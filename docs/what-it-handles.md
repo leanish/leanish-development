@@ -106,6 +106,14 @@ transitive copies within allowed ranges and existing overrides.
 Major upgrades get separate PRs. Candidates must pass identity checks and add no
 new advisories or malware. Existing vulnerabilities can remain.
 
+A routine may find a young version already locked, for example an early security
+fix. npm needs an age exemption to keep it, but that exemption covers the whole
+package name. bump-it pins the locked copies so npm cannot use it to take another
+young release. Direct dependencies outside the update plan stay locked too.
+A transitive copy can be removed when nothing needs it any more; if it remains,
+it must keep its locked version. Own packages still update without the wait;
+a configured npm age exclusion alone does not freeze transitives.
+
 It avoids deprecated targets. It keeps `@types/node` within the project's lowest
 known supported Node major. Without readable runtime evidence, it stays in the
 current type major; an existing type version that is too high needs a manual fix.

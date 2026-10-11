@@ -36,6 +36,8 @@ export interface TargetInputs {
   readonly overrides: RepositoryOverrides;
   /** Copy path → the version a direct dependency's copy must be at. */
   readonly direct: ReadonlyMap<string, string>;
+  /** Copy path → its locked version, retained because npm's age exclusion only permits keeping it. */
+  readonly retained?: ReadonlyMap<string, string>;
 }
 
 export type Decision =
@@ -50,9 +52,9 @@ export async function decideTargets(inputs: TargetInputs, sources: TargetSources
   const pending: Array<{ copy: Copy; baseVersion: string | undefined; candidates: string[] }> = [];
   const decisions: Decision[] = [];
   for (const copy of copies) {
-    const planned = direct.get(copy.path);
+    const planned = direct.get(copy.path) ?? inputs.retained?.get(copy.path);
     if (planned !== undefined) {
-      decisions.push({ copy, kind: "target", target: planned, direct: true });
+      decisions.push({ copy, kind: "target", target: planned, direct: direct.has(copy.path) });
       continue;
     }
     if (overrides.isComplex(copy.installedAs) || overrides.isComplex(copy.name)) {

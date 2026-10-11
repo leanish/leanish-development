@@ -107,6 +107,11 @@ manifest dependency fields (other manifest fields may change only for a major). 
 window cannot authorize a different explicit target. Peer copies use temporary declarations only when their
 root/workspace placement is representable; unsupported placements fail the unit with a reason. secure-it retains
 npm-induced transitives subject to compare; bump-it additionally selects routine transitive targets in code.
+For bump-it routines, a name excluded to preserve a young or unreadable locked version also has all its locked
+transitive copies pinned to their base versions before npm runs and throughout later target passes. Such a name
+exclusion permits keeping those versions, not choosing another young release or an aged replacement. Copies no
+dependency needs any more can be removed. Own packages keep their age exemption. secure-it's exact security targets
+and major-induced graphs retain their existing behavior.
 
 The npm required-dependency age exception starts only at a security fix independently established by the gate's
 version rule and advisory snapshot. Registry requirements and publish times prove that no aged satisfying version
