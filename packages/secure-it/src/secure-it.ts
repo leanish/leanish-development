@@ -294,7 +294,7 @@ async function parentsFirst(fixes: ReadonlyArray<SecurityFix>, base: PlanBase, e
 async function refreshText(execution: Execution, pr: GitHubPullRequest, plan: ChangePlan): Promise<void> {
   const previous = planOf(pr.body);
   if (previous !== undefined && planSection(previous) === planSection(plan)) return;
-  await rewriteText(execution.publication, pr.number, pr.headSha, withPlanSection(pr.body, plan));
+  await rewriteText(execution.publication, pr.number, pr.headSha, (body) => withPlanSection(body, plan));
 }
 
 async function computeRemoval(execution: Execution, base: PlanBase): Promise<ComputedRemoval> {

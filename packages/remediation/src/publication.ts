@@ -156,11 +156,12 @@ export async function recordState(context: PublicationContext, number: number, e
  * Rewrite the PR's text (its state kept), once it's still the tool's at `expectedHead`: for what a recomputed plan
  * says without changing what it does (its notes), so an open PR never shows an outdated reason.
  */
-export async function rewriteText(context: PublicationContext, number: number, expectedHead: string, body: string): Promise<GitHubPullRequest> {
+export async function rewriteText(context: PublicationContext, number: number, expectedHead: string, rewrite: (body: string) => string): Promise<GitHubPullRequest> {
   const current = await reReadOwn(context, number, expectedHead);
   const state = stateOf(current.body);
   if (state === undefined) throw new Error(`${current.url}: no recorded state to keep while rewriting its text`);
-  const updated = await context.github.updatePullRequest({ repo: context.repo, number, title: current.title, body: withMarker(context.rules, body, state) });
+  // From the body as it is now, so an edit made since the caller read it (an owner's note, say) is kept.
+  const updated = await context.github.updatePullRequest({ repo: context.repo, number, title: current.title, body: withMarker(context.rules, rewrite(current.body), state) });
   await ensureLabel(context, updated);
   return updated;
 }
