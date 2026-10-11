@@ -307,9 +307,9 @@ export async function planFor(work: ReadonlyArray<FixWork>, inputs: PlanInputs, 
     for (const location of fix.locations) {
       const found =
         fix.ecosystem === "npm" ? npmMechanism(inputs.lockfiles, fix.name, location, to.version) : { mechanism: gradleMechanism(inputs, fix.name, location), declaredAs: undefined };
-      // Parents that admit the target turn an override into a lock inside their own ranges.
-      // Parents that admit the target, moving in the same unit, turn an override into a lock inside their own ranges.
-      const lifted = found.mechanism === "npm-override" && (fix.parents ?? []).some((parent) => parent.unblocks === location &&
+      // Parents that admit the target, all moving in the same unit, turn an override into a lock inside their ranges.
+      const needed = (fix.parents ?? []).filter((parent) => parent.unblocks === location);
+      const lifted = found.mechanism === "npm-override" && needed.length > 0 && needed.every((parent) =>
         work.some((other) => other.ecosystem === "npm" && other.name === parent.name && other.to?.version === parent.to && other.locations.includes(parent.location)));
       const { mechanism, declaredAs } = lifted ? { ...found, mechanism: "npm-lock" as const } : found;
       const key = `${mechanism}|${declaredAs ?? ""}`;

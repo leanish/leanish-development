@@ -19,11 +19,13 @@
   rule, since the advisory isn't on the carrier itself. Required dependencies
   of such a carrier aren't proved (a young one fails the comparison).
 - When a parent's range excludes a transitive npm copy's security target,
-  secure-it first looks for that parent's lowest version in its own line, past
-  the release-age wait, whose range admits the target (no new advisory, same
+  secure-it first looks for a version of that parent in its own line, past
+  the release-age wait, whose ranges admit the targets (no new advisory, same
   publisher, movable without an override itself), and moves both, the copy
-  locked inside the parent's new range. Only when no parent can move does it
-  fall back to the override and floor, with the reason in the PR's notes.
+  locked inside the parent's new range. When the parent must admit several
+  copies, it takes the version admitting the most (the lowest of those that
+  tie); the copies it can't admit keep the override and floor, with the reason
+  in the PR's notes, as does every copy when no parent can move.
 - In Gradle, before flooring a vulnerable transitive (or plugin-declared)
   module, secure-it looks for a dependency the sources declare that brings it
   in every affected configuration, and that dependency's lowest version in its

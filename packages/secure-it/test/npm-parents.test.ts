@@ -298,3 +298,90 @@ describe("npm parents, third round", () => {
     expect(planned.fixes.map((fix) => fix.name).sort()).toEqual(["parent", "x"]);
   });
 });
+
+describe("npm parents admitting some of the copies they must", () => {
+  const fixOf = (name: string, from: string, to: string): SecurityFix => ({
+    ecosystem: "npm", name, from, locations: [`node_modules/${name}`], targets: [`GHSA-${name}`], unfixable: [], malicious: false, severity: "HIGH",
+    to: { version: to, line: to.split(".")[0]!, aged: true, major: false, blockers: [] }, problem: undefined,
+  });
+  /** The app declares `parent` (and `other`, when given its range for x), which bring x, y and z, each at 1.0.0. */
+  const locks = (other?: string) => new Map([["package-lock.json", { lockfileVersion: 3, packages: {
+    "": { name: "app", dependencies: { parent: "^1.0.0", ...(other === undefined ? {} : { other: "^1.0.0" }) } },
+    "node_modules/parent": { version: "1.0.0", dependencies: { x: "~1.0.0", y: "~1.0.0", z: "~1.0.0" } },
+    ...(other === undefined ? {} : { "node_modules/other": { version: "1.0.0", dependencies: { x: other } } }),
+    "node_modules/x": { version: "1.0.0" },
+    "node_modules/y": { version: "1.0.0" },
+    "node_modules/z": { version: "1.0.0" },
+  } }]]);
+  const parentVersions = (versions: Record<string, Record<string, string>>): Registry["x"] => Object.fromEntries(Object.entries(versions).map(([version, dependencies]) => [version, { time: OLD, dependencies }]));
+  const BASE = { "1.0.0": { x: "~1.0.0", y: "~1.0.0", z: "~1.0.0" } };
+  const run = async (fixes: SecurityFix[], registry: Registry, options: { affected?: Record<string, string[]>; other?: string } = {}) => {
+    const lockfiles = locks(options.other);
+    const result = await withParents(fixes, { lockfiles, env: environment(registry, options.affected), config: parseConfig({}), exceptions: NO_EXCEPTIONS });
+    const plan = await planFor(result, { named: undefined, lockfiles, gradle: undefined, tagCommit: async () => undefined });
+    return {
+      result,
+      notes: result.flatMap((fix) => fix.notes ?? []),
+      moves: plan.moves.map((move) => `${move.name} ${move.to} ${move.mechanism}`).sort(),
+    };
+  };
+
+  it("moves the parent for the copies it can admit and keeps the others' overrides", async () => {
+    const { notes, moves } = await run([fixOf("x", "1.0.0", "1.1.0"), fixOf("y", "1.0.0", "1.1.0")], { parent: parentVersions({ ...BASE, "1.1.0": { x: "^1.1.0", y: "~1.0.0", z: "~1.0.0" } }) });
+    expect(moves).toEqual(["parent 1.1.0 npm-direct", "x 1.1.0 npm-lock", "y 1.1.0 npm-override"]);
+    expect(notes).toEqual(["y@1.1.0 at node_modules/y keeps an override: the parent version admitting the most of the copies it must (1.1.0) doesn't admit it"]);
+  });
+
+  it("takes the lowest of the versions admitting as many", async () => {
+    const { moves } = await run([fixOf("x", "1.0.0", "1.1.0"), fixOf("y", "1.0.0", "1.1.0")], { parent: parentVersions({
+      ...BASE, "1.1.0": { x: "^1.1.0", y: "~1.0.0", z: "~1.0.0" }, "1.2.0": { x: "~1.0.0", y: "^1.1.0", z: "~1.0.0" },
+    }) });
+    expect(moves).toEqual(["parent 1.1.0 npm-direct", "x 1.1.0 npm-lock", "y 1.1.0 npm-override"]);
+  });
+
+  it("falls back to a version admitting fewer when the one admitting the most fails a check", async () => {
+    const { moves } = await run([fixOf("x", "1.0.0", "1.1.0"), fixOf("y", "1.0.0", "1.1.0")], { parent: parentVersions({
+      ...BASE, "1.1.0": { x: "^1.1.0", y: "~1.0.0", z: "~1.0.0" }, "1.2.0": { x: "^1.1.0", y: "^1.1.0", z: "~1.0.0" },
+    }) }, { affected: { "parent@1.2.0": ["GHSA-p"] } });
+    expect(moves).toEqual(["parent 1.1.0 npm-direct", "x 1.1.0 npm-lock", "y 1.1.0 npm-override"]);
+  });
+
+  it("never takes a version that drops a copy its range admits today", async () => {
+    // z's fix 1.0.5 is inside parent 1.0.0's ~1.0.0; 1.2.0 would admit x and y but not z any more.
+    const { moves } = await run([fixOf("x", "1.0.0", "1.1.0"), fixOf("y", "1.0.0", "1.1.0"), fixOf("z", "1.0.0", "1.0.5")], { parent: parentVersions({
+      ...BASE, "1.1.0": { x: "^1.1.0", y: "~1.0.0", z: "~1.0.0" }, "1.2.0": { x: "^1.1.0", y: "^1.1.0", z: "~0.9.0" },
+    }) });
+    expect(moves).toEqual(["parent 1.1.0 npm-direct", "x 1.1.0 npm-lock", "y 1.1.0 npm-override", "z 1.0.5 npm-lock"]);
+  });
+
+  it("searches again without a copy another parent can't admit", async () => {
+    // 1.2.0 admits the most (x and y), but `other` can't admit x, so x keeps its override; for y alone 1.1.0 is lowest.
+    const { notes, moves } = await run([fixOf("x", "1.0.0", "1.1.0"), fixOf("y", "1.0.0", "1.1.0")], {
+      parent: parentVersions({ ...BASE, "1.1.0": { x: "~1.0.0", y: "^1.1.0", z: "~1.0.0" }, "1.2.0": { x: "^1.1.0", y: "^1.1.0", z: "~1.0.0" } }),
+      other: parentVersions({ "1.0.0": { x: "~1.0.0" } }),
+    }, { other: "~1.0.0" });
+    expect(moves).toEqual(["parent 1.1.0 npm-direct", "x 1.1.0 npm-override", "y 1.1.0 npm-lock"]);
+    expect(notes).toEqual([expect.stringMatching(/^x@1\.1\.0 at node_modules\/x keeps an override: no other version in its line past the wait/)]);
+  });
+
+  it("moves no parent when every copy it could admit keeps an override anyway", async () => {
+    const { result, moves } = await run([fixOf("x", "1.0.0", "1.1.0")], {
+      parent: parentVersions({ ...BASE, "1.1.0": { x: "^1.1.0", y: "~1.0.0", z: "~1.0.0" } }),
+      other: parentVersions({ "1.0.0": { x: "~1.0.0" } }),
+    }, { other: "~1.0.0" });
+    expect(moves).toEqual(["x 1.1.0 npm-override"]);
+    expect(result.some((fix) => fix.name === "parent" || fix.parents !== undefined)).toBe(false);
+  });
+
+  it("locks a copy only when every parent it needs moves in the same work", async () => {
+    const lockfiles = locks("~1.0.0");
+    const result = await withParents([fixOf("x", "1.0.0", "1.1.0")], { lockfiles, env: environment({
+      parent: parentVersions({ ...BASE, "1.1.0": { x: "^1.1.0", y: "~1.0.0", z: "~1.0.0" } }),
+      other: parentVersions({ "1.0.0": { x: "~1.0.0" }, "1.1.0": { x: "^1.1.0" } }),
+    }), config: parseConfig({}), exceptions: NO_EXCEPTIONS });
+    expect(result.find((fix) => fix.name === "x")!.parents?.map((parent) => parent.name).sort()).toEqual(["other", "parent"]);
+    const withoutOther = result.filter((fix) => fix.name !== "other");
+    const plan = await planFor(withoutOther, { named: undefined, lockfiles, gradle: undefined, tagCommit: async () => undefined });
+    expect(plan.moves.find((move) => move.name === "x")!.mechanism).toBe("npm-override");
+  });
+});
