@@ -425,6 +425,22 @@ describe("npm parents, what they must keep admitting", () => {
     ]);
   });
 
+  it("explains nothing about a copy its parent admits already, while moving it for another", async () => {
+    const lockfiles = new Map([["package-lock.json", { lockfileVersion: 3, packages: {
+      "": { name: "app", dependencies: { parent: "^1.0.0" } },
+      "node_modules/parent": { version: "1.0.0", dependencies: { x: "~1.0.0", y: "~1.0.0" }, optionalDependencies: { x: "^1.0.0" } },
+      "node_modules/x": { version: "1.0.0" },
+      "node_modules/y": { version: "1.0.0" },
+    } }]]);
+    const fixes = await run([fixAt("x", "1.0.0", "1.1.0", "node_modules/x"), fixAt("y", "1.0.0", "1.1.0", "node_modules/y")], { parent: {
+      "1.0.0": { time: OLD, dependencies: { x: "~1.0.0", y: "~1.0.0" } },
+      "1.1.0": { time: OLD, dependencies: { x: "^1.1.0", y: "^1.1.0" } },
+    } }, lockfiles);
+    const x = fixes.find((fix) => fix.name === "x")!;
+    expect([x.notes, x.parents]).toEqual([undefined, undefined]);
+    expect(fixes.find((fix) => fix.name === "y")!.parents?.map((parent) => parent.to)).toEqual(["1.1.0"]);
+  });
+
   it("keeps a parent transition in another lockfile beside the parent's own fix", async () => {
     // A one-letter directory on purpose: "b" must still rank deeper than the root's ".".
     const lockfiles = new Map<string, unknown>([

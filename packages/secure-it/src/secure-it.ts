@@ -35,7 +35,7 @@ import { runSandboxed } from "../../remediation/src/sandboxed.ts";
 import { ensureOsvScanner, verifyingRun } from "../../remediation/src/osv-scanner.ts";
 import { branchFor, ownPullRequests, stateOf, topicOf } from "../../remediation/src/own-pr.ts";
 import { revertToBase } from "../../remediation/src/reconcile.ts";
-import { clearLeftoverBranch, closeAndDelete, ownOpenPullRequests, type PublicationContext, publishNew, publishUpdate, recoverPublication } from "../../remediation/src/publication.ts";
+import { clearLeftoverBranch, closeAndDelete, ownOpenPullRequests, type PublicationContext, publishNew, publishUpdate, recoverPublication, rewriteText } from "../../remediation/src/publication.ts";
 import { type BaseMerge, type CooldownState, reviewOpenPullRequests, type ReviewSteps } from "../../remediation/src/review.ts";
 
 import { removalTransform } from "./floor-gradle.ts";
@@ -290,6 +290,13 @@ async function parentsFirst(fixes: ReadonlyArray<SecurityFix>, base: PlanBase, e
   return withUnsupportedCarriers(work, lockfiles);
 }
 
+/** An open PR of the same plan keeps its commits; its plan section is rewritten when what it says (notes) changed. */
+async function refreshText(execution: Execution, pr: GitHubPullRequest, plan: ChangePlan): Promise<void> {
+  const previous = planOf(pr.body);
+  if (previous !== undefined && planSection(previous) === planSection(plan)) return;
+  await rewriteText(execution.publication, pr.number, pr.headSha, withPlanSection(pr.body, plan));
+}
+
 async function computeRemoval(execution: Execution, base: PlanBase): Promise<ComputedRemoval> {
   return selectRemovals(await floorsOf(base.tree), (floors) => execution.deps.floorProbe(execution.context, base.tree, floors, execution.env),
     (text) => createHash("sha256").update(text).digest("hex"));
@@ -312,7 +319,10 @@ async function runRemoval(execution: Execution, removal: ComputedRemoval, base: 
   const owned = await recognisedPlans(execution.context, execution.publication, own, plan);
   const already = owned.find((pr) => stateOf(pr.body)?.head === pr.headSha && planDigest(planOf(pr.body)!) === planDigest(plan));
   const report = { topic: plan.topic, packages: plan.packages, notes: removal.notes };
-  if (already !== undefined) return { ...report, outcome: "already-open", pullRequest: already.url };
+  if (already !== undefined) {
+    await refreshText(execution, already, plan);
+    return { ...report, outcome: "already-open", pullRequest: already.url };
+  }
   const reusable = owned[0];
   const prepared = await preparePlan(execution.context, execution.deps, plan, reusable, own, base.tree.id);
   const content = await applyRemoval(execution, removal);
@@ -378,7 +388,10 @@ async function runUnit(execution: Execution, unit: SecurityUnit, base: PlanBase,
     return stateOf(pr.body)?.head === pr.headSha && previous !== undefined && planDigest(previous) === planDigest(plan);
   });
   const details = { topic: plan.topic, packages: plan.packages, notes: plan.notes ?? [] };
-  if (already !== undefined) return { ...details, outcome: "already-open", pullRequest: already.url };
+  if (already !== undefined) {
+    await refreshText(execution, already, plan);
+    return { ...details, outcome: "already-open", pullRequest: already.url };
+  }
   const reusable = owned[0];
   const prepared = await preparePlan(context, deps, plan, reusable, own, base.tree.id);
   const input = await agentInput(execution, plan, base.tree, "apply");

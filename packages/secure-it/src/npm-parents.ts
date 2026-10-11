@@ -100,9 +100,10 @@ export async function withParents(fixes: ReadonlyArray<FixWork>, inputs: ParentI
         const required = isObject(current) && admits(current, packages, dependent.path, obligation);
         entry.obligations.set(`${copyKey(fix.name, location)}|${fix.to!.version}`, { ...obligation, required });
         occurrences.set(key, entry);
-        if (!keys.includes(key)) keys.push(key);
+        // One that admits the copy already doesn't block it: it needn't move for it, only keep admitting it.
+        if (!required && !keys.includes(key)) keys.push(key);
       }
-      blockedBy.set(copyKey(fix.name, location), keys);
+      if (keys.length > 0) blockedBy.set(copyKey(fix.name, location), keys);
     }
   }
   // An occurrence must also keep admitting every other planned copy it supplies, even one its range admits today.
