@@ -1,6 +1,6 @@
 /**
  * The run's report: a JSON document for machines (secure-it reads it, the
- * daily publisher posts its verdict), plus GitHub annotations and a markdown
+ * `cooldown` job evaluates it), plus GitHub annotations and a markdown
  * step summary for people. `completed` says whether the gate ran to the end;
  * `verdict` is `fail` whenever it didn't.
  */
