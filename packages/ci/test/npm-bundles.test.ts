@@ -63,11 +63,6 @@ describe("reading what an npm archive bundles", () => {
     ]));
   });
 
-  it("reads past a global pax header that only comments, as git archive writes", async () => {
-    const contents = await read([{ path: "pax_global_header", body: "52 comment=0123456789abcdef0123456789abcdef01234567\n", type: "g" }, ...CARRIER]);
-    expect(contents.complete && contents.packages.map((pkg) => pkg.name)).toEqual(expect.arrayContaining(["inner", "leaf"]));
-  });
-
   it("reads a bundle-less archive as complete and empty", async () => {
     expect(await read([{ path: "package/package.json", body: manifest("carrier", "1.0.0") }])).toEqual({ complete: true, packages: [] });
   });
@@ -91,8 +86,9 @@ describe("reading what an npm archive bundles", () => {
 
   it.each<[string, TarEntry[], string]>([
     ["a symbolic link", [...CARRIER, { path: "package/node_modules/link", type: "2" }], "unsupported tar entry type"],
-    // npm applies a global size to the next entry, so it would read files this reader skipped as one body.
-    ["a global pax header setting sizes", [CARRIER[0]!, { path: "pax_global_header", body: "12 size=512\n", type: "g" }, ...CARRIER.slice(1)], "a global pax header sets size"],
+    // npm applies a global header's records to later entries (and parses them differently), so none is read at all.
+    ["a global pax header setting sizes", [CARRIER[0]!, { path: "pax_global_header", body: "12 size=512\n", type: "g" }, ...CARRIER.slice(1)], "a global pax header"],
+    ["a global pax header with only a comment", [{ path: "pax_global_header", body: "52 comment=0123456789abcdef0123456789abcdef01234567\n", type: "g" }, ...CARRIER], "a global pax header"],
     ["a path climbing out", [...CARRIER, { path: "package/../escape/package.json", body: "{}" }], "unsafe tar path"],
     ["an absolute path", [...CARRIER, { path: "/etc/package.json", body: "{}" }], "unsafe tar path"],
     ["a second top directory", [...CARRIER, { path: "other/node_modules/x/package.json", body: manifest("x", "1.0.0") }], "two top directories"],

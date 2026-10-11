@@ -243,7 +243,7 @@ export function bundleMismatches(packages: ReadonlyArray<LockedPackage>, carrier
 const BLOCK = 512;
 
 interface Pending {
-  readonly kind: "manifest" | "pax" | "globalpax" | "longname" | "skip";
+  readonly kind: "manifest" | "pax" | "longname" | "skip";
   readonly path: string;
   remaining: number;
   readonly chunks: Buffer[];
@@ -344,12 +344,6 @@ class TarReader {
     const body = Buffer.concat(pending.chunks);
     if (pending.kind === "manifest") this.#manifests.set(pending.path, body);
     else if (pending.kind === "pax") this.#pax = { ...this.#pax, ...parsePax(body) };
-    else if (pending.kind === "globalpax") {
-      // npm's tar applies a global record (a size, a path) to every later entry; this reader doesn't, so one that
-      // could change how entries read makes the archive unreadable rather than read differently from npm.
-      const keys = Object.keys(parsePax(body)).filter((key) => key !== "comment");
-      if (keys.length > 0) throw new Error(`a global pax header sets ${keys.join(", ")}`);
-    }
     else if (pending.kind === "longname") this.#longName = body.toString("utf8").replace(/\0+$/, "");
     return true;
   }
@@ -369,12 +363,14 @@ class TarReader {
     if (!Number.isSafeInteger(size) || size < 0) throw new Error("a tar entry has an unreadable size");
     const padding = (BLOCK - (size % BLOCK)) % BLOCK;
     const meta = (kind: Pending["kind"], cap: number) => {
-      if (size > cap) throw new Error(`a tar ${kind === "longname" ? "long name" : "pax header"} over ${cap} bytes`);
+      if (size > cap) throw new Error(`a tar ${kind === "pax" ? "pax header" : "long name"} over ${cap} bytes`);
       this.#pending = { kind, path: "", remaining: size, chunks: [], padding };
     };
     if (type === "x") return meta("pax", this.#limits.manifestBytes);
     if (type === "L") return meta("longname", 4096);
-    if (type === "g") return meta("globalpax", this.#limits.manifestBytes);
+    // npm's tar applies a global pax header's records to later entries, parses its records differently, and keeps a
+    // pending local header across it; npm pack never writes one. Unreadable, so it's never read differently from npm.
+    if (type === "g") throw new Error("the archive has a global pax header");
     if (type !== "0" && type !== "\0" && type !== "5") throw new Error(`unsupported tar entry type ${JSON.stringify(type)}`);
     const raw = pax["path"] ?? longName ?? ustarPath(header);
     const path = this.#relative(raw, type === "5");
