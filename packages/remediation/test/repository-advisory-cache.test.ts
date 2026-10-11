@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -19,7 +19,7 @@ const page = (entries: unknown[], next?: string) => new Response(JSON.stringify(
 
 let dir: string;
 let now: number;
-const cache = (token = "read-token") => new FileRepositoryAdvisoryCache(dir, token, () => now);
+const cache = (token = "read-token") => new FileRepositoryAdvisoryCache(dir, [], token, () => now);
 const entryPath = async () => join(dir, "repository-advisories-v1", (await readdir(join(dir, "repository-advisories-v1")))[0]!);
 
 beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), "advisory-cache-")); now = 1_000_000; });
@@ -64,9 +64,10 @@ describe("repository advisory cache", () => {
 
   it("treats missing/unreadable entries and unwritable cache directories as best-effort misses", async () => {
     expect(await cache().read(REPO)).toBeUndefined();
-    const blocked = join(dir, "file");
-    await writeFile(blocked, "not a directory");
-    const broken = new FileRepositoryAdvisoryCache(blocked, "read-token");
+    // A state directory the tool can't write: entries can't be stored, the read still succeeds.
+    const blocked = join(dir, "read-only");
+    await mkdir(blocked, { mode: 0o500 });
+    const broken = new FileRepositoryAdvisoryCache(blocked, [], "read-token");
     const raw = vi.fn<typeof globalThis.fetch>(async () => page([ENTRY]));
     expect(await fetchRepositoryAdvisories(REPO, { fetch: raw, token: "read-token", cache: broken })).toHaveLength(1);
     expect(await broken.read(REPO)).toBeUndefined();
@@ -120,9 +121,39 @@ describe("repository advisory cache", () => {
 });
 
 describe("where the tools keep the cache", () => {
+  it("refuses a state directory that resolves into a sandbox-writable one, symlinked or not", async () => {
+    const writable = join(dir, "cache");
+    await mkdir(writable);
+    expect(() => new FileRepositoryAdvisoryCache(join(writable, "state"), [writable], "read-token")).toThrow("sandboxed commands can write");
+    // A link the sandbox could retarget: the cache resolves it once and keeps the canonical path.
+    const link = join(dir, "state-link");
+    await symlink(writable, link);
+    expect(() => new FileRepositoryAdvisoryCache(link, [writable], "read-token")).toThrow("sandboxed commands can write");
+    expect(() => new FileRepositoryAdvisoryCache(join(dir, "state"), [writable], "read-token")).not.toThrow();
+  });
+
+  it("refuses a dangling cache-directory link and ignores linked entries", async () => {
+    const writable = join(dir, "cache");
+    const state = join(dir, "linked-state");
+    await mkdir(state);
+    await symlink(join(writable, "later"), join(state, "repository-advisories-v1"));
+    expect(() => new FileRepositoryAdvisoryCache(state, [writable], "read-token")).toThrow("dangling symlink");
+    // A dangling link higher up, as the state directory itself.
+    await symlink(join(writable, "missing"), join(dir, "state-dangling"));
+    expect(() => new FileRepositoryAdvisoryCache(join(dir, "state-dangling"), [writable], "read-token")).toThrow("dangling symlink");
+
+    // A forged entry elsewhere, linked in under the real entry's name, is a miss.
+    await writeFile(join(dir, "forged.json"), JSON.stringify({ repo: REPO.toLowerCase(), fetchedAt: now, advisories: [] }));
+    await cache().write(REPO, [ENTRY]);
+    const [name] = (await readdir(join(dir, "repository-advisories-v1"))).filter((file) => file.endsWith(".json"));
+    await rm(join(dir, "repository-advisories-v1", name!));
+    await symlink(join(dir, "forged.json"), join(dir, "repository-advisories-v1", name!));
+    expect(await cache().read(REPO)).toBeUndefined();
+  });
+
   it.each(["../../secure-it/src/secure-it.ts", "../../bump-it/src/deps.ts"])("%s keeps it in state, out of the sandbox's reach", async (source) => {
     const text = await readFile(new URL(source, import.meta.url), "utf8");
-    expect(text).toContain("new FileRepositoryAdvisoryCache(context.config.dirs.state,");
+    expect(text).toContain("new FileRepositoryAdvisoryCache(context.config.dirs.state, writable,");
     expect(text).not.toContain("new FileRepositoryAdvisoryCache(context.config.dirs.cache");
   });
 });
