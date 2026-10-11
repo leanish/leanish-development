@@ -42,8 +42,6 @@ describe("sandboxed Gradle inventory errors", () => {
       "  supply-chain compare ...",
       "  supply-chain scan ...",
       "  supply-chain gradle-inventory ...",
-      "  supply-chain rescan-plan ...",
-      "  supply-chain rescan ...",
     ].join("\n");
     vi.mocked(runSandboxed).mockResolvedValue({ code: 2, stdout: "", stderr });
     await expect(sandboxedGradleInventories({}, workingCopy).ofWorkingTree(tree)).rejects.toThrow(

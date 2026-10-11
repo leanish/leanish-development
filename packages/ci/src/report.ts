@@ -20,8 +20,6 @@ export interface Report {
   readonly configDigest: string;
   readonly baseSha: string | undefined;
   readonly headSha: string;
-  /** The PR's own head, set by the daily rescan, whose `headSha` is that head merged onto the base's tip. */
-  readonly prHeadSha: string | undefined;
   readonly startedAt: string;
   readonly completedAt: string;
   readonly completed: boolean;

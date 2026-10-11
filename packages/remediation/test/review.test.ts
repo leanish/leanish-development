@@ -237,7 +237,7 @@ describe("reviewOpenPullRequests", () => {
       }
     });
 
-    it("stays a draft when the daily rescan holds it, its own cooldown green, held or untracked, with no model and no adaptation", async () => {
+    it("stays a draft when an older gate's rescan status holds it, its own cooldown green, held or untracked, with no model and no adaptation", async () => {
       const rescanHeld = { ...CI_HOLDING, checkRuns: [CI_HOLDING.checkRuns[0]!, { name: "supply-chain / cooldown", status: "completed", conclusion: "success" }], statuses: [{ context: "supply-chain / cooldown", state: "failure" }] };
       for (const [checks, tracked] of [[rescanHeld, true], [rescanHeld, false], [{ ...CI_HOLDING, statuses: rescanHeld.statuses }, true]] as const) {
         const github = new FakeGitHub(ownPr());

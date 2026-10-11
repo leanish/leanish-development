@@ -46,7 +46,7 @@ remain supported when it arrives.
 ## Packages
 
 - [`ci`](packages/ci): inventories, advisory/version rules, candidate selection and
-  the reusable gate with daily open-PR rescans
+  the reusable gate with daily default-branch scans
 - [`secure-it`](packages/secure-it): security batches, separate majors and verified
   removal of security floors; compatibility floors stay
 - [`bump-it`](packages/bump-it): routine/major plans, tool-computed npm changes and

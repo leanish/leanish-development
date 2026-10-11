@@ -7,14 +7,9 @@ on:
   push:
     branches: [main]
   schedule:
-    # Daily: main's full scan, and a fresh rescan of every open PR.
+    # Daily: main's full scan (open PRs are checked when they change, not daily).
     - cron: "23 4 * * *"
   workflow_dispatch:
-    inputs:
-      pr:
-        description: Rescan only this open PR now (its status lands right away instead of with the daily run)
-        required: false
-        type: string
 
 permissions:
   contents: read
@@ -23,13 +18,6 @@ jobs:
   # The gate on this repository itself, from the code under review: the same reusable workflow adopters call.
   gate:
     uses: ./.github/workflows/supply-chain.yml
-    with:
-      required-check: supply-chain
-      required-cooldown-check: gate / cooldown
-    permissions:
-      contents: read
-      pull-requests: read
-      statuses: write
 
   # Keep the existing required check name; the reusable gate decides its result. A cooldown hold alone doesn't fail
   # it: `gate / cooldown` reports that (and is required too), so the tests below still run on a held PR.
