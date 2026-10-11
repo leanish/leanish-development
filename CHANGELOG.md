@@ -7,7 +7,8 @@
 - secure-it and bump-it emit one JSON GitHub API request summary per command on
   stderr, grouped by method and normalized endpoint, including retries and failures.
 - Local tools cache complete repository security advisory listings for one hour
-  under `dirs.cache`, across snapshots and processes. Writes are atomic; corrupt
+  under `dirs.state` (out of the sandbox's reach, so a build or agent can't hide an
+  advisory), across snapshots and processes. Writes are atomic; corrupt
   or unavailable cache entries are misses and failed/partial responses are never
   cached. The CI gate continues fetching fresh advisories.
 

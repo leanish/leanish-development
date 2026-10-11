@@ -7,7 +7,11 @@ import type { RepositoryAdvisoryCache } from "../../ci/src/repository-advisories
 
 const TTL_MS = 60 * 60 * 1_000;
 
-/** Local tools only: share a complete repository response across snapshots and processes for one hour. */
+/**
+ * Local tools only: share a complete repository response across snapshots and processes for one hour.
+ * Keep it under `dirs.state`, never a sandbox-writable dir: an agent or build that could rewrite an
+ * entry (say, to `[]`) would hide repository-only advisories from the final verification.
+ */
 export class FileRepositoryAdvisoryCache implements RepositoryAdvisoryCache {
   readonly #dir: string;
   readonly #scope: string;
