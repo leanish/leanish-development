@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- secure-it and bump-it emit one JSON GitHub API request summary per command on
+  stderr, grouped by method and normalized endpoint, including retries and failures.
+- Local tools cache complete repository security advisory listings for one hour
+  under `dirs.cache`, across snapshots and processes. Writes are atomic; corrupt
+  or unavailable cache entries are misses and failed/partial responses are never
+  cached. The CI gate continues fetching fresh advisories.
+
 ### Fixed
 
 - bump-it's routine protects non-bundled locked transitive versions when npm's age window

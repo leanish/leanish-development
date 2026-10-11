@@ -72,7 +72,7 @@ function harness(options: { bumps?: BumpCandidate[]; prs?: GitHubPullRequest[]; 
     return originalPrepare(workingCopy, args);
   };
   for (const pr of options.prs ?? []) workspace.setRemoteHead(pr.headRef, pr.headSha);
-  const context: ToolRunContext = { config: CONFIG, repo: { repo: REPO, branch: undefined }, base: "main", github, workspace, workingCopy: wc, now: NOW, releaseAgeDays: 7, releaseAgeExclude: [], readToken: "read-token", isolation: {}, logger: new ConsoleLogger({ minLevel: "error" }), agent: (async (call: { effort?: string; input: Record<string, unknown> }) => { agentCalls.push(call); return options.refuse ? { outcome: "cannot-apply", summary: "can't migrate" } : { outcome: "applied", summary: "updated", publication: { title: "upgrading lib", body: "Adapts to the upgrade.", commitMessage: "upgrading lib" } }; }) as ToolRunContext["agent"] };
+  const context: ToolRunContext = { config: CONFIG, repo: { repo: REPO, branch: undefined }, base: "main", github, workspace, workingCopy: wc, now: NOW, releaseAgeDays: 7, releaseAgeExclude: [], readToken: "read-token", fetch: globalThis.fetch, isolation: {}, logger: new ConsoleLogger({ minLevel: "error" }), agent: (async (call: { effort?: string; input: Record<string, unknown> }) => { agentCalls.push(call); return options.refuse ? { outcome: "cannot-apply", summary: "can't migrate" } : { outcome: "applied", summary: "updated", publication: { title: "upgrading lib", body: "Adapts to the upgrade.", commitMessage: "upgrading lib" } }; }) as ToolRunContext["agent"] };
   const deps: BumpItDeps = {
     generateWrapper: async () => wrapperArtifacts(),
     readWrapperFiles: async () => wrapperArtifacts(),

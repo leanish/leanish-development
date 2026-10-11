@@ -4,8 +4,10 @@
  * days before GitHub reviews them into its global database and OSV imports
  * them (snappy-java's CVE-2026-90559 was one), so the gate reads them too.
  *
- * Each repository is read once per run. A 404 (renamed, deleted or private
- * repository) is a coverage gap; any other failure, rate limits included,
+ * Each repository is read once per snapshot. Local tools may reuse a complete
+ * response through their opt-in cache; the CI CLI always fetches fresh.
+ * A 404 (renamed, deleted or private repository) is a coverage gap;
+ * any other failure, rate limits included,
  * fails the run. Withdrawn advisories are left out; an advisory whose range
  * doesn't parse is a gap, never a pass.
  */
@@ -45,6 +47,13 @@ export interface RepositoryAdvisoryOptions {
   readonly fetch: Fetch;
   /** A token for the GitHub API; unauthenticated requests get 60 an hour. */
   readonly token: string | undefined;
+  /** Opt-in for local tools; absent on the CI verdict path. Stores raw responses for the same parser. */
+  readonly cache?: RepositoryAdvisoryCache;
+}
+
+export interface RepositoryAdvisoryCache {
+  read(repo: string): Promise<ReadonlyArray<unknown> | undefined>;
+  write(repo: string, advisories: ReadonlyArray<unknown>): Promise<void>;
 }
 
 /**
@@ -134,9 +143,18 @@ export async function fetchRepositoryAdvisories(
   repo: string,
   options: RepositoryAdvisoryOptions,
 ): Promise<RepositoryAdvisory[] | undefined> {
+  const cached = await options.cache?.read(repo);
+  if (cached !== undefined) {
+    try {
+      return cached.flatMap((entry) => parseRepositoryAdvisory(entry, repo) ?? []);
+    } catch {
+      // A corrupt entry is a miss, never a clean verdict or a failed command.
+    }
+  }
   const headers: Record<string, string> = { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28" };
   if (options.token !== undefined) headers["authorization"] = `Bearer ${options.token}`;
   const advisories: RepositoryAdvisory[] = [];
+  const entries: unknown[] = [];
   let url: string | undefined = `${GITHUB_API}/repos/${repo}/security-advisories?state=published&per_page=100`;
   while (url !== undefined) {
     const response = await options.fetch(url, { headers });
@@ -150,9 +168,12 @@ export async function fetchRepositoryAdvisories(
     for (const entry of page) {
       const advisory = parseRepositoryAdvisory(entry, repo);
       if (advisory !== undefined) advisories.push(advisory);
+      if (options.cache !== undefined) entries.push(entry);
     }
     url = nextLink(response.headers.get("link"));
   }
+  // Cache only after every page was fetched and parsed. A later refusal must not preserve a partial list.
+  await options.cache?.write(repo, entries);
   return advisories;
 }
 

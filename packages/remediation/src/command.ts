@@ -6,7 +6,8 @@
  * GitHub calls, clone and push; the read-only one, the only credential the
  * agent's commands get), syncs the working copy, wires the isolated coding
  * agent, hands everything to the tool's `run` or `review`, and always ends with
- * the `run finished` line on stderr, interruptions included.
+ * a GitHub request summary and the `run finished` line on stderr,
+ * interruptions included.
  */
 import { writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -39,11 +40,14 @@ import { workingTree } from "../../ci/src/tree.ts";
 import { defaultConfigPath, parseToolConfig, repoOf, type ToolConfig, type ToolRepo } from "./config.ts";
 import { DEFAULT_MODEL_PRICES } from "./model-prices.ts";
 import type { ToolName } from "./own-pr.ts";
+import { GitHubRequests } from "./github-requests.ts";
 
 const GUARD_DIR = fileURLToPath(new URL("../../agent-basics/guard", import.meta.url));
 
 /** What a tool's `run` or `review` gets. */
 export interface ToolRunContext {
+  /** Command-scoped fetch: counts the tool's own GitHub API attempts, including gate reads and retries. */
+  readonly fetch: typeof globalThis.fetch;
   readonly config: ToolConfig;
   readonly repo: ToolRepo;
   /** The branch the tool works against: the configured one, else the repository's default branch. */
@@ -92,8 +96,11 @@ export const USAGE = (tool: ToolName) => `usage: ${tool} run|review <owner/repo>
 export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray<string>, machine: Partial<Machine> = {}): Promise<number> {
   const m: Machine = { ...defaultMachine(), ...machine };
   const report = new RunReport();
+  const requests = new GitHubRequests();
+  const fetch = requests.wrap(m.fetch);
+  let command: string | undefined;
   // The final line goes through this stream, on the normal path and on a signal's: it tells run.sh once the line is out.
-  const finalLines = acknowledging(m.stderr, m.reportMarker);
+  const finalLines = acknowledging(m.stderr, m.reportMarker, requests, () => ({ tool: handlers.tool, command }));
   let stopReporting: () => void = () => undefined;
   const finish = async (exitCode: number, status: "ok" | "error", extra: { error?: string; result?: Readonly<Record<string, unknown>> } = {}) => {
     stopReporting();
@@ -107,7 +114,6 @@ export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray
     return finish(70, "error", { error: `couldn't start reporting: ${(err as Error).message}` });
   }
 
-  let command: string;
   let repoName: string;
   let configPath: string;
   try {
@@ -127,8 +133,8 @@ export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray
     const write = await m.secrets.get(config.secrets.write);
     const read = await m.secrets.get(config.secrets.read);
     if (write === read) throw new Error(`${config.secrets.write} and ${config.secrets.read} hold the same token: the agent would get the write one`);
-    const github = createGitHubClient({ env: { GITHUB_TOKEN: write }, fetch: m.fetch });
-    const base = repo.branch ?? (await defaultBranch(repo.repo, write, m.fetch));
+    const github = createGitHubClient({ env: { GITHUB_TOKEN: write }, fetch });
+    const base = repo.branch ?? (await defaultBranch(repo.repo, write, fetch));
     const workspace = m.workspace(join(config.dirs.state, "workspaces"), write, config);
     const synced = await workspace.sync([{ id: repo.repo, source: { url: `https://github.com/${repo.repo}.git`, branch: base } }]);
     const workingCopy = synced.workingCopies[0]!;
@@ -160,6 +166,7 @@ export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray
       modelPrices: prices,
     };
     const context: ToolRunContext = {
+      fetch,
       config,
       repo,
       base,
@@ -198,10 +205,13 @@ export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray
  * through. Writing it is best effort: if it fails, run.sh writes its own line
  * as well, a duplicate rather than none.
  */
-function acknowledging(out: NodeJS.WritableStream, marker: string | undefined): Writable {
+function acknowledging(out: NodeJS.WritableStream, marker: string | undefined, requests: GitHubRequests, identity: () => { tool: ToolName; command: string | undefined }): Writable {
   return new Writable({
     write(chunk: Buffer, _encoding, callback) {
-      out.write(chunk, (err) => {
+      const final = JSON.parse(chunk.toString("utf8")) as { ts: string; repo?: string };
+      const summary = JSON.stringify({ ts: final.ts, level: "info", msg: "GitHub API requests", ...identity(), repo: final.repo, ...requests.summary() });
+      // This stream also handles signals: flush the summary and final line together, exactly once.
+      out.write(`${summary}\n${chunk.toString("utf8")}`, (err) => {
         if ((err === undefined || err === null) && marker !== undefined && marker !== "" && chunk.toString("utf8").includes('"msg":"run finished"')) {
           try {
             // Synchronous: on a signal, the process dies right after this callback.

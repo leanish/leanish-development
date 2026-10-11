@@ -16,6 +16,7 @@ import { compareFindings, findingsOf, type Finding, type Located } from "./findi
 import { checkFloors, type Floor, FLOORS_PATH, parseFloors } from "./floors.ts";
 import { type GradleInventory, gradleResolutionProblems } from "./gradle.ts";
 import type { Fetch } from "./http.ts";
+import type { RepositoryAdvisoryCache } from "./repository-advisories.ts";
 import { type Inventory, isEmpty, located, readInventory, type Sources, sourcesOf } from "./inventory.ts";
 import { ActionsCatalog, actionChanges, actionGaps, actionsLocated, resolveUses } from "./actions-changes.ts";
 import type { Resolution } from "./actions-inventory.ts";
@@ -50,6 +51,8 @@ export interface GateEnvironment {
   /** The `osv-scanner` binary. */
   readonly osvScanner: string;
   readonly githubToken: string | undefined;
+  /** Opt-in for local-tool snapshots; the CI CLI leaves this absent and fetches fresh. */
+  readonly repositoryAdvisoryCache?: RepositoryAdvisoryCache;
   /** Registry archive downloads (`npm-bundles.ts`); plain `fetch` refusing redirects when absent. */
   readonly fetchArchive?: FetchArchive;
   /** One archive reader for a whole run, so its cache and download budget span every stage; a fresh one when absent. */
@@ -155,7 +158,7 @@ export function snapshotOptions(config: Config, env: GateEnvironment, actions: A
   return {
     osv: { binary: env.osvScanner, run: env.run },
     sourceRepos: { fetch: env.fetch, overrides: config.repositories, mavenRepositories: config.maven.repositories },
-    repositoryAdvisories: { fetch: env.fetch, token: env.githubToken },
+    repositoryAdvisories: { fetch: env.fetch, token: env.githubToken, cache: env.repositoryAdvisoryCache },
     fetch: env.fetch,
     actions,
     now: env.now,

@@ -30,7 +30,7 @@ permissions and schedules.
 | `secrets.read` | `leanish-<tool>-read` | Different service holding a different, read-only PAT for the agent. Both equal names and equal token values are refused. |
 | `commitIdentity.name`, `commitIdentity.email` | Required | Author and committer for the tool's commits; also the identity exposed to agent commands. No developer-global git identity is inherited. |
 | `dirs.state` | `~/.local/share/leanish/<tool>` | Workspaces, separate git metadata, publication journal and protected OSV-Scanner. bump-it also stores deferred-major ordering here. Keep this outside temp and cache roots; see the adoption guide. |
-| `dirs.cache` | `~/.cache/leanish/<tool>` | Sandbox-writable build cache, including Gradle and npm caches. Keep separate from state and between tools. |
+| `dirs.cache` | `~/.cache/leanish/<tool>` | Sandbox-writable cache for Gradle, npm and local-tool repository advisories. Keep separate from state and between tools. |
 | `readDeny` | `[]` | Extra absolute paths denied to sandboxed commands, in addition to existing sensitive home paths. These paths' names can reach the model; their contents cannot. Other readable files can reach the model provider. |
 | `modelPrices` | Built-in dated OpenAI Standard prices | Absolute path to an optional JSON table replacing the built-in rates. Unknown models and incomplete measurements still produce explicit cost gaps. |
 | `maxNewMajorsPerRun` | bump-it only, `3` | Nonnegative integer. Caps newly opened major PRs, never updates to existing ones. `0` defers all new majors. Deferred majors have priority next run. |
@@ -47,6 +47,42 @@ per-repository secrets are not supported.
 `${XDG_STATE_HOME:-$HOME/.local/state}/leanish/<tool>/locks`. Changing `dirs.state`
 does not move these locks. Every launcher for the same tool/repository should use
 the same user and `XDG_STATE_HOME`.
+
+## GitHub API usage and advisory cache
+
+Every `run` and `review` writes one `GitHub API requests` JSON line to stderr,
+immediately before `run finished`, including failures and handled termination
+signals. `tool`, `repo` and `command` identify the command; `total` counts API
+attempts and `byKind` groups them by HTTP method and normalized path. Pagination,
+retries and refused requests count separately; cache hits do not. For example:
+
+```json
+{"ts":"2026-10-11T19:00:00.000Z","level":"info","msg":"GitHub API requests","tool":"secure-it","repo":"acme/widget","command":"run","total":3,"byKind":{"GET /repos/{owner}/{repo}/pulls":1,"GET /repos/{owner}/{repo}/security-advisories":2}}
+```
+
+The counter covers the tool process's GitHub API calls, including planning,
+verification, PRs and checks. GitHub calls made by child commands or coding
+agents, and git clone/fetch/push traffic, are outside this counter. URLs, query
+values, tag names and credentials are not retained in the summary.
+
+Local tools reuse repository security advisories for **one hour** under
+`dirs.cache/repository-advisories-v1`. Entries are keyed by source repository
+and a hash of the read credential, so a different token cannot reuse a private
+response. Each entry contains a complete, parsed-successfully API listing;
+all pages must succeed before it is written. Empty successful listings are
+cached too. Atomic replacement permits concurrent processes; simultaneous
+misses may still fetch separately. Missing, expired, corrupt or unreadable
+entries cause a fresh fetch; inability to write the cache does not fail a run.
+403, 429, server errors, malformed responses and partial listings are never
+cached. Rate-limit errors still fail with the existing diagnostic.
+
+The one-hour window spans repeated local snapshots and separate commands in a
+weekly pass; an advisory published during it appears after expiry. Delete the
+`repository-advisories-v1` directory to force the next local read to be fresh.
+Each tool uses its own configured cache directory by default. Action tag refs
+are fetched as before, since tags can move. The CI gate CLI always fetches fresh
+repository advisories; its verdict rules and the local verification rules are
+unchanged.
 
 ## Repository policy
 
