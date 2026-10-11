@@ -47,9 +47,9 @@ packages/remediation/run.sh secure-it review leanish/sqs-codec   # every few hou
 6. **The tool resolves npm; the agent applies non-npm moves** (skill [`secure-it`](skills/secure-it/SKILL.md)). It changes code only for a major move, with `majorEffort`.
    npm may resolve transitive changes a planned move requires, under the supplied release-age window and exclusions.
    The tool resolves those versions; the agent never changes npm dependency fields or lockfiles. Direct
-   dependencies outside the plan stay unchanged, except what a planned Gradle plugin fix itself adds, moves or removes
-   in its build when the edit is nothing but the planned version swaps (a floor added alongside is another edit, so it
-   doesn't qualify; [`packages/ci/README.md`](../ci/README.md)). Direct peers selected by code are explicit moves, even when they
+   dependencies outside the plan stay unchanged; in Gradle, the edit must resolve and declare exactly what the plan's
+   reference does (the base with the plan applied by Gradle, so a planned plugin fix's own fallout is in it;
+   [`packages/ci/README.md`](../ci/README.md)). Direct peers selected by code are explicit moves, even when they
    have no advisory themselves. New or purely transitive peers remain npm's resolution under `compare` unless they need the proved exception below.
    When a security target needs a version with no aged satisfier, code proves the registry requirement and pins its
    lowest stable, non-deprecated target exactly. This includes young direct-peer companions and recursive
@@ -104,7 +104,9 @@ run report and the PR's plan notes. Incomplete inventories or advisory coverage 
   special exemption in this unlocked proof. The tool writes the successful joint result's exact manifest and
   lockfile bytes; npm-only removal uses no agent.
 - **Gradle:** a trusted init script removes only the selected exact advisory-bearing declarations from the selected
-  configurations and disables dependency locking. Shared parent configurations stay intact. The inventory runs
+  configurations and disables dependency locking. Shared parent configurations stay intact; a floor declared directly
+  on a buildscript or settings classpath (which resolves while its script compiles) is dropped as its dependencies
+  are finalized. The inventory runs
   sandboxed with `--no-daemon` and configuration caching disabled. A declaration already used in resolution cannot
   be safely removed by this probe, so that floor is retained with a reason. After proof, the agent removes only the
   named declarations from the real build files; it cannot edit the tool-written floor/npm files or adapt code.
