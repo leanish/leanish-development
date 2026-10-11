@@ -224,7 +224,7 @@ BeanUtils. It can go after that dependency is removed or naturally resolves safe
   A proven young bundled fix also cannot justify its
   own young, non-bundled dependencies. Such a change fails comparison and is reported.
 - Bundle proofs have size, time and search budgets. An unreadable or incomplete
-  archive is never treated as clean. Archive authentication covers these proofs
+  archive (including one with global tar headers, which `npm pack` never writes) is never treated as clean. Archive authentication covers these proofs
   and secure-it's bundled moves; it is not a general check of every changed bundle.
   Bundled children follow their archive, without separate release-age checks.
 - npm peers, recursive young-dependency proofs and exact lockfile updates have
