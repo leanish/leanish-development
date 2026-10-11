@@ -778,6 +778,17 @@ describe("the cooldown hold", () => {
     return [];
   };
 
+  it("keeps a held PR's cooldown warning and hold when rewriting its notes", async () => {
+    const plan = await planFor([vite()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined });
+    const held = { ...plan, notes: ["an outdated reason"], cooldown: [{ ...HELD, signals: [] }] };
+    const h = harness({ prs: [ownPr({ headRef: `secure-it/2026-10-05-${plan.topic}`, body: withMarker(RULES, withPlanSection("Fixes vite.", held), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) })] });
+    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "already-open" });
+    const body = h.github.prs.get(7)!.body;
+    expect(body).not.toContain("an outdated reason");
+    expect(body).toContain("Release-age cooldown bypassed.");
+    expect(planOf(body)?.cooldown).toEqual(held.cooldown);
+  });
+
   it("opens young fixes in a held PR of their own, warned, while the aged ones go out as usual", async () => {
     const h = harness({ fixes: [YOUNG_VITE(), leftPad()] });
     const result = await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context);
