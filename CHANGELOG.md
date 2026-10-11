@@ -8,7 +8,8 @@
   stderr, grouped by method and normalized endpoint, including retries and failures.
 - Local tools cache complete repository security advisory listings for one hour
   under `dirs.state` (out of the sandbox's reach, so a build or agent can't hide an
-  advisory), across snapshots and processes. Writes are atomic; corrupt
+  advisory; a state directory resolving into a sandbox-writable one is refused),
+  across snapshots and processes. Writes are atomic; corrupt
   or unavailable cache entries are misses and failed/partial responses are never
   cached. The CI gate continues fetching fresh advisories.
 

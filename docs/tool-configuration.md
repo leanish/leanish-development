@@ -67,7 +67,9 @@ values, tag names and credentials are not retained in the summary.
 
 Local tools reuse repository security advisories for **one hour** under
 `dirs.state/repository-advisories-v1`, which agents and sandboxed builds can't write: a
-build that could edit the cache could hide an advisory from verification. Entries are keyed by source repository
+build that could edit the cache could hide an advisory from verification. The path
+is resolved once (symlinks included), and a state directory that resolves into a
+sandbox-writable directory is refused, as for the protected OSV-Scanner. Entries are keyed by source repository
 and a hash of the read credential, so a different token cannot reuse a private
 response. Each entry contains a complete, parsed-successfully API listing;
 all pages must succeed before it is written. Empty successful listings are

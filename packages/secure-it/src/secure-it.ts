@@ -92,7 +92,7 @@ export function defaultDeps(): SecureItDeps {
       // Outside everything sandboxed commands can write, and checked right before each run.
       const writable = [context.config.dirs.cache, context.workingCopy.path, tmpdir(), "/tmp", ...(context.isolation.buildCacheRoot === undefined ? [] : [context.isolation.buildCacheRoot])];
       const osv = await ensureOsvScanner(context.config.dirs.state, writable);
-      return { run: verifyingRun(runProcess, osv), fetch: namingFailures(context.fetch), now: () => new Date(), osvScanner: osv.path, githubToken: context.readToken, bundles: new BundleReader(), repositoryAdvisoryCache: new FileRepositoryAdvisoryCache(context.config.dirs.state, context.readToken) };
+      return { run: verifyingRun(runProcess, osv), fetch: namingFailures(context.fetch), now: () => new Date(), osvScanner: osv.path, githubToken: context.readToken, bundles: new BundleReader(), repositoryAdvisoryCache: new FileRepositoryAdvisoryCache(context.config.dirs.state, writable, context.readToken) };
     },
     gradle: (context) => sandboxedGradleInventories(context.isolation, context.workingCopy),
     trees: { commit: (workingCopy, sha) => gitTree(workingCopy.path, sha, runProcess), working: (workingCopy) => workingTree(workingCopy.path) },
