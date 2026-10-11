@@ -285,7 +285,7 @@ describe("exact npm computation", () => {
     await requireNpmExcludes(async () => { throw new Error("must not run"); }, ".", []);
     await requireNpmExcludes(async () => ({ code: 0, stdout: "11.20.0", stderr: "" }), ".", ["@own/*"]);
   });
-  it("excludes a young locked transitive before the first install, but still selects an aged target", async () => {
+  it("keeps a young locked transitive excluded from npm's window, even when a newer aged target exists", async () => {
     const h = await fixture();
     const published = vi.fn(async (name: string, version: string) => {
       return new Date(name === "child" && version !== "1.2.0" ? "2026-10-06" : "2026-09-01");
@@ -299,8 +299,9 @@ describe("exact npm computation", () => {
         return { code: 1, stdout: "", stderr: "notarget No matching version found for child@1.0.0 with a date before the window" };
       }
       const root = JSON.parse(await readFile(join(dir, "package.json"), "utf8"));
-      const pinned = root.overrides?.["child@1.3.0"] === "1.2.0" || h.calls.length === 5;
-      await writeFile(join(dir, "package-lock.json"), json(lock("1.0.0", pinned ? "1.2.0" : "1.3.0")));
+      if (args[0] === "update") {
+        expect(root.overrides).toEqual({ "child@1.0.0": "1.0.0" });
+      }
       return { code: 0, stdout: "", stderr: "" };
     };
     const result = await computeNpm({
@@ -309,17 +310,54 @@ describe("exact npm computation", () => {
       npm,
       sources: { ...h.inputs.sources, published, versions: async () => ["1.0.0", "1.2.0", "1.3.0"] },
     });
-    expect(h.calls.map((args) => args[0])).toEqual(["install", "update", "install", "install", "install"]);
+    expect(h.calls.map((args) => args[0])).toEqual(["install", "update", "install"]);
     for (const args of h.calls) {
       expect(args.filter((arg) => arg.startsWith("--min-release-age-exclude=")))
         .toEqual(["--min-release-age-exclude=@other/*", "--min-release-age-exclude=@own/*", "--min-release-age-exclude=child"]);
       expect(args).toContain("--min-release-age=7");
     }
     expect(result.notes).toEqual(["child: its locked 1.0.0 is younger than the window, so npm's own window skips it; bump-it's targets still require the age"]);
-    expect(result.changes).toMatchObject([{ name: "child", from: "1.0.0", to: "1.2.0" }]);
+    expect(result.changes).toEqual([]);
     const lookups = published.mock.calls.map(([name, version]) => `${name}@${version}`);
     expect(lookups.filter((key) => key === "child@1.0.0")).toHaveLength(1);
     expect(new Set(lookups).size).toBe(lookups.length);
+  });
+  it("holds young locked vite through install, update and later pins without resolving its newer young dependencies", async () => {
+    const h = await fixture();
+    const base = { ...lock(), packages: {
+      ...lock().packages,
+      "node_modules/parent": { version: "1.0.0", dependencies: { child: "^1", vite: "^8" } },
+      "node_modules/vite": { version: "8.3.3" },
+    } };
+    await writeFile(join(h.dir, "package-lock.json"), json(base));
+    let child = "1.0.0";
+    const npm: NpmCommand = async (dir, args) => {
+      if (args[0] === "--version") return { code: 0, stdout: "11.20.0", stderr: "" };
+      h.calls.push([...args]);
+      expect(args).toContain("--min-release-age-exclude=vite");
+      const root = JSON.parse(await readFile(join(dir, "package.json"), "utf8"));
+      const resolving = h.calls.length <= 2 || h.calls.length === 4;
+      if (resolving && root.overrides?.["vite@8.3.3"] !== "8.3.3") {
+        // npm's name exclusion would choose vite 8.3.4, whose postcss range has no aged version.
+        return { code: 1, stdout: "", stderr: "notarget postcss@^8.5.29 with a date before the release window" };
+      }
+      if (args[0] === "update") child = "1.2.0";
+      if (root.overrides?.["child@1.2.0"] === "1.1.0") child = "1.1.0";
+      if (!resolving) expect(root).toEqual(manifest);
+      await writeFile(join(dir, "package-lock.json"), json({ ...base, packages: { ...base.packages, "node_modules/child": { version: child } } }));
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const result = await computeNpm({
+      ...h.inputs, npm, moves: [], baseLocks: new Map([["package-lock.json", base]]),
+      sources: { ...h.inputs.sources, now: new Date("2026-10-11"),
+        versions: async (name) => name === "vite" ? ["8.3.2", "8.3.3", "8.3.4"] : ["1.0.0", "1.1.0", "1.2.0"],
+        published: async (name, version) => new Date(name === "vite" && version !== "8.3.2" || version === "1.2.0" ? "2026-10-06" : "2026-09-01"),
+      },
+    });
+    expect(h.calls.map((args) => args[0])).toEqual(["install", "update", "install", "install", "install"]);
+    expect(JSON.parse(await readFile(join(h.dir, "package-lock.json"), "utf8")).packages["node_modules/vite"].version).toBe("8.3.3");
+    expect(result.changes).toEqual([{ lockfile: "package-lock.json", path: "node_modules/child", name: "child", from: "1.0.0", to: "1.1.0" }]);
+    expect(await readFile(join(h.dir, "package.json"), "utf8")).toBe(json(manifest));
   });
   it.each(["missing", "throwing", "invalid"])("excludes an unreadable locked publish time (%s), notes it and keeps the base target", async (failure) => {
     const h = await fixture();
@@ -336,7 +374,7 @@ describe("exact npm computation", () => {
     expect(h.calls.every((args) => args.includes("--min-release-age-exclude=child"))).toBe(true);
     expect(result.notes).toContain("child: publish time for its locked 1.0.0 could not be read, so npm's own window skips it; bump-it's targets still require the age");
     expect(result.changes).toEqual([]);
-    expect(published.mock.calls.filter(([name]) => name === "child")).toHaveLength(2);
+    expect(published.mock.calls.filter(([name]) => name === "child")).toHaveLength(1);
   });
   it("keeps a young locked base when no newer aged target exists", async () => {
     const h = await fixture();
@@ -348,6 +386,100 @@ describe("exact npm computation", () => {
     expect(result.changes).toEqual([]);
     expect(result.notes).toHaveLength(3);
     expect(h.calls.every((args) => args.includes("--min-release-age-exclude=child"))).toBe(true);
+  });
+  it("retains distinct locked copies of an excluded name, including its aged copy", async () => {
+    const h = await fixture();
+    const base = { ...lock(), packages: { ...lock().packages,
+      "node_modules/frozen": { version: "1.0.0", dependencies: { child: "^2" } },
+      "node_modules/frozen/node_modules/child": { version: "2.0.0" },
+    } };
+    await writeFile(join(h.dir, "package-lock.json"), json(base));
+    const versions = vi.fn(async () => ["1.0.0", "1.1.0", "2.0.0", "2.1.0"]);
+    const npm: NpmCommand = async (dir, args) => {
+      if (args[0] === "--version") return { code: 0, stdout: "11.20.0", stderr: "" };
+      const root = JSON.parse(await readFile(join(dir, "package.json"), "utf8"));
+      h.calls.push([...args]);
+      if (h.calls.length <= 2) expect(root.overrides).toEqual({ "child@1.0.0": "1.0.0", "child@2.0.0": "2.0.0" });
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const result = await computeNpm({ ...h.inputs, npm, moves: [], baseLocks: new Map([["package-lock.json", base]]),
+      sources: { ...h.inputs.sources, versions,
+        published: async (name, version) => new Date(name === "child" && version === "1.0.0" ? "2026-10-06" : "2026-09-01"),
+      },
+    });
+    expect(result.changes).toEqual([]);
+    expect(versions).not.toHaveBeenCalled();
+  });
+  it.each(["configured", "own"])("still refreshes a transitive with only a %s age exemption", async (exemption) => {
+    const h = await fixture(async (dir) => { await writeFile(join(dir, "package-lock.json"), json(lock("1.0.0", "1.1.0"))); });
+    const result = await computeNpm({ ...h.inputs, moves: [], window: { days: 7, exclude: ["child"] },
+      sources: { ...h.inputs.sources, isOwn: (name) => exemption === "own" && name === "child",
+        published: async () => new Date(exemption === "own" ? "2026-10-06" : "2026-09-01"),
+      },
+    });
+    expect(result.changes).toMatchObject([{ name: "child", from: "1.0.0", to: "1.1.0" }]);
+  });
+  it("allows a direct update to remove a retained transitive it no longer needs", async () => {
+    const h = await fixture(async (dir, _args, n) => {
+      const base = lock();
+      const { "node_modules/child": _child, ...packages } = base.packages;
+      const root = JSON.parse(await readFile(join(dir, "package.json"), "utf8"));
+      if (n <= 2) expect(root.overrides).toEqual({ "child@1.0.0": "1.0.0" });
+      else expect(root.overrides).toBeUndefined();
+      await writeFile(join(dir, "package-lock.json"), json({ ...base, packages: {
+        ...packages, "node_modules/parent": { version: "1.1.0" },
+      } }));
+    });
+    const result = await computeNpm({ ...h.inputs,
+      sources: { ...h.inputs.sources, published: async (name) => new Date(name === "child" ? "2026-10-06" : "2026-09-01") },
+    });
+    expect(result.changes).toEqual([
+      { lockfile: "package-lock.json", path: "node_modules/child", name: "child", from: "1.0.0", to: undefined },
+      { lockfile: "package-lock.json", path: "node_modules/parent", name: "parent", from: "1.0.0", to: "1.1.0" },
+    ]);
+    expect(JSON.parse(result.files.get("package-lock.json")!).packages["node_modules/child"]).toBeUndefined();
+    expect(h.calls.map((args) => args[0])).toEqual(["install", "update", "install"]);
+  });
+  it("fails clearly if npm keeps a retained copy at a different version after every pin pass", async () => {
+    const h = await fixture(async (dir) => {
+      await writeFile(join(dir, "package-lock.json"), json(lock("1.0.0", "1.1.0")));
+    });
+    await expect(computeNpm({ ...h.inputs, moves: [],
+      sources: { ...h.inputs.sources, published: async (name) => new Date(name === "child" ? "2026-10-06" : "2026-09-01") },
+    })).rejects.toThrow(`after ${MAX_PASSES} passes: child at node_modules/child is 1.1.0, not 1.0.0`);
+  });
+  it("keeps a young locked direct at its base version through a routine and later pins", async () => {
+    let frozen = "1.0.0";
+    let child = "1.0.0";
+    const h = await fixture(async (dir, args, n) => {
+      const root = JSON.parse(await readFile(join(dir, "package.json"), "utf8"));
+      expect(args).toContain("--min-release-age-exclude=frozen");
+      const pinned = n <= 2 || n === 4;
+      expect(root.dependencies.frozen).toBe(pinned ? "1.0.0" : "^1.0.0");
+      if (args[0] === "update") {
+        // Without an exact direct declaration the name exemption would select young 1.1.0.
+        frozen = root.dependencies.frozen === "1.0.0" ? "1.0.0" : "1.1.0";
+        child = "1.2.0";
+      }
+      if (root.overrides?.["child@1.2.0"] === "1.1.0") child = "1.1.0";
+      await writeFile(join(dir, "package-lock.json"), json(lock("1.1.0", child, frozen)));
+    });
+    const result = await computeNpm({ ...h.inputs,
+      sources: { ...h.inputs.sources, versions: async () => ["1.0.0", "1.1.0", "1.2.0"],
+        published: async (name, version) => new Date(name === "frozen" || version === "1.2.0" ? "2026-10-06" : "2026-09-01"),
+      },
+    });
+    expect(JSON.parse(result.files.get("package-lock.json")!).packages["node_modules/frozen"].version).toBe("1.0.0");
+    expect(result.changes.map((change) => change.name)).toEqual(["child", "parent"]);
+    expect(h.calls.map((args) => args[0])).toEqual(["install", "update", "install", "install", "install"]);
+  });
+  it("leaves a major's induced transitive changes to verification even with a young locked base", async () => {
+    const h = await fixture(async (dir) => { await writeFile(join(dir, "package-lock.json"), json(lock("2.0.0", "1.1.0"))); });
+    const result = await computeNpm({ ...h.inputs, kind: "major", moves: h.inputs.moves.map((move) => ({ ...move, to: "2.0.0" })),
+      sources: { ...h.inputs.sources, published: async (name) => new Date(name === "child" ? "2026-10-06" : "2026-09-01") },
+    });
+    expect(result.changes).toMatchObject([{ name: "child", to: "1.1.0" }, { name: "parent", to: "2.0.0" }]);
+    expect(h.calls.map((args) => args[0])).toEqual(["install", "install"]);
   });
   it("requires a new enough npm for a young base alone, before editing any files", async () => {
     const h = await fixture();

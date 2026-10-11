@@ -10,6 +10,8 @@ interface NpmWindow {
 
 interface PreparedWindow {
   readonly window: NpmWindow;
+  /** Automatically excluded package names whose locked transitive copies a routine must retain. */
+  readonly lockedNames: ReadonlySet<string>;
   readonly sources: TargetSources;
   readonly notes: ReadonlyArray<string>;
   readonly reason: string;
@@ -35,6 +37,7 @@ export async function npmWindowFor(baseVersions: ReadonlyMap<string, ReadonlyArr
   }
   return {
     window: { ...window, exclude: [...new Set([...window.exclude, ...excluded.map((entry) => entry.name)])].sort() },
+    lockedNames: new Set(excluded.map((entry) => entry.name).filter((name) => !sources.isOwn(name))),
     sources: cached,
     notes,
     reason: reasons.join(" and "),

@@ -1,7 +1,8 @@
 /**
  * Compute exact npm files in a sandboxed scratch copy, pin targets, then restore planned manifests.
  * npm's age exclusions include young or unreadable locked base versions, reported in notes;
- * code-decided targets still enforce age. Any exclusions require npm >= 11.17.0.
+ * routines retain those names' locked transitive copies; other targets still enforce age.
+ * Any exclusions require npm >= 11.17.0.
  * Routine and major-induced Node types must fit the base tree's lowest supported runtime.
  */
 import { lstat, readFile, writeFile } from "node:fs/promises";
@@ -14,7 +15,7 @@ import { workingTree } from "../../ci/src/tree.ts";
 
 import { assertLocalFile } from "./files.ts";
 import { withSpec } from "../../remediation/src/manifest-spec.ts";
-import { NpmGraph, rewriteSpec } from "./npm-graph.ts";
+import { type Copy, NpmGraph, rewriteSpec } from "./npm-graph.ts";
 import { repositoryOverrides } from "./npm-overrides.ts";
 import { pinnedManifests } from "./npm-pins.ts";
 import { type Decision, decideTargets, type TargetSources } from "./npm-targets.ts";
@@ -84,7 +85,7 @@ export async function computeNpm(inputs: NpmInputs): Promise<NpmResult> {
     await requireNpmExcludes(inputs.npm, join(inputs.dir, dirname(lockfile)), preparedWindow.window.exclude, preparedWindow.reason);
   }
   for (const lockfile of lockfiles) {
-    const result = await computeLockfile(lockfile, readyInputs, baseVersions, runtime);
+    const result = await computeLockfile(lockfile, readyInputs, baseVersions, runtime, preparedWindow.lockedNames);
     for (const [path, content] of result.files) {
       files.set(path, content);
     }
@@ -96,7 +97,7 @@ export async function computeNpm(inputs: NpmInputs): Promise<NpmResult> {
   return { files, changes, notes: [...notes].sort() };
 }
 
-async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions: ReadonlyMap<string, ReadonlyArray<string>>, runtime: NodeRuntime): Promise<NpmResult> {
+async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions: ReadonlyMap<string, ReadonlyArray<string>>, runtime: NodeRuntime, lockedNames: ReadonlySet<string>): Promise<NpmResult> {
   const root = dirname(lockfile) === "." ? "" : dirname(lockfile);
   const at = (path: string) => join(inputs.dir, root, path);
   const repoPath = (path: string) => (root === "" ? path : `${root}/${path}`);
@@ -150,8 +151,15 @@ async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions
   }));
   // Freeze all direct declarations before npm can drift an excluded name, including peer companions.
   const initialDirect = directTargets(baseGraph, plannedDirect, baseDirect);
+  // npm exempts names, not versions: update could otherwise fetch a newer young copy (and
+  // fail on its young dependencies) before decisions run. Keep every locked transitive
+  // copy of an automatically exempted name, including aged copies sharing that name.
+  const retained = new Map(baseGraph.copies()
+    .filter((copy) => inputs.kind === "routine" && lockedNames.has(copy.name) && !initialDirect.has(copy.path))
+    .map((copy) => [copy.path, copy]));
+  const initialTargets = new Map([...initialDirect, ...retainedTargets(baseGraph, retained)]);
   const initialPins = baseGraph.copies().flatMap((copy) => {
-    const target = initialDirect.get(copy.path);
+    const target = initialTargets.get(copy.path);
     return target === undefined ? [] : [{ copy, target }];
   });
   await resolveExact(join(inputs.dir, root), planned, pinnedManifests(baseGraph, initialPins, plannedParsed, overrides), async () => {
@@ -162,8 +170,10 @@ async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions
   let decisions: Decision[] = [];
   for (let pass = 0; ; pass++) {
     const graph = new NpmGraph(JSON.parse(await readFile(at(lockName), "utf8")));
+    // Retained copies remain required targets even when already correct: another pin pass
+    // must not drift them or let candidate selection replace them with an aged version.
     const direct = directTargets(graph, plannedDirect, baseDirect);
-    const targets = { graph, base: baseGraph, baseVersions, overrides, direct, nodeRuntime: runtime };
+    const targets = { graph, base: baseGraph, baseVersions, overrides, direct, retained: retainedTargets(graph, retained), nodeRuntime: runtime };
     // Majors retain their induced graph, except Node API types must still fit the runtime.
     decisions = inputs.kind === "routine"
       ? await decideTargets(targets, inputs.sources)
@@ -183,7 +193,7 @@ async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions
     }
     // Pin the full decision set together, not just off-target copies: a later install must not drift a companion.
     const pins = decisions.flatMap((decision) => {
-      const needed = decision.target !== decision.copy.version || direct.has(decision.copy.path);
+      const needed = decision.target !== decision.copy.version || direct.has(decision.copy.path) || retained.has(decision.copy.path);
       return decision.target === undefined || !needed ? [] : [{ copy: decision.copy, target: decision.target }];
     });
     await resolveExact(join(inputs.dir, root), planned, pinnedManifests(graph, pins, plannedParsed, overrides),
@@ -244,6 +254,22 @@ function decisionNotes(lockfile: string, decision: Decision): string[] {
 
 function manifestOf(declaringPath: string): string {
   return declaringPath === "" ? "package.json" : `${declaringPath}/package.json`;
+}
+
+function retainedTargets(graph: NpmGraph, retained: ReadonlyMap<string, Copy>): Map<string, string> {
+  const targets = new Map<string, string>();
+  for (const [path, copy] of retained) {
+    // A direct update can drop the dependency that needed this copy. Removing it
+    // introduces no young version; only surviving copies need their locked target.
+    if (graph.packages[path] === undefined) {
+      continue;
+    }
+    if (graph.nameAt(path) !== copy.name || graph.packages[path]?.version === undefined) {
+      throw new Error(`locked ${copy.name} at ${path} disappeared from the npm graph; its age exclusion only permits keeping ${copy.version}`);
+    }
+    targets.set(path, copy.version);
+  }
+  return targets;
 }
 
 /**

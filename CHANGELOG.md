@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- bump-it's routine keeps locked transitive versions when npm's age window
+  excludes their package name to preserve a young or unreadable locked version.
+  Install, update and later pin passes cannot replace those copies with another
+  version. This avoids failures on a newer release's young dependencies. Copies
+  no longer needed by any dependency can still be removed.
+
 ## 0.4.0 - 2026-10-11
 
 ### Changed
