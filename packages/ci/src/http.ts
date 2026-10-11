@@ -65,6 +65,25 @@ async function retryRead(fetch: Fetch, url: string, init: Parameters<Fetch>[1], 
   }
 }
 
+/**
+ * Why GitHub refused a read, for its error message: which rate limit ran out and
+ * until when, from GitHub's headers; empty when the status isn't a refusal. Reads
+ * fail rather than wait, so a slow pass never hides a spent quota.
+ */
+export function githubRefusal(response: Awaited<ReturnType<Fetch>>, hasToken: boolean): string {
+  if (response.status !== 403 && response.status !== 429) return "";
+  const setToken = hasToken ? "" : "; set GITHUB_TOKEN";
+  const reset = Number(response.headers.get("x-ratelimit-reset"));
+  if (response.headers.get("x-ratelimit-remaining") === "0" && Number.isInteger(reset) && reset > 0) {
+    const resource = response.headers.get("x-ratelimit-resource") ?? "core";
+    return ` (GitHub rate limit: the ${hasToken ? "token's" : "anonymous"} "${resource}" quota is used up until ${new Date(reset * 1000).toISOString()}${setToken})`;
+  }
+  const retryAfter = response.headers.get("retry-after")?.trim();
+  if (retryAfter !== undefined && /^\d+$/.test(retryAfter)) return ` (GitHub secondary rate limit: retry after ${retryAfter}s)`;
+  if (response.status === 429) return ` (GitHub rate limit${setToken})`;
+  return hasToken ? " (the token can't read it?)" : " (rate limited? set GITHUB_TOKEN)";
+}
+
 /** Walk causes without looping; explicit cancellation always takes priority over a nested socket error. */
 function isTransient(error: unknown): boolean {
   const seen = new Set<unknown>();

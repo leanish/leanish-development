@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- A read GitHub refuses says why: which rate limit is spent and until when (from
+  GitHub's headers), a secondary limit's wait, or that the token may lack access.
+  Before, every 403 suggested setting `GITHUB_TOKEN`, even with a token set.
+
 ## 0.3.0 - 2026-10-11
 
 ### Added

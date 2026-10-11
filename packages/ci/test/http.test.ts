@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { type Fetch, mapLimited, namingFailures, type RetryTiming } from "../src/http.ts";
+import { type Fetch, githubRefusal, mapLimited, namingFailures, type RetryTiming } from "../src/http.ts";
 
 const URL = "https://repo1.maven.org/maven2/acme/lib/1.0/lib-1.0.pom";
 
@@ -302,6 +302,30 @@ describe("named HTTP reads", () => {
 
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(clock.sleep).toHaveBeenCalledExactlyOnceWith(500, controller.signal);
+  });
+});
+
+describe("GitHub refusals", () => {
+  const refused = (status: number, headers: Record<string, string> = {}) => new Response("{}", { status, headers });
+  const spent = { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(Date.parse("2026-10-11T09:15:00Z") / 1000), "x-ratelimit-resource": "core" };
+
+  it("names the spent quota and when it resets", () => {
+    expect(githubRefusal(refused(403, spent), true)).toBe(' (GitHub rate limit: the token\'s "core" quota is used up until 2026-10-11T09:15:00.000Z)');
+    expect(githubRefusal(refused(403, spent), false)).toBe(' (GitHub rate limit: the anonymous "core" quota is used up until 2026-10-11T09:15:00.000Z; set GITHUB_TOKEN)');
+  });
+
+  it("names a secondary limit by its retry-after", () => {
+    expect(githubRefusal(refused(429, { "retry-after": "60" }), true)).toBe(" (GitHub secondary rate limit: retry after 60s)");
+    expect(githubRefusal(refused(429), true)).toBe(" (GitHub rate limit)");
+  });
+
+  it("reads a bare 403 as a permission failure when a token is set", () => {
+    expect(githubRefusal(refused(403, { "x-ratelimit-remaining": "4999" }), true)).toBe(" (the token can't read it?)");
+    expect(githubRefusal(refused(403), false)).toBe(" (rate limited? set GITHUB_TOKEN)");
+  });
+
+  it("adds nothing to other failures", () => {
+    expect(githubRefusal(refused(500, spent), true)).toBe("");
   });
 });
 
