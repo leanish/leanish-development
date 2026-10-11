@@ -9,9 +9,8 @@ packages/remediation/run.sh secure-it review leanish/sqs-codec   # every few hou
 
 ## What a run does
 
-1. **Checks the daily scan still runs.** It warns when the default branch's last successful scheduled `supply-chain.yml` run is older than `staleScanHours` (default 36).
-2. **Finds what fails.** It runs `candidates --rule security` on the default branch's head. The Gradle inventory runs the build, so it runs under the agent's sandbox (see below).
-3. **Groups actionable fixes.**
+1. **Finds what fails.** It runs `candidates --rule security` on the default branch's head. The Gradle inventory runs the build, so it runs under the agent's sandbox (see below).
+2. **Groups actionable fixes.**
    - Every non-major package goes in one routine security batch, across npm, Gradle and Actions.
    - Each package needing a major gets its own PR, with `majorEffort`. A package's failing copies stay together: if
      any copy needs a major, all its actionable copies go in that major unit rather than splitting the package.
@@ -20,7 +19,7 @@ packages/remediation/run.sh secure-it review leanish/sqs-codec   # every few hou
      version of a planned package left in the tree. Advisories no version fixes stay, inherited.
    - Malware takes priority: every malicious package goes together, and if any malicious fix cannot move, nothing
      else is planned. No other unit runs while malware remains on the base.
-4. **Plans the change** (`plan.ts`), for each version and location. For npm, code reads locked and candidate manifests
+3. **Plans the change** (`plan.ts`), for each version and location. For npm, code reads locked and candidate manifests
    to find direct peer constraints in either direction. Rule-picked security targets stay fixed. A direct that must
    move with them gets the lowest safe version in its own compatible line that makes the connected set consistent:
    aged (own scopes: any age, or the proved required-dependency exception below), adding no advisory group or malware, and passing the gate's publisher identity check.
@@ -43,11 +42,11 @@ packages/remediation/run.sh secure-it review leanish/sqs-codec   # every few hou
    - **Young fixes go apart.** Fixes whose target is younger than the release-age wait, everything coupled to them,
      and any fix whose required npm dependency is young form their own routine unit (topic `security-cooldown`), so
      the aged fixes aren't held back. A major or malware unit with a young version stays whole and is held.
-5. **Looks at its open PRs first.**
+4. **Looks at its open PRs first.**
    - An open PR for the same routine/major/malware unit, with an identical plan and a recognised head: keep its commits and refresh the plan section if its notes changed; its review owns further work. The unit reports `already-open`. Other major units still proceed. An already-open malware unit is left to review without planning other work.
    - One with a different plan, while its head is still the tool's: that PR is reconciled. The default branch is merged into it, every file it changed goes back to the base's content, and the new plan is applied on top, so nothing the old plan did lingers. It's pushed as a normal commit.
    - One someone else pushed to: the fix goes in a PR of its own.
-6. **The tool resolves npm; the agent applies non-npm moves** (skill [`secure-it`](skills/secure-it/SKILL.md)). It changes code only for a major move, with `majorEffort`.
+5. **The tool resolves npm; the agent applies non-npm moves** (skill [`secure-it`](skills/secure-it/SKILL.md)). It changes code only for a major move, with `majorEffort`.
    npm may resolve transitive changes a planned move requires, under the supplied release-age window and exclusions.
    The tool resolves those versions; the agent never changes npm dependency fields or lockfiles. Direct
    dependencies outside the plan stay unchanged; in Gradle, the edit must resolve and declare exactly what the plan's
@@ -66,7 +65,7 @@ packages/remediation/run.sh secure-it review leanish/sqs-codec   # every few hou
    Other induced versions are npm's choice, not additional rule-picked targets: `compare` judges each changed version's advisories, age and identity. They may differ from another open
    PR's target; that PR doesn't constrain resolution. A failed comparison prevents publishing that edit rather than silently
    choosing a coupled target. The PR description lists required transitive changes too.
-7. **Verifies before publishing** (`verify.ts`):
+6. **Verifies before publishing** (`verify.ts`):
    - existing floor records and declarations are preserved before comparison: compatibility floors never change; security-floor updates match exact planned moves and retain their scope and history; only planned security floors may be added or removed in an explicit floor-removal plan;
    - the gate's own policy (its config, its exceptions, workflows and actions outside planned pins) is untouched, major or not;
    - `compare` against the base passes;
@@ -83,7 +82,7 @@ packages/remediation/run.sh secure-it review leanish/sqs-codec   # every few hou
    Malware and major units are never reduced. Omitted moves and the original problems appear in the run report,
    the PR description and its persisted plan; only the remaining moves are claimed as applied. npm may still induce
    transitive changes, and these still face `compare`. The next run reconsiders omitted fixes.
-8. **Publishes** draft PRs: `secure-it/<date>-security` for the routine, `secure-it/<date>-<package>-major` for each
+7. **Publishes** draft PRs: `secure-it/<date>-security` for the routine, `secure-it/<date>-<package>-major` for each
    major, or `secure-it/<date>-malware`. Each unit starts from the scanned base and publishes at most one new or
    updated PR. A failed unit is reported and doesn't stop other major units. The agent's description carries the
    move table and hidden plan for later runs. Multi-unit reports use `units`; a single unit keeps its outcome at the

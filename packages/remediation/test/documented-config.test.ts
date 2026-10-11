@@ -20,7 +20,6 @@ describe("documented agent configs", () => {
     expect(config.secrets).toEqual({ write: `leanish-${tool}-write`, read: `leanish-${tool}-read` });
     expect(config.dirs).toEqual({ state: `${HOME}/.local/share/leanish/${tool}`, cache: `${HOME}/.cache/leanish/${tool}` });
     expect(config.readDeny).toEqual([]);
-    expect(config.staleScanHours).toBe(tool === "secure-it" ? 36 : undefined);
     expect(config.maxNewMajorsPerRun).toBe(tool === "bump-it" ? 3 : undefined);
   });
 });

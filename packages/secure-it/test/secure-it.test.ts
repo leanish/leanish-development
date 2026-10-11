@@ -112,7 +112,6 @@ function harness(options: { prs?: GitHubPullRequest[]; fixes?: SecurityFix[]; an
     npm: async () => ({ code: 0, stdout: "11.20.0\n", stderr: "" }),
     candidates: async () => ({ fixes: options.fixes ?? [vite()], incomplete: [], gaps: [], osvScannerVersion: "2.6.0" }),
     verify: async () => options.problems ?? [],
-    staleScan: async () => ({ stale: false, lastSuccess: "2026-10-07T05:17:00Z", detail: "fresh" }),
     changedSince: async () => ["package.json", "package-lock.json"],
     journal: () => journal,
     writeFile: async (_wc, path, content) => {

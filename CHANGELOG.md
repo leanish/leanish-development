@@ -21,8 +21,18 @@
   a PR's head until it's pushed to; the tools still read a failing cooldown
   status as a hold.
 
+### Fixed
+
+- A read GitHub refuses says why: which rate limit is spent and until when (from
+  GitHub's headers), a secondary limit's wait, or that the token may lack access.
+  Before, every 403 suggested setting `GITHUB_TOKEN`, even with a token set.
+
 ### Removed
 
+- secure-it's check that the daily scan still runs, and its `staleScanHours`
+  option (now an unknown field: delete it from `agent.yaml`). It warned on every
+  repository whose scheduled scan failed for a real finding, already visible as a
+  failed run, and never caught a scan that had stopped running.
 - The CLI's `rescan-plan` and `rescan` commands, `prepare-pr.sh`, and the
   report's `prHeadSha`.
 

@@ -9,7 +9,7 @@
  * fails the run. Withdrawn advisories are left out; an advisory whose range
  * doesn't parse is a gap, never a pass.
  */
-import { mapLimited, type Fetch } from "./http.ts";
+import { githubRefusal, mapLimited, type Fetch } from "./http.ts";
 import { isObject, optionalString, stringList } from "./json.ts";
 import { label, type PackageVersion, versionKey } from "./package-version.ts";
 import { mavenCoordinates } from "./source-repos.ts";
@@ -142,7 +142,7 @@ export async function fetchRepositoryAdvisories(
     const response = await options.fetch(url, { headers });
     if (response.status === 404) return undefined;
     if (!response.ok) {
-      const hint = response.status === 403 || response.status === 429 ? " (rate limited? set GITHUB_TOKEN)" : "";
+      const hint = githubRefusal(response, options.token !== undefined);
       throw new Error(`GitHub repository advisories of ${repo} failed with HTTP ${response.status}${hint}`);
     }
     const page = await response.json();
