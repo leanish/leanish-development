@@ -353,7 +353,8 @@ export function lockfileOf(lockfiles: ReadonlyMap<string, unknown>, location: st
   const matching = [...lockfiles.keys()]
     .map((path) => ({ path, dir: dirname(path) }))
     .filter(({ dir }) => dir === "." || location.startsWith(`${dir}/`))
-    .sort((a, b) => b.dir.length - a.dir.length)[0];
+    // The root's "." is shallower than any directory, a one-letter one included.
+    .sort((a, b) => (b.dir === "." ? 0 : b.dir.length) - (a.dir === "." ? 0 : a.dir.length))[0];
   if (matching === undefined) throw new Error(`no checked lockfile holds ${location}`);
   return { lock: lockfiles.get(matching.path), key: matching.dir === "." ? location : location.slice(matching.dir.length + 1) };
 }

@@ -84,11 +84,16 @@ export async function withParents(fixes: ReadonlyArray<FixWork>, inputs: ParentI
       const excluding = dependents.filter((dependent) => !satisfies(fix.to!.version, dependent.spec));
       if (declaredByWorkspace || dependents.length === 0 || excluding.length === 0) continue;
       const lockfile = lockfilePathOf(inputs.lockfiles, location);
+      const packages = lockedEntries(inputs.lockfiles, lockfile);
       const keys: string[] = [];
       for (const dependent of excluding) {
         const key = `${lockfile}|${dependent.path}`;
         const entry = occurrences.get(key) ?? { dependent, lockfile, obligations: new Map<string, Obligation>() };
-        entry.obligations.set(`${copyKey(fix.name, location)}|${fix.to!.version}`, { fix, location, name: fix.name, to: fix.to!.version, required: false });
+        // What the occurrence's edges admit today (optional ones taking precedence, as npm reads them) it must keep.
+        const current = packages[dependent.path];
+        const obligation = { fix, location, name: fix.name, to: fix.to!.version };
+        const required = isObject(current) && admits(current, packages, dependent.path, obligation);
+        entry.obligations.set(`${copyKey(fix.name, location)}|${fix.to!.version}`, { ...obligation, required });
         occurrences.set(key, entry);
         if (!keys.includes(key)) keys.push(key);
       }
@@ -159,7 +164,11 @@ export async function withParents(fixes: ReadonlyArray<FixWork>, inputs: ParentI
         notes.push(`${fix.name}@${fix.to!.version} at ${location} keeps an override: ${why}`);
         continue;
       }
-      for (const key of keys) parents.push({ ...(chosen.get(key) as Chosen).move, unblocks: location });
+      // A blocker never searched admits the copy already (it wanted nothing): it needn't move for it.
+      for (const key of keys) {
+        const choice = chosen.get(key);
+        if (choice !== undefined) parents.push({ ...(choice as Chosen).move, unblocks: location });
+      }
     }
     if (parents.length === 0 && notes.length === 0) return fix;
     return { ...fix, ...(parents.length === 0 ? {} : { parents }), ...(notes.length === 0 ? {} : { notes: [...(fix.notes ?? []), ...notes] }) };
@@ -176,7 +185,8 @@ function parentFixes(fixes: ReadonlyArray<FixWork>): FixWork[] {
   const byTransition = new Map<string, FixWork>();
   for (const fix of fixes) {
     for (const parent of fix.parents ?? []) {
-      if (fixes.some((other) => other.ecosystem === "npm" && other.name === parent.name)) continue;
+      // Only the occurrence an existing fix moves to the same version is covered by it; another lockfile's isn't.
+      if (fixes.some((other) => other.ecosystem === "npm" && other.name === parent.name && other.to?.version === parent.to && other.locations.includes(parent.location))) continue;
       const key = `${parent.name}|${parent.from}|${parent.to}`;
       const existing = byTransition.get(key);
       const locations = [...new Set([...(existing?.locations ?? []), parent.location])].sort();
@@ -220,22 +230,33 @@ class ParentSearch {
     const own = isOwnPackage(config.ownPackages, parent);
     const now = env.now();
     const doc = await this.#registry.packument(dependent.name);
-    const packages = ((lockfiles.get(lockfile) ?? {}) as { packages?: Record<string, unknown> }).packages ?? {};
+    const packages = lockedEntries(lockfiles, lockfile);
     const required = obligations.filter((obligation) => obligation.required);
     const wanted = obligations.filter((obligation) => !obligation.required);
     const described = wanted.map((obligation) => `${obligation.name}@${obligation.to}`).join(", ");
     const versions = pinned !== undefined ? [pinned] : movesFrom(parent, from, listed, "above").filter((version) => line(version) === line(from));
     // Cheap filters first (line, age, the ranges for the copies); advisories are read for the survivors at once.
     const ranked: Array<{ version: string; admitted: ReadonlyArray<Obligation> }> = [];
+    // Copies admitted today that a version admitting a wanted one would drop: why nothing ranks, when that's the reason.
+    const dropped = new Set<string>();
     for (const version of versions) {
       if (!own && pinned === undefined) {
         const published = await this.#catalog.published({ ...parent, version });
         if (published === undefined || (now.getTime() - published.getTime()) / DAY_MS < config.releaseAgeDays) continue;
       }
       const manifest = doc.versions[version];
-      if (!isObject(manifest) || !required.every((obligation) => admits(manifest, packages, dependent.path, obligation))) continue;
+      if (!isObject(manifest)) continue;
       const admitted = wanted.filter((obligation) => admits(manifest, packages, dependent.path, obligation));
-      if (admitted.length > 0) ranked.push({ version, admitted });
+      if (admitted.length === 0) continue;
+      const lost = required.filter((obligation) => !admits(manifest, packages, dependent.path, obligation));
+      if (lost.length === 0) ranked.push({ version, admitted });
+      for (const obligation of lost) dropped.add(`${obligation.name}@${obligation.to}`);
+    }
+    if (ranked.length === 0 && dropped.size > 0) {
+      const kept = [...dropped].sort().join(", ");
+      return pinned !== undefined
+        ? `${dependent.name}'s own security fix ${pinned} would drop ${kept}, which its range admits today`
+        : `every ${dependent.name} version in its line past the wait admitting ${wanted.length === 1 ? described : `any of ${described}`} drops ${kept}, which its range admits today`;
     }
     if (ranked.length === 0) {
       return pinned !== undefined
@@ -286,7 +307,7 @@ class ParentSearch {
  * install the very copy (an ordinary dependency below the parent, a peer beside it, as npm places them) admits it,
  * and there's at least one.
  */
-function admits(manifest: Record<string, unknown>, packages: Readonly<Record<string, unknown>>, parentPath: string, obligation: Obligation): boolean {
+function admits(manifest: Record<string, unknown>, packages: Readonly<Record<string, unknown>>, parentPath: string, obligation: Pick<Obligation, "location" | "name" | "to">): boolean {
   const key = obligation.location.slice(obligation.location.lastIndexOf("node_modules/") + "node_modules/".length);
   const copy = obligation.location.slice(obligation.location.indexOf("node_modules/"));
   const applicable = requirements(manifest).filter((edge) => edge.key === key && requiredPath(packages, parentPath, edge.key, edge.peer) === copy);
@@ -294,6 +315,11 @@ function admits(manifest: Record<string, unknown>, packages: Readonly<Record<str
     const spec = requirementSpec(edge.key, edge.spec);
     return spec.name === obligation.name && satisfies(obligation.to, spec.range);
   });
+}
+
+/** A lockfile's raw `packages` entries, by path. */
+function lockedEntries(lockfiles: ReadonlyMap<string, unknown>, lockfile: string): Readonly<Record<string, unknown>> {
+  return ((lockfiles.get(lockfile) ?? {}) as { packages?: Record<string, unknown> }).packages ?? {};
 }
 
 /** The lockfile path whose directory prefixes a gate location. */

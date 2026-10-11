@@ -385,3 +385,56 @@ describe("npm parents admitting some of the copies they must", () => {
     expect(plan.moves.find((move) => move.name === "x")!.mechanism).toBe("npm-override");
   });
 });
+
+describe("npm parents, what they must keep admitting", () => {
+  const fixAt = (name: string, from: string, to: string, location: string): SecurityFix => ({
+    ecosystem: "npm", name, from, locations: [location], targets: [`GHSA-${name}`], unfixable: [], malicious: false, severity: "HIGH",
+    to: { version: to, line: to.split(".")[0]!, aged: true, major: false, blockers: [] }, problem: undefined,
+  });
+  const run = (fixes: SecurityFix[], registry: Registry, lockfiles: ReadonlyMap<string, unknown>) =>
+    withParents(fixes, { lockfiles, env: environment(registry), config: parseConfig({}), exceptions: NO_EXCEPTIONS });
+
+  it("reads what the parent admits today through its effective edges, an optional one included", async () => {
+    // The optional ^1.0.0 is the edge npm uses for x: x's fix is admitted today, and 1.1.0 would drop it.
+    const lockfiles = new Map([["package-lock.json", { lockfileVersion: 3, packages: {
+      "": { name: "app", dependencies: { parent: "^1.0.0" } },
+      "node_modules/parent": { version: "1.0.0", dependencies: { x: "~1.0.0", y: "~1.0.0" }, optionalDependencies: { x: "^1.0.0" } },
+      "node_modules/x": { version: "1.0.0" },
+      "node_modules/y": { version: "1.0.0" },
+    } }]]);
+    const fixes = await run([fixAt("x", "1.0.0", "1.1.0", "node_modules/x"), fixAt("y", "1.0.0", "1.1.0", "node_modules/y")], { parent: {
+      "1.0.0": { time: OLD, dependencies: { x: "~1.0.0", y: "~1.0.0" } },
+      "1.1.0": { time: OLD, dependencies: { x: "~1.0.0", y: "^1.1.0" } },
+    } }, lockfiles);
+    expect(fixes.some((fix) => fix.parents !== undefined || fix.name === "parent")).toBe(false);
+    expect(fixes.find((fix) => fix.name === "y")!.notes).toEqual([
+      "y@1.1.0 at node_modules/y keeps an override: every parent version in its line past the wait admitting y@1.1.0 drops x@1.1.0, which its range admits today",
+    ]);
+  });
+
+  it("keeps a parent transition in another lockfile beside the parent's own fix", async () => {
+    // A one-letter directory on purpose: "b" must still rank deeper than the root's ".".
+    const lockfiles = new Map<string, unknown>([
+      ["package-lock.json", { lockfileVersion: 3, packages: {
+        "": { name: "app", dependencies: { parent: "^1.0.0" } },
+        "node_modules/parent": { version: "1.0.0", dependencies: {} },
+      } }],
+      ["b/package-lock.json", { lockfileVersion: 3, packages: {
+        "": { name: "b", dependencies: { parent: "^2.0.0" } },
+        "node_modules/parent": { version: "2.0.0", dependencies: { x: "~1.0.0" } },
+        "node_modules/x": { version: "1.0.0" },
+      } }],
+    ]);
+    const fixes = await run([fixAt("parent", "1.0.0", "1.1.0", "node_modules/parent"), fixAt("x", "1.0.0", "1.1.0", "b/node_modules/x")], { parent: {
+      "1.0.0": { time: OLD, dependencies: {} },
+      "1.1.0": { time: OLD, dependencies: {} },
+      "2.0.0": { time: OLD, dependencies: { x: "~1.0.0" } },
+      "2.1.0": { time: OLD, dependencies: { x: "^1.1.0" } },
+    } }, lockfiles);
+    expect(fixes.filter((fix) => fix.name === "parent").map((fix) => [fix.to!.version, fix.locations])).toEqual([
+      ["1.1.0", ["node_modules/parent"]],
+      ["2.1.0", ["b/node_modules/parent"]],
+    ]);
+    expect(fixes.find((fix) => fix.name === "x")!.parents?.map((parent) => parent.to)).toEqual(["2.1.0"]);
+  });
+});
