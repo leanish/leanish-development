@@ -1,7 +1,7 @@
 /**
  * Compute exact npm files in a sandboxed scratch copy, pin targets, then restore planned manifests.
  * npm's age exclusions include young or unreadable locked base versions, reported in notes;
- * routines retain those names' non-bundled locked transitive copies; other targets still enforce age.
+ * routines pin those names' non-bundled locked copies where supported; unpinned replacements must be aged.
  * Any exclusions require npm >= 11.17.0.
  * Routine and major-induced Node types must fit the base tree's lowest supported runtime.
  */
@@ -18,7 +18,7 @@ import { withSpec } from "../../remediation/src/manifest-spec.ts";
 import { type Copy, NpmGraph, rewriteSpec } from "./npm-graph.ts";
 import { repositoryOverrides } from "./npm-overrides.ts";
 import { retentionManifests } from "./npm-pins.ts";
-import { type Decision, decideTargets, type TargetSources } from "./npm-targets.ts";
+import { type Decision, decideTargets, meetsReleaseAge, type TargetSources } from "./npm-targets.ts";
 import { npmWindowFor, requireNpmExcludes } from "./npm-window.ts";
 
 /** Runs npm with `args` in `cwd` (an absolute directory in the scratch copy). */
@@ -158,7 +158,7 @@ async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions
   const retained = new Map(baseGraph.copies()
     .filter((copy) => inputs.kind === "routine" && lockedNames.has(copy.name) && !copy.bundled && !initialDirect.has(copy.path))
     .map((copy) => [copy.path, copy]));
-  const initialTargets = new Map([...initialDirect, ...retainedTargets(baseGraph, retained)]);
+  const initialTargets = new Map([...initialDirect, ...retainedTargets(baseGraph, retained, new Set())]);
   const initialPins = baseGraph.copies().flatMap((copy) => {
     const target = initialTargets.get(copy.path);
     return target === undefined ? [] : [{ copy, target }];
@@ -173,11 +173,12 @@ async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions
   let decisions: Decision[] = [];
   for (let pass = 0; ; pass++) {
     const graph = new NpmGraph(JSON.parse(await readFile(at(lockName), "utf8")));
-    assertUnpinnedRetention(graph, retained, unpinned, lockfile);
-    // Retained copies remain required targets even when already correct: another pin pass
-    // must not drift them or let candidate selection replace them with an aged version.
+    await assertUnpinnedRetention(graph, retained, unpinned, lockfile, inputs.sources);
+    // Pinnable copies stay at base; unpinnable copies may keep an aged replacement.
+    // Carry that accepted version forward so later passes do not try an unsupported
+    // pin back to base or reject unrelated updates for a harmless aged move.
     const direct = directTargets(graph, plannedDirect, baseDirect);
-    const targets = { graph, base: baseGraph, baseVersions, overrides, direct, retained: retainedTargets(graph, retained), nodeRuntime: runtime };
+    const targets = { graph, base: baseGraph, baseVersions, overrides, direct, retained: retainedTargets(graph, retained, unpinned), nodeRuntime: runtime };
     // Majors retain their induced graph, except Node API types must still fit the runtime.
     decisions = inputs.kind === "routine"
       ? await decideTargets(targets, inputs.sources)
@@ -202,7 +203,7 @@ async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions
     });
     const retention = retentionManifests(graph, pins, retained, plannedParsed, overrides);
     unpinned = retention.unpinned;
-    assertUnpinnedRetention(graph, retained, unpinned, lockfile);
+    await assertUnpinnedRetention(graph, retained, unpinned, lockfile, inputs.sources);
     await resolveExact(join(inputs.dir, root), planned, retention.manifests,
       () => npm("install"), () => npm("install"));
   }
@@ -263,29 +264,40 @@ function manifestOf(declaringPath: string): string {
   return declaringPath === "" ? "package.json" : `${declaringPath}/package.json`;
 }
 
-function retainedTargets(graph: NpmGraph, retained: ReadonlyMap<string, Copy>): Map<string, string> {
+function retainedTargets(graph: NpmGraph, retained: ReadonlyMap<string, Copy>, unpinned: ReadonlySet<string>): Map<string, string> {
   const targets = new Map<string, string>();
   for (const [path, copy] of retained) {
+    const current = graph.packages[path];
     // A direct update can drop the dependency that needed this copy. Removing it
     // introduces no young version; only surviving copies need their locked target.
-    if (graph.packages[path] === undefined) {
+    if (current === undefined) {
       continue;
     }
-    if (graph.nameAt(path) !== copy.name || graph.packages[path]?.version === undefined) {
+    if (graph.nameAt(path) !== copy.name || current.version === undefined) {
       throw new Error(`locked ${copy.name} at ${path} disappeared from the npm graph; its age exclusion only permits keeping ${copy.version}`);
     }
-    targets.set(path, copy.version);
+    targets.set(path, unpinned.has(path) ? current.version : copy.version);
   }
   return targets;
 }
 
-function assertUnpinnedRetention(graph: NpmGraph, retained: ReadonlyMap<string, Copy>, unpinned: ReadonlySet<string>, lockfile: string): void {
+async function assertUnpinnedRetention(graph: NpmGraph, retained: ReadonlyMap<string, Copy>, unpinned: ReadonlySet<string>, lockfile: string, sources: TargetSources): Promise<void> {
   for (const path of unpinned) {
     const previous = retained.get(path)!;
     const current = graph.packages[path];
-    if (current !== undefined && (graph.nameAt(path) !== previous.name || current.version !== previous.version)) {
-      throw new Error(`${lockfile}: ${previous.name} at ${path} is ${current.version}, not its locked ${previous.version}; cannot pin this copy`);
+    if (current === undefined || graph.nameAt(path) === previous.name && current.version === previous.version) {
+      continue;
     }
+    let published: Date | undefined;
+    if (graph.nameAt(path) === previous.name && current.version !== undefined) {
+      try {
+        published = await sources.published(previous.name, current.version);
+      } catch {
+        // An unreadable replacement's age cannot justify drift under a name exemption.
+      }
+    }
+    if (meetsReleaseAge(published, sources)) continue;
+    throw new Error(`${lockfile}: ${previous.name} at ${path} is ${current.version}, not its locked ${previous.version}; cannot pin this copy and its replacement is young or unreadable`);
   }
 }
 

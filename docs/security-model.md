@@ -108,10 +108,10 @@ window cannot authorize a different explicit target. Peer copies use temporary d
 root/workspace placement is representable; unsupported pins for selected updates fail the unit with a reason. secure-it retains
 npm-induced transitives subject to compare; bump-it additionally selects routine transitive targets in code.
 For bump-it routines, non-bundled transitive copies of a name excluded to preserve a young or unreadable locked
-version get temporary retention pins only where their placement supports them. Existing overrides and unsupported
-placements are left alone and checked after resolution: surviving copies must keep their base versions, or the unit
-fails. Such an exclusion permits keeping those versions, not selecting another young release or an aged replacement.
-Unused copies may be removed. Bundled copies follow their carrier and may change when it moves to an aged target.
+version get temporary retention pins where supported. Supported plain overrides are narrowed to exact versions
+temporarily and restored afterwards. Only unsupported placements are left alone and checked after resolution:
+they may stay locked, be removed, or move to a version past the release-age wait. A move to another young or
+unreadable version fails the unit. Bundled copies follow their carrier and may change when it moves to an aged target.
 Own packages keep their age exemption. secure-it's exact security targets and major-induced graphs retain their
 existing behavior.
 

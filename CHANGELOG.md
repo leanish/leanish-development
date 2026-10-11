@@ -4,11 +4,12 @@
 
 ### Fixed
 
-- bump-it's routine keeps non-bundled locked transitive versions when npm's age window
+- bump-it's routine protects non-bundled locked transitive versions when npm's age window
   excludes their package name to preserve a young or unreadable locked version.
-  Temporary pins prevent drift where supported; existing overrides and
-  unsupported placements are checked after resolution instead of failing on a
-  redundant pin. Bundled copies follow their carrier's aged update. This avoids
+  Temporary pins prevent drift where supported, narrowing plain overrides and
+  restoring them afterwards. Unsupported placements are checked after resolution:
+  aged replacements are allowed; another young or unreadable version fails the unit.
+  Bundled copies follow their carrier's aged update. This avoids
   failures on a newer release's young dependencies. Unused copies can be removed.
 
 ## 0.4.0 - 2026-10-11
