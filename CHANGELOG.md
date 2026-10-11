@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.1 - 2026-10-11
 
 ### Changed
 
@@ -32,7 +32,8 @@
 - secure-it's check that the daily scan still runs, and its `staleScanHours`
   option (now an unknown field: delete it from `agent.yaml`). It warned on every
   repository whose scheduled scan failed for a real finding, already visible as a
-  failed run, and never caught a scan that had stopped running.
+  failed run; in the owner's repositories it never flagged a scan that had
+  stopped running.
 - The CLI's `rescan-plan` and `rescan` commands, `prepare-pr.sh`, and the
   report's `prHeadSha`.
 
