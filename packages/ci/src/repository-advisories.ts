@@ -142,7 +142,8 @@ export async function fetchRepositoryAdvisories(
     const response = await options.fetch(url, { headers });
     if (response.status === 404) return undefined;
     if (!response.ok) {
-      const hint = response.status === 403 || response.status === 429 ? " (rate limited? set GITHUB_TOKEN)" : "";
+      // Rate limits were already waited out (see namingFailures), so this is an exhausted wait or a permission failure.
+      const hint = response.status !== 403 && response.status !== 429 ? "" : options.token === undefined ? " (rate limited? set GITHUB_TOKEN)" : " (rate limited, or the token can't read it)";
       throw new Error(`GitHub repository advisories of ${repo} failed with HTTP ${response.status}${hint}`);
     }
     const page = await response.json();

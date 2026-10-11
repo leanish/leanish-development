@@ -136,7 +136,8 @@ export class ActionsGitHub {
     const response = await this.fetch(`${GITHUB_API}${path}`, { headers });
     if (response.status === 404) return { body: undefined, next: undefined };
     if (!response.ok) {
-      const hint = response.status === 403 || response.status === 429 ? " (rate limited? set GITHUB_TOKEN)" : "";
+      // Rate limits were already waited out (see namingFailures), so this is an exhausted wait or a permission failure.
+      const hint = response.status !== 403 && response.status !== 429 ? "" : this.token === undefined ? " (rate limited? set GITHUB_TOKEN)" : " (rate limited, or the token can't read it)";
       throw new Error(`GitHub API ${path} failed with HTTP ${response.status}${hint}`);
     }
     const link = /<([^>]+)>;\s*rel="next"/.exec(response.headers.get("link") ?? "")?.[1];
