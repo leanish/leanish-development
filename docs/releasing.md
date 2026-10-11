@@ -20,6 +20,10 @@ lists its changes in [the CHANGELOG](../CHANGELOG.md).
      whole state, unprimed: say what to review, not where to look. Real runs only
      reach the cases the adopting repositories have today; this review looks for
      the ones they didn't exercise.
+   - then have a different reviewer take a second, critical pass on that same
+     review, seeing its findings: it challenges them and looks for what the first
+     pass missed. Whoever implemented judges each finding against the rule below
+     rather than taking every one as required.
 
    A fix found here lands on main through its own PR and gets a new candidate,
    `rc.<n+1>`, which is run and reviewed again. Release only a candidate with
