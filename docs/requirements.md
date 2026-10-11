@@ -1,6 +1,6 @@
 # Supply-chain: requirements and behavior
 
-**Scope: release 0.3.0 (2026-10-11).** Coverage depends on each adopter's configuration. This document describes the implemented contract, including its limits.
+**Scope: release 0.4.0 (2026-10-11).** Coverage depends on each adopter's configuration. This document describes the implemented contract, including its limits.
 
 For the plain-language guide, see [What supply-chain handles](what-it-handles.md).
 
@@ -118,7 +118,7 @@ Gradle source evidence is textual and repository-wide: coordinates, group/name p
 | Fork PR | Check uses fork workflow, read-only token and no secrets; nothing re-runs it from trusted files. Review builds/workflows and check it yourself. | The PR's own workflow is not independent evidence. |
 | Routine PR open when security needs repair | Independent tool branches/markers/labels; other producers' overlap does not suppress work. Same plan/recognized head: `already-open`. Changed plan: merge base, revert old edits to base, apply/verify new plan and push normally. | Independence without old-plan residue. |
 | Human push, race or body-update failure after push | Leave human-pushed PR alone; necessary work goes separately. Every write re-reads head/state. Journal recovers exact head/base/title/body/attempt count before reuse. | Do not overwrite people or detach a branch from its plan. |
-| CI pending, green or held only by cooldown | Review uses no model for waiting/green states; green can mark ready unless held. Recompute on base movement before CI handling, except retiring an aged planned hold. A `failure` cooldown status (left by gates before 0.3.1, which rescanned open PRs) means waiting for either tool; cooldown `error` is not a hold. | Separate waiting from broken verification. |
+| CI pending, green or held only by cooldown | Review uses no model for waiting/green states; green can mark ready unless held. Recompute on base movement before CI handling, except retiring an aged planned hold. A `failure` cooldown status (left by gates before 0.4.0, which rescanned open PRs) means waiting for either tool; cooldown `error` is not a hold. | Separate waiting from broken verification. |
 | CI fails | secure-it version fixes and bump-it majors: at most two verified adaptations, counted before invoking the agent. bump-it routine/floor-removal report without agent adaptation; shared budget closes exhausted PRs. One PR does not stop others. | Bound loops and protect proved edits. |
 | Scanner/API/registry failure, malformed JSON, unresolved build or incomplete report | **Gate:** 0 pass, 1 fail, 2 incomplete (also failure). **Tools:** no unverified publication. GET/HEAD timeout/reset gets at most two retries; HTTP errors, malformed JSON and writes do not get those retries. | Missing evidence is not a clean scan. |
 | secure-it routine verification fails | One retry from original base, omitting identifiable package groups and connected peers; omissions in report/PR/plan. Global or unattributable induced-transitive failure cannot reduce. Major/malware never reduce. | Partial repair must be selected and reported by code. |

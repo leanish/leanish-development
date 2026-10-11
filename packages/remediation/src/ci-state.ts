@@ -74,7 +74,7 @@ const isGateJob = (run: GitHubCheckRun, job: string) => run.name === job || run.
  * Whether the head's only failures are the gate's cooldown holding young
  * versions after a passing comparison: waiting, not broken. That's the
  * cooldown job failing its hold step, or a `failure` status under the
- * cooldown check's name: gates before 0.3.1 rescanned open PRs daily and posted
+ * cooldown check's name: gates before 0.4.0 rescanned open PRs daily and posted
  * these, and they stay on a head nothing pushed to since (a cooldown that
  * rescan couldn't evaluate was an `error`). A cooldown that failed any other way (no evaluation, a missing
  * report, cancelled) is an ordinary failure, and so is a hold next to any
