@@ -33,7 +33,6 @@ permissions and schedules.
 | `dirs.cache` | `~/.cache/leanish/<tool>` | Sandbox-writable build cache, including Gradle and npm caches. Keep separate from state and between tools. |
 | `readDeny` | `[]` | Extra absolute paths denied to sandboxed commands, in addition to existing sensitive home paths. These paths' names can reach the model; their contents cannot. Other readable files can reach the model provider. |
 | `modelPrices` | Built-in dated OpenAI Standard prices | Absolute path to an optional JSON table replacing the built-in rates. Unknown models and incomplete measurements still produce explicit cost gaps. |
-| `staleScanHours` | secure-it only, `36` | Positive integer: warn if the base branch's last successful daily full scan is older. This does not replace CI's daily scan or stop planning. |
 | `maxNewMajorsPerRun` | bump-it only, `3` | Nonnegative integer. Caps newly opened major PRs, never updates to existing ones. `0` defers all new majors. Deferred majors have priority next run. |
 
 The defaults are `leanish-secure-it-write` / `leanish-secure-it-read` and

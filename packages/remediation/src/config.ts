@@ -19,7 +19,6 @@
  *   dirs: { state: ~/.local/share/leanish/secure-it, cache: ~/.cache/leanish/secure-it }  # optional
  *   readDeny: [~/dev/private]    # optional: paths the agent's commands can't read
  *   modelPrices: ~/.config/leanish/model-prices.json   # optional
- *   staleScanHours: 36           # secure-it only
  *   maxNewMajorsPerRun: 3        # bump-it only: new major PRs one run may open
  *
  * Unknown fields fail, so a typo can't turn something off.
@@ -51,8 +50,6 @@ export interface ToolConfig {
   readonly dirs: { readonly state: string; readonly cache: string };
   readonly readDeny: ReadonlyArray<string>;
   readonly modelPrices: string | undefined;
-  /** secure-it: how old the default branch's last successful daily scan may be before the run report warns. */
-  readonly staleScanHours: number | undefined;
   /** bump-it: how many new major PRs one run may open (updating an open one is never capped). */
   readonly maxNewMajorsPerRun: number | undefined;
 }
@@ -69,7 +66,7 @@ export function parseToolConfig(tool: ToolName, text: string, where: string, hom
   } catch (err) {
     throw new Error(`${where} isn't YAML: ${(err as Error).message}`);
   }
-  const root = object(raw, where, ["repos", "agent", "secrets", "commitIdentity", "dirs", "readDeny", "modelPrices", "staleScanHours", "maxNewMajorsPerRun"]);
+  const root = object(raw, where, ["repos", "agent", "secrets", "commitIdentity", "dirs", "readDeny", "modelPrices", "maxNewMajorsPerRun"]);
   const path = (value: unknown, field: string): string => {
     const text = string(value, `${where}: ${field}`);
     const expanded = text === "~" ? home : text.startsWith("~/") ? join(home, text.slice(2)) : text;
@@ -98,12 +95,6 @@ export function parseToolConfig(tool: ToolName, text: string, where: string, hom
   const identity = object(root["commitIdentity"], `${where}: commitIdentity`, ["name", "email"]);
   const dirs = root["dirs"] === undefined ? {} : object(root["dirs"], `${where}: dirs`, ["state", "cache"]);
 
-  const staleScanHours = root["staleScanHours"];
-  if (staleScanHours !== undefined && tool !== "secure-it") throw new Error(`${where}: staleScanHours is secure-it's`);
-  if (staleScanHours !== undefined && (typeof staleScanHours !== "number" || !Number.isInteger(staleScanHours) || staleScanHours < 1)) {
-    throw new Error(`${where}: staleScanHours must be a positive integer`);
-  }
-
   const maxNewMajorsPerRun = root["maxNewMajorsPerRun"];
   if (maxNewMajorsPerRun !== undefined && tool !== "bump-it") throw new Error(`${where}: maxNewMajorsPerRun is bump-it's`);
   if (maxNewMajorsPerRun !== undefined && (typeof maxNewMajorsPerRun !== "number" || !Number.isInteger(maxNewMajorsPerRun) || maxNewMajorsPerRun < 0)) {
@@ -130,7 +121,6 @@ export function parseToolConfig(tool: ToolName, text: string, where: string, hom
     },
     readDeny: root["readDeny"] === undefined ? [] : list(root["readDeny"], `${where}: readDeny`).map((entry, i) => path(entry, `readDeny[${i}]`)),
     modelPrices: root["modelPrices"] === undefined ? undefined : path(root["modelPrices"], "modelPrices"),
-    staleScanHours: tool === "secure-it" ? ((staleScanHours as number | undefined) ?? 36) : undefined,
     maxNewMajorsPerRun: tool === "bump-it" ? ((maxNewMajorsPerRun as number | undefined) ?? 3) : undefined,
   };
 }

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Removed
+
+- secure-it's check that the daily scan still runs, and its `staleScanHours`
+  option (now an unknown field: delete it from `agent.yaml`). It warned on every
+  repository whose scheduled scan failed for a real finding, already visible as a
+  failed run, and never caught a scan that had stopped running.
+
 ## 0.3.0 - 2026-10-11
 
 ### Added
