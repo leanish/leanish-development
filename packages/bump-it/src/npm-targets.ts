@@ -36,7 +36,7 @@ export interface TargetInputs {
   readonly overrides: RepositoryOverrides;
   /** Copy path → the version a direct dependency's copy must be at. */
   readonly direct: ReadonlyMap<string, string>;
-  /** Copy path → its locked version, retained because npm's age exclusion only permits keeping it. */
+  /** Copy path → its retained target: base, or an accepted aged version when it cannot be pinned. */
   readonly retained?: ReadonlyMap<string, string>;
 }
 
@@ -172,11 +172,17 @@ async function candidatesOf(
     if (published === undefined) {
       return { baseVersion, why: `the registry has no publish time for ${copy.name}@${version}, so its age can't be judged` };
     }
-    if ((sources.now.getTime() - published.getTime()) / DAY_MS >= sources.releaseAgeDays) {
+    if (meetsReleaseAge(published, sources)) {
       candidates.push(version);
     }
   }
   return { baseVersion, candidates };
+}
+
+/** Missing or invalid publish times cannot establish that a replacement has aged. */
+export function meetsReleaseAge(published: Date | undefined, sources: Pick<TargetSources, "now" | "releaseAgeDays">): boolean {
+  const time = published?.getTime();
+  return time !== undefined && Number.isFinite(time) && (sources.now.getTime() - time) / DAY_MS >= sources.releaseAgeDays;
 }
 
 /**
