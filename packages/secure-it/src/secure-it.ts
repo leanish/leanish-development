@@ -14,6 +14,7 @@ import type { NpmPeerPlanner } from "../../ci/src/npm-peers.ts";
 import { type GateEnvironment, type GradleInputs, readSettings } from "../../ci/src/gate.ts";
 import type { GradleInventory } from "../../ci/src/gradle.ts";
 import { namingFailures } from "../../ci/src/http.ts";
+import { FileRepositoryAdvisoryCache } from "../../remediation/src/repository-advisory-cache.ts";
 import { BundleReader } from "../../ci/src/npm-bundles.ts";
 import { NpmRegistry, releaseSignals } from "../../ci/src/npm-registry.ts";
 import type { HeldVersion } from "../../ci/src/release-age.ts";
@@ -91,7 +92,7 @@ export function defaultDeps(): SecureItDeps {
       // Outside everything sandboxed commands can write, and checked right before each run.
       const writable = [context.config.dirs.cache, context.workingCopy.path, tmpdir(), "/tmp", ...(context.isolation.buildCacheRoot === undefined ? [] : [context.isolation.buildCacheRoot])];
       const osv = await ensureOsvScanner(context.config.dirs.state, writable);
-      return { run: verifyingRun(runProcess, osv), fetch: namingFailures((url, init) => fetch(url, init)), now: () => new Date(), osvScanner: osv.path, githubToken: context.readToken, bundles: new BundleReader() };
+      return { run: verifyingRun(runProcess, osv), fetch: namingFailures(context.fetch), now: () => new Date(), osvScanner: osv.path, githubToken: context.readToken, bundles: new BundleReader(), repositoryAdvisoryCache: new FileRepositoryAdvisoryCache(context.config.dirs.cache, context.readToken) };
     },
     gradle: (context) => sandboxedGradleInventories(context.isolation, context.workingCopy),
     trees: { commit: (workingCopy, sha) => gitTree(workingCopy.path, sha, runProcess), working: (workingCopy) => workingTree(workingCopy.path) },

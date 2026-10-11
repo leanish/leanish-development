@@ -97,6 +97,30 @@ function handlers(run: (context: ToolRunContext) => Promise<Readonly<Record<stri
 }
 
 describe("runToolCommand", () => {
+  it.each(["secure-it", "bump-it"] as const)("summarizes %s's PR and advisory requests once on success and failure", async (tool) => {
+    for (const fail of [false, true]) {
+      const { fake, log } = machine({ fetch: async (input) => {
+        const body = String(input).endsWith("/repos/leanish/widget") ? { default_branch: "trunk" } : [];
+        return new Response(JSON.stringify(body));
+      } });
+      const run = async (context: ToolRunContext) => {
+        await context.github.listOpenPullRequests({ repo: "leanish/widget" });
+        await context.fetch("https://api.github.com/repos/source/lib/security-advisories?page=2");
+        if (fail) throw new Error("unit failed");
+        return {};
+      };
+      const command = fail ? "review" : "run";
+      expect(await runToolCommand({ ...handlers(run), tool, review: run }, [command, "leanish/widget", "--config", "/config/agent.yaml"], fake)).toBe(fail ? 1 : 0);
+      const lines = log().trim().split("\n").map((line) => JSON.parse(line));
+      expect(lines.filter((line) => line.msg === "GitHub API requests")).toEqual([expect.objectContaining({
+        level: "info", tool, command, repo: "leanish/widget", total: 3,
+        byKind: { "GET /repos/{owner}/{repo}": 1, "GET /repos/{owner}/{repo}/pulls": 1, "GET /repos/{owner}/{repo}/security-advisories": 1 },
+      })]);
+      expect(lines.at(-2)?.msg).toBe("GitHub API requests");
+      expect(lines.at(-1)?.msg).toBe("run finished");
+    }
+  });
+
   it.each([undefined, "/config/prices.json"])("prices measured calls using built-in rates or the explicit override %s", async (priceFile) => {
     const tokens = { input: 1_000, cachedInput: 0, cacheWriteInput: 0, output: 100, reasoningOutput: 0, total: 1_100 };
     const configured = { inputPerMTok: 1, cachedInputPerMTok: 0, cacheWritePerMTok: 0, outputPerMTok: 1, basis: "test", source: "test", asOf: "2026-10-07" };
@@ -202,6 +226,9 @@ describe("runToolCommand", () => {
     const bad = machine();
     expect(await runToolCommand(handlers(async () => ({})), ["fix", "leanish/widget"], bad.fake)).toBe(64);
     expect(bad.finalLine()).toMatchObject({ status: "error", exitCode: 64, error: "usage: secure-it run|review <owner/repo> [--config <agent.yaml>]" });
+    expect(bad.log().split("\n").filter((line) => line.includes('"GitHub API requests"')).map((line) => JSON.parse(line))).toEqual([
+      expect.objectContaining({ total: 0, byKind: {} }),
+    ]);
 
     const unlisted = machine();
     expect(await runToolCommand(handlers(async () => ({})), ["run", "leanish/other", "--config", "/config/agent.yaml"], unlisted.fake)).toBe(1);
@@ -274,6 +301,9 @@ describe("runToolCommand", () => {
     expect(await exited).toBe("SIGTERM");
     const finals = log.split("\n").filter((line) => line.includes('"run finished"'));
     expect(finals.map((line) => JSON.parse(line))).toEqual([expect.objectContaining({ status: "interrupted", exitCode: 143, tool: "secure-it" })]);
+    expect(log.split("\n").filter((line) => line.includes('"GitHub API requests"')).map((line) => JSON.parse(line))).toEqual([
+      expect.objectContaining({ tool: "secure-it", command: "run", total: 1, byKind: { "GET /repos/{owner}/{repo}/security-advisories": 1 } }),
+    ]);
     expect(readFileSync(marker, "utf8")).toBe("reported\n");
   }, 20_000);
 });

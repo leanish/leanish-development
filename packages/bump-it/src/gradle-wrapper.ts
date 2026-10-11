@@ -57,7 +57,7 @@ export function gradleWrapperPlanner(env: GateEnvironment, releaseAgeDays: numbe
   const targets = new Map<string, Promise<WrapperTarget>>();
   const readSnapshot = () => snapshot ??= Promise.all([
     releasesOf(env),
-    fetchRepositoryAdvisories("gradle/gradle", { fetch: env.fetch, token: env.githubToken }),
+    fetchRepositoryAdvisories("gradle/gradle", { fetch: env.fetch, token: env.githubToken, cache: env.repositoryAdvisoryCache }),
   ]).then(([catalog, advisories]) => {
     if (advisories === undefined) throw new Error("gradle/gradle's published advisories could not be read");
     return { ...catalog, advisories };

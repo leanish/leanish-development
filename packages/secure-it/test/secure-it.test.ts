@@ -96,6 +96,7 @@ function harness(options: { prs?: GitHubPullRequest[]; fixes?: SecurityFix[]; an
     releaseAgeDays: 7,
     releaseAgeExclude: [],
     readToken: "read-token",
+    fetch: globalThis.fetch,
     isolation: {},
     agent: (async (call: { entrypoint: string; input: Record<string, unknown>; effort?: string }) => {
       agentCalls.push(call);

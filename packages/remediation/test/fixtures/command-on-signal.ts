@@ -15,7 +15,8 @@ process.exitCode = await runToolCommand(
   {
     tool: "secure-it",
     skills: { dirs: ["/nonexistent"], entrypoints: [], support: [] },
-    run: async () => {
+    run: async (context) => {
+      await context.fetch("https://api.github.com/repos/source/lib/security-advisories");
       process.stderr.write("waiting to be killed\n");
       await new Promise((settle) => setTimeout(settle, 30_000));
       return {};
@@ -24,6 +25,7 @@ process.exitCode = await runToolCommand(
   },
   ["run", "leanish/widget", "--config", "/config.yaml"],
   {
+    fetch: async () => new Response("[]"),
     secrets: { get: async (name) => `${name}-token` },
     readText: async () => CONFIG,
     workspace: () => new InMemoryWorkspace(),
