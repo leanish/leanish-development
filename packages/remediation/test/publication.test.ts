@@ -5,7 +5,7 @@ import type { PreparedBranch, WorkingCopy } from "../../agent-basics/src/types/w
 import { InMemoryWorkspace } from "../../agent-basics/src/working-copy/in-memory-workspace.ts";
 import { MemoryJournal } from "../src/journal.ts";
 import { ownPullRequests, stateOf, withMarker } from "../src/own-pr.ts";
-import { clearLeftoverBranch, closeAndDelete, markReady, ownOpenPullRequests, publishNew, publishUpdate, recordState, recoverPublication, type PublicationContext } from "../src/publication.ts";
+import { clearLeftoverBranch, closeAndDelete, markReady, ownOpenPullRequests, publishNew, publishUpdate, recordState, recoverPublication, rewriteText, type PublicationContext } from "../src/publication.ts";
 import { BASE_SHA, FakeGitHub, HEAD_SHA, OWN_BRANCH, ownPr, PUSHED_SHA, RULES } from "./fake-github.ts";
 
 const WC: WorkingCopy = { projectId: "leanish/widget", path: "/synthetic/leanish/widget", branch: "main", headSha: BASE_SHA, gitDir: "/x/.git" };
@@ -19,6 +19,16 @@ const fresh: PreparedBranch = { branch: "secure-it/2026-10-07-vite", baseSha: BA
 const existing: PreparedBranch = { branch: OWN_BRANCH, baseSha: BASE_SHA, remoteHeadSha: HEAD_SHA, preparedSha: HEAD_SHA };
 
 describe("publication", () => {
+  it("rewrites a PR's text from its body as it is now, keeping its state and an owner's edit", async () => {
+    const state = { head: HEAD_SHA, base: BASE_SHA, adaptations: 1 };
+    const github = new FakeGitHub(ownPr({ body: withMarker(RULES, "An owner's added note.\n\nold reasons", state) }));
+    await rewriteText(context(github), 7, HEAD_SHA, (body) => body.replace("old reasons", "new reasons"));
+    const body = github.prs.get(7)!.body;
+    expect([body.includes("An owner's added note."), body.includes("new reasons"), body.includes("old reasons")]).toEqual([true, true, false]);
+    expect(stateOf(body)).toEqual(state);
+    await expect(rewriteText(context(github), 7, PUSHED_SHA, (text) => text)).rejects.toThrow();
+  });
+
   it.each(["secure-it", "bump-it"] as const)("adds %s's new label when publishing or updating, keeping the legacy label", async (tool) => {
     const rules = ownPullRequests(tool);
     const branch = `${tool}/2026-10-05-security`;

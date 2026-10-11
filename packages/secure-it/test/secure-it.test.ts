@@ -219,6 +219,18 @@ describe("secure-it run", () => {
     expect(stateOf(pr.body)).toEqual({ head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 });
   });
 
+  it("rewrites an open PR's notes when the same plan now explains itself differently, without a commit or the agent", async () => {
+    const plan = await planFor([vite()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined });
+    const stale = ownPr({ headRef: `secure-it/2026-10-05-${plan.topic}`, body: withMarker(RULES, `Fixes security findings.\n\n${planSection({ ...plan, notes: ["an outdated reason"] })}`, { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [stale] });
+    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "already-open", pullRequest: "https://github.com/leanish/widget/pull/7" });
+    const body = h.github.prs.get(7)!.body;
+    expect(body).not.toContain("an outdated reason");
+    expect(body).toContain("Fixes security findings.");
+    expect(stateOf(body)).toEqual({ head: HEAD_SHA, base: BASE_SHA, adaptations: 0 });
+    expect([h.agentCalls, h.workspace.publications]).toEqual([[], []]);
+  });
+
   it("leaves the same plan's open PR to its review tick, and reconciles one whose plan changed while it's still the tool's", async () => {
     const same = harness({ prs: [await vitePr()] });
     expect(await secureIt(same.deps).run(same.context)).toMatchObject({ outcome: "already-open", pullRequest: "https://github.com/leanish/widget/pull/7" });
@@ -682,6 +694,16 @@ describe("secure-it floor-removal units", () => {
     expect(await secureIt({ ...h.deps, floorProbe }).run(h.context)).toMatchObject({ outcome: "nothing-to-fix", units: [] });
     expect(h.workspace.publications).toEqual([]);
   });
+  it("rewrites an open removal PR's notes when they changed, keeping its commits", async () => {
+    const f = removalFixture();
+    const { plan } = await f.computed();
+    const pr = await removalPr(f, { body: withMarker(RULES, planSection({ ...plan!, floorRemoval: { ...plan!.floorRemoval!, notes: ["an outdated reason"] } }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ fixes: [], files: f.base, prs: [pr] });
+    expect(await secureIt({ ...h.deps, floorProbe: f.probe }).run(h.context)).toMatchObject({ outcome: "already-open" });
+    expect(h.github.prs.get(pr.number)!.body).not.toContain("an outdated reason");
+    expect(h.workspace.publications).toEqual([]);
+  });
+
   it("suppresses a recognised identical removal and updates a changed plan by reverting", async () => {
     const f = removalFixture();
     const pr = await removalPr(f);
