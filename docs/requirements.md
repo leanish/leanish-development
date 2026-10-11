@@ -1,6 +1,6 @@
 # Supply-chain: requirements and behavior
 
-**Scope: release 0.4.0 (2026-10-11).** Coverage depends on each adopter's configuration. This document describes the implemented contract, including its limits.
+**Scope: release 0.4.1 (2026-10-12).** Coverage depends on each adopter's configuration. This document describes the implemented contract, including its limits.
 
 For the plain-language guide, see [What supply-chain handles](what-it-handles.md).
 
@@ -137,7 +137,7 @@ Signature verification stages fresh manifests/workspaces/selected lockfiles, wit
 | Guarantee or limit | Actual scope |
 |---|---|
 | Agent edits | Exact locks; full routine manifests/dependency fields for majors; Gradle resolution and declarations equal to the plan's reference; protected floors/pins/workflows and wrapper hashes/modes. compare judges results; secure-it demands target-advisory removal. A Gradle change with no effect on resolved modules or declarations isn't seen. Migration semantics still need tests/review. |
-| Snapshot | One per compare. Security has initial scan plus candidate snapshot; bump-it has rounds/peers; final verification is fresh. Not an atomic service transaction or one snapshot for the entire run. |
+| Snapshot | One per compare. Security has initial scan plus candidate snapshot; bump-it has rounds/peers; final verification takes a new snapshot, though the local tools reuse a repository's advisories for up to an hour (the CI gate on the PR always fetches fresh). Not an atomic service transaction or one snapshot for the entire run. |
 | Policy | Strict base/head age/ownership and tool policy fence. Human PRs can change other configuration/exceptions; review/branch protection remain necessary. |
 | Gaps | No GitHub source, repository 404 or unreadable range: repository coverage missing, OSV remains. Inherited unverifiable Actions/`docker://`: gaps. **A verdict can pass with gaps.** |
 | Gradle | Build/plugin can misrepresent inventory. Local files/JARs are not scanned. Job isolation protects credentials/verdict, not inventory truth. |
