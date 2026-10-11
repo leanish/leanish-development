@@ -196,13 +196,33 @@ class ParentSearch {
       admitting.map((version) => ({ ...parent, version })));
     const parentLocation = npmLocation(lockfile, dependent.path);
     const movable = dependentsOf(lockfiles, parentLocation);
+    // Why each admitting version can't move, so the note names the check that failed rather than all of them.
+    const rejected = { advisories: [] as string[], identity: [] as string[], ranges: [] as string[] };
+    let identityDetail: string | undefined;
     for (const version of admitting) {
-      if (pinned === undefined && !fixes(snapshot, parent, from, [], version)) continue;
-      if ((await this.#identity.problems({ ...parent, version: from }, version)).length > 0) continue;
-      if (!movable.declaredByWorkspace && !(movable.dependents.length > 0 && movable.dependents.every((entry) => satisfies(version, entry.spec)))) continue;
+      if (pinned === undefined && !fixes(snapshot, parent, from, [], version)) {
+        rejected.advisories.push(version);
+        continue;
+      }
+      const identity = await this.#identity.problems({ ...parent, version: from }, version);
+      if (identity.length > 0) {
+        rejected.identity.push(version);
+        identityDetail ??= identity[0];
+        continue;
+      }
+      if (!movable.declaredByWorkspace && !(movable.dependents.length > 0 && movable.dependents.every((entry) => satisfies(version, entry.spec)))) {
+        rejected.ranges.push(version);
+        continue;
+      }
       return { name: dependent.name, from, to: version, location: parentLocation, line: line(version) };
     }
-    return `no ${dependent.name} version admitting ${wanted} is free of new advisories, keeps its publisher, and moves without an override itself`;
+    const failing = (versions: ReadonlyArray<string>, one: string, many: string) => versions.length === 0 ? [] : [`${versions.join(", ")} ${versions.length === 1 ? one : many}`];
+    const reasons = [
+      ...failing(rejected.advisories, "brings new advisories", "bring new advisories"),
+      ...failing(rejected.identity, `fails the identity check (${identityDetail})`, `fail the identity check (${identityDetail})`),
+      ...failing(rejected.ranges, "would need an override itself", "would need an override themselves"),
+    ];
+    return `no ${dependent.name} version admitting ${wanted} can move: ${reasons.join("; ")}`;
   }
 }
 

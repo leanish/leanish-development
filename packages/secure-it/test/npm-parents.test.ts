@@ -15,9 +15,11 @@ import { coupledWork, planFor } from "../src/plan.ts";
 const NOW = new Date("2026-10-10T12:00:00Z");
 const OLD = "2026-01-01T00:00:00Z";
 const YOUNG = "2026-10-09T00:00:00Z";
+/** Aged, but after the versions a lockfile holds: a new publisher here has no history up to them. */
+const LATER = "2026-06-01T00:00:00Z";
 
 /** `name` → version → its publish time and its dependencies. */
-type Registry = Record<string, Record<string, { readonly time: string; readonly dependencies?: Record<string, string> }>>;
+type Registry = Record<string, Record<string, { readonly time: string; readonly dependencies?: Record<string, string>; readonly publisher?: string }>>;
 
 function environment(registry: Registry, affected: Record<string, string[]> = {}): GateEnvironment {
   const run: RunProcess = async (command, args, options) => {
@@ -36,18 +38,18 @@ function environment(registry: Registry, affected: Record<string, string[]> = {}
   for (const [name, versions] of Object.entries(registry)) {
     routes[`https://registry.npmjs.org/${name}`] = { body: {
       time: Object.fromEntries(Object.entries(versions).map(([version, entry]) => [version, entry.time])),
-      versions: Object.fromEntries(Object.entries(versions).map(([version, entry]) => [version, { _npmUser: { name: "maintainer" }, dependencies: entry.dependencies ?? {}, dist: {} }])),
+      versions: Object.fromEntries(Object.entries(versions).map(([version, entry]) => [version, { _npmUser: { name: entry.publisher ?? "maintainer" }, dependencies: entry.dependencies ?? {}, dist: {} }])),
     } };
     for (const version of Object.keys(versions)) routes[`https://registry.npmjs.org/${name}/${version}`] = { body: {} };
   }
   return { run, fetch: fakeFetch(routes), now: () => NOW, osvScanner: "osv-scanner", githubToken: undefined };
 }
 
-/** The app declares `parent` (`^1.0.0`), which pins `brace` with `~1.1.0`. */
+/** The app declares `parent` (`^1.0.0`, from the registry, so its publisher is checked), which pins `brace` with `~1.1.0`. */
 function lockfiles() {
   return new Map([["package-lock.json", { lockfileVersion: 3, packages: {
     "": { name: "app", dependencies: { parent: "^1.0.0" } },
-    "node_modules/parent": { version: "1.0.0", dependencies: { brace: "~1.1.0" } },
+    "node_modules/parent": { version: "1.0.0", resolved: "https://registry.npmjs.org/parent/-/parent-1.0.0.tgz", dependencies: { brace: "~1.1.0" } },
     "node_modules/brace": { version: "1.1.0" },
   } }]]);
 }
@@ -88,7 +90,9 @@ describe("moving a parent instead of overriding its range", () => {
   it.each<[string, Registry["x"], Record<string, string[]>, string]>([
     ["only a young version admits it", { ...PARENT, "1.2.0": { ...PARENT["1.2.0"]!, time: YOUNG }, "1.3.0": { ...PARENT["1.3.0"]!, time: YOUNG } }, {}, "no parent version in its line past the wait"],
     ["only another line admits it", { "1.0.0": PARENT["1.0.0"]!, "2.0.0": PARENT["2.0.0"]! }, {}, "no parent version in its line past the wait"],
-    ["every admitting version brings an advisory of its own", PARENT, { "parent@1.2.0": ["GHSA-p"], "parent@1.3.0": ["GHSA-p"] }, "free of new advisories"],
+    ["every admitting version brings an advisory of its own", PARENT, { "parent@1.2.0": ["GHSA-p"], "parent@1.3.0": ["GHSA-p"] }, "can move: 1.2.0, 1.3.0 bring new advisories"],
+    ["every admitting version has another publisher", { ...PARENT, "1.2.0": { ...PARENT["1.2.0"]!, publisher: "stranger", time: LATER }, "1.3.0": { ...PARENT["1.3.0"]!, publisher: "stranger", time: LATER } }, {}, "can move: 1.2.0, 1.3.0 fail the identity check (parent@1.2.0 has no provenance and its publisher stranger"],
+    ["admitting versions fail different checks", { ...PARENT, "1.3.0": { ...PARENT["1.3.0"]!, publisher: "stranger", time: LATER } }, { "parent@1.2.0": ["GHSA-p"] }, "can move: 1.2.0 brings new advisories; 1.3.0 fails the identity check"],
   ])("keeps the override when %s", async (_, versions, affected, note) => {
     const result = await parents({ parent: versions }, { affected });
     expect(result.fixes[0]!.parents).toBeUndefined();
@@ -121,7 +125,7 @@ describe("moving a parent instead of overriding its range", () => {
       "node_modules/brace": { version: "1.1.0" },
     } }]]);
     const result = await parents({ parent: PARENT }, { locks });
-    expect(result.notes).toEqual([expect.stringContaining("moves without an override itself")]);
+    expect(result.notes).toEqual([expect.stringContaining("can move: 1.2.0, 1.3.0 would need an override themselves")]);
   });
 
   it("keeps the override, with the reason, when the registry can't be read", async () => {
