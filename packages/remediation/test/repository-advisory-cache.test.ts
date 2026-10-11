@@ -118,3 +118,11 @@ describe("repository advisory cache", () => {
     expect(raw).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("where the tools keep the cache", () => {
+  it.each(["../../secure-it/src/secure-it.ts", "../../bump-it/src/deps.ts"])("%s keeps it in state, out of the sandbox's reach", async (source) => {
+    const text = await readFile(new URL(source, import.meta.url), "utf8");
+    expect(text).toContain("new FileRepositoryAdvisoryCache(context.config.dirs.state,");
+    expect(text).not.toContain("new FileRepositoryAdvisoryCache(context.config.dirs.cache");
+  });
+});

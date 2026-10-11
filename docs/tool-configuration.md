@@ -29,8 +29,8 @@ permissions and schedules.
 | `secrets.write` | `leanish-<tool>-write` | macOS Keychain service holding the tool's write PAT. |
 | `secrets.read` | `leanish-<tool>-read` | Different service holding a different, read-only PAT for the agent. Both equal names and equal token values are refused. |
 | `commitIdentity.name`, `commitIdentity.email` | Required | Author and committer for the tool's commits; also the identity exposed to agent commands. No developer-global git identity is inherited. |
-| `dirs.state` | `~/.local/share/leanish/<tool>` | Workspaces, separate git metadata, publication journal and protected OSV-Scanner. bump-it also stores deferred-major ordering here. Keep this outside temp and cache roots; see the adoption guide. |
-| `dirs.cache` | `~/.cache/leanish/<tool>` | Sandbox-writable cache for Gradle, npm and local-tool repository advisories. Keep separate from state and between tools. |
+| `dirs.state` | `~/.local/share/leanish/<tool>` | Workspaces, separate git metadata, publication journal, protected OSV-Scanner and the repository-advisory cache (out of the sandbox's reach). bump-it also stores deferred-major ordering here. Keep this outside temp and cache roots; see the adoption guide. |
+| `dirs.cache` | `~/.cache/leanish/<tool>` | Sandbox-writable cache for Gradle and npm. Keep separate from state and between tools. |
 | `readDeny` | `[]` | Extra absolute paths denied to sandboxed commands, in addition to existing sensitive home paths. These paths' names can reach the model; their contents cannot. Other readable files can reach the model provider. |
 | `modelPrices` | Built-in dated OpenAI Standard prices | Absolute path to an optional JSON table replacing the built-in rates. Unknown models and incomplete measurements still produce explicit cost gaps. |
 | `maxNewMajorsPerRun` | bump-it only, `3` | Nonnegative integer. Caps newly opened major PRs, never updates to existing ones. `0` defers all new majors. Deferred majors have priority next run. |
@@ -66,7 +66,8 @@ agents, and git clone/fetch/push traffic, are outside this counter. URLs, query
 values, tag names and credentials are not retained in the summary.
 
 Local tools reuse repository security advisories for **one hour** under
-`dirs.cache/repository-advisories-v1`. Entries are keyed by source repository
+`dirs.state/repository-advisories-v1`, which agents and sandboxed builds can't write: a
+build that could edit the cache could hide an advisory from verification. Entries are keyed by source repository
 and a hash of the read credential, so a different token cannot reuse a private
 response. Each entry contains a complete, parsed-successfully API listing;
 all pages must succeed before it is written. Empty successful listings are
