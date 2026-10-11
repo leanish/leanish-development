@@ -285,7 +285,7 @@ describe.skipIf(process.env["SUPPLY_CHAIN_GRADLE_TESTS"] !== "1")("Gradle refere
     referenceBuild = join(referenceRoot, "build");
     await cp(WRAPPER, referenceBuild, { recursive: true });
     const repository = `repositories { maven { url = uri("${repo}") } }`;
-    await write(referenceBuild, "settings.gradle", `rootProject.name = "fixture"\n`);
+    await write(referenceBuild, "settings.gradle", `buildscript { ${repository} }\nrootProject.name = "fixture"\n`);
     await write(referenceBuild, "build.gradle", `buildscript {
   ${repository}
   dependencies { classpath "fixture:classpath-dep:1.0" }
@@ -326,6 +326,15 @@ dependencies {
     expect(at(inventory, ":runtimeClasspath")).toMatchObject({ resolved: expect.arrayContaining(["transitive:2.0"]), declared: expect.arrayContaining(["transitive:2.0"]) });
     expect(at(inventory, ":compileClasspath").resolved).toContain("transitive:1.0");
     expect(at(inventory, ":defaulted")).toMatchObject({ resolved: ["defaulted-extra:1.0", "defaulted:1.0"], declared: ["defaulted-extra:1.0", "defaulted:1.0"] });
+  }, 600_000);
+
+  it("adds floors to the buildscript and settings classpaths directly, which Gradle 9 won't give a parent", async () => {
+    const inventory = await reference({ floors: [
+      { name: "fixture:classpath-dep", version: "2.0", reason: "GHSA-test", locations: [":buildscript.classpath"] },
+      { name: "fixture:classpath-dep", version: "2.0", reason: "GHSA-test", locations: ["settings.classpath"] },
+    ] });
+    expect(at(inventory, ":buildscript.classpath")).toMatchObject({ resolved: ["classpath-dep:2.0"], declared: ["classpath-dep:1.0", "classpath-dep:2.0"], error: undefined });
+    expect(at(inventory, "settings.classpath")).toMatchObject({ resolved: ["classpath-dep:2.0"], declared: ["classpath-dep:2.0"], error: undefined });
   }, 600_000);
 
   it("marks a moved declaration wherever it's inherited, at a configuration the plan doesn't list too, its reason untouched", async () => {
