@@ -57,8 +57,8 @@ packages/remediation/run.sh bump-it review leanish/widget   # every few hours
   In a routine, non-bundled locked transitive copies of an automatically excluded name get temporary pins to their
   base versions, including aged copies of that name, before install/update and in later target passes where supported.
   Supported plain overrides are temporarily narrowed to exact versions and restored afterwards. Only unsupported
-  placements are left alone and checked after resolution: they may stay locked, be removed, or move to an aged version.
-  A move to another young or unreadable version fails the unit. Bundled copies follow
+  placements are left alone and checked after resolution: they may stay locked, be removed, or move to an aged version
+  that is not deprecated. A move to another young, deprecated or unreadable version fails the unit. Bundled copies follow
   their carrier and may change when it moves to an aged target. Young locked directs outside the plan stay at base too.
   Own packages keep their age exemption,
   and a configured exclusion alone does not freeze transitives. Majors keep their induced graph for `compare` to judge.

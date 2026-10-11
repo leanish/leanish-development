@@ -13,7 +13,7 @@ const DAY_MS = 86_400_000;
 
 /** What deciding reads from outside: the registry, the advisory snapshot and the identity check. */
 export interface TargetSources {
-  /** Every version the registry lists; undefined when it can't list them. */
+  /** Every non-deprecated version the catalog lists; undefined when it can't list them. */
   versions(name: string): Promise<ReadonlyArray<string> | undefined>;
   /** When a version was published; undefined when the registry can't say. */
   published(name: string, version: string): Promise<Date | undefined>;
@@ -36,7 +36,7 @@ export interface TargetInputs {
   readonly overrides: RepositoryOverrides;
   /** Copy path → the version a direct dependency's copy must be at. */
   readonly direct: ReadonlyMap<string, string>;
-  /** Copy path → its retained target: base, or an accepted aged version when it cannot be pinned. */
+  /** Copy path → its retained target: base, or an accepted aged, non-deprecated version when it cannot be pinned. */
   readonly retained?: ReadonlyMap<string, string>;
 }
 

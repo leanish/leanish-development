@@ -1,6 +1,8 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { NpmCatalog } from "../../ci/src/catalogs.ts";
+import { NpmRegistry } from "../../ci/src/npm-registry.ts";
 import { versionKey } from "../../ci/src/package-version.ts";
 import { type Advisory, Snapshot } from "../../ci/src/snapshot.ts";
 import { computeNpm, MAX_PASSES, type NpmCommand, type NpmInputs } from "../src/npm-compute.ts";
@@ -494,7 +496,12 @@ describe("exact npm computation", () => {
     }
     expect(h.calls.map((args) => args[0])).toEqual(later ? ["install", "update", "install", "install", "install"] : ["install", "update", "install"]);
   });
-  it.each(["initial resolution", "later pin pass"])("accepts aged drift of an unpinnable young peer alongside an unrelated update (%s)", async (stage) => {
+  it.each([
+    { stage: "initial resolution", deprecated: false },
+    { stage: "later pin pass", deprecated: false },
+    { stage: "initial resolution", deprecated: true },
+    { stage: "later pin pass", deprecated: true },
+  ])("checks aged drift of an unpinnable young peer alongside an unrelated update ($stage, deprecated=$deprecated)", async ({ stage, deprecated }) => {
     const h = await fixture();
     const path = "node_modules/parent/node_modules/held";
     const base = { ...lock(), packages: { ...lock().packages,
@@ -506,6 +513,11 @@ describe("exact npm computation", () => {
     const published = vi.fn(async (name: string, version: string) => new Date(
       name === "held" && version === "1.0.1" || version === "1.2.0" ? "2026-10-06" : "2026-09-30T12:00:00Z",
     ));
+    const catalog = new NpmCatalog(new NpmRegistry(async () => new Response(JSON.stringify({
+      time: { "1.0.1": "2026-10-06", "1.1.0": "2026-09-30T12:00:00Z" },
+      versions: { "1.0.1": {}, "1.1.0": { deprecated: deprecated ? "use a supported release" : "" } },
+    }))));
+    expect(await catalog.versions({ ecosystem: "npm", name: "held" })).toEqual(deprecated ? ["1.0.1"] : ["1.0.1", "1.1.0"]);
     const npm: NpmCommand = async (dir, args) => {
       if (args[0] === "--version") return { code: 0, stdout: "11.20.0", stderr: "" };
       h.calls.push([...args]);
@@ -518,11 +530,19 @@ describe("exact npm computation", () => {
       } }));
       return { code: 0, stdout: "", stderr: "" };
     };
-    const result = await computeNpm({ ...h.inputs, npm, moves: [], baseLocks: new Map([["package-lock.json", base]]),
+    const computed = computeNpm({ ...h.inputs, npm, moves: [], baseLocks: new Map([["package-lock.json", base]]),
       sources: { ...h.inputs.sources, now: new Date("2026-10-07T12:00:00Z"), published,
-        versions: async (name) => name === "child" ? ["1.0.0", "1.0.1", "1.1.0", "1.2.0"] : ["1.0.0"],
+        versions: async (name) => name === "held" ? catalog.versions({ ecosystem: "npm", name })
+          : name === "child" ? ["1.0.0", "1.0.1", "1.1.0", "1.2.0"] : ["1.0.0"],
       },
     });
+    if (deprecated) {
+      await expect(computed).rejects.toThrow(`held at ${path} is 1.1.0, not its locked 1.0.1; cannot pin this copy and its replacement is young, deprecated or unreadable`);
+      expect(h.calls.map((args) => args[0])).toEqual(stage === "initial resolution"
+        ? ["install", "update", "install"] : ["install", "update", "install", "install", "install"]);
+      return;
+    }
+    const result = await computed;
     expect(result.changes).toEqual([
       { lockfile: "package-lock.json", path: "node_modules/child", name: "child", from: "1.0.0", to: "1.1.0" },
       { lockfile: "package-lock.json", path, name: "held", from: "1.0.1", to: "1.1.0" },

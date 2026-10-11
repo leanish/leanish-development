@@ -8,7 +8,8 @@
   excludes their package name to preserve a young or unreadable locked version.
   Temporary pins prevent drift where supported, narrowing plain overrides and
   restoring them afterwards. Unsupported placements are checked after resolution:
-  aged replacements are allowed; another young or unreadable version fails the unit.
+  replacements must be aged and not deprecated; another young, deprecated or
+  unreadable version fails the unit.
   Bundled copies follow their carrier's aged update. This avoids
   failures on a newer release's young dependencies. Unused copies can be removed.
 
