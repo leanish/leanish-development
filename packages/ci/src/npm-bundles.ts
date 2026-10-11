@@ -368,11 +368,9 @@ class TarReader {
     };
     if (type === "x") return meta("pax", this.#limits.manifestBytes);
     if (type === "L") return meta("longname", 4096);
-    if (type === "g") {
-      // Global pax headers carry no path or size this reader uses.
-      this.#pending = { kind: "skip", path: "", remaining: size, chunks: [], padding };
-      return;
-    }
+    // npm's tar applies a global pax header's records to later entries, parses its records differently, and keeps a
+    // pending local header across it; npm pack never writes one. Unreadable, so it's never read differently from npm.
+    if (type === "g") throw new Error("the archive has a global pax header");
     if (type !== "0" && type !== "\0" && type !== "5") throw new Error(`unsupported tar entry type ${JSON.stringify(type)}`);
     const raw = pax["path"] ?? longName ?? ustarPath(header);
     const path = this.#relative(raw, type === "5");

@@ -86,6 +86,9 @@ describe("reading what an npm archive bundles", () => {
 
   it.each<[string, TarEntry[], string]>([
     ["a symbolic link", [...CARRIER, { path: "package/node_modules/link", type: "2" }], "unsupported tar entry type"],
+    // npm applies a global header's records to later entries (and parses them differently), so none is read at all.
+    ["a global pax header setting sizes", [CARRIER[0]!, { path: "pax_global_header", body: "12 size=512\n", type: "g" }, ...CARRIER.slice(1)], "a global pax header"],
+    ["a global pax header with only a comment", [{ path: "pax_global_header", body: "52 comment=0123456789abcdef0123456789abcdef01234567\n", type: "g" }, ...CARRIER], "a global pax header"],
     ["a path climbing out", [...CARRIER, { path: "package/../escape/package.json", body: "{}" }], "unsafe tar path"],
     ["an absolute path", [...CARRIER, { path: "/etc/package.json", body: "{}" }], "unsafe tar path"],
     ["a second top directory", [...CARRIER, { path: "other/node_modules/x/package.json", body: manifest("x", "1.0.0") }], "two top directories"],

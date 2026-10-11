@@ -290,11 +290,26 @@ async function parentsFirst(fixes: ReadonlyArray<SecurityFix>, base: PlanBase, e
   return withUnsupportedCarriers(work, lockfiles);
 }
 
-/** An open PR of the same plan keeps its commits; its plan section is rewritten when what it says (notes) changed. */
+/**
+ * An open PR of the same plan keeps its commits; its plan section is rewritten when what it says (notes) changed.
+ * Only the notes come from the recomputed plan: the rest, such as the cooldown hold its verification recorded (a
+ * fresh plan has none yet), stays as published.
+ */
 async function refreshText(execution: Execution, pr: GitHubPullRequest, plan: ChangePlan): Promise<void> {
   const previous = planOf(pr.body);
-  if (previous !== undefined && planSection(previous) === planSection(plan)) return;
-  await rewriteText(execution.publication, pr.number, pr.headSha, (body) => withPlanSection(body, plan));
+  if (previous === undefined) return;
+  const refreshed = withNotesOf(previous, plan);
+  if (planSection(refreshed) === planSection(previous)) return;
+  await rewriteText(execution.publication, pr.number, pr.headSha, (body) => withPlanSection(body, refreshed));
+}
+
+/** `published` with `recomputed`'s notes (a floor removal's own, or the plan's). */
+function withNotesOf(published: ChangePlan, recomputed: ChangePlan): ChangePlan {
+  if (published.floorRemoval !== undefined && recomputed.floorRemoval !== undefined) {
+    return { ...published, floorRemoval: { ...published.floorRemoval, notes: recomputed.floorRemoval.notes } };
+  }
+  const { notes: _published, ...rest } = published;
+  return recomputed.notes === undefined ? rest : { ...rest, notes: recomputed.notes };
 }
 
 async function computeRemoval(execution: Execution, base: PlanBase): Promise<ComputedRemoval> {
