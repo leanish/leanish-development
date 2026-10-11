@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- A read GitHub refuses says why: which rate limit is spent and until when (from
+  GitHub's headers), a secondary limit's wait, or that the token may lack access.
+  Before, every 403 suggested setting `GITHUB_TOKEN`, even with a token set.
+
 ### Removed
 
 - secure-it's check that the daily scan still runs, and its `staleScanHours`
