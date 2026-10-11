@@ -104,7 +104,9 @@ run report and the PR's plan notes. Incomplete inventories or advisory coverage 
   special exemption in this unlocked proof. The tool writes the successful joint result's exact manifest and
   lockfile bytes; npm-only removal uses no agent.
 - **Gradle:** a trusted init script removes only the selected exact advisory-bearing declarations from the selected
-  configurations and disables dependency locking. Shared parent configurations stay intact. The inventory runs
+  configurations and disables dependency locking. Shared parent configurations stay intact; a floor declared directly
+  on a buildscript or settings classpath (which resolves while its script compiles) is dropped as its dependencies
+  are finalized. The inventory runs
   sandboxed with `--no-daemon` and configuration caching disabled. A declaration already used in resolution cannot
   be safely removed by this probe, so that floor is retained with a reason. After proof, the agent removes only the
   named declarations from the real build files; it cannot edit the tool-written floor/npm files or adapt code.

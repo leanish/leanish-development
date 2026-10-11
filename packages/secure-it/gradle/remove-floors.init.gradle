@@ -98,15 +98,28 @@ def removeFloors = { configuration, String configLocation ->
     appliedConfigurations.add(configuration)
 }
 
+// A script classpath (buildscript or settings) resolves while its script compiles, by when Gradle 9 rejects
+// re-parenting it. A floor declared on it directly is dropped from its own dependencies instead, as they're finalized
+// before that resolution: the one change Gradle still allows there. An inherited one still takes the copy below.
+def scriptClasspath = { String configLocation -> configLocation.contains("buildscript.") || configLocation.contains("settings.") }
+def dropDeclaredFloors = { configuration, String configLocation, dependencies ->
+    def floors = removalsByLocation.containsKey(configLocation) ? removalsByLocation[configLocation] : []
+    if (floors.isEmpty() || !scriptClasspath(configLocation) || appliedConfigurations.contains(configuration)) return
+    if (!floors.every { floor -> dependencies.any { dependency -> matches(dependency, floor) } }) return
+    dependencies.removeIf { dependency -> matchesAny(dependency, floors) }
+    appliedConfigurations.add(configuration)
+}
+
 def configureConfiguration = { configuration, String configLocation ->
     if (!configuredConfigurations.add(configuration)) return
     unlock(configuration)
+    configuration.withDependencies { dependencies ->
+        unlock(configuration)
+        dropDeclaredFloors(configuration, configLocation, dependencies)
+    }
     configuration.incoming.beforeResolve {
         unlock(configuration)
         removeFloors(configuration, configLocation)
-    }
-    configuration.withDependencies {
-        unlock(configuration)
     }
 }
 
