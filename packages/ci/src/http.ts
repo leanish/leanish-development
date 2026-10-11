@@ -12,35 +12,23 @@ export type Fetch = (
   text(): Promise<string>;
 }>;
 
-/** Timing and notice sources replaced by deterministic tests; production uses timers, the clock, Math.random and stderr. */
+/** Timing sources replaced by deterministic tests; production uses timers and Math.random. */
 export interface RetryTiming {
   readonly sleep: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
   readonly random: () => number;
-  readonly now: () => number;
-  readonly notice: (message: string) => void;
 }
 
 const RETRIES = 2;
 const BACKOFF_MS = 500;
 const TRANSIENT_CODES = new Set(["UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET", "ECONNRESET", "ETIMEDOUT"]);
-// GitHub's primary limits reset hourly, so one wait never needs more than an hour (plus clock skew).
-const RATE_LIMIT_RETRIES = 2;
-const RATE_LIMIT_MAX_WAIT_MS = 61 * 60_000;
-const SECONDARY_LIMIT_WAIT_MS = 60_000;
-const TIMING: RetryTiming = {
-  sleep: (milliseconds, signal) => sleep(milliseconds, undefined, { signal }),
-  random: Math.random,
-  now: Date.now,
-  notice: (message) => process.stderr.write(`${message}\n`),
-};
+const TIMING: RetryTiming = { sleep: (milliseconds, signal) => sleep(milliseconds, undefined, { signal }), random: Math.random };
 
 /**
  * GET/HEAD reads retry transient connection failures twice, including body resets,
  * with exponential backoff and jitter. No overall timeout is added: fetch timeouts
  * and caller signals control duration. Successful reads are buffered so retries
- * finish before consumers parse them. A rate-limited read (see `rateLimitWait`)
- * waits as asked and retries twice; other HTTP failures, aborts and other methods
- * are never retried. Errors name the request and cause.
+ * finish before consumers parse them. HTTP failures, aborts and other methods are
+ * never retried. Errors name the request and cause.
  */
 export function namingFailures(fetch: Fetch, timing: RetryTiming = TIMING): Fetch {
   return async (url, init) => {
@@ -56,23 +44,11 @@ export function namingFailures(fetch: Fetch, timing: RetryTiming = TIMING): Fetc
 
 async function retryRead(fetch: Fetch, url: string, init: Parameters<Fetch>[1], timing: RetryTiming): Promise<Awaited<ReturnType<Fetch>>> {
   const signal = init?.signal;
-  let attempt = 0;
-  let rateLimited = 0;
-  for (;;) {
+  for (let attempt = 0; ; attempt++) {
     signal?.throwIfAborted();
     try {
       const response = await fetch(url, init);
-      if (!response.ok) {
-        const wait = rateLimitWait(response, timing.now(), rateLimited);
-        if (wait === undefined || wait > RATE_LIMIT_MAX_WAIT_MS || rateLimited === RATE_LIMIT_RETRIES) return response;
-        rateLimited++;
-        // Undici keeps the connection until the body is read, so release it before a long wait.
-        await response.text().catch(() => undefined);
-        // A long pass can spend a token's hourly quota; waiting for the reset beats failing the run.
-        timing.notice(`${url}: rate limited (HTTP ${response.status}), retrying in ${Math.ceil(wait / 1000)}s`);
-        await timing.sleep(wait, signal);
-        continue;
-      }
+      if (!response.ok) return response;
       const text = await response.text();
       signal?.throwIfAborted();
       return {
@@ -85,27 +61,27 @@ async function retryRead(fetch: Fetch, url: string, init: Parameters<Fetch>[1], 
     } catch (err) {
       if (signal?.aborted || attempt === RETRIES || !isTransient(err)) throw err;
       await timing.sleep(BACKOFF_MS * 2 ** attempt * (0.5 + timing.random()), signal);
-      attempt++;
     }
   }
 }
 
 /**
- * How long a 403/429 response asks to wait, following GitHub's rules: `retry-after`
- * seconds when given, else until `x-ratelimit-reset` when no requests remain, else a
- * minute for a 429, doubling for each earlier wait. Undefined for a 403 without those
- * headers: a permission failure.
+ * Why GitHub refused a read, for its error message: which rate limit ran out and
+ * until when, from GitHub's headers; empty when the status isn't a refusal. Reads
+ * fail rather than wait, so a slow pass never hides a spent quota.
  */
-export function rateLimitWait(response: Awaited<ReturnType<Fetch>>, nowMs: number, earlierWaits: number): number | undefined {
-  if (response.status !== 403 && response.status !== 429) return undefined;
-  const retryAfter = response.headers.get("retry-after")?.trim();
-  if (retryAfter !== undefined && /^\d+$/.test(retryAfter)) return Number(retryAfter) * 1000;
+export function githubRefusal(response: Awaited<ReturnType<Fetch>>, hasToken: boolean): string {
+  if (response.status !== 403 && response.status !== 429) return "";
+  const setToken = hasToken ? "" : "; set GITHUB_TOKEN";
   const reset = Number(response.headers.get("x-ratelimit-reset"));
   if (response.headers.get("x-ratelimit-remaining") === "0" && Number.isInteger(reset) && reset > 0) {
-    // One extra second covers the reset landing just after the clock reading.
-    return Math.max(0, reset * 1000 - nowMs) + 1000;
+    const resource = response.headers.get("x-ratelimit-resource") ?? "core";
+    return ` (GitHub rate limit: the ${hasToken ? "token's" : "anonymous"} "${resource}" quota is used up until ${new Date(reset * 1000).toISOString()}${setToken})`;
   }
-  return response.status === 429 ? SECONDARY_LIMIT_WAIT_MS * 2 ** earlierWaits : undefined;
+  const retryAfter = response.headers.get("retry-after")?.trim();
+  if (retryAfter !== undefined && /^\d+$/.test(retryAfter)) return ` (GitHub secondary rate limit: retry after ${retryAfter}s)`;
+  if (response.status === 429) return ` (GitHub rate limit${setToken})`;
+  return hasToken ? " (the token can't read it?)" : " (rate limited? set GITHUB_TOKEN)";
 }
 
 /** Walk causes without looping; explicit cancellation always takes priority over a nested socket error. */

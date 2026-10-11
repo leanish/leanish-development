@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { type Fetch, mapLimited, namingFailures, type RetryTiming } from "../src/http.ts";
+import { type Fetch, githubRefusal, mapLimited, namingFailures, type RetryTiming } from "../src/http.ts";
 
 const URL = "https://repo1.maven.org/maven2/acme/lib/1.0/lib-1.0.pom";
 
@@ -8,16 +8,8 @@ function connectionError(code: string): Error {
   return new TypeError("fetch failed", { cause: Object.assign(new Error("connection failed"), { code }) });
 }
 
-const NOW = Date.parse("2026-10-11T08:28:00Z");
-
-const QUIET = { now: () => NOW, notice: () => {} };
-
-function timing(random = 0.5): RetryTiming & { sleep: ReturnType<typeof vi.fn>; notice: ReturnType<typeof vi.fn<(message: string) => void>> } {
-  return { sleep: vi.fn(async () => {}), random: () => random, now: () => NOW, notice: vi.fn<(message: string) => void>() };
-}
-
-function limited(status: number, headers: Record<string, string>): Response {
-  return new Response('{"message":"API rate limit exceeded"}', { status, headers });
+function timing(random = 0.5): RetryTiming & { sleep: ReturnType<typeof vi.fn> } {
+  return { sleep: vi.fn(async () => {}), random: () => random };
 }
 
 function deferred<T>() {
@@ -134,7 +126,7 @@ describe("named HTTP reads", () => {
     expect(clock.sleep).not.toHaveBeenCalled();
   });
 
-  it.each([403, 404, 503])("leaves HTTP %s untouched, without reading or retrying its body", async (status) => {
+  it.each([404, 429, 503])("leaves HTTP %s untouched, without reading or retrying its body", async (status) => {
     const clock = timing();
     const original = new Response("error", { status });
     const text = vi.spyOn(original, "text").mockRejectedValue(connectionError("ECONNRESET"));
@@ -213,7 +205,7 @@ describe("named HTTP reads", () => {
   it("does not retry after the caller aborts during backoff", async () => {
     const controller = new AbortController();
     const fetch = vi.fn<Fetch>().mockRejectedValue(connectionError("ECONNRESET"));
-    const clock = { ...QUIET, random: () => 0.5, sleep: async () => controller.abort(new Error("caller cancelled")) };
+    const clock = { random: () => 0.5, sleep: async () => controller.abort(new Error("caller cancelled")) };
 
     await expect(namingFailures(fetch, clock)(URL, { signal: controller.signal })).rejects.toThrow("caller cancelled");
     expect(fetch).toHaveBeenCalledTimes(1);
@@ -273,7 +265,7 @@ describe("named HTTP reads", () => {
   it("allows bounded retries when attempts and backoff take more than 35 seconds", async () => {
     vi.useFakeTimers();
     const wait = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
-    const clock = { ...QUIET, sleep: vi.fn(wait), random: () => 0.5 };
+    const clock = { sleep: vi.fn(wait), random: () => 0.5 };
     const timeout = async () => {
       await wait(20_000);
       throw connectionError("UND_ERR_CONNECT_TIMEOUT");
@@ -293,7 +285,7 @@ describe("named HTTP reads", () => {
   it("interrupts pending backoff when the caller cancels", async () => {
     const controller = new AbortController();
     const started = deferred<void>();
-    const clock = { ...QUIET,
+    const clock = {
       random: () => 0.5,
       sleep: vi.fn((_milliseconds: number, signal?: AbortSignal) => {
         started.resolve();
@@ -313,102 +305,27 @@ describe("named HTTP reads", () => {
   });
 });
 
-describe("rate-limited reads", () => {
-  it("waits until the primary limit resets, says so, then returns the complete read", async () => {
-    const clock = timing();
-    const reset = String(NOW / 1000 + 120);
-    const fetch = vi.fn<Fetch>()
-      .mockResolvedValueOnce(limited(403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": reset }))
-      .mockResolvedValueOnce(new Response('{"ref":"v4.1.1"}'));
+describe("GitHub refusals", () => {
+  const refused = (status: number, headers: Record<string, string> = {}) => new Response("{}", { status, headers });
+  const spent = { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(Date.parse("2026-10-11T09:15:00Z") / 1000), "x-ratelimit-resource": "core" };
 
-    const response = await namingFailures(fetch, clock)(URL);
-
-    expect(fetch).toHaveBeenCalledTimes(2);
-    expect(clock.sleep.mock.calls.map(([milliseconds]) => milliseconds)).toEqual([121_000]);
-    expect(clock.notice).toHaveBeenCalledExactlyOnceWith(`${URL}: rate limited (HTTP 403), retrying in 121s`);
-    expect(await response.json()).toEqual({ ref: "v4.1.1" });
+  it("names the spent quota and when it resets", () => {
+    expect(githubRefusal(refused(403, spent), true)).toBe(' (GitHub rate limit: the token\'s "core" quota is used up until 2026-10-11T09:15:00.000Z)');
+    expect(githubRefusal(refused(403, spent), false)).toBe(' (GitHub rate limit: the anonymous "core" quota is used up until 2026-10-11T09:15:00.000Z; set GITHUB_TOKEN)');
   });
 
-  it.each([403, 429])("follows retry-after on HTTP %i", async (status) => {
-    const clock = timing();
-    const fetch = vi.fn<Fetch>().mockResolvedValueOnce(limited(status, { "retry-after": "30", "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(NOW / 1000 + 600) }))
-      .mockResolvedValueOnce(new Response("{}"));
-
-    expect((await namingFailures(fetch, clock)(URL)).ok).toBe(true);
-    expect(clock.sleep.mock.calls.map(([milliseconds]) => milliseconds)).toEqual([30_000]);
+  it("names a secondary limit by its retry-after", () => {
+    expect(githubRefusal(refused(429, { "retry-after": "60" }), true)).toBe(" (GitHub secondary rate limit: retry after 60s)");
+    expect(githubRefusal(refused(429), true)).toBe(" (GitHub rate limit)");
   });
 
-  it("waits a minute, then two, on 429s that name no wait", async () => {
-    const clock = timing();
-    const fetch = vi.fn<Fetch>().mockResolvedValueOnce(limited(429, {})).mockResolvedValueOnce(limited(429, {}))
-      .mockResolvedValueOnce(new Response("{}"));
-
-    await namingFailures(fetch, clock)(URL);
-
-    expect(clock.sleep.mock.calls.map(([milliseconds]) => milliseconds)).toEqual([60_000, 120_000]);
+  it("reads a bare 403 as a permission failure when a token is set", () => {
+    expect(githubRefusal(refused(403, { "x-ratelimit-remaining": "4999" }), true)).toBe(" (the token can't read it?)");
+    expect(githubRefusal(refused(403), false)).toBe(" (rate limited? set GITHUB_TOKEN)");
   });
 
-  it("releases each discarded body before waiting, leaving the returned one unread", async () => {
-    const discarded = limited(429, { "retry-after": "5" });
-    const released = vi.spyOn(discarded, "text");
-    const final = limited(429, { "retry-after": "5" });
-    const unread = vi.spyOn(final, "text");
-    const clock = timing();
-    clock.sleep.mockImplementation(async () => expect(released).toHaveBeenCalledOnce());
-    const fetch = vi.fn<Fetch>().mockResolvedValueOnce(discarded).mockResolvedValueOnce(limited(429, { "retry-after": "5" }))
-      .mockResolvedValueOnce(final);
-
-    expect(await namingFailures(fetch, clock)(URL)).toBe(final);
-    expect(unread).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    { name: "a 403 without rate-limit headers", response: () => limited(403, { "x-ratelimit-remaining": "4999" }) },
-    { name: "a wait longer than an hour", response: () => limited(429, { "retry-after": "7200" }) },
-    { name: "another failure", response: () => limited(500, { "retry-after": "1" }) },
-  ])("returns $name without waiting", async ({ response }) => {
-    const clock = timing();
-    const fetch = vi.fn<Fetch>().mockResolvedValue(response());
-
-    expect((await namingFailures(fetch, clock)(URL)).ok).toBe(false);
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(clock.sleep).not.toHaveBeenCalled();
-  });
-
-  it("returns the third rate-limited response after two waits, keeping the transient retries", async () => {
-    const clock = timing();
-    const fetch = vi.fn<Fetch>()
-      .mockRejectedValueOnce(connectionError("ECONNRESET"))
-      .mockResolvedValueOnce(limited(429, { "retry-after": "5" }))
-      .mockRejectedValueOnce(connectionError("ECONNRESET"))
-      .mockResolvedValue(limited(429, { "retry-after": "5" }));
-
-    const response = await namingFailures(fetch, clock)(URL);
-
-    expect(response.status).toBe(429);
-    expect(fetch).toHaveBeenCalledTimes(5);
-    expect(clock.sleep.mock.calls.map(([milliseconds]) => milliseconds)).toEqual([500, 5000, 1000, 5000]);
-  });
-
-  it("does not wait for a rate limit on writes", async () => {
-    const clock = timing();
-    const fetch = vi.fn<Fetch>().mockResolvedValue(limited(429, { "retry-after": "5" }));
-
-    expect((await namingFailures(fetch, clock)(URL, { method: "POST" })).status).toBe(429);
-    expect(clock.sleep).not.toHaveBeenCalled();
-  });
-
-  it("stops waiting when the caller cancels", async () => {
-    const controller = new AbortController();
-    const clock = timing();
-    clock.sleep.mockImplementation(async (_milliseconds: number, signal?: AbortSignal) => {
-      controller.abort(new Error("cancelled"));
-      signal?.throwIfAborted();
-    });
-    const fetch = vi.fn<Fetch>().mockResolvedValue(limited(429, { "retry-after": "5" }));
-
-    await expect(namingFailures(fetch, clock)(URL, { signal: controller.signal })).rejects.toThrow("cancelled");
-    expect(fetch).toHaveBeenCalledTimes(1);
+  it("adds nothing to other failures", () => {
+    expect(githubRefusal(refused(500, spent), true)).toBe("");
   });
 });
 

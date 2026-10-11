@@ -5,7 +5,7 @@
  * doesn't match versions against them; GitHub's `affects=` filter does).
  * Every call fails closed: an error other than a 404 throws.
  */
-import type { Fetch } from "./http.ts";
+import { type Fetch, githubRefusal } from "./http.ts";
 import { isObject, optionalString } from "./json.ts";
 import { type Advisory, isMalware } from "./snapshot.ts";
 
@@ -136,8 +136,7 @@ export class ActionsGitHub {
     const response = await this.fetch(`${GITHUB_API}${path}`, { headers });
     if (response.status === 404) return { body: undefined, next: undefined };
     if (!response.ok) {
-      // Rate limits were already waited out (see namingFailures), so this is an exhausted wait or a permission failure.
-      const hint = response.status !== 403 && response.status !== 429 ? "" : this.token === undefined ? " (rate limited? set GITHUB_TOKEN)" : " (rate limited, or the token can't read it)";
+      const hint = githubRefusal(response, this.token !== undefined);
       throw new Error(`GitHub API ${path} failed with HTTP ${response.status}${hint}`);
     }
     const link = /<([^>]+)>;\s*rel="next"/.exec(response.headers.get("link") ?? "")?.[1];

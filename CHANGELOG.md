@@ -4,10 +4,9 @@
 
 ### Fixed
 
-- GitHub and registry reads wait out a rate limit (as `retry-after` or
-  `x-ratelimit-reset` asks, up to an hour, twice per read) instead of failing
-  the command. Several weekly passes within an hour had spent the read token's
-  quota and failed bump-it on the test repositories.
+- A read GitHub refuses says why: which rate limit is spent and until when (from
+  GitHub's headers), a secondary limit's wait, or that the token may lack access.
+  Before, every 403 suggested setting `GITHUB_TOKEN`, even with a token set.
 
 ## 0.3.0 - 2026-10-11
 
