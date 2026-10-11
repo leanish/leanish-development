@@ -419,6 +419,39 @@ describe("exact npm computation", () => {
       { lockfile: "package-lock.json", path, name: "bundled", from: "1.0.0", to: "1.1.0" },
     ]);
   });
+  it("keeps different locked versions under a shared override without EOVERRIDE, including later passes", async () => {
+    const h = await fixture();
+    const path = "node_modules/parent/node_modules/held";
+    const root = { ...manifest, dependencies: { ...manifest.dependencies, held: "^1 || ^2" }, overrides: { held: "^1 || ^2" } };
+    const base = { ...lock(), packages: { ...lock().packages, "": root,
+      "node_modules/parent": { version: "1.0.0", dependencies: { child: "^1", held: "^1" } },
+      "node_modules/held": { version: "2.0.0" }, [path]: { version: "1.9.0" },
+    } };
+    await writeFile(join(h.dir, "package.json"), json(root));
+    await writeFile(join(h.dir, "package-lock.json"), json(base));
+    let child = "1.0.0";
+    const npm: NpmCommand = async (dir, args) => {
+      if (args[0] === "--version") return { code: 0, stdout: "11.20.0", stderr: "" };
+      h.calls.push([...args]);
+      const current = JSON.parse(await readFile(join(dir, "package.json"), "utf8"));
+      // npm rejects a name-level self-override that differs from the direct spec.
+      if (current.overrides.held !== current.dependencies.held) return { code: 1, stdout: "", stderr: "EOVERRIDE held" };
+      expect(current.overrides.held).toBe(h.calls.length <= 2 || h.calls.length === 4 ? "2.0.0" : "^1 || ^2");
+      if (args[0] === "update") child = "1.2.0";
+      if (current.overrides["child@1.2.0"] === "1.1.0") child = "1.1.0";
+      await writeFile(join(dir, "package-lock.json"), json({ ...base, packages: { ...base.packages, "node_modules/child": { version: child } } }));
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const result = await computeNpm({ ...h.inputs, npm, moves: [], baseLocks: new Map([["package-lock.json", base]]),
+      sources: { ...h.inputs.sources,
+        versions: async (name) => name === "held" ? ["1.9.0", "2.0.0"] : name === "child" ? ["1.0.0", "1.1.0", "1.2.0"] : ["1.0.0"],
+        published: async (name, version) => new Date(name === "held" && version === "1.9.0" || version === "1.2.0" ? "2026-10-06" : "2026-09-01"),
+      },
+    });
+    expect(result.changes).toEqual([{ lockfile: "package-lock.json", path: "node_modules/child", name: "child", from: "1.0.0", to: "1.1.0" }]);
+    expect(h.calls.map((args) => args[0])).toEqual(["install", "update", "install", "install", "install"]);
+    expect(await readFile(join(h.dir, "package.json"), "utf8")).toBe(json(root));
+  });
   it.each(["override", "plain override", "nested peer"])("keeps a young %s copy with supported pins only, including later passes", async (placement) => {
     const h = await fixture();
     const path = placement === "nested peer" ? "node_modules/parent/node_modules/held" : "node_modules/held";

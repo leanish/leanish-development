@@ -15,8 +15,9 @@
 
 - bump-it's routine protects non-bundled locked transitive versions when npm's age window
   excludes their package name to preserve a young or unreadable locked version.
-  Temporary pins prevent drift where supported, narrowing plain overrides and
-  restoring them afterwards. Unsupported placements are checked after resolution:
+  Temporary pins prevent drift where supported, narrowing compatible plain overrides and
+  restoring them afterwards. Unsupported placements, including shared overrides
+  whose copies need different targets, are checked after resolution:
   replacements must be aged and not deprecated; another young, deprecated or
   unreadable version fails the unit.
   Bundled copies follow their carrier's aged update. This avoids

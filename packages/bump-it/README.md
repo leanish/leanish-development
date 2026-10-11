@@ -56,8 +56,9 @@ packages/remediation/run.sh bump-it review leanish/widget   # every few hours
   with target selection: bump-it's targets still require the age, and `compare` judges what a major induces.
   In a routine, non-bundled locked transitive copies of an automatically excluded name get temporary pins to their
   base versions, including aged copies of that name, before install/update and in later target passes where supported.
-  Supported plain overrides are temporarily narrowed to exact versions and restored afterwards. Only unsupported
-  placements are left alone and checked after resolution: they may stay locked, be removed, or move to an aged version
+  Plain overrides are temporarily narrowed to exact versions when compatible with every governed copy, then restored.
+  Unsupported placements, including shared overrides whose copies need different targets, are left unpinned and checked
+  after resolution: they may stay locked, be removed, or move to an aged version
   that is not deprecated. A move to another young, deprecated or unreadable version fails the unit. Bundled copies follow
   their carrier and may change when it moves to an aged target. Young locked directs outside the plan stay at base too.
   Own packages keep their age exemption,
