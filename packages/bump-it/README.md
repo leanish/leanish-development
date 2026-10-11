@@ -105,7 +105,7 @@ Clean same-target major merges preserve existing script/config adaptations. Fail
 high-effort adaptations, with the attempt counted before the agent starts. Routine CI failures are reported without
 an agent; after the shared two-attempt budget the PR closes. One PR's problem does not stop the tick.
 
-R7's daily main scan and open-PR rescan remain CI's responsibility; this tick reads those checks, it does not replace them.
+R7's daily main scan remains CI's responsibility; this tick reads those checks, it does not replace them.
 
 ## Setup and isolation
 

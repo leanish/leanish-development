@@ -21,7 +21,7 @@
  * has aged, the draft is retired before anything else, and the tool's next run
  * plans again from scratch, with fresh checks. A person who marked it ready
  * owns it: the tick leaves it alone. Any other PR that only the gate's
- * cooldown holds (the daily rescan, after the base's wait grew) waits as a
+ * cooldown holds (say, after the base's wait grew and its checks re-ran) waits as a
  * draft too: no adaptation can make a version older.
  *
  * Steps 1 and 3 need no model.

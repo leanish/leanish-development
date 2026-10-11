@@ -48,5 +48,4 @@ cannot apply a sandbox inside the current process. macOS launchd plist checks sk
 on other operating systems. Report these skips separately from passed tests.
 
 The reusable workflow also inventories base/head and runs the gate on the exact
-PR candidate. Its rescan-only jobs normally skip on a pull-request event; their
-scheduled/dispatch execution is a separate check, not a failed acceptance test.
+PR candidate.

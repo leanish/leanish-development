@@ -8,7 +8,6 @@ import { parse } from "yaml";
 interface CompatibilityWorkflow {
   readonly jobs: {
     readonly check: { readonly needs: string; readonly if: string };
-    readonly gate: { readonly with: { readonly "required-check": string } };
     readonly "supply-chain": {
       readonly needs: string;
       readonly if: string;
@@ -22,10 +21,9 @@ const bridge = workflow.jobs["supply-chain"];
 const step = bridge.steps[0]!;
 
 describe("the existing required supply-chain check", () => {
-  it("runs after every gate outcome and shares its context with daily rescans", () => {
+  it("runs after every gate outcome", () => {
     expect(bridge.needs).toBe("gate");
     expect(bridge.if).toBe("always()");
-    expect(workflow.jobs.gate.with["required-check"]).toBe("supply-chain");
     expect(step.env).toEqual({
       GATE_RESULT: "${{ needs.gate.result }}",
       COMPARISON_PASSED: "${{ needs.gate.outputs.comparison-passed }}",

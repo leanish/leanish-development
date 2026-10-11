@@ -13,7 +13,7 @@ Those tools are good, and this repository uses two of them: [OSV-Scanner](https:
 - **Publisher identity.** When an npm version replaces one the registry still lists, it fails if its publisher never published the package before (without provenance on either side) or if its provenance moved to another repository or workflow; valid provenance from the same source accepts a new publisher. A package new to the repository has no earlier version to compare with, so this check doesn't apply to it.
 - **Recorded floors, checked.** A floor recorded in `.github/dependency-floors.json` must be declared at that version with a `because(...)` naming its advisories, and resolve at or above it (npm: the override must pin it and the lockfile install it); every npm override needs an entry. A Gradle declaration with a reason but no entry is a note, not a failure. Removing floors that are no longer needed is secure-it's job (planned).
 - **Remote actions are dependencies too.** A new or changed remote action or reusable workflow must be pinned to a commit whose comment names a tag pointing at it; GitHub's database and the action's own repository advisories are checked like any package's. Local actions are followed to their `action.yml`; `docker://` actions are a reported gap.
-- **Open PRs are rescanned daily**, merged onto their base's current tip, and the verdict lands as a status GitHub requires next to the PR's own check.
+- **The default branch is scanned daily** against the day's advisories; a PR is judged whenever it changes.
 
 ## What secure-it and bump-it add
 

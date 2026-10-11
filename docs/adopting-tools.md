@@ -11,8 +11,7 @@ Tool PRs use `leanish:secure-it` or `leanish:bump-it`. Open PRs carrying the old
 keep the old one. The body marker is unchanged.
 
 Adopt [the CI gate](../packages/ci/README.md#adopting-the-gate) first: default-branch
-daily scans, PR comparisons and open-PR rescans are what these tools act on and
-read. They do not replace R7's CI coverage. Read [the security model](security-model.md)
+daily scans and PR comparisons are what these tools act on and read. They do not replace R7's CI coverage. Read [the security model](security-model.md)
 and [coverage gaps](coverage-gaps.md) before giving a tool repository access.
 
 ## Prerequisites

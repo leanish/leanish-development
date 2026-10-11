@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Changed
+
+- The gate's scheduled (and manually dispatched) run scans only the default
+  branch. Open PRs are no longer rescanned daily: a PR is judged when it's
+  opened, pushed to, reopened or retargeted. That drops the three rescan jobs
+  every PR showed as skipped and the commit statuses the rescan posted.
+  - An advisory published after a PR's last check shows up on its next push, or
+    in the default branch's scan once merged.
+  - A person's PR held by the cooldown stays red until it's pushed to or its
+    whole workflow is re-run after the hold's date. secure-it and bump-it retire
+    their own held PRs as before.
+  - Fork PRs no longer get a trusted daily status: check them yourself.
+- **When repinning**, drop from the calling workflow the `required-check` and
+  `required-cooldown-check` inputs (an unknown input makes the call invalid),
+  the `pull-requests: read` and `statuses: write` grants, and the
+  `workflow_dispatch` `pr` input. Statuses an older gate already posted stay on
+  a PR's head until it's pushed to; the tools still read a failing cooldown
+  status as a hold.
+
 ### Fixed
 
 - A read GitHub refuses says why: which rate limit is spent and until when (from
@@ -14,6 +33,8 @@
   option (now an unknown field: delete it from `agent.yaml`). It warned on every
   repository whose scheduled scan failed for a real finding, already visible as a
   failed run, and never caught a scan that had stopped running.
+- The CLI's `rescan-plan` and `rescan` commands, `prepare-pr.sh`, and the
+  report's `prHeadSha`.
 
 ## 0.3.0 - 2026-10-11
 

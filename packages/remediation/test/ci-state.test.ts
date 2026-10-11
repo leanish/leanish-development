@@ -67,7 +67,7 @@ describe("onlyCooldownHolds", () => {
     expect(onlyCooldownHolds(checks([run("completed", "success", "gate / supply-chain"), held("gate / cooldown")]))).toBe(true);
   });
 
-  it("is a hold when the daily rescan's cooldown status fails, the cooldown job itself green or holding", () => {
+  it("is a hold when an older gate's rescan left a failing cooldown status, the cooldown job itself green or holding", () => {
     const green = run("completed", "success", "supply-chain / cooldown");
     expect(onlyCooldownHolds(checks([verdict, green], [status("failure", "supply-chain / cooldown")]))).toBe(true);
     expect(onlyCooldownHolds(checks([verdict, held()], [status("failure", "supply-chain / cooldown")]))).toBe(true);
@@ -84,8 +84,8 @@ describe("onlyCooldownHolds", () => {
     ["no comparison ran", checks([held()])],
     ["a job merely named like it", checks([verdict, held("cooldown-ish")])],
     ["nothing failed", checks([verdict])],
-    ["the rescan couldn't evaluate the cooldown", checks([verdict], [status("error", "supply-chain / cooldown")])],
-    ["the rescan's comparison failed too", checks([verdict], [status("failure", "supply-chain / cooldown"), status("failure", "supply-chain / supply-chain")])],
+    ["an older rescan couldn't evaluate the cooldown", checks([verdict], [status("error", "supply-chain / cooldown")])],
+    ["an older rescan's comparison failed too", checks([verdict], [status("failure", "supply-chain / cooldown"), status("failure", "supply-chain / supply-chain")])],
     ["a status merely named like it", checks([verdict], [status("failure", "cooldown-ish")])],
   ])("isn't a hold when %s", (_name, value) => {
     expect(onlyCooldownHolds(value)).toBe(false);

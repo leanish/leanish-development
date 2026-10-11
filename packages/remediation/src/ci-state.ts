@@ -1,5 +1,5 @@
 // Copied from leanish/leanish-development agents/bump-it/src/ci-state.ts at c6282df; see PROVENANCE.md.
-// Local changes: `CiConclusion` defined here instead of bump-it's handler type; failingCheckNames supplies both failed Actions jobs and commit status contexts to adaptations; onlyCooldownHolds tells the gate's cooldown hold (its job's hold step, or the daily rescan's `failure` cooldown status) from a failure.
+// Local changes: `CiConclusion` defined here instead of bump-it's handler type; failingCheckNames supplies both failed Actions jobs and commit status contexts to adaptations; onlyCooldownHolds tells the gate's cooldown hold (its job's hold step, or the `failure` cooldown status older gates' daily rescan posted) from a failure.
 import type { GitHubCheckRun, GitHubCommitStatus, GitHubHeadChecks } from "../../agent-basics/src/types/clients.ts";
 
 /** What a PR head's CI says. */
@@ -73,9 +73,10 @@ const isGateJob = (run: GitHubCheckRun, job: string) => run.name === job || run.
 /**
  * Whether the head's only failures are the gate's cooldown holding young
  * versions after a passing comparison: waiting, not broken. That's the
- * cooldown job failing its hold step, or the daily rescan's `failure` status
- * under the cooldown check's name (it posts a cooldown it can't evaluate as
- * `error`). A cooldown that failed any other way (no evaluation, a missing
+ * cooldown job failing its hold step, or a `failure` status under the
+ * cooldown check's name: gates before 0.3.1 rescanned open PRs daily and posted
+ * these, and they stay on a head nothing pushed to since (a cooldown that
+ * rescan couldn't evaluate was an `error`). A cooldown that failed any other way (no evaluation, a missing
  * report, cancelled) is an ordinary failure, and so is a hold next to any
  * other failure.
  */

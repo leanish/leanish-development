@@ -100,7 +100,7 @@ For every version a PR adds or changes:
 - **Identity:** a version that replaces another fails on a publisher identity break: provenance dropped or from another repository or workflow, provenance from a repository the replaced version doesn't declare, or (without provenance) a publisher who hadn't published the package up to the replaced version. Every provenance statement must name the exact package, version and locked sha512.
 - Bundles the lockfile doesn't fully record fail: every `bundleDependencies` entry, and what it depends on, needs an `inBundle` entry inside the package that ships it.
 
-The CLI's `npm-signatures` command runs scriptless `npm ci` and `npm audit signatures` in fresh temporary projects containing only the selected lockfile and root/workspace manifests. It ignores repository `.npmrc` files and ambient npm/proxy settings, uses only gate-approved registries, and disables Git execution. Git, tarball URL and external file dependencies are refused; internal workspace links remain supported. The PR job and daily rescan use this same verifier; the rescan skips it unless comparison passes. See the [security model](../../docs/security-model.md) for the publisher's execution boundary.
+The CLI's `npm-signatures` command runs scriptless `npm ci` and `npm audit signatures` in fresh temporary projects containing only the selected lockfile and root/workspace manifests. It ignores repository `.npmrc` files and ambient npm/proxy settings, uses only gate-approved registries, and disables Git execution. Git, tarball URL and external file dependencies are refused; internal workspace links remain supported. See the [security model](../../docs/security-model.md) for its execution boundary.
 
 ## A young security fix (any ecosystem)
 
@@ -194,11 +194,10 @@ requires it, or a `releaseAge` exception names it:
 - Exceptions don't clear a hold. Taking a held version before its time is a person's decision: every other check
   green, the reason written on the PR, then an admin merge past the red `cooldown` check. Where nothing enforces
   the check (no ruleset, e.g. a private repository on the free plan), the same: a merge with the reason written.
-- The daily rescan re-judges the cooldown under the base's current policy and posts it as a status named like the
-  required cooldown check: a PR that was green under a shorter wait is held again when the base raises it. A status
-  can't clear a red `cooldown` job, though: secure-it retires its held PRs once everything aged and opens a fresh one;
-  for a person's PR, re-run the **whole** workflow on the current revision after the time it gives (a re-run of the
-  `cooldown` job alone reads the old report and stays red).
+- Open PRs aren't rescanned: the cooldown is judged when the PR is opened, pushed to, reopened or retargeted.
+  secure-it and bump-it retire their held PRs once everything aged and open fresh ones; for a person's PR, re-run the
+  **whole** workflow after the time it gives (a re-run of the `cooldown` job alone reads the old report and stays
+  red), or push. A base that raises its wait later doesn't re-hold a PR that was already green.
 
 `compare` writes the held versions into its report (`cooldown`, report schema 2); `supply-chain cooldown --report
 <file> --head <sha>` reads it, refusing anything but a complete, passing comparison of that exact head.
@@ -244,7 +243,7 @@ Malware ids can't be excepted.
 
 ## Report
 
-`--report <file>` writes JSON: `schemaVersion`, `mode`, the gate's commit and OSV-Scanner version, a digest of the config, `baseSha`, `headSha` (the daily rescan's reports also carry `prHeadSha`, the PR's own head, since its `headSha` is that head merged onto the base's tip), `startedAt` (the snapshot's time), `completedAt`, `completed`, `verdict`, and the failures, warnings, notes and gaps.
+`--report <file>` writes JSON: `schemaVersion`, `mode`, the gate's commit and OSV-Scanner version, a digest of the config, `baseSha`, `headSha`, `startedAt` (the snapshot's time), `completedAt`, `completed`, `verdict`, and the failures, warnings, notes and gaps.
 
 ## Adopting the gate
 
@@ -265,22 +264,14 @@ on:
   schedule:
     - cron: "17 5 * * *" # an odd minute: GitHub delays or drops scheduled runs on the hour
   workflow_dispatch:
-    inputs:
-      pr:
-        description: Rescan only this open PR now
-        required: false
-        type: string
 
 permissions:
   contents: read
 
 jobs:
   supply-chain:
-    uses: leanish/supply-chain/.github/workflows/supply-chain.yml@cb630386ce9976cef5ba37665f4abc615f34d7fe # v0.1.0-rc.4-ubuntu26
-    permissions:
-      contents: read
-      pull-requests: read # the daily rescan lists open PRs
-      statuses: write # the daily rescan posts its verdicts
+    # A full commit SHA of v0.3.1 or later (earlier gates also need `pull-requests: read` and `statuses: write`).
+    uses: leanish/supply-chain/.github/workflows/supply-chain.yml@<full commit SHA> # v0.3.1
     with:
       java-version: "25" # for Gradle builds; several lines for several JDKs, the last one runs Gradle
 ```
@@ -288,21 +279,18 @@ jobs:
 What runs where:
 
 - **On a PR:** two inventory jobs (base and head) run the Gradle builds with a read-only token; the `supply-chain` job compares their output and the lockfiles and workflows read from git, and its result is the verdict. It runs with `if: always()` and fails when an inventory job didn't succeed, so a skipped job never satisfies the required check. The `cooldown` job then reads the verdict's report: red while it holds young versions, and red when the comparison didn't pass (also `if: always()`, so it's never skipped on a PR).
-- **On pushes to the default branch and daily:** the full `scan`.
-- **Daily (and on `workflow_dispatch`):** every open PR's head is merged onto its base's current tip (the same commit in every job; the head itself, against its merge base, when the merge conflicts). One job per PR inventories the base, uploads it before any PR code runs, then inventories the merged PR. A single `rescan` job, the only one with write access and running no code from the repository, then goes through the PRs: re-reads each (still open, same head, same base), compares it with today's advisories, checks npm signatures in clean temporary projects only when comparison passes, and posts the verdict as a commit status on the PR's head, named like the required check, and, once the comparison completed, the cooldown under the base's current policy, named like the required cooldown check (an `error` for a PR that conflicts with its base, whose merge base's policy isn't current); neither is posted over a newer status of its name. A PR whose inventories or comparison didn't complete gets a failure. Verdicts never leave that job, so nothing another job uploads can stand in for one; the tools it runs (npm, git) never get its token in their environment.
+- **On pushes to the default branch, daily and on `workflow_dispatch`:** the full `scan` of the default branch, with today's advisories. Open PRs aren't rescanned: an advisory published after a PR's last check shows up when it's pushed to again, or in the default branch's scan once it's merged.
 
 **GitHub settings**
 
-- A ruleset (or branch protection) on the default branch requiring the checks `supply-chain / supply-chain` and `supply-chain / cooldown` (`<your job id> / …`; pass `required-check` and `required-cooldown-check` if you call the job something else, or require a bridge job's checks instead), from GitHub Actions. secure-it and bump-it recognise the cooldown hold by those job names and the job's steps, and the daily rescan's hold by a `failure` status of the cooldown check's name (a cooldown it can't evaluate is an `error`); they recognise only `cooldown` or a name ending in ` / cooldown`, so a differently named cooldown check makes a held PR look broken to them (adapted, then closed). GitHub then requires both the check and the daily status of that name to pass: a red status blocks a PR whose own check was green, and the latest status wins. Required checks on private repositories need a paid plan.
+- A ruleset (or branch protection) on the default branch requiring the checks `supply-chain / supply-chain` and `supply-chain / cooldown` (`<your job id> / …`, or a bridge job's checks), from GitHub Actions. secure-it and bump-it recognise the cooldown hold by the job's name and steps; they recognise only `cooldown` or a name ending in ` / cooldown`, so a differently named cooldown check makes a held PR look broken to them (adapted, then closed). Required checks on private repositories need a paid plan.
 - Actions enabled, allowing the actions this workflow uses (actions/checkout, setup-node, setup-java, upload-artifact, download-artifact).
 - The dependency graph and Dependabot **alerts** on; Dependabot version and security updates off (secure-it and bump-it make those PRs, with this gate's rules).
 
 **Limits**
 
-- **Fork PRs:** their workflow runs from the fork's own files, with a read-only token and no secrets, so their check is only as trustworthy as the PR: review workflow and build changes, require approval for outside contributors' runs, and don't merge before the daily rescan's status lands (or trigger it with `workflow_dispatch`, `pr` input).
+- **Fork PRs:** their workflow runs from the fork's own files, with a read-only token and no secrets, so their check is only as trustworthy as the PR: review workflow and build changes, require approval for outside contributors' runs, and check the PR against the default branch yourself before merging: nothing re-runs it from trusted files.
 - **Scheduled runs** are best effort: GitHub may delay or skip them under load, and disables them in a public repository after 60 days without activity.
-- **The rescan goes through PRs one after another** in one job (up to 256 open PRs): minutes per PR, fine for a repository's own pace of work, slow for hundreds of open PRs.
-- A PR's build runs in its inventory job, which could also upload an artifact under another PR's name; such cross-PR tampering can make that PR's inventory lie, like a build can lie about its own.
 - The Gradle inventory comes from running the build, so a malicious build script or plugin can alter its own inventory; the job split keeps it from touching the comparison and the publishing credentials, not from lying about itself.
 
 **Updating the pin:** a PR that changes the SHA (and its `# vX.Y.Z` comment); bump-it does it like any other action update.

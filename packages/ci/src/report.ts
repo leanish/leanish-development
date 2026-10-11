@@ -1,6 +1,6 @@
 /**
  * The run's report: a JSON document for machines (secure-it reads it, the
- * daily publisher posts its verdict), plus GitHub annotations and a markdown
+ * `cooldown` job evaluates it), plus GitHub annotations and a markdown
  * step summary for people. `completed` says whether the gate ran to the end;
  * `verdict` is `fail` whenever it didn't.
  */
@@ -20,8 +20,6 @@ export interface Report {
   readonly configDigest: string;
   readonly baseSha: string | undefined;
   readonly headSha: string;
-  /** The PR's own head, set by the daily rescan, whose `headSha` is that head merged onto the base's tip. */
-  readonly prHeadSha: string | undefined;
   readonly startedAt: string;
   readonly completedAt: string;
   readonly completed: boolean;

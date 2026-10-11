@@ -204,8 +204,7 @@ BeanUtils. It can go after that dependency is removed or naturally resolves safe
   match; someone must identify and update the package that ships them.
 - Gradle local files and JARs are not external modules. A build or plugin can hide
   dependencies from its own inventory. Job isolation protects credentials, not
-  the truth of that inventory. Daily rescan artifacts can also be tampered with
-  by another PR's build. Review build and workflow changes, especially on forks.
+  the truth of that inventory. Review build and workflow changes, especially on forks.
 - A missing GitHub source repository, a private/deleted/renamed repository, or an
   unreadable advisory range leaves a reported gap in repository advisories.
   OSV coverage still applies. One known range-reading defect can over-report:
@@ -271,8 +270,11 @@ BeanUtils. It can go after that dependency is removed or naturally resolves safe
   can publish changes. The tools read Actions jobs and commit statuses, not another
   app's Checks-only results or GitHub's list of required checks.
 - Schedules can be delayed, skipped or disabled after 60 days of public-repository
-  inactivity. Rescans are sequential and capped at 256 PRs. If planning the rescan
-  fails, old statuses can remain. There is no separate watchdog.
+  inactivity. There is no separate watchdog.
+- Open PRs aren't rescanned daily. An advisory published after a PR's last check
+  shows up when it's pushed to again, or in the default branch's daily scan after
+  merging. A person's PR held by the cooldown stays red until it's pushed to or its
+  whole workflow is re-run after the date the hold gives.
 - Verification is about dependencies and policy, not whether a migration behaves
   correctly. Agent retries are bounded. Human pushes are left alone. Publication
   guards reduce races, but GitHub writes cannot be made atomic with a head check.
@@ -282,7 +284,7 @@ BeanUtils. It can go after that dependency is removed or naturally resolves safe
 Install and pin the gate, and require **both the supply-chain and cooldown checks**.
 Check scan health, read gaps and omissions, and review exceptions before they expire.
 Review migrations and run application tests. Compatibility floors need manual review.
-For fork PRs, wait for the trusted default-branch rescan, or trigger it manually.
+For fork PRs, check them against the default branch yourself before merging.
 
 Young fixes stay draft, with a warning and the date the wait ends. To take one
 early, make every other check green, write the reason on the PR, and make an admin
