@@ -33,23 +33,26 @@ packages/remediation/run.sh secure-it review leanish/sqs-codec   # every few hou
    |---|---|---|
    | npm | a direct dependency | change its range and lock |
    | npm | a transitive one that every parent's range allows | lock exactly `to`, through temporary pins (a declaration for peers) |
-   | npm | otherwise | a lasting override plus a floor entry |
+   | npm | a transitive one a parent's range excludes, when that parent has a version in its own line, past the wait, whose range admits the fix (and that adds no advisory, keeps its publisher, and moves without an override itself) | move that parent too, and lock the copy inside its new range; of a parent's versions, the one admitting the most of the copies it must (the lowest of those that tie) |
+   | npm | otherwise (also a copy the parent's chosen version doesn't admit) | a lasting override plus a floor entry (the PR notes why no parent could move, or why the one that moves doesn't admit it) |
+   | npm | a copy its parent bundles (`inBundle`) | move the carrier (the nearest non-bundled ancestor) to the version the security rule picks for its bundle, read from the registry archive (`carries` in the plan); a carrier that would need an override is reported instead |
    | Gradle | a dependency the repository's sources declare | change its version |
-   | Gradle | a transitive one, or one only a plugin declares | a floor: an explicit dependency with `because(...)`, plus its entry in `.github/dependency-floors.json` |
+   | Gradle | a transitive one, or one only a plugin declares, that a dependency the sources declare brings in every affected configuration | first, that declaration's lowest version in its own line, past the wait, that brings a fixed version (proved by a reference resolution, at most 6 per vulnerable module; the declaration moves wherever it's declared, `carries` in the plan) |
+   | Gradle | otherwise, or when no such version is proved | a floor: an explicit dependency with `because(...)`, plus its entry in `.github/dependency-floors.json` (the PR notes why no parent could move) |
    | Actions | any | pin to the tag's commit |
    - **Young fixes go apart.** Fixes whose target is younger than the release-age wait, everything coupled to them,
      and any fix whose required npm dependency is young form their own routine unit (topic `security-cooldown`), so
      the aged fixes aren't held back. A major or malware unit with a young version stays whole and is held.
 5. **Looks at its open PRs first.**
-   - An open PR for the same routine/major/malware unit, with an identical plan and a recognised head: nothing to do; its review owns it. The unit reports `already-open`. Other major units still proceed. An already-open malware unit is left to review without planning other work.
+   - An open PR for the same routine/major/malware unit, with an identical plan and a recognised head: keep its commits and refresh the plan section if its notes changed; its review owns further work. The unit reports `already-open`. Other major units still proceed. An already-open malware unit is left to review without planning other work.
    - One with a different plan, while its head is still the tool's: that PR is reconciled. The default branch is merged into it, every file it changed goes back to the base's content, and the new plan is applied on top, so nothing the old plan did lingers. It's pushed as a normal commit.
    - One someone else pushed to: the fix goes in a PR of its own.
 6. **The tool resolves npm; the agent applies non-npm moves** (skill [`secure-it`](skills/secure-it/SKILL.md)). It changes code only for a major move, with `majorEffort`.
    npm may resolve transitive changes a planned move requires, under the supplied release-age window and exclusions.
    The tool resolves those versions; the agent never changes npm dependency fields or lockfiles. Direct
-   dependencies outside the plan stay unchanged, except what a planned Gradle plugin fix itself adds, moves or removes
-   in its build when the edit is nothing but the planned version swaps (a floor added alongside is another edit, so it
-   doesn't qualify; [`packages/ci/README.md`](../ci/README.md)). Direct peers selected by code are explicit moves, even when they
+   dependencies outside the plan stay unchanged; in Gradle, the edit must resolve and declare exactly what the plan's
+   reference does (the base with the plan applied by Gradle, so a planned plugin fix's own fallout is in it;
+   [`packages/ci/README.md`](../ci/README.md)). Direct peers selected by code are explicit moves, even when they
    have no advisory themselves. New or purely transitive peers remain npm's resolution under `compare` unless they need the proved exception below.
    When a security target needs a version with no aged satisfier, code proves the registry requirement and pins its
    lowest stable, non-deprecated target exactly. This includes young direct-peer companions and recursive
@@ -104,7 +107,9 @@ run report and the PR's plan notes. Incomplete inventories or advisory coverage 
   special exemption in this unlocked proof. The tool writes the successful joint result's exact manifest and
   lockfile bytes; npm-only removal uses no agent.
 - **Gradle:** a trusted init script removes only the selected exact advisory-bearing declarations from the selected
-  configurations and disables dependency locking. Shared parent configurations stay intact. The inventory runs
+  configurations and disables dependency locking. Shared parent configurations stay intact; a floor declared directly
+  on a buildscript or settings classpath (which resolves while its script compiles) is dropped as its dependencies
+  are finalized. The inventory runs
   sandboxed with `--no-daemon` and configuration caching disabled. A declaration already used in resolution cannot
   be safely removed by this probe, so that floor is retained with a reason. After proof, the agent removes only the
   named declarations from the real build files; it cannot edit the tool-written floor/npm files or adapt code.
@@ -118,7 +123,8 @@ the removed floors' advisories. No removal is published on a failed proof or ver
 Review recomputes the unlocked proof on a moved base and reconciles by reverting the old plan before applying the
 new one. An unavailable or unsafe proof retains the PR and reports why; no floors remaining on base retires it.
 Failed CI is reported without agent adaptation: the exact proved edit cannot be changed legitimately. The shared
-review attempt budget still applies. An unchanged recognised plan reports `already-open`; a human-pushed PR is left
+review attempt budget still applies. An unchanged recognised plan reports `already-open`, refreshing changed plan
+notes without changing commits; a human-pushed PR is left
 alone and any needed removal goes on a separate branch. Hidden plans record complete floor identities and file
 hashes, never npm file contents.
 

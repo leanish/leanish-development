@@ -3,6 +3,8 @@
 Dependency security and freshness for npm, Gradle and GitHub Actions, with one
 version/advisory policy shared by CI and the update tools.
 
+[What it handles and where it stops](docs/what-it-handles.md): a plain-language guide.
+
 - **The CI gate** compares base and head against one advisory snapshot. A PR fails
   on what it makes worse; malware always fails. Daily scans check the default
   branch and refresh the verdict on open PRs.

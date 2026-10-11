@@ -11,8 +11,10 @@ import type { Floor } from "../../ci/src/floors.ts";
 import { type SecurityCandidates, type SecurityFix, securityCandidates } from "../../ci/src/candidates.ts";
 import { type CooldownEvaluation, heldUntil } from "../../ci/src/cooldown.ts";
 import type { NpmPeerPlanner } from "../../ci/src/npm-peers.ts";
-import type { GateEnvironment, GradleInputs } from "../../ci/src/gate.ts";
+import { type GateEnvironment, type GradleInputs, readSettings } from "../../ci/src/gate.ts";
+import type { GradleInventory } from "../../ci/src/gradle.ts";
 import { namingFailures } from "../../ci/src/http.ts";
+import { BundleReader } from "../../ci/src/npm-bundles.ts";
 import { NpmRegistry, releaseSignals } from "../../ci/src/npm-registry.ts";
 import type { HeldVersion } from "../../ci/src/release-age.ts";
 import { runProcess } from "../../ci/src/process.ts";
@@ -22,7 +24,8 @@ import type { ToolHandlers, ToolRunContext } from "../../remediation/src/command
 import { FLOORS_FILE, isMechanical } from "../../remediation/src/edit-checks.ts";
 import { writeLocalFile } from "../../remediation/src/local-files.ts";
 import { gradleSourceIndex } from "../../ci/src/gradle-sources.ts";
-import { changedSince, modeChangedSince } from "../../remediation/src/git-copies.ts";
+import { changedSince } from "../../remediation/src/git-copies.ts";
+import { referenceTransform } from "../../remediation/src/gradle-reference.ts";
 import { type GradleInventories, lockfilesOf, sandboxedGradleInventories } from "../../remediation/src/inventories.ts";
 import { FileJournal, type PublicationJournal } from "../../remediation/src/journal.ts";
 import { formatManifest } from "../../remediation/src/manifest-format.ts";
@@ -32,20 +35,23 @@ import { runSandboxed } from "../../remediation/src/sandboxed.ts";
 import { ensureOsvScanner, verifyingRun } from "../../remediation/src/osv-scanner.ts";
 import { branchFor, ownPullRequests, stateOf, topicOf } from "../../remediation/src/own-pr.ts";
 import { revertToBase } from "../../remediation/src/reconcile.ts";
-import { clearLeftoverBranch, closeAndDelete, ownOpenPullRequests, type PublicationContext, publishNew, publishUpdate, recoverPublication } from "../../remediation/src/publication.ts";
+import { clearLeftoverBranch, closeAndDelete, ownOpenPullRequests, type PublicationContext, publishNew, publishUpdate, recoverPublication, rewriteText } from "../../remediation/src/publication.ts";
 import { type BaseMerge, type CooldownState, reviewOpenPullRequests, type ReviewSteps } from "../../remediation/src/review.ts";
 
+import { removalTransform } from "./floor-gradle.ts";
 import { probeOnBase } from "./floor-probe.ts";
 import { type ComputedRemoval, type RemovalProbe, floorsOf, selectRemovals } from "./floor-removal.ts";
 import { reconcileNpmFloors } from "./npm-floor-history.ts";
 import { materializeOnBase } from "./npm-materialize.ts";
+import { withGradleParents } from "./gradle-parents.ts";
+import { withParents } from "./npm-parents.ts";
 import { requiredNpmPlan } from "./npm-required-plan.ts";
 import { npmWindowFor } from "./npm-window.ts";
 import { planDigest, planOf, planSection, withPlanSection } from "./plan-block.ts";
-import { type ChangePlan, coupledWork, HELD_TOPIC, packageKey, planFor, type PlannedHold, type SecurityUnit } from "./plan.ts";
+import { type ChangePlan, coupledWork, type FixWork, HELD_TOPIC, packageKey, planFor, type PlannedHold, type SecurityUnit, withUnsupportedCarriers } from "./plan.ts";
 import { namedProblems, retryWithoutNamed, type ProblemMoves } from "./retry.ts";
 import { staleScanStatus, type StaleScan } from "./stale-scan.ts";
-import { verifyPlan, type VerifyInputs } from "./verify.ts";
+import { referencePlan, verifyPlan, type VerifyInputs } from "./verify.ts";
 
 export const RULES = ownPullRequests("secure-it");
 const SKILLS_DIR = fileURLToPath(new URL("../skills", import.meta.url));
@@ -69,7 +75,6 @@ export interface SecureItDeps {
   readonly verify: (inputs: VerifyInputs) => Promise<string[]>;
   readonly staleScan: (context: ToolRunContext) => Promise<StaleScan>;
   readonly changedSince: (workingCopy: WorkingCopy, sha: string) => Promise<string[]>;
-  readonly modeChangedSince: (workingCopy: WorkingCopy, sha: string) => Promise<string[]>;
   readonly journal: (context: ToolRunContext) => PublicationJournal;
   /** Writes `content` at `path` (relative to the working copy): taking the base's side of a conflicted dependency file. */
   readonly writeFile: (workingCopy: WorkingCopy, path: string, content: string) => Promise<void>;
@@ -88,7 +93,7 @@ export function defaultDeps(): SecureItDeps {
       // Outside everything sandboxed commands can write, and checked right before each run.
       const writable = [context.config.dirs.cache, context.workingCopy.path, tmpdir(), "/tmp", ...(context.isolation.buildCacheRoot === undefined ? [] : [context.isolation.buildCacheRoot])];
       const osv = await ensureOsvScanner(context.config.dirs.state, writable);
-      return { run: verifyingRun(runProcess, osv), fetch: namingFailures((url, init) => fetch(url, init)), now: () => new Date(), osvScanner: osv.path, githubToken: context.readToken };
+      return { run: verifyingRun(runProcess, osv), fetch: namingFailures((url, init) => fetch(url, init)), now: () => new Date(), osvScanner: osv.path, githubToken: context.readToken, bundles: new BundleReader() };
     },
     gradle: (context) => sandboxedGradleInventories(context.isolation, context.workingCopy),
     trees: { commit: (workingCopy, sha) => gitTree(workingCopy.path, sha, runProcess), working: (workingCopy) => workingTree(workingCopy.path) },
@@ -97,7 +102,6 @@ export function defaultDeps(): SecureItDeps {
     verify: verifyPlan,
     staleScan: (context) => staleScanStatus(context.repo.repo, context.base, context.readToken, context.now, context.config.staleScanHours ?? 36),
     changedSince: (workingCopy, sha) => changedSince(workingCopy, sha),
-    modeChangedSince: (workingCopy, sha) => modeChangedSince(workingCopy, sha),
     journal: (context) => new FileJournal(context.config.dirs.state),
     writeFile: (workingCopy, path, content) => writeLocalFile(workingCopy.path, path, content),
     revert: (workingCopy, baseSha) => revertToBase(workingCopy, baseSha),
@@ -142,6 +146,7 @@ function skillInput(context: ToolRunContext, plan: ChangePlan, npmAgeExclusions:
       major: move.major,
       ...(move.commitSha === undefined ? {} : { commitSha: move.commitSha }),
       ...(move.declaredAs === undefined ? {} : { declaredAs: move.declaredAs }),
+      ...(move.carries === undefined ? {} : { carries: move.carries.map((carried) => ({ ...carried, from: [...carried.from], to: [...carried.to], locations: [...carried.locations], advisories: [...carried.advisories] })) }),
     })),
     ...(plan.floorRemoval === undefined ? {} : {
       floorRemovals: plan.floorRemoval.floors.filter((floor) => floor.ecosystem === "Maven").map((floor) => ({
@@ -228,7 +233,8 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   const found = await deps.candidates(tree, env, { head: base.gradle });
   const report = { staleScan, gaps: found.gaps.length };
   if (found.incomplete.length > 0) return { ...report, outcome: "incomplete", incomplete: found.incomplete };
-  const selection = await coupledWork(found.fixes, found.npmPeers);
+  const planned = await withParentsPlanned(found, base, env, inventories);
+  const selection = await coupledWork(planned.fixes, planned.peers);
   const waiting = selection.blocked.flatMap((group) => group.reasons);
 
   const execution = { context, deps, env, inventories, publication: publicationOf(context, deps), npmFiles: new Map<string, string>() };
@@ -257,6 +263,40 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   return { ...report, ...(results.length === 1 ? results[0]! : { outcome: "completed" }), waiting, blocked: selection.blocked, units: results };
 }
 
+/**
+ * The run's fixes with their parents (`parentsFirst`), and the direct-peer planner that sees the npm parents they
+ * added: a parent may need a peer of its own to move.
+ */
+export async function withParentsPlanned(found: SecurityCandidates, base: PlanBase, env: GateEnvironment, inventories: GradleInventories): Promise<{ readonly fixes: FixWork[]; readonly peers: NpmPeerPlanner | undefined }> {
+  const fixes = await parentsFirst(found.fixes, base, env, inventories);
+  const added = fixes.filter((fix) => fix.ecosystem === "npm" && fix.to !== undefined && !found.fixes.some((other) => other.ecosystem === "npm" && other.name === fix.name && other.from === fix.from));
+  if (added.length === 0 || found.peersWith === undefined) return { fixes, peers: found.npmPeers };
+  return { fixes, peers: await found.peersWith(added.map((fix) => ({ ecosystem: "npm" as const, name: fix.name, version: fix.to!.version }))) };
+}
+
+/**
+ * Parents first, on every fix of the run before it's split into units (a parent's own fix may land in another unit
+ * otherwise): npm parents where an override would be needed, Gradle parents where a floor would; then npm carriers
+ * that would need an override are blocked.
+ */
+async function parentsFirst(fixes: ReadonlyArray<SecurityFix>, base: PlanBase, env: GateEnvironment, inventories: GradleInventories): Promise<FixWork[]> {
+  const lockfiles = await lockfilesOf(base.tree);
+  const { config, exceptions } = await readSettings(base.tree);
+  let work = await withParents(fixes, { lockfiles, env, config, exceptions });
+  if (base.gradle !== undefined) {
+    const sources = await gradleSourceIndex(base.tree);
+    work = await withGradleParents(work, { base: base.tree, gradle: base.gradle, named: sources.named, inventories, env, config });
+  }
+  return withUnsupportedCarriers(work, lockfiles);
+}
+
+/** An open PR of the same plan keeps its commits; its plan section is rewritten when what it says (notes) changed. */
+async function refreshText(execution: Execution, pr: GitHubPullRequest, plan: ChangePlan): Promise<void> {
+  const previous = planOf(pr.body);
+  if (previous !== undefined && planSection(previous) === planSection(plan)) return;
+  await rewriteText(execution.publication, pr.number, pr.headSha, (body) => withPlanSection(body, plan));
+}
+
 async function computeRemoval(execution: Execution, base: PlanBase): Promise<ComputedRemoval> {
   return selectRemovals(await floorsOf(base.tree), (floors) => execution.deps.floorProbe(execution.context, base.tree, floors, execution.env),
     (text) => createHash("sha256").update(text).digest("hex"));
@@ -279,7 +319,10 @@ async function runRemoval(execution: Execution, removal: ComputedRemoval, base: 
   const owned = await recognisedPlans(execution.context, execution.publication, own, plan);
   const already = owned.find((pr) => stateOf(pr.body)?.head === pr.headSha && planDigest(planOf(pr.body)!) === planDigest(plan));
   const report = { topic: plan.topic, packages: plan.packages, notes: removal.notes };
-  if (already !== undefined) return { ...report, outcome: "already-open", pullRequest: already.url };
+  if (already !== undefined) {
+    await refreshText(execution, already, plan);
+    return { ...report, outcome: "already-open", pullRequest: already.url };
+  }
   const reusable = owned[0];
   const prepared = await preparePlan(execution.context, execution.deps, plan, reusable, own, base.tree.id);
   const content = await applyRemoval(execution, removal);
@@ -331,7 +374,8 @@ async function holdRequiredYoung(execution: Execution, units: ReadonlyArray<Secu
 async function planUnit(execution: Execution, unit: SecurityUnit, base: PlanBase): Promise<ChangePlan> {
   const actions = new ActionsGitHub(execution.env.fetch, execution.env.githubToken);
   const sources = base.gradle === undefined ? undefined : await gradleSourceIndex(base.tree);
-  const plan = await planFor(unit.work, { lockfiles: await lockfilesOf(base.tree), gradle: base.gradle, named: sources?.named, tagCommit: (action, tag) => actions.tagCommit(action, tag) }, unit);
+  const lockfiles = await lockfilesOf(base.tree);
+  const plan = await planFor(unit.work, { lockfiles, gradle: base.gradle, named: sources?.named, tagCommit: (action, tag) => actions.tagCommit(action, tag) }, unit);
   return execution.deps.requiredNpm(base.tree, plan, execution.env);
 }
 
@@ -344,7 +388,10 @@ async function runUnit(execution: Execution, unit: SecurityUnit, base: PlanBase,
     return stateOf(pr.body)?.head === pr.headSha && previous !== undefined && planDigest(previous) === planDigest(plan);
   });
   const details = { topic: plan.topic, packages: plan.packages, notes: plan.notes ?? [] };
-  if (already !== undefined) return { ...details, outcome: "already-open", pullRequest: already.url };
+  if (already !== undefined) {
+    await refreshText(execution, already, plan);
+    return { ...details, outcome: "already-open", pullRequest: already.url };
+  }
   const reusable = owned[0];
   const prepared = await preparePlan(context, deps, plan, reusable, own, base.tree.id);
   const input = await agentInput(execution, plan, base.tree, "apply");
@@ -491,10 +538,32 @@ async function verifyEdit(
 ): Promise<string[]> {
   const head = deps.trees.working(context.workingCopy);
   const headGradle = await inventories.ofWorkingTree(head);
+  let reference: GradleInventory | undefined;
+  try {
+    reference = await referenceOf(plan, base, baseGradle, inventories);
+  } catch (err) {
+    return [`the plan's Gradle reference can't be built: ${(err as Error).message}`];
+  }
   return deps.verify({
-    plan, base, head, env, npmFiles, gradle: { base: baseGradle, head: headGradle }, changedFiles: await deps.changedSince(context.workingCopy, base.id),
-    modeChanged: await deps.modeChangedSince(context.workingCopy, base.id), ...(cooldown === undefined ? {} : { cooldown }),
+    plan, base, head, env, npmFiles, gradle: { base: baseGradle, head: headGradle }, reference, changedFiles: await deps.changedSince(context.workingCopy, base.id),
+    ...(cooldown === undefined ? {} : { cooldown }),
   });
+}
+
+/**
+ * The base with the plan applied by Gradle (`gradle-reference.ts`): its floors removed for a floor removal, its
+ * declaration moves and floors otherwise. The base's own inventory when the plan changes nothing there, or when its
+ * moves can't be applied faithfully (verification reports why).
+ */
+async function referenceOf(plan: ChangePlan, base: Tree, baseGradle: GradleInputs["head"], inventories: GradleInventories): Promise<GradleInventory | undefined> {
+  if (baseGradle === undefined) return undefined;
+  if (plan.kind === "floor-removal") {
+    const floors = (plan.floorRemoval?.floors ?? []).filter((floor) => floor.ecosystem === "Maven");
+    return floors.length === 0 ? baseGradle : inventories.ofCommit(base, { transform: removalTransform(floors) });
+  }
+  const { moves, floors, problems } = referencePlan(plan, baseGradle);
+  if (problems.length > 0 || (moves.length === 0 && floors.length === 0)) return baseGradle;
+  return inventories.ofCommit(base, { transform: referenceTransform(moves, floors) });
 }
 
 async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Readonly<Record<string, unknown>>> {
@@ -536,7 +605,8 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
         await publishUpdate(publication, merge.prepared, pr.number, content);
         return "rebased";
       }
-      const { units, blocked } = await reviewUnits(previous, found.fixes, found.npmPeers);
+      const planned = await withParentsPlanned(found, { tree: base, gradle: baseGradle }, env, inventories);
+      const { units, blocked } = await reviewUnits(previous, planned.fixes, planned.peers);
       if (blocked.length > 0) notes.push({ number: pr.number, blocked });
       // Split exactly as a run would, required-dependency moves included, before telling which unit is this PR's.
       const unit = unitOf(previous, await holdRequiredYoung(execution, units, { tree: base, gradle: baseGradle }));

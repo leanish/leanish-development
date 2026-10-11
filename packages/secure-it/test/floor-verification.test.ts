@@ -12,7 +12,7 @@ import { verifyPlan, type VerifyInputs } from "../src/verify.ts";
 vi.mock("../../ci/src/gate.ts", async (load) => ({ ...await load<typeof import("../../ci/src/gate.ts")>(), runCompare: vi.fn() }));
 beforeEach(() => {
   vi.mocked(runCompare).mockReset();
-  vi.mocked(runCompare).mockResolvedValue({ failures: [], headFindings: [], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, cooldown: { evaluated: true, releaseAgeDays: 7, held: [] } });
+  vi.mocked(runCompare).mockResolvedValue({ failures: [], headFindings: [], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, group: (id: string) => id, cooldown: { evaluated: true, releaseAgeDays: 7, held: [] } });
 });
 const ID = "CVE-2026-12345";
 const raw = (name: string, ecosystem = "npm", purpose = "security") => ({ ecosystem, package: name, version: ecosystem === "npm" ? "2.0.0" : "2.0", declaredIn: ecosystem === "npm" ? "package.json" : "build.gradle.kts",
@@ -30,7 +30,7 @@ function fixture() {
   const now = { ...was, [FLOORS_PATH]: withoutFloorRecords(records, [floors[0]!]), "package.json": withoutOverrides(manifest, [floors[0]!]) };
   const plan: ChangePlan = { kind: "floor-removal", topic: "floor-removal", moves: [], packages: ["npm|lib"], malware: false, severity: undefined,
     floorRemoval: { floors: [floors[0]!], files: Object.entries(now).map(([path, text]) => ({ path, sha256: hash(text) })), notes: [] } };
-  const input: VerifyInputs = { modeChanged: [], plan, base: tree("base", was), head: tree("head", now), env, gradle: {}, changedFiles: [FLOORS_PATH, "package.json", "package-lock.json"] };
+  const input: VerifyInputs = { reference: undefined, plan, base: tree("base", was), head: tree("head", now), env, gradle: {}, changedFiles: [FLOORS_PATH, "package.json", "package-lock.json"] };
   return { input, was, now, floors };
 }
 
@@ -49,9 +49,9 @@ describe("floor-removal verification", () => {
   it("rejects a removal that the cooldown holds, or whose cooldown wasn't evaluated", async () => {
     const { input } = fixture();
     const held = { ecosystem: "Maven" as const, name: "g:lib", version: "2.1", replaced: ["2.0"], published: "2026-10-06T00:00:00.000Z", eligibleAt: "2026-10-13T00:00:00.000Z", justification: "security-fix" as const };
-    vi.mocked(runCompare).mockResolvedValue({ failures: [], headFindings: [], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, cooldown: { evaluated: true, releaseAgeDays: 7, held: [held] } });
+    vi.mocked(runCompare).mockResolvedValue({ failures: [], headFindings: [], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, group: (id: string) => id, cooldown: { evaluated: true, releaseAgeDays: 7, held: [held] } });
     expect(await verifyPlan(input)).toEqual([expect.stringContaining("a floor removal can't take a version under the release-age wait: Maven g:lib@2.1")]);
-    vi.mocked(runCompare).mockResolvedValue({ failures: [], headFindings: [], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, cooldown: { evaluated: false, reason: "base broke" } });
+    vi.mocked(runCompare).mockResolvedValue({ failures: [], headFindings: [], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, group: (id: string) => id, cooldown: { evaluated: false, reason: "base broke" } });
     expect(await verifyPlan(input)).toEqual(["the cooldown can't be evaluated: base broke"]);
   });
 
@@ -77,7 +77,7 @@ describe("floor-removal verification", () => {
   });
   it("checks recorded advisory aliases even if compare calls them inherited, and forwards all compare failures", async () => {
     const { input } = fixture();
-    vi.mocked(runCompare).mockResolvedValue({ failures: ["identity changed"], headFindings: [{ ecosystem: "npm", name: "lib", version: "1.0.0", advisory: "GHSA-rq7h-c2jc-7f22", ids: [ID], malicious: false, locations: ["node_modules/lib"], summary: undefined, severity: undefined }], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, cooldown: { evaluated: true, releaseAgeDays: 7, held: [] } });
+    vi.mocked(runCompare).mockResolvedValue({ failures: ["identity changed"], headFindings: [{ ecosystem: "npm", name: "lib", version: "1.0.0", advisory: "GHSA-rq7h-c2jc-7f22", ids: [ID], malicious: false, locations: ["node_modules/lib"], summary: undefined, severity: undefined }], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, group: (id: string) => id, cooldown: { evaluated: true, releaseAgeDays: 7, held: [] } });
     expect(await verifyPlan(input)).toEqual(["compare: identity changed", "lib@1.0.0 still has GHSA-rq7h-c2jc-7f22"]);
   });
   it("removes multiple Gradle floors jointly and preserves every other declaration", async () => {
@@ -88,9 +88,11 @@ describe("floor-removal verification", () => {
     const after = before.slice(2);
     const text = withoutFloorRecords(records, removed);
     const plan: ChangePlan = { kind: "floor-removal", topic: "floor-removal", malware: false, severity: undefined, packages: ["Maven|g:lib", "Maven|g:other"], moves: [], floorRemoval: { floors: removed, files: [{ path: FLOORS_PATH, sha256: hash(text) }], notes: [] } };
-    const input: VerifyInputs = { modeChanged: [], plan, base: tree("base", { [FLOORS_PATH]: records, "build.gradle.kts": "before" }), head: tree("head", { [FLOORS_PATH]: text, "build.gradle.kts": "after" }), env,
-      gradle: { base: gradle(before), head: gradle(after) }, changedFiles: [FLOORS_PATH, "build.gradle.kts"] };
+    const input: VerifyInputs = { plan, base: tree("base", { [FLOORS_PATH]: records, "build.gradle.kts": "before" }), head: tree("head", { [FLOORS_PATH]: text, "build.gradle.kts": "after" }), env,
+      gradle: { base: gradle(before), head: gradle(after) }, reference: gradle(after), changedFiles: [FLOORS_PATH, "build.gradle.kts"] };
     expect(await verifyPlan(input)).toEqual([]);
+    // The reference, the base with the floors removed by Gradle, must have lost them; head must match it.
+    expect(await verifyPlan({ ...input, reference: gradle([...after, before[0]!]) })).toContain("the plan's reference still declares g:lib 2.0 at :runtimeClasspath");
     expect(await verifyPlan({ ...input, gradle: { ...input.gradle, head: gradle([...after, before[0]!]) } })).toContainEqual(expect.stringContaining("exactly the planned"));
     expect(await verifyPlan({ ...input, gradle: { ...input.gradle, head: gradle(after.map((entry) => ({ ...entry, version: "9.0" }))) } })).toContainEqual(expect.stringContaining("compatibility floor"));
     expect(await verifyPlan({ ...input, gradle: { ...input.gradle, head: gradle([after[0]!]) } })).toContainEqual(expect.stringContaining("exactly the planned"));

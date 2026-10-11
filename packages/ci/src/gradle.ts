@@ -20,7 +20,7 @@ import { isObject } from "./json.ts";
 import { versionKey } from "./package-version.ts";
 import { type RunProcess, withoutCredentials } from "./process.ts";
 
-export const GRADLE_INVENTORY_SCHEMA_VERSION = 1;
+export const GRADLE_INVENTORY_SCHEMA_VERSION = 2;
 const INIT_SCRIPT = fileURLToPath(new URL("../gradle/supply-chain-inventory.init.gradle", import.meta.url));
 
 export interface Coordinates {
@@ -35,6 +35,8 @@ export interface DeclaredDependency {
   readonly version: string | undefined;
   /** Gradle's `because(...)`. */
   readonly reason: string | undefined;
+  /** In a reference's inventory only: the reference script moved this declaration (`supply-chain-reference.init.gradle`). */
+  readonly moved?: true;
 }
 
 export interface GradleConfiguration {
@@ -44,7 +46,19 @@ export interface GradleConfiguration {
   readonly resolved: ReadonlyArray<Coordinates>;
   readonly unresolved: ReadonlyArray<{ readonly requested: string; readonly failure: string }>;
   readonly declared: ReadonlyArray<DeclaredDependency>;
+  /**
+   * The resolved graph's edges: who brought what, as `group:name:version` for modules and Gradle's display name for
+   * anything else (`project :app`, the configuration's own root). A constraint edge only raised a version. Every
+   * inventory read from Gradle has them; absent (a configuration built by hand), the graph is unknown, never empty.
+   */
+  readonly edges?: ReadonlyArray<GradleEdge>;
   readonly error: string | undefined;
+}
+
+export interface GradleEdge {
+  readonly from: string;
+  readonly to: string;
+  readonly constraint: boolean;
 }
 
 export interface GradleBuild {
@@ -192,9 +206,17 @@ async function readRun(out: string, requested: string): Promise<Map<string, Buil
     if (!settings.has(label)) throw new Error(`Gradle inventory of build ${label} wrote no settings output`);
     const missing = manifest.projects.filter((project) => !projects.get(label)?.has(project));
     if (missing.length > 0) throw new Error(`Gradle inventory of build ${label} has no output for project(s) ${missing.join(", ")}`);
+    rejectDuplicateConfigurations(label, configs);
     builds.set(label, { configurations: configs, nestedBuilds: manifest.nestedBuilds });
   }
   return builds;
+}
+
+/** Two configurations of a build with one id (a project configuration named `buildscript.classpath`, say) would hide one another. */
+function rejectDuplicateConfigurations(build: string, configurations: ReadonlyArray<GradleConfiguration>): void {
+  const ids = configurations.map((configuration) => configuration.id);
+  const twice = ids.filter((id, index) => ids.indexOf(id) !== index);
+  if (twice.length > 0) throw new Error(`Gradle inventory of build ${build} has more than one configuration at ${[...new Set(twice)].sort().join(", ")}`);
 }
 
 function isStrings(value: unknown): value is string[] {
@@ -230,7 +252,9 @@ export function parseGradleInventory(raw: unknown, tree: string, builds: Readonl
       throw new Error("Gradle inventory has a malformed build");
     }
     const build = entry["build"];
-    return { build, configurations: entry["configurations"].map((config) => parseConfiguration(config, build)) };
+    const configurations = entry["configurations"].map((config) => parseConfiguration(config, build));
+    rejectDuplicateConfigurations(build, configurations);
+    return { build, configurations };
   });
   const names = parsed.map((build) => build.build);
   const missing = builds.filter((build) => !names.includes(build));
@@ -274,10 +298,22 @@ function parseConfiguration(raw: unknown, where: string): GradleConfiguration {
         name: text(item["name"], "name"),
         version: optional(item["version"], "version"),
         reason: optional(item["reason"], "reason"),
+        ...movedFlag(item["moved"]),
       };
+    }),
+    edges: list("edges").map((entry) => {
+      const item = isObject(entry) ? entry : {};
+      if (typeof item["constraint"] !== "boolean") throw new Error(`Gradle inventory (${where}): ${id} has a malformed edge`);
+      return { from: text(item["from"], "edge"), to: text(item["to"], "edge"), constraint: item["constraint"] };
     }),
     error: optional(raw["error"], "error"),
   };
+}
+
+function movedFlag(value: unknown): { moved?: true } {
+  if (value === undefined) return {};
+  if (value !== true) throw new Error("Gradle inventory: a declaration's moved flag must be true when present");
+  return { moved: true };
 }
 
 /** `:runtimeClasspath` for the root build, `buildSrc/:runtimeClasspath` for another. */
