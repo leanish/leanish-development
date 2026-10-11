@@ -329,7 +329,7 @@ describe("npm parents admitting some of the copies they must", () => {
   it("moves the parent for the copies it can admit and keeps the others' overrides", async () => {
     const { notes, moves } = await run([fixOf("x", "1.0.0", "1.1.0"), fixOf("y", "1.0.0", "1.1.0")], { parent: parentVersions({ ...BASE, "1.1.0": { x: "^1.1.0", y: "~1.0.0", z: "~1.0.0" } }) });
     expect(moves).toEqual(["parent 1.1.0 npm-direct", "x 1.1.0 npm-lock", "y 1.1.0 npm-override"]);
-    expect(notes).toEqual(["y@1.1.0 at node_modules/y keeps an override: the parent version admitting the most of the copies it must (1.1.0) doesn't admit it"]);
+    expect(notes).toEqual(["y@1.1.0 at node_modules/y keeps an override: no parent version in its line past the wait admits it, keeping what its range admits today"]);
   });
 
   it("takes the lowest of the versions admitting as many", async () => {
@@ -362,6 +362,19 @@ describe("npm parents admitting some of the copies they must", () => {
     }, { other: "~1.0.0" });
     expect(moves).toEqual(["parent 1.1.0 npm-direct", "x 1.1.0 npm-override", "y 1.1.0 npm-lock"]);
     expect(notes).toEqual([expect.stringMatching(/^x@1\.1\.0 at node_modules\/x keeps an override: no other version in its line past the wait/)]);
+  });
+
+  it("takes back a copy a provisional choice ranked out, once the copies it was ranked out for are lost", async () => {
+    // 1.2.0 admits the most (x and z) but `other` can't admit x; for y and z, 1.1.0 and 1.2.0 tie, so 1.1.0 admits y.
+    const { notes, moves } = await run([fixOf("x", "1.0.0", "1.1.0"), fixOf("y", "1.0.0", "1.1.0"), fixOf("z", "1.0.0", "1.1.0")], {
+      parent: parentVersions({ ...BASE, "1.1.0": { x: "~1.0.0", y: "^1.1.0", z: "~1.0.0" }, "1.2.0": { x: "^1.1.0", y: "~1.0.0", z: "^1.1.0" } }),
+      other: parentVersions({ "1.0.0": { x: "~1.0.0" } }),
+    }, { other: "~1.0.0" });
+    expect(moves).toEqual(["parent 1.1.0 npm-direct", "x 1.1.0 npm-override", "y 1.1.0 npm-lock", "z 1.1.0 npm-override"]);
+    expect(notes).toEqual([
+      expect.stringMatching(/^x@1\.1\.0 at node_modules\/x keeps an override: no other version in its line past the wait/),
+      "z@1.1.0 at node_modules/z keeps an override: parent moves to 1.1.0, the version admitting the most of the copies it must, which doesn't admit it",
+    ]);
   });
 
   it("moves no parent when every copy it could admit keeps an override anyway", async () => {

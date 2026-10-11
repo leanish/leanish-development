@@ -15,9 +15,10 @@
  * publisher identity check, and can itself move without an override (a
  * workspace declares it, or every dependent's range admits it) is P's move.
  * A copy every excluding dependent's move admits is locked and those parents
- * move with it; any other keeps today's override, and the parents search again
- * without it (it gains nothing from their moving). Parents are aged, so the
- * gate needs no new justification for them.
+ * move with it; any other keeps today's override. A copy some excluding
+ * dependent can't admit in any version gains nothing from the others moving,
+ * so they search again without it. Parents are aged, so the gate needs no new
+ * justification for them.
  */
 import { ActionsGitHub } from "../../ci/src/actions-github.ts";
 import { IdentityCheck } from "../../ci/src/candidates.ts";
@@ -55,10 +56,14 @@ interface Obligation {
   readonly required: boolean;
 }
 
-/** A parent occurrence's chosen move, with the copies (`copyKey`) its version admits. */
+/**
+ * A parent occurrence's chosen move, with the copies (`copyKey`) its version admits, and those some version past the
+ * wait admits (keeping what its range admits today), whatever the ranking or the checks made of it.
+ */
 interface Chosen {
   readonly move: Omit<ParentMove, "unblocks">;
   readonly admitted: ReadonlySet<string>;
+  readonly admissible: ReadonlySet<string>;
 }
 
 const copyKey = (name: string, location: string) => `${name}|${location}`;
@@ -114,43 +119,64 @@ export async function withParents(fixes: ReadonlyArray<FixWork>, inputs: ParentI
     }
   }
 
-  // Copies that can't be locked, each with why. A copy one parent can't admit gains nothing from the others moving,
-  // so they search again without it, until no copy is newly lost: each round only adds to `lost`, so this ends.
-  const lost = new Map<string, string>();
-  const chosen = new Map<string, Chosen | string>();
-  const searchedFor = new Map<string, string>();
+  // Copies a parent can't admit in any version (or whose parent can't move at all) gain nothing from the others
+  // moving, so those search again without them, until no such copy is newly found: `hopeless` only grows, so this
+  // ends. A copy a parent's chosen version merely ranks out stays wanted: a later search may admit it again.
+  // Each with why: a fact about that parent (its search failed, or no version admits the copy), so it stays true.
+  const hopeless = new Map<string, string>();
+  const searches = new Map<string, Chosen | string>();
+  let chosen = new Map<string, Chosen | string>();
   for (;;) {
+    chosen = new Map();
     for (const [key, { dependent, lockfile, obligations }] of occurrences) {
-      const live = [...obligations.values()].filter((obligation) => obligation.required || !lost.has(copyKey(obligation.name, obligation.location)));
+      const live = [...obligations.values()].filter((obligation) => obligation.required || !hopeless.has(copyKey(obligation.name, obligation.location)));
       if (!live.some((obligation) => !obligation.required)) continue;
-      const signature = live.map((obligation) => `${copyKey(obligation.name, obligation.location)}|${obligation.required}`).sort().join(",");
-      if (searchedFor.get(key) === signature) continue;
-      searchedFor.set(key, signature);
-      const parentLocation = npmLocation(lockfile, dependent.path);
-      const own = fixes.find((fix) => fix.ecosystem === "npm" && fix.name === dependent.name && fix.to !== undefined && fix.locations.includes(parentLocation));
-      // A search that can't finish leaves the override, as before parents were tried.
-      chosen.set(key, await search.parentFor(dependent, lockfile, live, own?.to?.version)
-        .catch((error: unknown) => `searching ${dependent.name} failed: ${error instanceof Error ? error.message : String(error)}`));
+      const signature = `${key}#${live.map((obligation) => `${copyKey(obligation.name, obligation.location)}|${obligation.required}`).sort().join(",")}`;
+      if (!searches.has(signature)) {
+        const parentLocation = npmLocation(lockfile, dependent.path);
+        const own = fixes.find((fix) => fix.ecosystem === "npm" && fix.name === dependent.name && fix.to !== undefined && fix.locations.includes(parentLocation));
+        // A search that can't finish leaves the override, as before parents were tried.
+        searches.set(signature, await search.parentFor(dependent, lockfile, live, own?.to?.version)
+          .catch((error: unknown) => `searching ${dependent.name} failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
+      chosen.set(key, searches.get(signature)!);
     }
-    let grew = false;
+    const before = hopeless.size;
     for (const [copy, keys] of blockedBy) {
-      if (lost.has(copy)) continue;
+      if (hopeless.has(copy)) continue;
       for (const key of keys) {
         const result = chosen.get(key);
-        if (result === undefined) continue;
-        if (typeof result === "string") {
-          lost.set(copy, result);
-        } else if (!result.admitted.has(copy)) {
-          const { name, to } = result.move;
-          lost.set(copy, `the ${name} version admitting the most of the copies it must (${to}) doesn't admit it`);
-        } else {
-          continue;
-        }
-        grew = true;
+        if (result === undefined || (typeof result !== "string" && result.admissible.has(copy))) continue;
+        hopeless.set(copy, typeof result === "string" ? result : `no ${result.move.name} version in its line past the wait admits it, keeping what its range admits today`);
         break;
       }
     }
-    if (!grew) break;
+    if (hopeless.size === before) break;
+  }
+  // From the final choices: a copy is locked when every parent excluding it moves to a version admitting it.
+  const unblocked = (copy: string) => !hopeless.has(copy) && blockedBy.get(copy)!.every((key) => { const result = chosen.get(key); return result === undefined || (typeof result !== "string" && result.admitted.has(copy)); });
+  const moving = (key: string) => [...blockedBy].some(([copy, keys]) => keys.includes(key) && unblocked(copy));
+  const lost = new Map<string, string>();
+  for (const [copy, keys] of blockedBy) {
+    if (unblocked(copy)) continue;
+    if (hopeless.has(copy)) {
+      lost.set(copy, hopeless.get(copy)!);
+      continue;
+    }
+    for (const key of keys) {
+      const result = chosen.get(key);
+      if (result === undefined) continue;
+      if (typeof result === "string") {
+        lost.set(copy, result);
+        break;
+      }
+      if (result.admitted.has(copy)) continue;
+      const { name, to } = result.move;
+      lost.set(copy, moving(key)
+          ? `${name} moves to ${to}, the version admitting the most of the copies it must, which doesn't admit it`
+          : `${name}'s version admitting the most of the copies it must (${to}) doesn't admit it, and none of those can be locked`);
+      break;
+    }
   }
 
   const result = fixes.map((fix) => {
@@ -239,6 +265,7 @@ class ParentSearch {
     const ranked: Array<{ version: string; admitted: ReadonlyArray<Obligation> }> = [];
     // Copies admitted today that a version admitting a wanted one would drop: why nothing ranks, when that's the reason.
     const dropped = new Set<string>();
+    const admissible = new Set<string>();
     for (const version of versions) {
       if (!own && pinned === undefined) {
         const published = await this.#catalog.published({ ...parent, version });
@@ -249,7 +276,10 @@ class ParentSearch {
       const admitted = wanted.filter((obligation) => admits(manifest, packages, dependent.path, obligation));
       if (admitted.length === 0) continue;
       const lost = required.filter((obligation) => !admits(manifest, packages, dependent.path, obligation));
-      if (lost.length === 0) ranked.push({ version, admitted });
+      if (lost.length === 0) {
+        ranked.push({ version, admitted });
+        for (const obligation of admitted) admissible.add(copyKey(obligation.name, obligation.location));
+      }
       for (const obligation of lost) dropped.add(`${obligation.name}@${obligation.to}`);
     }
     if (ranked.length === 0 && dropped.size > 0) {
@@ -290,6 +320,7 @@ class ParentSearch {
       return {
         move: { name: dependent.name, from, to: version, location: parentLocation, line: line(version) },
         admitted: new Set(admitted.map((obligation) => copyKey(obligation.name, obligation.location))),
+        admissible,
       };
     }
     const failing = (versions: ReadonlyArray<string>, one: string, many: string) => versions.length === 0 ? [] : [`${versions.join(", ")} ${versions.length === 1 ? one : many}`];
