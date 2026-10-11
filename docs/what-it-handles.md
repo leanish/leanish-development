@@ -111,8 +111,8 @@ fix. npm needs an age exemption to keep it, but that exemption covers the whole
 package name. bump-it pins copies where it can so npm cannot use it to take another
 young release. Supported plain overrides get temporary exact versions, then are
 restored. Only unsupported placements are checked afterwards: a copy may stay
-locked, be removed, or move to an aged version. Another young version, or one
-whose age cannot be read, fails the routine. Bundled copies
+locked, be removed, or move to an aged version that is not deprecated. Another
+young or deprecated version, or one whose eligibility cannot be read, fails the routine. Bundled copies
 follow their carrier and may change when it takes an aged update. Direct
 dependencies outside the update plan stay locked too. Own packages still update
 without the wait; a configured npm age exclusion alone does not freeze transitives.

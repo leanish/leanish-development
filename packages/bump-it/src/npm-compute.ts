@@ -1,7 +1,7 @@
 /**
  * Compute exact npm files in a sandboxed scratch copy, pin targets, then restore planned manifests.
  * npm's age exclusions include young or unreadable locked base versions, reported in notes;
- * routines pin those names' non-bundled locked copies where supported; unpinned replacements must be aged.
+ * routines pin those names' non-bundled locked copies where supported; unpinned replacements must be aged and not deprecated.
  * Any exclusions require npm >= 11.17.0.
  * Routine and major-induced Node types must fit the base tree's lowest supported runtime.
  */
@@ -174,7 +174,7 @@ async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions
   for (let pass = 0; ; pass++) {
     const graph = new NpmGraph(JSON.parse(await readFile(at(lockName), "utf8")));
     await assertUnpinnedRetention(graph, retained, unpinned, lockfile, inputs.sources);
-    // Pinnable copies stay at base; unpinnable copies may keep an aged replacement.
+    // Pinnable copies stay at base; unpinnable copies may keep an aged, non-deprecated replacement.
     // Carry that accepted version forward so later passes do not try an unsupported
     // pin back to base or reject unrelated updates for a harmless aged move.
     const direct = directTargets(graph, plannedDirect, baseDirect);
@@ -288,16 +288,17 @@ async function assertUnpinnedRetention(graph: NpmGraph, retained: ReadonlyMap<st
     if (current === undefined || graph.nameAt(path) === previous.name && current.version === previous.version) {
       continue;
     }
-    let published: Date | undefined;
     if (graph.nameAt(path) === previous.name && current.version !== undefined) {
       try {
-        published = await sources.published(previous.name, current.version);
+        const published = await sources.published(previous.name, current.version);
+        // Retained targets bypass candidate selection. Check its catalog too:
+        // npm's name exemption cannot authorize a new deprecated version.
+        if (meetsReleaseAge(published, sources) && (await sources.versions(previous.name))?.includes(current.version)) continue;
       } catch {
-        // An unreadable replacement's age cannot justify drift under a name exemption.
+        // Unreadable age or catalog data cannot justify drift under a name exemption.
       }
     }
-    if (meetsReleaseAge(published, sources)) continue;
-    throw new Error(`${lockfile}: ${previous.name} at ${path} is ${current.version}, not its locked ${previous.version}; cannot pin this copy and its replacement is young or unreadable`);
+    throw new Error(`${lockfile}: ${previous.name} at ${path} is ${current.version}, not its locked ${previous.version}; cannot pin this copy and its replacement is young, deprecated or unreadable`);
   }
 }
 

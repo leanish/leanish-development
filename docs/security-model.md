@@ -110,8 +110,8 @@ npm-induced transitives subject to compare; bump-it additionally selects routine
 For bump-it routines, non-bundled transitive copies of a name excluded to preserve a young or unreadable locked
 version get temporary retention pins where supported. Supported plain overrides are narrowed to exact versions
 temporarily and restored afterwards. Only unsupported placements are left alone and checked after resolution:
-they may stay locked, be removed, or move to a version past the release-age wait. A move to another young or
-unreadable version fails the unit. Bundled copies follow their carrier and may change when it moves to an aged target.
+they may stay locked, be removed, or move to a version past the release-age wait that is not deprecated. A move to
+another young, deprecated or unreadable version fails the unit. Bundled copies follow their carrier and may change when it moves to an aged target.
 Own packages keep their age exemption. secure-it's exact security targets and major-induced graphs retain their
 existing behavior.
 
