@@ -39,7 +39,8 @@ def buildLabel = { File rootDir ->
     def relative = repositoryRoot.relativize(rootDir.canonicalFile.toPath()).toString()
     relative.isEmpty() ? "." : relative.replace(File.separatorChar, '/' as char)
 }
-def location = { String build, String configuration -> build == "." ? configuration : "${build}/${configuration}" }
+// A String, never a GString: a location is compared with, and looked up as, the plan's String locations.
+def location = { String build, String configuration -> build == "." ? configuration : "${build}/${configuration}".toString() }
 def projectPrefix = { String projectPath -> projectPath == ":" ? ":" : "${projectPath}:" }
 
 // This build's configurations by location (each build runs its own copy of this script), and the declarations moved.
