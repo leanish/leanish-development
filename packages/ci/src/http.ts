@@ -63,9 +63,11 @@ async function retryRead(fetch: Fetch, url: string, init: Parameters<Fetch>[1], 
     try {
       const response = await fetch(url, init);
       if (!response.ok) {
-        const wait = rateLimitWait(response, timing.now());
+        const wait = rateLimitWait(response, timing.now(), rateLimited);
         if (wait === undefined || wait > RATE_LIMIT_MAX_WAIT_MS || rateLimited === RATE_LIMIT_RETRIES) return response;
         rateLimited++;
+        // Undici keeps the connection until the body is read, so release it before a long wait.
+        await response.text().catch(() => undefined);
         // A long pass can spend a token's hourly quota; waiting for the reset beats failing the run.
         timing.notice(`${url}: rate limited (HTTP ${response.status}), retrying in ${Math.ceil(wait / 1000)}s`);
         await timing.sleep(wait, signal);
@@ -91,9 +93,10 @@ async function retryRead(fetch: Fetch, url: string, init: Parameters<Fetch>[1], 
 /**
  * How long a 403/429 response asks to wait, following GitHub's rules: `retry-after`
  * seconds when given, else until `x-ratelimit-reset` when no requests remain, else a
- * minute for a 429. Undefined for a 403 without those headers: a permission failure.
+ * minute for a 429, doubling for each earlier wait. Undefined for a 403 without those
+ * headers: a permission failure.
  */
-export function rateLimitWait(response: Awaited<ReturnType<Fetch>>, nowMs: number): number | undefined {
+export function rateLimitWait(response: Awaited<ReturnType<Fetch>>, nowMs: number, earlierWaits: number): number | undefined {
   if (response.status !== 403 && response.status !== 429) return undefined;
   const retryAfter = response.headers.get("retry-after")?.trim();
   if (retryAfter !== undefined && /^\d+$/.test(retryAfter)) return Number(retryAfter) * 1000;
@@ -102,7 +105,7 @@ export function rateLimitWait(response: Awaited<ReturnType<Fetch>>, nowMs: numbe
     // One extra second covers the reset landing just after the clock reading.
     return Math.max(0, reset * 1000 - nowMs) + 1000;
   }
-  return response.status === 429 ? SECONDARY_LIMIT_WAIT_MS : undefined;
+  return response.status === 429 ? SECONDARY_LIMIT_WAIT_MS * 2 ** earlierWaits : undefined;
 }
 
 /** Walk causes without looping; explicit cancellation always takes priority over a nested socket error. */

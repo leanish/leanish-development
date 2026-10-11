@@ -338,13 +338,28 @@ describe("rate-limited reads", () => {
     expect(clock.sleep.mock.calls.map(([milliseconds]) => milliseconds)).toEqual([30_000]);
   });
 
-  it("waits a minute on a 429 that names no wait", async () => {
+  it("waits a minute, then two, on 429s that name no wait", async () => {
     const clock = timing();
-    const fetch = vi.fn<Fetch>().mockResolvedValueOnce(limited(429, {})).mockResolvedValueOnce(new Response("{}"));
+    const fetch = vi.fn<Fetch>().mockResolvedValueOnce(limited(429, {})).mockResolvedValueOnce(limited(429, {}))
+      .mockResolvedValueOnce(new Response("{}"));
 
     await namingFailures(fetch, clock)(URL);
 
-    expect(clock.sleep.mock.calls.map(([milliseconds]) => milliseconds)).toEqual([60_000]);
+    expect(clock.sleep.mock.calls.map(([milliseconds]) => milliseconds)).toEqual([60_000, 120_000]);
+  });
+
+  it("releases each discarded body before waiting, leaving the returned one unread", async () => {
+    const discarded = limited(429, { "retry-after": "5" });
+    const released = vi.spyOn(discarded, "text");
+    const final = limited(429, { "retry-after": "5" });
+    const unread = vi.spyOn(final, "text");
+    const clock = timing();
+    clock.sleep.mockImplementation(async () => expect(released).toHaveBeenCalledOnce());
+    const fetch = vi.fn<Fetch>().mockResolvedValueOnce(discarded).mockResolvedValueOnce(limited(429, { "retry-after": "5" }))
+      .mockResolvedValueOnce(final);
+
+    expect(await namingFailures(fetch, clock)(URL)).toBe(final);
+    expect(unread).not.toHaveBeenCalled();
   });
 
   it.each([

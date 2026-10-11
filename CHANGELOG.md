@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- GitHub and registry reads wait out a rate limit (as `retry-after` or
+  `x-ratelimit-reset` asks, up to an hour, twice per read) instead of failing
+  the command. Several weekly passes within an hour had spent the read token's
+  quota and failed bump-it on the test repositories.
+
 ## 0.3.0 - 2026-10-11
 
 ### Added
