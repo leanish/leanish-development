@@ -44,7 +44,7 @@ packages/remediation/run.sh secure-it review leanish/sqs-codec   # every few hou
      and any fix whose required npm dependency is young form their own routine unit (topic `security-cooldown`), so
      the aged fixes aren't held back. A major or malware unit with a young version stays whole and is held.
 5. **Looks at its open PRs first.**
-   - An open PR for the same routine/major/malware unit, with an identical plan and a recognised head: nothing to do; its review owns it. The unit reports `already-open`. Other major units still proceed. An already-open malware unit is left to review without planning other work.
+   - An open PR for the same routine/major/malware unit, with an identical plan and a recognised head: keep its commits and refresh the plan section if its notes changed; its review owns further work. The unit reports `already-open`. Other major units still proceed. An already-open malware unit is left to review without planning other work.
    - One with a different plan, while its head is still the tool's: that PR is reconciled. The default branch is merged into it, every file it changed goes back to the base's content, and the new plan is applied on top, so nothing the old plan did lingers. It's pushed as a normal commit.
    - One someone else pushed to: the fix goes in a PR of its own.
 6. **The tool resolves npm; the agent applies non-npm moves** (skill [`secure-it`](skills/secure-it/SKILL.md)). It changes code only for a major move, with `majorEffort`.
@@ -123,7 +123,8 @@ the removed floors' advisories. No removal is published on a failed proof or ver
 Review recomputes the unlocked proof on a moved base and reconciles by reverting the old plan before applying the
 new one. An unavailable or unsafe proof retains the PR and reports why; no floors remaining on base retires it.
 Failed CI is reported without agent adaptation: the exact proved edit cannot be changed legitimately. The shared
-review attempt budget still applies. An unchanged recognised plan reports `already-open`; a human-pushed PR is left
+review attempt budget still applies. An unchanged recognised plan reports `already-open`, refreshing changed plan
+notes without changing commits; a human-pushed PR is left
 alone and any needed removal goes on a separate branch. Hidden plans record complete floor identities and file
 hashes, never npm file contents.
 

@@ -1,5 +1,7 @@
 # Coverage gaps
 
+For a plain-language overview of coverage and update limits, see [What supply-chain handles](what-it-handles.md).
+
 What the gate can't see. Two kinds: **reported gaps**, which every report lists next to its verdict (a verdict can pass with them), and **limits**, which no report mentions because the gate can't detect them.
 
 ## Reported gaps
