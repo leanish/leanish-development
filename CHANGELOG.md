@@ -44,6 +44,9 @@
 
 ### Fixed
 
+- secure-it rewrites the notes of its open PR when a later run finds the same
+  plan with different reasons (a floor kept for another cause, say). Before,
+  the PR kept the first run's reasons, since notes don't change the plan.
 - Removing a Gradle security floor declared on a buildscript or settings
   classpath no longer fails on Gradle 9 ("Cannot mutate the hierarchy of
   configuration 'classpath' after the configuration was resolved"), which
