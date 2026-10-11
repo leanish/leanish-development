@@ -18,5 +18,4 @@ dirs:
   cache: ~/.cache/leanish/secure-it
 # Add private folders that must not reach the model, e.g. ~/Documents/private.
 readDeny: []
-staleScanHours: 36
 # Optional, after creating a price table: modelPrices: ~/.config/leanish/model-prices.json

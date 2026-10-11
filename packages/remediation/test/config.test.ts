@@ -59,7 +59,6 @@ describe("tool config", () => {
       dirs: { state: "/Users/dev/.local/share/leanish/secure-it", cache: "/Users/dev/.cache/leanish/secure-it" },
       readDeny: ["/Users/dev/dev/private", "/Volumes/vault"],
       modelPrices: undefined,
-      staleScanHours: 36,
       maxNewMajorsPerRun: undefined,
     });
     expect(defaultConfigPath("bump-it", HOME)).toBe("/Users/dev/.config/leanish/bump-it/agent.yaml");
@@ -75,13 +74,11 @@ describe("tool config", () => {
       [VALID.replace("codingAgent: codex", "codingAgent: claude-code"), "must be codex"],
       [VALID.replace("read: leanish-secure-it-github-read", "read: leanish-secure-it-github"), "must be different items"],
       [VALID.replace("[~/dev/private, /Volumes/vault]", "[dev/private]"), "readDeny[0] must be an absolute path"],
-      [`${VALID}staleScanHours: 0\n`, "staleScanHours must be a positive integer"],
+      [`${VALID}staleScanHours: 36\n`, "unknown field(s): staleScanHours"],
       [VALID.replace(/repos:[\s\S]*?agent:/, "repos: []\nagent:"), "lists no repository"],
       ["repos: [", "isn't YAML"],
     ];
     for (const [text, message] of failing) expect(() => parseToolConfig("secure-it", text, "agent.yaml", HOME)).toThrow(message);
-    expect(() => parseToolConfig("bump-it", `${VALID}staleScanHours: 24\n`, "agent.yaml", HOME)).toThrow("staleScanHours is secure-it's");
-    expect(parseToolConfig("bump-it", VALID, "agent.yaml", HOME).staleScanHours).toBeUndefined();
     expect(() => parseToolConfig("secure-it", `${VALID}maxNewMajorsPerRun: 2\n`, "agent.yaml", HOME)).toThrow("maxNewMajorsPerRun is bump-it's");
     expect(() => parseToolConfig("bump-it", `${VALID}maxNewMajorsPerRun: -1\n`, "agent.yaml", HOME)).toThrow("non-negative integer");
     expect(parseToolConfig("bump-it", VALID, "agent.yaml", HOME).maxNewMajorsPerRun).toBe(3);

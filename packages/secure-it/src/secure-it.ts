@@ -50,7 +50,6 @@ import { npmWindowFor } from "./npm-window.ts";
 import { planDigest, planOf, planSection, withPlanSection } from "./plan-block.ts";
 import { type ChangePlan, coupledWork, type FixWork, HELD_TOPIC, packageKey, planFor, type PlannedHold, type SecurityUnit, withUnsupportedCarriers } from "./plan.ts";
 import { namedProblems, retryWithoutNamed, type ProblemMoves } from "./retry.ts";
-import { staleScanStatus, type StaleScan } from "./stale-scan.ts";
 import { referencePlan, verifyPlan, type VerifyInputs } from "./verify.ts";
 
 export const RULES = ownPullRequests("secure-it");
@@ -73,7 +72,6 @@ export interface SecureItDeps {
   readonly trees: { readonly commit: (workingCopy: WorkingCopy, sha: string) => Promise<Tree>; readonly working: (workingCopy: WorkingCopy) => Tree };
   readonly candidates: (tree: Tree, env: GateEnvironment, gradle: GradleInputs) => Promise<SecurityCandidates>;
   readonly verify: (inputs: VerifyInputs) => Promise<string[]>;
-  readonly staleScan: (context: ToolRunContext) => Promise<StaleScan>;
   readonly changedSince: (workingCopy: WorkingCopy, sha: string) => Promise<string[]>;
   readonly journal: (context: ToolRunContext) => PublicationJournal;
   /** Writes `content` at `path` (relative to the working copy): taking the base's side of a conflicted dependency file. */
@@ -100,7 +98,6 @@ export function defaultDeps(): SecureItDeps {
     candidates: securityCandidates,
     npm: (context, args) => runSandboxed(context.isolation, { workingCopy: context.workingCopy, command: ["npm", ...args] }),
     verify: verifyPlan,
-    staleScan: (context) => staleScanStatus(context.repo.repo, context.base, context.readToken, context.now, context.config.staleScanHours ?? 36),
     changedSince: (workingCopy, sha) => changedSince(workingCopy, sha),
     journal: (context) => new FileJournal(context.config.dirs.state),
     writeFile: (workingCopy, path, content) => writeLocalFile(workingCopy.path, path, content),
@@ -224,14 +221,12 @@ interface PlanBase {
 type Content = NonNullable<SkillAnswer["publication"]>;
 
 async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonly<Record<string, unknown>>> {
-  const staleScan = await deps.staleScan(context);
-  if (staleScan.stale) context.logger.warn("secure-it: the daily scan looks stale", { detail: staleScan.detail });
   const env = await deps.gate(context);
   const inventories = deps.gradle(context);
   const tree = await deps.trees.commit(context.workingCopy, context.workingCopy.headSha);
   const base = { tree, gradle: await inventories.ofCommit(tree) };
   const found = await deps.candidates(tree, env, { head: base.gradle });
-  const report = { staleScan, gaps: found.gaps.length };
+  const report = { gaps: found.gaps.length };
   if (found.incomplete.length > 0) return { ...report, outcome: "incomplete", incomplete: found.incomplete };
   const planned = await withParentsPlanned(found, base, env, inventories);
   const selection = await coupledWork(planned.fixes, planned.peers);

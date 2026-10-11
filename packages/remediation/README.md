@@ -9,7 +9,7 @@ package is the code around them. See [Adopting the tools](../../docs/adopting-to
   - the coding agent, model and efforts (`majorEffort` for majors and their reviews);
   - optional Keychain service overrides (defaults: `leanish-<tool>-write` and `leanish-<tool>-read`, for the tool's write token and the agent's read-only one);
   - the commit identity, the state and cache directories, and paths the agent may not read;
-  - for secure-it, `staleScanHours`; for bump-it, `maxNewMajorsPerRun` (default 3, new majors only).
+  - for bump-it, `maxNewMajorsPerRun` (default 3, new majors only).
 
   Every opted-in repository uses the tool's pair of Keychain items. Both tools may share a pair through overrides; write and read must still be distinct names and token values. PAT mode remains an alternative when GitHub App mode lands. What's about the repository (release age, own packages, registries) comes from its `.github/supply-chain.json`.
 - **The tool's PRs** (`own-pr.ts`, `publication.ts`):
