@@ -109,8 +109,9 @@ new advisories or malware. Existing vulnerabilities can remain.
 A routine may find a young version already locked, for example an early security
 fix. npm needs an age exemption to keep it, but that exemption covers the whole
 package name. bump-it pins copies where it can so npm cannot use it to take another
-young release. Supported plain overrides get temporary exact versions, then are
-restored. Only unsupported placements are checked afterwards: a copy may stay
+young release. Plain overrides get temporary exact versions when all their copies
+can share the target, then are restored. Unsupported placements, including shared
+overrides that need different targets, are left unpinned and checked afterwards: a copy may stay
 locked, be removed, or move to an aged version that is not deprecated. Another
 young or deprecated version, or one whose eligibility cannot be read, fails the routine. Bundled copies
 follow their carrier and may change when it takes an aged update. Direct
