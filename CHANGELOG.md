@@ -7,7 +7,9 @@
 - Removing a Gradle security floor declared on a buildscript or settings
   classpath no longer fails on Gradle 9 ("Cannot mutate the hierarchy of
   configuration 'classpath' after the configuration was resolved"), which
-  kept such floors with that error as the reason. The plan's Gradle reference
+  kept such floors with that error as the reason. Nor does removing one in a
+  nested build such as buildSrc report its configuration missing (its location
+  never matched the plan's). The plan's Gradle reference
   likewise declares a floor on such a classpath directly, which Gradle 9
   requires.
 - The gate counts each unpinned (or unverified) action use: a use of another

@@ -278,6 +278,11 @@ describe.skipIf(process.env["SUPPLY_CHAIN_GRADLE_TESTS"] !== "1")("Gradle refere
     await cp(WRAPPER, referenceBuild, { recursive: true });
     const repository = `repositories { maven { url = uri("${repo}") } }`;
     await write(referenceBuild, "settings.gradle", `buildscript { ${repository} }\nrootProject.name = "fixture"\n`);
+    await write(referenceBuild, "buildSrc/build.gradle", `buildscript {
+  ${repository}
+  dependencies { classpath "fixture:classpath-dep:1.0" }
+}
+`);
     await write(referenceBuild, "build.gradle", `buildscript {
   ${repository}
   dependencies { classpath "fixture:classpath-dep:1.0" }
@@ -327,6 +332,15 @@ dependencies {
     ] });
     expect(at(inventory, ":buildscript.classpath")).toMatchObject({ resolved: ["classpath-dep:2.0"], declared: ["classpath-dep:1.0", "classpath-dep:2.0"], error: undefined });
     expect(at(inventory, "settings.classpath")).toMatchObject({ resolved: ["classpath-dep:2.0"], declared: ["classpath-dep:2.0"], error: undefined });
+  }, 600_000);
+
+  it("moves and floors in a nested build such as buildSrc, under its own location prefix", async () => {
+    const inventory = await reference({
+      moves: [{ name: "fixture:classpath-dep", from: "1.0", to: "2.0", locations: ["buildSrc/:buildscript.classpath"] }],
+      floors: [{ name: "fixture:transitive", version: "2.0", reason: "GHSA-test", locations: ["buildSrc/:buildscript.classpath"] }],
+    });
+    expect(at(inventory, "buildSrc/:buildscript.classpath")).toMatchObject({ resolved: ["classpath-dep:2.0", "transitive:2.0"], declared: ["classpath-dep:2.0", "transitive:2.0"], error: undefined });
+    expect(at(inventory, ":buildscript.classpath")).toMatchObject({ resolved: ["classpath-dep:1.0"], declared: ["classpath-dep:1.0"] });
   }, 600_000);
 
   it("marks a moved declaration wherever it's inherited, at a configuration the plan doesn't list too, its reason untouched", async () => {

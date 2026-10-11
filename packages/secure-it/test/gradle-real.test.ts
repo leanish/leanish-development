@@ -68,19 +68,21 @@ describe.skipIf(process.env["SUPPLY_CHAIN_GRADLE_TESTS"] !== "1")("Gradle floor 
 `;
     await write(build, "settings.gradle", `${classpath}rootProject.name = "fixture"\n`);
     await write(build, "build.gradle", `${classpath}plugins { id "java" }\n`);
+    await write(build, "buildSrc/build.gradle", classpath);
   }, 600_000);
 
   afterAll(async () => {
     if (root !== undefined) await rm(root, { recursive: true, force: true });
   });
 
-  it.each([":buildscript.classpath", "settings.classpath"])("removes a floor declared on %s, which resolves before projects are evaluated", async (location) => {
-    const file = join(root, `removal-${location}.json`);
+  it.each([":buildscript.classpath", "settings.classpath", "buildSrc/:buildscript.classpath"])("removes a floor declared on %s, which resolves before projects are evaluated", async (location) => {
+    const file = join(root, `removal-${location.replaceAll("/", "_")}.json`);
     await writeFile(file, JSON.stringify({ repositoryRoot: build, floors: [{ package: "fixture:t", version: "2.0", advisories: ["GHSA-t"], locations: [location] }] }));
     const inventory = await runGradleInventory(build, ["."], "worktree", runProcess, { additionalInitScripts: [REMOVE_FLOORS], systemProperties: { "supplyChain.removeFloors.file": file } });
     expect(at(inventory, location)).toEqual({ resolved: ["plugin-lib:1.0", "t:1.0"], declared: ["plugin-lib:1.0"] });
-    // The other classpath keeps its floor.
-    const other = location === "settings.classpath" ? ":buildscript.classpath" : "settings.classpath";
-    expect(at(inventory, other)).toEqual({ resolved: ["plugin-lib:1.0", "t:2.0"], declared: ["plugin-lib:1.0", "t:2.0"] });
+    // The other classpaths keep their floors.
+    for (const other of [":buildscript.classpath", "settings.classpath", "buildSrc/:buildscript.classpath"].filter((each) => each !== location)) {
+      expect(at(inventory, other)).toEqual({ resolved: ["plugin-lib:1.0", "t:2.0"], declared: ["plugin-lib:1.0", "t:2.0"] });
+    }
   }, 600_000);
 });
