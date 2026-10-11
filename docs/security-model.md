@@ -105,13 +105,15 @@ with `--package-lock-only --ignore-scripts` and the window/exclusions, restores 
 again. It asserts exact target landing before handing files to an agent; final verification protects lock bytes and
 manifest dependency fields (other manifest fields may change only for a major). Exempting a package name from npm's
 window cannot authorize a different explicit target. Peer copies use temporary declarations only when their
-root/workspace placement is representable; unsupported placements fail the unit with a reason. secure-it retains
+root/workspace placement is representable; unsupported pins for selected updates fail the unit with a reason. secure-it retains
 npm-induced transitives subject to compare; bump-it additionally selects routine transitive targets in code.
-For bump-it routines, a name excluded to preserve a young or unreadable locked version also has all its locked
-transitive copies pinned to their base versions before npm runs and throughout later target passes. Such a name
-exclusion permits keeping those versions, not choosing another young release or an aged replacement. Copies no
-dependency needs any more can be removed. Own packages keep their age exemption. secure-it's exact security targets
-and major-induced graphs retain their existing behavior.
+For bump-it routines, non-bundled transitive copies of a name excluded to preserve a young or unreadable locked
+version get temporary retention pins only where their placement supports them. Existing overrides and unsupported
+placements are left alone and checked after resolution: surviving copies must keep their base versions, or the unit
+fails. Such an exclusion permits keeping those versions, not selecting another young release or an aged replacement.
+Unused copies may be removed. Bundled copies follow their carrier and may change when it moves to an aged target.
+Own packages keep their age exemption. secure-it's exact security targets and major-induced graphs retain their
+existing behavior.
 
 The npm required-dependency age exception starts only at a security fix independently established by the gate's
 version rule and advisory snapshot. Registry requirements and publish times prove that no aged satisfying version

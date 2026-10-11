@@ -54,10 +54,11 @@ packages/remediation/run.sh bump-it review leanish/widget   # every few hours
   in any lockfile this unit computes also get a named npm age exclusion, so npm can keep the version already locked;
   unreadable publish times are treated as young. Each exclusion is reported. Publish-time lookups are cached and shared
   with target selection: bump-it's targets still require the age, and `compare` judges what a major induces.
-  In a routine, every surviving locked transitive copy of an automatically excluded name stays at its exact base
-  version, including aged copies of that name. A copy may be removed when no dependency needs it any more.
-  Temporary pins apply before install/update and in later target passes; neither a newer young release nor an aged
-  replacement is selected. Young locked directs outside the plan also stay at their exact base versions.
+  In a routine, surviving non-bundled locked transitive copies of an automatically excluded name must keep their exact
+  base versions, including aged copies of that name. Temporary pins apply before install/update and in later target
+  passes where the placement supports them. Existing overrides or unsupported placements are left alone and checked
+  after resolution: an actual version change fails the unit, an unused copy may be removed. Bundled copies follow
+  their carrier and may change when it moves to an aged target. Young locked directs outside the plan stay at base too.
   Own packages keep their age exemption,
   and a configured exclusion alone does not freeze transitives. Majors keep their induced graph for `compare` to judge.
   The routine resolves after direct updates,

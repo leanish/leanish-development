@@ -9,6 +9,9 @@ export interface Pin {
   readonly target: string;
 }
 
+/** The copy cannot be represented by temporary repository declarations or overrides. */
+export class NpmPinPlacementError extends Error {}
+
 type Manifest = Record<string, unknown>;
 
 const DEPENDENCY_FIELDS = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"] as const;
@@ -46,7 +49,7 @@ export function pinnedManifests(graph: NpmGraph, pins: ReadonlyArray<Pin>, manif
   const transitive: Pin[] = [];
   for (const pin of pins) {
     if (pin.copy.bundled) {
-      throw new Error(`unsupported npm placement: ${pin.copy.path} is bundled with its parent`);
+      throw new NpmPinPlacementError(`unsupported npm placement: ${pin.copy.path} is bundled with its parent`);
     }
     const incoming = graph.edgesTo(pin.copy.path);
     const peers = incoming.filter((edge) => edge.kind === "peer");
@@ -93,14 +96,14 @@ export function pinnedManifests(graph: NpmGraph, pins: ReadonlyArray<Pin>, manif
     const cut = pin.copy.path.lastIndexOf("/node_modules/");
     const owner = cut === -1 ? undefined : graph.nameAt(pin.copy.path.slice(0, cut));
     if (owner === undefined) {
-      throw new Error(`can't lock ${pin.copy.name} at ${pin.copy.path} to ${pin.target}: an override would also catch the root's own declaration of it`);
+      throw new NpmPinPlacementError(`can't lock ${pin.copy.name} at ${pin.copy.path} to ${pin.target}: an override would also catch the root's own declaration of it`);
     }
     if (overrides.topLevelKeys.has(owner)) {
-      throw new Error(`can't lock ${pin.copy.name} at ${pin.copy.path} to ${pin.target}: the overrides already have a rule for ${owner}`);
+      throw new NpmPinPlacementError(`can't lock ${pin.copy.name} at ${pin.copy.path} to ${pin.target}: the overrides already have a rule for ${owner}`);
     }
     const scope = (rootOverrides()[owner] ??= {}) as Record<string, unknown>;
     if (scope[key] !== undefined && scope[key] !== exactSpec(pin)) {
-      throw new Error(`can't lock two copies of ${pin.copy.name} under ${owner} to different targets in one pass`);
+      throw new NpmPinPlacementError(`can't lock two copies of ${pin.copy.name} under ${owner} to different targets in one pass`);
     }
     scope[key] = exactSpec(pin);
   }
@@ -129,12 +132,12 @@ function declarePeer(pin: Pin, graph: NpmGraph, manifests: ReadonlyMap<string, M
   const suffix = `node_modules/${pin.copy.installedAs}`;
   const owner = pin.copy.path === suffix ? "" : pin.copy.path.endsWith(`/${suffix}`) ? pin.copy.path.slice(0, -(suffix.length + 1)) : undefined;
   if (owner === undefined || !manifests.has(owner) || owner.includes("node_modules/")) {
-    throw new Error(`unsupported npm peer placement: ${pin.copy.name} at ${pin.copy.path} needs an exact declaration inside an installed package`);
+    throw new NpmPinPlacementError(`unsupported npm peer placement: ${pin.copy.name} at ${pin.copy.path} needs an exact declaration inside an installed package`);
   }
   const manifest = edit(owner);
   // A temporary dependency must not shadow an existing edge that resolves to another copy.
   if (graph.declaredEdges().some((edge) => edge.from === owner && edge.key === pin.copy.installedAs && edge.to !== pin.copy.path)) {
-    throw new Error(`unsupported npm peer placement: ${pin.copy.path} would shadow another declared copy`);
+    throw new NpmPinPlacementError(`unsupported npm peer placement: ${pin.copy.path} would shadow another declared copy`);
   }
   const dependencies = (manifest["devDependencies"] ??= {}) as Record<string, string>;
   dependencies[pin.copy.installedAs] = exactSpec(pin);

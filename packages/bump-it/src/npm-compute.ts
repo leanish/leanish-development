@@ -1,7 +1,7 @@
 /**
  * Compute exact npm files in a sandboxed scratch copy, pin targets, then restore planned manifests.
  * npm's age exclusions include young or unreadable locked base versions, reported in notes;
- * routines retain those names' locked transitive copies; other targets still enforce age.
+ * routines retain those names' non-bundled locked transitive copies; other targets still enforce age.
  * Any exclusions require npm >= 11.17.0.
  * Routine and major-induced Node types must fit the base tree's lowest supported runtime.
  */
@@ -17,7 +17,7 @@ import { assertLocalFile } from "./files.ts";
 import { withSpec } from "../../remediation/src/manifest-spec.ts";
 import { type Copy, NpmGraph, rewriteSpec } from "./npm-graph.ts";
 import { repositoryOverrides } from "./npm-overrides.ts";
-import { pinnedManifests } from "./npm-pins.ts";
+import { retentionManifests } from "./npm-pins.ts";
 import { type Decision, decideTargets, type TargetSources } from "./npm-targets.ts";
 import { npmWindowFor, requireNpmExcludes } from "./npm-window.ts";
 
@@ -152,17 +152,20 @@ async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions
   // Freeze all direct declarations before npm can drift an excluded name, including peer companions.
   const initialDirect = directTargets(baseGraph, plannedDirect, baseDirect);
   // npm exempts names, not versions: update could otherwise fetch a newer young copy (and
-  // fail on its young dependencies) before decisions run. Keep every locked transitive
-  // copy of an automatically exempted name, including aged copies sharing that name.
+  // fail on its young dependencies) before decisions run. Keep every non-bundled locked
+  // transitive copy of an automatically exempted name, including aged copies sharing
+  // that name. Bundles cannot be pinned independently: they follow their carrier.
   const retained = new Map(baseGraph.copies()
-    .filter((copy) => inputs.kind === "routine" && lockedNames.has(copy.name) && !initialDirect.has(copy.path))
+    .filter((copy) => inputs.kind === "routine" && lockedNames.has(copy.name) && !copy.bundled && !initialDirect.has(copy.path))
     .map((copy) => [copy.path, copy]));
   const initialTargets = new Map([...initialDirect, ...retainedTargets(baseGraph, retained)]);
   const initialPins = baseGraph.copies().flatMap((copy) => {
     const target = initialTargets.get(copy.path);
     return target === undefined ? [] : [{ copy, target }];
   });
-  await resolveExact(join(inputs.dir, root), planned, pinnedManifests(baseGraph, initialPins, plannedParsed, overrides), async () => {
+  const initialRetention = retentionManifests(baseGraph, initialPins, retained, plannedParsed, overrides);
+  let unpinned = initialRetention.unpinned;
+  await resolveExact(join(inputs.dir, root), planned, initialRetention.manifests, async () => {
     await npm("install");
     if (inputs.kind === "routine") await npm("update");
   }, () => npm("install"));
@@ -170,6 +173,7 @@ async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions
   let decisions: Decision[] = [];
   for (let pass = 0; ; pass++) {
     const graph = new NpmGraph(JSON.parse(await readFile(at(lockName), "utf8")));
+    assertUnpinnedRetention(graph, retained, unpinned, lockfile);
     // Retained copies remain required targets even when already correct: another pin pass
     // must not drift them or let candidate selection replace them with an aged version.
     const direct = directTargets(graph, plannedDirect, baseDirect);
@@ -196,7 +200,10 @@ async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions
       const needed = decision.target !== decision.copy.version || direct.has(decision.copy.path) || retained.has(decision.copy.path);
       return decision.target === undefined || !needed ? [] : [{ copy: decision.copy, target: decision.target }];
     });
-    await resolveExact(join(inputs.dir, root), planned, pinnedManifests(graph, pins, plannedParsed, overrides),
+    const retention = retentionManifests(graph, pins, retained, plannedParsed, overrides);
+    unpinned = retention.unpinned;
+    assertUnpinnedRetention(graph, retained, unpinned, lockfile);
+    await resolveExact(join(inputs.dir, root), planned, retention.manifests,
       () => npm("install"), () => npm("install"));
   }
 
@@ -270,6 +277,16 @@ function retainedTargets(graph: NpmGraph, retained: ReadonlyMap<string, Copy>): 
     targets.set(path, copy.version);
   }
   return targets;
+}
+
+function assertUnpinnedRetention(graph: NpmGraph, retained: ReadonlyMap<string, Copy>, unpinned: ReadonlySet<string>, lockfile: string): void {
+  for (const path of unpinned) {
+    const previous = retained.get(path)!;
+    const current = graph.packages[path];
+    if (current !== undefined && (graph.nameAt(path) !== previous.name || current.version !== previous.version)) {
+      throw new Error(`${lockfile}: ${previous.name} at ${path} is ${current.version}, not its locked ${previous.version}; cannot pin this copy`);
+    }
+  }
 }
 
 /**

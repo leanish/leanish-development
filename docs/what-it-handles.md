@@ -108,11 +108,12 @@ new advisories or malware. Existing vulnerabilities can remain.
 
 A routine may find a young version already locked, for example an early security
 fix. npm needs an age exemption to keep it, but that exemption covers the whole
-package name. bump-it pins the locked copies so npm cannot use it to take another
-young release. Direct dependencies outside the update plan stay locked too.
-A transitive copy can be removed when nothing needs it any more; if it remains,
-it must keep its locked version. Own packages still update without the wait;
-a configured npm age exclusion alone does not freeze transitives.
+package name. bump-it pins copies where it can so npm cannot use it to take another
+young release. For existing overrides or unsupported placements, it checks the
+result instead: a copy must keep its locked version or be removed. Bundled copies
+follow their carrier and may change when it takes an aged update. Direct
+dependencies outside the update plan stay locked too. Own packages still update
+without the wait; a configured npm age exclusion alone does not freeze transitives.
 
 It avoids deprecated targets. It keeps `@types/node` within the project's lowest
 known supported Node major. Without readable runtime evidence, it stays in the
