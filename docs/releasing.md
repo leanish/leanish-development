@@ -23,7 +23,9 @@ lists its changes in [the CHANGELOG](../CHANGELOG.md).
    - then have a different reviewer take a second, critical pass on that same
      review, seeing its findings: it challenges them and looks for what the first
      pass missed. Whoever implemented judges each finding against the rule below
-     rather than taking every one as required.
+     rather than taking every one as required, and records whether the second pass
+     added anything (a finding the first missed, or one it rightly overturned) or
+     only cost time and tokens, so its worth can be judged across releases.
 
    A fix found here lands on main through its own PR and gets a new candidate,
    `rc.<n+1>`, which is run and reviewed again. Release only a candidate with
