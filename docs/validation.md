@@ -41,8 +41,9 @@ that repository's still-needed floor.
 
 ## Automated checks and skips
 
-`npm run check` runs all workspace typechecks and tests. CI enables the seven real
-Gradle inventory acceptance tests with `SUPPLY_CHAIN_GRADLE_TESTS=1`; local checks
+`npm run check` runs all workspace typechecks and tests. CI enables the real-Gradle
+suites with `SUPPLY_CHAIN_GRADLE_TESTS=1`: the gate's inventory coverage and
+reference tests, and secure-it's floor-removal and parent-search tests. Local checks
 skip them unless explicitly enabled. The Seatbelt test skips when `codex sandbox`
 cannot apply a sandbox inside the current process. macOS launchd plist checks skip
 on other operating systems. Report these skips separately from passed tests.

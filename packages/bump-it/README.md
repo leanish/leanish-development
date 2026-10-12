@@ -94,7 +94,7 @@ Plans carry moves and npm file hashes, with a bounded copy-change summary, never
 carry a hash of their dependency fields, allowing later review to protect them while retaining script adaptations.
 For a planned wrapper move the tool runs `./gradlew wrapper --gradle-version X
 --gradle-distribution-sha256-sum SUM --distribution-type bin|all --no-daemon` twice, sequentially, under
-`runSandboxed` in an exported base commit. This replaces design item 31's agent-run generation. The first call
+`runSandboxed` in an exported base commit. The agent never generates the wrapper. The first call
 selects the target; the second regenerates its jar and scripts. The tool preserves bin/all, rejects other changes
 to tracked or non-ignored repository files, and copies all four generated files into the working copy before any
 agent work. Ignored build/cache output stays in the scratch copy. The plan records each file's SHA-256 and executable
@@ -117,7 +117,7 @@ Clean same-target major merges preserve existing script/config adaptations. Fail
 high-effort adaptations, with the attempt counted before the agent starts. Routine CI failures are reported without
 an agent; after the shared two-attempt budget the PR closes. One PR's problem does not stop the tick.
 
-R7's daily main scan remains CI's responsibility; this tick reads those checks, it does not replace them.
+The review reads each PR's own CI. The gate's daily scan of the default branch stays CI's job; the tick doesn't replace it.
 
 ## Setup and isolation
 

@@ -70,7 +70,7 @@ Both tools are in this tree: [`secure-it`](../packages/secure-it) and [`bump-it`
   - one read-only, which the coding agent gets as `GH_TOKEN`.
 
   The tool refuses two Keychain items holding the same token. The default services are `leanish-<tool>-write` and `leanish-<tool>-read`; optional `secrets` overrides may point both tools to the same pair. Every opted-in repository uses that pair, with no per-repository secrets.
-- **Secrets live in the macOS Keychain.** Only the tool's own process reads them, and it never puts them in an environment variable.
+- **Secrets live in the macOS Keychain.** Only the tool's own process reads them. The write token never goes into an environment variable; the read-only token is passed to the agent as `GH_TOKEN`, as described above.
 - **Repository code never runs in the tool's process.** The Gradle inventory runs the build under `codex sandbox` with the agent's write profile. Under that profile, checked on macOS, the Keychain isn't reachable, the sensitive home paths (`~/.ssh`, `~/.aws`, the Codex and Claude logins, shell startup files…) can't be read, and writes land only in the working copy, the temp dirs and the build cache. bump-it computes npm changes in exported scratch copies under the same sandbox, with `--package-lock-only --ignore-scripts`, explicit release-age flags and own-scope exclusions. The tool protects exact lockfile bytes and manifest dependency fields; only major migrations may adapt other manifest fields.
 - **The Codex login source stays unreadable.** When a tool reuses a file-backed login, the sandbox denies the resolved `auth.json` and its canonical target when it is a symlink, including with a custom `CODEX_HOME`.
 - **npm's age exclusions do not waive verification.** secure-it excludes planned young or unreadable targets, plus young or unreadable versions already locked in the affected base lockfiles, retaining configured own-scope exclusions. This lets npm keep unrelated locked security fixes. It checks sandboxed npm >= 11.17.0 before tool-run npm uses these flags; agent check commands receive the same exclusions in every mode. Every exclusion is reported; exact target verification and `compare` still judge all induced changes, including their age and identity.
@@ -112,7 +112,9 @@ version get temporary retention pins where supported. Plain overrides are tempor
 when compatible with every governed copy, then restored. Unsupported placements, including shared overrides whose
 copies need different targets, are left unpinned and checked after resolution:
 they may stay locked, be removed, or move to a version past the release-age wait that is not deprecated. A move to
-another young, deprecated or unreadable version fails the unit. Bundled copies follow their carrier and may change when it moves to an aged target.
+another young, deprecated or unreadable version fails the unit. An accepted aged move is kept once a later pass can
+pin that copy; if the copy's dependents or plain overrides stop admitting it, or the constraint can't be judged, its
+current version is checked again the same way. Bundled copies follow their carrier and may change when it moves to an aged target.
 Own packages keep their age exemption. secure-it's exact security targets and major-induced graphs retain their
 existing behavior.
 

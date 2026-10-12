@@ -6,8 +6,8 @@ version/advisory policy shared by CI and the update tools.
 [What it handles and where it stops](docs/what-it-handles.md): a plain-language guide.
 
 - **The CI gate** compares base and head against one advisory snapshot. A PR fails
-  on what it makes worse; malware always fails. Daily scans check the default
-  branch and refresh the verdict on open PRs.
+  on what it makes worse; malware always fails. A daily scan checks the default
+  branch; a PR is judged whenever it changes.
 - **secure-it** batches actionable non-major security fixes, keeps malware fixes
   together, and opens a separate PR per major. It can remove redundant security
   floors only after a joint resolution without lockfiles proves them unnecessary.
@@ -19,7 +19,7 @@ version/advisory policy shared by CI and the update tools.
 The gate runs in GitHub Actions. The tools run on macOS and propose PRs; they do
 not merge them. Node 24 is required; npm 11.17+ is needed for release-age exclusions.
 Packages remain private: adoption uses a reviewed Git commit, with no npm publish.
-The current release is **v0.2.2**; see the [CHANGELOG](CHANGELOG.md) for its changes.
+The current release is **v0.4.2**; see the [CHANGELOG](CHANGELOG.md) for its changes.
 Licensed under Apache-2.0.
 
 ## Adoption and operation
