@@ -583,6 +583,43 @@ describe("exact npm computation", () => {
     expect(h.calls.map((args) => args[0])).toEqual(["install", "update", "install", "install", "install"]);
     expect(published.mock.calls.filter(([name, version]) => name === "held" && version === "1.1.0")).toHaveLength(1);
   });
+  it("keeps an accepted aged move once its copy becomes pinnable in a later pass", async () => {
+    const h = await fixture();
+    const path = "node_modules/parent/node_modules/held";
+    const anchored = {
+      "node_modules/parent": { version: "1.0.0", dependencies: { child: "^1", plugin: "^1" } },
+      "node_modules/parent/node_modules/plugin": { version: "1.0.0", peerDependencies: { held: "^1" } },
+    };
+    const base = { ...lock(), packages: { ...lock().packages, ...anchored, [path]: { version: "1.0.1" } } };
+    await writeFile(join(h.dir, "package-lock.json"), json(base));
+    const heldPins: unknown[] = [];
+    const npm: NpmCommand = async (dir, args) => {
+      if (args[0] === "--version") return { code: 0, stdout: "11.20.0", stderr: "" };
+      h.calls.push([...args]);
+      const root = JSON.parse(await readFile(join(dir, "package.json"), "utf8"));
+      if (root.overrides?.["held@1.1.0"] !== undefined) heldPins.push(root.overrides["held@1.1.0"]);
+      // child drifts back to its young version on every restore until the third pin pass settles it.
+      const child = root.overrides?.["child@1.2.0"] === "1.1.0" || h.calls.length >= 7 ? "1.1.0" : "1.2.0";
+      // From the first pin pass on, the peer anchor is gone and held becomes a plain, pinnable dependency.
+      const parent = h.calls.length >= 4
+        ? { "node_modules/parent": { version: "1.0.0", dependencies: { child: "^1", held: "^1" } } }
+        : anchored;
+      await writeFile(join(dir, "package-lock.json"), json({ ...base, packages: { ...lock().packages, ...parent,
+        "node_modules/child": { version: child }, [path]: { version: root.overrides?.["held@1.1.0"] ?? "1.1.0" },
+      } }));
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const result = await computeNpm({ ...h.inputs, npm, moves: [], baseLocks: new Map([["package-lock.json", base]]),
+      sources: { ...h.inputs.sources, now: new Date("2026-10-07T12:00:00Z"),
+        published: async (name, version) => new Date(name === "held" && version === "1.0.1" || version === "1.2.0" ? "2026-10-06" : "2026-09-30T12:00:00Z"),
+        versions: async (name) => name === "held" ? ["1.0.1", "1.1.0"] : name === "child" ? ["1.0.0", "1.0.1", "1.1.0", "1.2.0"] : ["1.0.0"],
+      },
+    });
+    expect(result.changes).toContainEqual({ lockfile: "package-lock.json", path, name: "held", from: "1.0.1", to: "1.1.0" });
+    expect(heldPins).toContain("1.1.0");
+    expect(heldPins).not.toContain("1.0.1");
+    expect(h.calls.map((args) => args[0])).toEqual(["install", "update", "install", "install", "install", "install", "install"]);
+  });
   it.each(["young", "missing", "invalid", "throwing"])("rejects unpinned drift when the replacement's publish time is %s", async (time) => {
     const h = await fixture();
     const path = "node_modules/parent/node_modules/held";

@@ -59,9 +59,8 @@ packages/remediation/run.sh bump-it review leanish/widget   # every few hours
   Plain overrides are temporarily narrowed to exact versions when compatible with every governed copy, then restored.
   Unsupported placements, including shared overrides whose copies need different targets, are left unpinned and checked
   after resolution: they may stay locked, be removed, or move to an aged version
-  that is not deprecated. A move to another young, deprecated or unreadable version fails the unit. Known limit: an
-  accepted aged move isn't remembered once that copy becomes pinnable in a later pass, so the routine can fail asking
-  for the old young version again. Bundled copies follow
+  that is not deprecated. A move to another young, deprecated or unreadable version fails the unit. An accepted aged
+  move is kept when that copy becomes pinnable in a later pass. Bundled copies follow
   their carrier and may change when it moves to an aged target. Young locked directs outside the plan stay at base too.
   Own packages keep their age exemption,
   and a configured exclusion alone does not freeze transitives. Majors keep their induced graph for `compare` to judge.

@@ -158,7 +158,9 @@ async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions
   const retained = new Map(baseGraph.copies()
     .filter((copy) => inputs.kind === "routine" && lockedNames.has(copy.name) && !copy.bundled && !initialDirect.has(copy.path))
     .map((copy) => [copy.path, copy]));
-  const initialTargets = new Map([...initialDirect, ...retainedTargets(baseGraph, retained, new Set())]);
+  // Aged replacements accepted for unpinnable copies, kept once a later graph makes them pinnable.
+  const accepted = new Map<string, string>();
+  const initialTargets = new Map([...initialDirect, ...retainedTargets(baseGraph, retained, new Set(), accepted)]);
   const initialPins = baseGraph.copies().flatMap((copy) => {
     const target = initialTargets.get(copy.path);
     return target === undefined ? [] : [{ copy, target }];
@@ -174,11 +176,12 @@ async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions
   for (let pass = 0; ; pass++) {
     const graph = new NpmGraph(JSON.parse(await readFile(at(lockName), "utf8")));
     await assertUnpinnedRetention(graph, retained, unpinned, lockfile, inputs.sources);
+    rememberAccepted(graph, retained, unpinned, accepted);
     // Pinnable copies stay at base; unpinnable copies may keep an aged, non-deprecated replacement.
-    // Carry that accepted version forward so later passes do not try an unsupported
-    // pin back to base or reject unrelated updates for a harmless aged move.
+    // Carry that accepted version forward, also after a later graph makes the copy pinnable, so
+    // later passes do not pin back to base or reject unrelated updates for a harmless aged move.
     const direct = directTargets(graph, plannedDirect, baseDirect);
-    const targets = { graph, base: baseGraph, baseVersions, overrides, direct, retained: retainedTargets(graph, retained, unpinned), nodeRuntime: runtime };
+    const targets = { graph, base: baseGraph, baseVersions, overrides, direct, retained: retainedTargets(graph, retained, unpinned, accepted), nodeRuntime: runtime };
     // Majors retain their induced graph, except Node API types must still fit the runtime.
     decisions = inputs.kind === "routine"
       ? await decideTargets(targets, inputs.sources)
@@ -264,7 +267,7 @@ function manifestOf(declaringPath: string): string {
   return declaringPath === "" ? "package.json" : `${declaringPath}/package.json`;
 }
 
-function retainedTargets(graph: NpmGraph, retained: ReadonlyMap<string, Copy>, unpinned: ReadonlySet<string>): Map<string, string> {
+function retainedTargets(graph: NpmGraph, retained: ReadonlyMap<string, Copy>, unpinned: ReadonlySet<string>, accepted: ReadonlyMap<string, string>): Map<string, string> {
   const targets = new Map<string, string>();
   for (const [path, copy] of retained) {
     const current = graph.packages[path];
@@ -276,9 +279,22 @@ function retainedTargets(graph: NpmGraph, retained: ReadonlyMap<string, Copy>, u
     if (graph.nameAt(path) !== copy.name || current.version === undefined) {
       throw new Error(`locked ${copy.name} at ${path} disappeared from the npm graph; its age exclusion only permits keeping ${copy.version}`);
     }
-    targets.set(path, unpinned.has(path) ? current.version : copy.version);
+    targets.set(path, unpinned.has(path) ? current.version : accepted.get(path) ?? copy.version);
   }
   return targets;
+}
+
+/**
+ * Records the checked aged replacement of each unpinned copy. A later pass can make the
+ * copy pinnable; pinning it back to its young locked version would undo an accepted move.
+ */
+function rememberAccepted(graph: NpmGraph, retained: ReadonlyMap<string, Copy>, unpinned: ReadonlySet<string>, accepted: Map<string, string>): void {
+  for (const path of unpinned) {
+    const version = graph.packages[path]?.version;
+    if (version !== undefined && graph.nameAt(path) === retained.get(path)?.name && version !== retained.get(path)?.version) {
+      accepted.set(path, version);
+    }
+  }
 }
 
 async function assertUnpinnedRetention(graph: NpmGraph, retained: ReadonlyMap<string, Copy>, unpinned: ReadonlySet<string>, lockfile: string, sources: TargetSources): Promise<void> {
