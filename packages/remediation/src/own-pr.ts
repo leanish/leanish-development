@@ -1,6 +1,6 @@
 // Adapted from leanish/leanish-development agents/bump-it/src/own-pr.ts at c6282df: one set of rules per tool
 // (secure-it, bump-it) instead of bump-it's constants, and the PR's state (what the tool last published) in its body;
-// publishes leanish:<tool> labels while recognising legacy leanish:agent=<tool> labels and keeping the body marker.
+// publishes leanish:<tool> labels instead of leanish:agent=<tool> ones, keeping the body marker.
 import type { GitHubPullRequest } from "../../agent-basics/src/types/clients.ts";
 
 export type ToolName = "secure-it" | "bump-it";
@@ -56,8 +56,7 @@ function isOwnBranch(rules: OwnPullRequests, branch: string): boolean {
 /**
  * A PR the tool may update, mark ready or close: an open PR from one of its
  * dated branches of `repo` itself (not a fork) into `base`, carrying the
- * marker, the label or the legacy `leanish:agent=<tool>` label, so a PR whose
- * labelling failed or that predates the label change is still recognised.
+ * marker or the label, so a PR whose labelling failed is still recognised.
  */
 export function isOwnPullRequest(rules: OwnPullRequests, pr: GitHubPullRequest, repo: string, base: string): boolean {
   return (
@@ -65,7 +64,7 @@ export function isOwnPullRequest(rules: OwnPullRequests, pr: GitHubPullRequest, 
     isOwnBranch(rules, pr.headRef) &&
     pr.headRepo?.toLowerCase() === repo.toLowerCase() &&
     pr.baseRef === base &&
-    (pr.body.includes(rules.marker) || pr.labels.includes(rules.label) || pr.labels.includes(`leanish:agent=${rules.tool}`))
+    (pr.body.includes(rules.marker) || pr.labels.includes(rules.label))
   );
 }
 

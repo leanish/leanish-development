@@ -29,7 +29,7 @@ describe("publication", () => {
     await expect(rewriteText(context(github), 7, PUSHED_SHA, (text) => text)).rejects.toThrow();
   });
 
-  it.each(["secure-it", "bump-it"] as const)("adds %s's new label when publishing or updating, keeping the legacy label", async (tool) => {
+  it.each(["secure-it", "bump-it"] as const)("adds %s's label when publishing or updating", async (tool) => {
     const rules = ownPullRequests(tool);
     const branch = `${tool}/2026-10-05-security`;
     const created = new FakeGitHub();
@@ -37,32 +37,30 @@ describe("publication", () => {
     expect(created.prs.get(pr!.number)?.labels).toEqual([`leanish:${tool}`]);
 
     for (const unchanged of [false, true]) {
-      const legacy = `leanish:agent=${tool}`;
-      const github = new FakeGitHub(ownPr({ headRef: branch, labels: [legacy], body: "No marker.", isDraft: false }));
+      const github = new FakeGitHub(ownPr({ headRef: branch, labels: [], body: rules.marker, isDraft: false }));
       const workspace = new InMemoryWorkspace();
       if (unchanged) workspace.setPublishUnchanged();
       await publishUpdate({ ...context(github, workspace), rules }, { ...existing, branch }, 7, CONTENT);
-      expect(github.prs.get(7)?.labels).toEqual([legacy, `leanish:${tool}`]);
+      expect(github.prs.get(7)?.labels).toEqual([`leanish:${tool}`]);
       expect(github.calls.filter((call) => call.startsWith("addLabels"))).toEqual([`addLabels 7 leanish:${tool}`]);
     }
   });
 
-  it("adds the current label when recording state, recovering a publication or marking a legacy PR ready", async () => {
-    const legacy = "leanish:agent=secure-it";
-    const updated = new FakeGitHub(ownPr({ labels: [legacy] }));
+  it("adds the label when recording state, recovering a publication or marking a PR ready", async () => {
+    const updated = new FakeGitHub(ownPr({ labels: [] }));
     await recordState(context(updated), 7, HEAD_SHA, { head: HEAD_SHA, base: BASE_SHA, adaptations: 1 });
-    expect(updated.prs.get(7)?.labels).toEqual([legacy, "leanish:secure-it"]);
+    expect(updated.prs.get(7)?.labels).toEqual(["leanish:secure-it"]);
 
-    const recovering = new FakeGitHub(ownPr({ labels: [legacy], headSha: PUSHED_SHA }));
+    const recovering = new FakeGitHub(ownPr({ labels: [], headSha: PUSHED_SHA }));
     const journal = new MemoryJournal();
     const body = withMarker(RULES, CONTENT.body, { head: PUSHED_SHA, base: BASE_SHA, adaptations: 1 });
     await journal.pushed(WC.projectId, 7, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: CONTENT.title, body, adaptations: 1 } });
     await recoverPublication(context(recovering, new InMemoryWorkspace(), journal), recovering.prs.get(7)!);
-    expect(recovering.prs.get(7)?.labels).toEqual([legacy, "leanish:secure-it"]);
+    expect(recovering.prs.get(7)?.labels).toEqual(["leanish:secure-it"]);
 
-    const ready = new FakeGitHub(ownPr({ labels: [legacy] }));
+    const ready = new FakeGitHub(ownPr({ labels: [] }));
     await markReady(context(ready), 7, HEAD_SHA);
-    expect(ready.prs.get(7)).toMatchObject({ isDraft: false, labels: [legacy, "leanish:secure-it"] });
+    expect(ready.prs.get(7)).toMatchObject({ isDraft: false, labels: ["leanish:secure-it"] });
   });
 
   it("opens a labelled draft PR recording the pushed head and its base, or nothing when nothing changed", async () => {

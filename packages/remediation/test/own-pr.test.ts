@@ -4,15 +4,15 @@ import { branchFor, isOwnPullRequest, ownPullRequests, stateOf, topicOf, withMar
 import { BASE_SHA, HEAD_SHA, ownPr, RULES } from "./fake-github.ts";
 
 describe("own PRs", () => {
-  it.each(["secure-it", "bump-it"] as const)("publishes %s's new label and recognises its legacy label even without a marker", (tool) => {
+  it.each(["secure-it", "bump-it"] as const)("publishes %s's label and doesn't recognise the old leanish:agent=<tool> label alone", (tool) => {
     const rules = ownPullRequests(tool);
-    const pr = ownPr({ headRef: `${tool}/2026-10-05-security`, body: "No marker.", labels: [`leanish:agent=${tool}`] });
+    const pr = ownPr({ headRef: `${tool}/2026-10-05-security`, body: "No marker.", labels: [`leanish:${tool}`] });
     expect(rules.label).toBe(`leanish:${tool}`);
     expect(rules.marker).toBe(`<!-- leanish:agent=${tool} -->`);
     expect(isOwnPullRequest(rules, pr, "leanish/widget", "main")).toBe(true);
-    expect(isOwnPullRequest(rules, { ...pr, labels: [`leanish:${tool}`] }, "leanish/widget", "main")).toBe(true);
+    expect(isOwnPullRequest(rules, { ...pr, labels: [`leanish:agent=${tool}`] }, "leanish/widget", "main")).toBe(false);
     const other = tool === "secure-it" ? "bump-it" : "secure-it";
-    expect(isOwnPullRequest(rules, { ...pr, labels: [`leanish:agent=${other}`, `leanish:${other}`] }, "leanish/widget", "main")).toBe(false);
+    expect(isOwnPullRequest(rules, { ...pr, labels: [`leanish:${other}`] }, "leanish/widget", "main")).toBe(false);
     expect(isOwnPullRequest(rules, { ...pr, headRepo: "someone/widget" }, "leanish/widget", "main")).toBe(false);
     expect(isOwnPullRequest(rules, { ...pr, state: "closed" }, "leanish/widget", "main")).toBe(false);
   });
