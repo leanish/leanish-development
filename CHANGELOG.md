@@ -7,8 +7,10 @@
 - bump-it's routine keeps an accepted aged replacement of an unpinnable locked copy when a
   later pass makes that copy pinnable, instead of pinning it back to its young locked version
   and failing the unit. When a later pass changes what its dependents or the repository's
-  overrides ask for so they no longer admit the remembered version, the copy's current version
-  is checked again (aged and not deprecated) instead of being pinned back to the stale one.
+  overrides ask for so they no longer admit the remembered version, or to something bump-it
+  can't judge (a spec that isn't a version range, a scoped or complex override), the copy's
+  current version is checked again (aged and not deprecated) instead of being pinned back to
+  the stale one.
 
 ## 0.4.1 - 2026-10-12
 

@@ -620,14 +620,20 @@ describe("exact npm computation", () => {
     expect(heldPins).not.toContain("1.0.1");
     expect(h.calls.map((args) => args[0])).toEqual(["install", "update", "install", "install", "install", "install", "install"]);
   });
-  it("checks the current replacement again when a dependent's range drops a remembered aged move", async () => {
+  it.each([
+    { constraint: "a range", spec: "^2", overrides: undefined },
+    { constraint: "a non-range spec", spec: "https://registry.npmjs.org/held/-/held-2.0.0.tgz", overrides: undefined },
+    { constraint: "a scoped override", spec: "^1 || ^2", overrides: { "parent@1.0.0": { held: "^2" } } },
+  ])("checks the current replacement again when $constraint drops a remembered aged move", async ({ spec, overrides }) => {
     const h = await fixture();
     const path = "node_modules/parent/node_modules/held";
     const anchored = {
       "node_modules/parent": { version: "1.0.0", dependencies: { child: "^1", plugin: "^1" } },
       "node_modules/parent/node_modules/plugin": { version: "1.0.0", peerDependencies: { held: "^1" } },
     };
-    const base = { ...lock(), packages: { ...lock().packages, ...anchored, [path]: { version: "1.0.1" } } };
+    const root = overrides === undefined ? manifest : { ...manifest, overrides };
+    const base = { ...lock(), packages: { ...lock().packages, "": root, ...anchored, [path]: { version: "1.0.1" } } };
+    await writeFile(join(h.dir, "package.json"), json(root));
     await writeFile(join(h.dir, "package-lock.json"), json(base));
     const npm: NpmCommand = async (dir, args) => {
       if (args[0] === "--version") return { code: 0, stdout: "11.20.0", stderr: "" };
@@ -637,9 +643,9 @@ describe("exact npm computation", () => {
       // held becomes pinnable at 1.1.0 after the first pin pass; from the second, its parent asks for ^2.
       const held = h.calls.length >= 6 ? "2.0.0" : "1.1.0";
       const parent = h.calls.length >= 4
-        ? { "node_modules/parent": { version: "1.0.0", dependencies: { child: "^1", held: h.calls.length >= 6 ? "^2" : "^1" } } }
+        ? { "node_modules/parent": { version: "1.0.0", dependencies: { child: "^1", held: h.calls.length >= 6 ? spec : "^1" } } }
         : anchored;
-      await writeFile(join(dir, "package-lock.json"), json({ ...base, packages: { ...lock().packages, ...parent,
+      await writeFile(join(dir, "package-lock.json"), json({ ...base, packages: { ...lock().packages, "": root, ...parent,
         "node_modules/child": { version: child }, [path]: { version: held },
       } }));
       return { code: 0, stdout: "", stderr: "" };
