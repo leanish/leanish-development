@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- bump-it's routine keeps an accepted aged replacement of an unpinnable locked copy when a
+  later pass makes that copy pinnable, instead of pinning it back to its young locked version
+  and failing the unit.
+
 ## 0.4.1 - 2026-10-12
 
 ### Added
