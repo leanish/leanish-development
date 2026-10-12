@@ -299,8 +299,10 @@ function withStaleAccepted(graph: NpmGraph, accepted: Map<string, string>, unpin
     if (copy === undefined) continue;
     const overridden = overrides.rangeFor(copy.installedAs) ?? overrides.rangeFor(copy.name);
     const specs = overridden !== undefined ? [overridden] : graph.edgesTo(path).map((edge) => edge.spec);
-    // A spec that isn't a version range can't be judged here; candidate selection reports it.
-    if (specs.map(rangeOf).every((range) => range === undefined || semver.satisfies(version, range))) continue;
+    // What can't be judged here (a spec that isn't a version range, a scoped or complex
+    // override) can't keep a remembered version either: its current version is checked instead.
+    const complex = overrides.isComplex(copy.installedAs) || overrides.isComplex(copy.name);
+    if (!complex && specs.map(rangeOf).every((range) => range !== undefined && semver.satisfies(version, range))) continue;
     accepted.delete(path);
     result.add(path);
   }
