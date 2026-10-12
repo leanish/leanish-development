@@ -8,6 +8,8 @@
 import { lstat, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
+import semver from "semver";
+
 import type { NpmDeclaration } from "../../ci/src/candidates.ts";
 import { type NodeRuntime, nodeRuntime, nodeTypeProblem, nodeTypeVersions } from "../../ci/src/node-runtime.ts";
 import { resolveExact } from "../../remediation/src/npm-exact.ts";
@@ -15,7 +17,7 @@ import { workingTree } from "../../ci/src/tree.ts";
 
 import { assertLocalFile } from "./files.ts";
 import { withSpec } from "../../remediation/src/manifest-spec.ts";
-import { type Copy, NpmGraph, rewriteSpec } from "./npm-graph.ts";
+import { type Copy, NpmGraph, rangeOf, rewriteSpec } from "./npm-graph.ts";
 import { repositoryOverrides } from "./npm-overrides.ts";
 import { retentionManifests } from "./npm-pins.ts";
 import { type Decision, decideTargets, meetsReleaseAge, type TargetSources } from "./npm-targets.ts";
@@ -175,6 +177,7 @@ async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions
   let decisions: Decision[] = [];
   for (let pass = 0; ; pass++) {
     const graph = new NpmGraph(JSON.parse(await readFile(at(lockName), "utf8")));
+    unpinned = withStaleAccepted(graph, accepted, unpinned, overrides);
     await assertUnpinnedRetention(graph, retained, unpinned, lockfile, inputs.sources);
     rememberAccepted(graph, retained, unpinned, accepted);
     // Pinnable copies stay at base; unpinnable copies may keep an aged, non-deprecated replacement.
@@ -282,6 +285,26 @@ function retainedTargets(graph: NpmGraph, retained: ReadonlyMap<string, Copy>, u
     targets.set(path, unpinned.has(path) ? current.version : accepted.get(path) ?? copy.version);
   }
   return targets;
+}
+
+/**
+ * A later pass can change what a remembered copy's dependents or the repository's overrides
+ * ask for. A remembered version they no longer admit is dropped, and the copy's current
+ * version is checked again like any unpinned replacement.
+ */
+function withStaleAccepted(graph: NpmGraph, accepted: Map<string, string>, unpinned: ReadonlySet<string>, overrides: ReturnType<typeof repositoryOverrides>): Set<string> {
+  const result = new Set(unpinned);
+  for (const [path, version] of accepted) {
+    const copy = graph.copies().find((candidate) => candidate.path === path);
+    if (copy === undefined) continue;
+    const overridden = overrides.rangeFor(copy.installedAs) ?? overrides.rangeFor(copy.name);
+    const specs = overridden !== undefined ? [overridden] : graph.edgesTo(path).map((edge) => edge.spec);
+    // A spec that isn't a version range can't be judged here; candidate selection reports it.
+    if (specs.map(rangeOf).every((range) => range === undefined || semver.satisfies(version, range))) continue;
+    accepted.delete(path);
+    result.add(path);
+  }
+  return result;
 }
 
 /**
