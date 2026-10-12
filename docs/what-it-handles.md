@@ -2,8 +2,8 @@
 
 This guide describes supply-chain 0.4.2. The [changelog](../CHANGELOG.md) lists what changed in each release.
 
-- **The gate** checks a pull request (PR). It also scans the default branch and
-  checks open PRs again each day with current advisories.
+- **The gate** checks a pull request (PR) whenever it changes. It also scans the
+  default branch each day with current advisories.
 - **secure-it** proposes security fixes. It can also remove security version
   restrictions that are no longer needed.
 - **bump-it** proposes routine updates and separate major upgrades.
@@ -117,10 +117,21 @@ young or deprecated version, or one whose eligibility cannot be read, fails the 
 follow their carrier and may change when it takes an aged update. Direct
 dependencies outside the update plan stay locked too. Own packages still update
 without the wait; a configured npm age exclusion alone does not freeze transitives.
+A locked version whose publication date can't be read is treated like a young one.
+An aged version accepted for a copy that couldn't be pinned is kept if a later step
+can pin that copy. If the copy's dependents or the repository's overrides then ask
+for something that version doesn't satisfy, or bump-it can't judge what they ask
+for, the copy's current version is checked again instead.
 
 It avoids deprecated targets. It keeps `@types/node` within the project's lowest
 known supported Node major. Without readable runtime evidence, it stays in the
 current type major; an existing type version that is too high needs a manual fix.
+
+Required peers move with the update that needs them. The version chosen for the
+updated package stays fixed. A companion that already fits stays; otherwise bump-it
+takes its lowest eligible version that every package asking for it accepts, within
+the companion's line, which can be lower than its current version. If no set of
+versions fits, that update is blocked and reported; the other updates go ahead.
 
 ## Gradle and Maven packages
 
@@ -131,6 +142,12 @@ Maven modules in runtime, compile and test dependencies, annotation processors,
 build tools, plugins, and buildscript and settings classpaths.
 It also covers `buildSrc` and included builds configured by the root build.
 Missing output or unresolved configurations fail. Explicitly ignored ones are not covered.
+
+The tools change declared versions; Gradle decides what resolves. A declared
+version can resolve higher when another dependency asks for more, and updating one
+dependency can change what another one resolves to. The gate judges the resolved
+versions. Both tools verify an edit by having Gradle apply the plan to the base
+build: the edited build must then declare and resolve the same dependencies.
 
 Resolved modules get advisory and release-age checks. Release dates come from
 configured Maven repositories, by default Maven Central and the Plugin Portal.
@@ -190,6 +207,40 @@ bump-it selects the highest eligible aged release, with routine updates together
 and majors separate. Neither rewrites unrelated workflow policy.
 There are no dependency floors or npm publisher checks for Actions.
 
+## Pull requests over time
+
+Each tool reviews its own open PRs on later runs:
+
+- **Someone else changed it:** a push by a person, or a description whose hidden
+  tool-state marker was removed, makes the tool leave that PR alone. Editing the
+  rest of the description doesn't.
+- **The base moved:** the tool recomputes the plan and updates the PR, merging the
+  new base or redoing the change if the plan changed.
+- **CI is green:** the draft is marked ready. **Held by the cooldown:** it waits.
+  A secure-it PR held for young versions is retired once they have all aged; the
+  next run plans a fresh one.
+- **CI failed:** the agent adapts the PR, **at most twice**; an attempt counts even
+  if it changes nothing. If CI still fails after the second, the next review closes
+  the PR and deletes its branch, and a later run starts over. A run that replans an
+  open PR (its computed plan changed) starts that count again.
+
+Which PRs the agent can adapt:
+
+- **Majors, from both tools:** code, tests and scripts may change. The agent
+  already adapts them while building the PR, when its checks fail. A break that
+  appears later, after the base moved, is adapted during review.
+- **secure-it's non-major fixes:** build and dependency files only, never code.
+- **bump-it's routine PR and floor removals:** never adapted.
+
+Verification failures are different from CI failures. When secure-it's own
+verification of a routine batch fails, it retries once without the package groups
+named by the problems; malware and major fixes are never reduced.
+
+Order matters when not everything fits in one run. secure-it handles malware
+first, then fixes by highest severity. bump-it opens at most three new major PRs
+per run (configurable); majors deferred by an earlier run go first, then those
+touching more places. Updates to its already-open PRs don't count toward the cap.
+
 ## Removing floors later
 
 A **floor** records a minimum version and why it is needed. A security floor names
@@ -224,6 +275,9 @@ BeanUtils. It can go after that dependency is removed or naturally resolves safe
 - Unchanged unpinned Actions, `docker://` actions, missing local action descriptors
   and missing local reusable workflows leave reported gaps. A new or changed
   unpinned remote use fails instead.
+- The local tools reuse a repository's advisory listing for up to an hour, so an
+  advisory published meanwhile can wait for a later run. The CI gate always reads
+  fresh advisories.
 - Signatures, provenance and a seven-day wait do not prove an archive harmless.
   Wrapper checks do not scan the distribution's contents or separately compare
   generated scripts with official scripts.
@@ -250,8 +304,8 @@ BeanUtils. It can go after that dependency is removed or naturally resolves safe
   preserve earlier fixes. It does not maximize fixes across modules. Six probes can
   miss a later fix. Several parents each covering
   only part of the affected build cannot replace the floor through this search.
-- Gradle source recognition is text-based. It misses `kotlin("stdlib")`, escaped
-  names and files outside the repository. Comments or names in another build can
+- Gradle source recognition is text-based. It misses `kotlin("stdlib")`, escapes
+  inside Kotlin or Groovy strings, and files outside the repository. Comments or names in another build can
   cause an attempted update that verification rejects.
 - Several declared versions, shared catalog versions that move unplanned packages,
   replaced declarations, or a plugin major that stops the base build configuring
@@ -288,7 +342,7 @@ BeanUtils. It can go after that dependency is removed or naturally resolves safe
   merging. A person's PR held by the cooldown stays red until it's pushed to or its
   whole workflow is re-run after the date the hold gives.
 - Verification is about dependencies and policy, not whether a migration behaves
-  correctly. Agent retries are bounded. Human pushes are left alone. Publication
+  correctly. Agent adaptations are bounded (see above). Human pushes are left alone. Publication
   guards reduce races, but GitHub writes cannot be made atomic with a head check.
 
 ## What a person still does
