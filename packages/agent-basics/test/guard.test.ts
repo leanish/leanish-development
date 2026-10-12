@@ -128,7 +128,7 @@ describe("gh guard", () => {
     [["workflow", "run", "ci.yml"], "gh workflow"],
     [["secret", "list"], "gh secret"],
     [["release", "create", "v9"], "gh release create"],
-    [["label", "create", "leanish:agent:bump-it"], "gh label create"],
+    [["label", "create", "leanish:bump-it"], "gh label create"],
     [["auth", "token"], "gh auth token"],
     [["issue", "create", "--title", "x"], "gh issue create"],
   ])("refuses %j", async (args, reason) => {

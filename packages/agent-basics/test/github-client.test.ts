@@ -40,7 +40,7 @@ function apiPr(overrides: Record<string, unknown> = {}): Record<string, unknown>
     draft: true,
     merged_at: null,
     user: { login: "leanish" },
-    labels: [{ name: "leanish:agent:bump-it" }],
+    labels: [{ name: "leanish:bump-it" }],
     base: { ref: "main" },
     head: { sha: SHA, ref: "bump-it/dependency-refresh-2026-10-05", repo: { full_name: "leanish/widget" } },
     ...overrides,
@@ -68,7 +68,7 @@ describe("createGitHubClient", () => {
     expect(calls[0]?.init.redirect).toBe("error");
     const common = { nodeId: "PR_node7", url: "https://github.com/leanish/widget/pull/7", title: "refreshing dependencies", baseRef: "main", headSha: SHA };
     expect(pulls).toEqual([
-      { ...common, number: 7, body: "body", state: "open", merged: false, isDraft: true, author: "leanish", labels: ["leanish:agent:bump-it"], headRef: "bump-it/dependency-refresh-2026-10-05", headRepo: "leanish/widget" },
+      { ...common, number: 7, body: "body", state: "open", merged: false, isDraft: true, author: "leanish", labels: ["leanish:bump-it"], headRef: "bump-it/dependency-refresh-2026-10-05", headRepo: "leanish/widget" },
       { ...common, number: 3, body: "", state: "closed", merged: true, isDraft: false, author: null, labels: [], headRef: "x", headRepo: null },
     ]);
   });
@@ -294,7 +294,7 @@ describe("createGitHubClient", () => {
   it("labels and comments on a PR's issue, and deletes a branch ref (204)", async () => {
     const { fetch, calls } = scripted(json([{ name: "x" }]), json({ id: 1 }, 201), new Response(null, { status: 204 }));
     const github = client(fetch);
-    await github.addLabels({ repo: "leanish/widget", number: 7, labels: ["leanish:agent:bump-it"] });
+    await github.addLabels({ repo: "leanish/widget", number: 7, labels: ["leanish:bump-it"] });
     await github.createComment({ repo: "leanish/widget", number: 7, body: "closing: malware" });
     await github.deleteBranch({ repo: "leanish/widget", branch: "bump-it/dependency-refresh-2026-10-05" });
     expect(calls.map((call) => `${call.init.method} ${call.url}`)).toEqual([
@@ -302,7 +302,7 @@ describe("createGitHubClient", () => {
       "POST https://api.github.com/repos/leanish/widget/issues/7/comments",
       "DELETE https://api.github.com/repos/leanish/widget/git/refs/heads/bump-it/dependency-refresh-2026-10-05",
     ]);
-    expect(JSON.parse(String(calls[0]?.init.body))).toEqual({ labels: ["leanish:agent:bump-it"] });
+    expect(JSON.parse(String(calls[0]?.init.body))).toEqual({ labels: ["leanish:bump-it"] });
     expect(calls[2]?.init.body).toBeUndefined();
   });
 

@@ -6,7 +6,8 @@ its own config, default Keychain services and two schedules: `run` plans changes
 **no tool dry-run flag**. Start with the candidate preview below before enabling
 publication or a schedule.
 
-Tool PRs carry the `leanish:secure-it` or `leanish:bump-it` label and the tool's body marker.
+Tool PRs carry the `leanish:secure-it` or `leanish:bump-it` label and a matching body marker
+(`<!-- leanish:secure-it -->` or `<!-- leanish:bump-it -->`).
 
 Adopt [the CI gate](../packages/ci/README.md#adopting-the-gate) first. The tools read
 their PRs' CI (the gate's comparison included) during review; they compute their own

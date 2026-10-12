@@ -4,9 +4,8 @@
 
 ### Changed
 
-- secure-it and bump-it no longer recognise a PR by the old `leanish:agent=<tool>` label
-  alone: a PR is theirs when it carries the body marker or the `leanish:<tool>` label (every
-  PR they publish carries the marker).
+- The tools' PR body marker is `<!-- leanish:<tool> -->`, named like their label; a PR is theirs
+  when it carries either.
 
 ## 0.4.2 - 2026-10-12
 
@@ -338,7 +337,7 @@
 - Shared sandboxed repository commands, isolated credentials, PR race checks,
   publication journal recovery, deterministic reconciliation and bounded CI
   adaptation. CI reads Actions and commit statuses without Checks permission.
-- Per-tool PAT/Keychain defaults, strict configuration, current/legacy label
+- Per-tool PAT/Keychain defaults, strict configuration, per-tool PR label
   recognition, candidate preview, launchd examples, logs and cost reporting.
 - Provenance for copied agent basics, an adoption/configuration guide, security
   model, coverage gaps and a real-run validation record for wrapper generation
