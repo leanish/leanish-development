@@ -4,7 +4,7 @@ Each section is dated with when its results were observed. They supplement the a
 they do not replace verification of a new plan or its current-head CI. GitHub App
 mode is deferred; this evidence uses the supported PAT mode.
 
-## Gradle wrapper generation (E2)
+## Gradle wrapper generation (E2) — 2026-10-07
 
 bump-it opened the owner-approved wrapper fixture's PR #1, moving the official
 root wrapper from **9.7.1 to 9.8.0**. The tool generated it twice under the sandbox
@@ -19,7 +19,7 @@ earlier public-catalog selection checks and network-free unit tests. No fixture
 source or private configuration is reproduced here. The PR was still unmerged
 when this evidence was recorded.
 
-## Joint unlocked floor removal (D2)
+## Joint unlocked floor removal (D2) — 2026-10-07
 
 Real sandboxed probes and final secure-it verification ran on synthetic projects
 using public packages. The Gradle probe used `--no-daemon` and disabled dependency
@@ -41,8 +41,13 @@ that repository's still-needed floor.
 
 ## Real runs on the fixture repositories — 2026-10-12
 
-supply-chain v0.4.2 ran for real on the owner's fixture repositories (`leanish/supply-chain_TEST_*`, private
-test inputs kept out of regular passes; see each repository's `VALIDATION.md` for heads, costs and details):
+supply-chain v0.4.2 ran for real on the owner's fixture repositories, private test inputs kept out of regular
+passes. Heads, costs and details are in each one's `VALIDATION.md`:
+[gradle](https://github.com/leanish/supply-chain_TEST_gradle/blob/main/VALIDATION.md),
+[npm-actions](https://github.com/leanish/supply-chain_TEST_npm-actions/blob/main/VALIDATION.md),
+[npm-bundles](https://github.com/leanish/supply-chain_TEST_npm-bundles/blob/main/VALIDATION.md),
+[conventions](https://github.com/leanish/supply-chain_TEST_conventions/blob/main/VALIDATION.md) and
+[bump-it-wrapper](https://github.com/leanish/supply-chain_TEST_bump-it-wrapper/blob/main/VALIDATION.md).
 
 - **Majors that need code.** secure-it adapted code while building a security major
   (gradle case 12: SnakeYAML 1.33 → 2.0) and during review after a later break (case 17).
@@ -60,27 +65,29 @@ test inputs kept out of regular passes; see each repository's `VALIDATION.md` fo
 ## Fixture coverage
 
 What the fixture repositories exercise, by evidence state: **real tool run** (the tools ran for
-real and the outcome is recorded), **seed/probe** (seeded and probed locally, outcome not yet
+real and the outcome is recorded), **real tool run, branch only** (the tool's branch is recorded
+but not its CI or comparison results), **seed/probe** (seeded and probed locally, outcome not yet
 recorded from a tool run), or **unit tests only** (no fixture end-to-end evidence; covered by the
 tests in this repository). Case numbers refer to each fixture's `EXPECTED.md`.
 
 | Behaviour | Fixture case | Evidence |
 |---|---|---|
-| Gate: new findings fail, inherited ones warn; finding identity | gradle 4, npm-actions 7, npm-bundles A | real tool run |
+| Gate: new findings fail, inherited ones warn; finding identity | gradle 4, npm-actions 7; npm-bundles A | real tool run; npm-bundles: branch only |
 | Gate: default-branch scan; PR judged when it changes | all fixtures (push and PR runs) | real tool run |
 | Malware fails and can't be excepted; malware repairs first | — | unit tests only (no real malware can be published) |
-| Release age and cooldown hold; proven young fix | npm-bundles A (young carrier) | real tool run (held draft); retirement after 2026-10-15 pending |
+| Release age and cooldown hold; proven young fix | npm-bundles A (young carrier) | real tool run, branch only (held draft); retirement after 2026-10-15 pending |
 | npm required young-dependency proof | — | unit tests only |
 | npm publisher identity | npm-actions 7 (minimist blocker), 15 (first seed) | real tool run |
 | npm signature or provenance failure | — | unit tests only |
-| Actions pins: full SHA plus release tag | gradle, npm-actions, conventions 8 | real tool run |
-| Gradle inventory: buildSrc, plugins, configurations | gradle 3/5, conventions 1/5 | real tool run |
-| Gradle declared versus resolved | gradle 10, npm-actions 10 | seed/probe |
+| Actions pins: full SHA plus release tag | gradle 8, npm-actions 8; conventions 8 | real tool run; conventions: branch only |
+| Gradle inventory: buildSrc, plugins, configurations | gradle 3/5; conventions 1/5 | real tool run; conventions: branch only |
+| Gradle declared versus resolved | gradle 10 | seed/probe |
+| npm root and nested copies of one package moving independently | npm-actions 10 | seed/probe |
 | secure-it npm direct fix | npm-actions 7 (JSON5) | real tool run |
 | secure-it npm parent search, override and floor | npm-actions B, 7 (glob/minimatch) | real tool run |
-| secure-it bundled fix through its carrier | npm-bundles A | real tool run |
+| secure-it bundled fix through its carrier | npm-bundles A | real tool run, branch only |
 | secure-it Gradle parent search and floor | gradle 4/C (consumed seeds; re-seed steps in its EXPECTED) | real tool run |
-| secure-it floor removal | gradle (#13 open) | real tool run (PR open) |
+| secure-it floor removal | gradle (#13) | real tool run (#13 ready, CI green, not merged) |
 | secure-it verification retry | — | unit tests only |
 | Major needing code, adapted while building the PR | gradle 12 | real tool run |
 | Major needing code, adapted during review | gradle 11, 17; npm-actions 16 | real tool run |

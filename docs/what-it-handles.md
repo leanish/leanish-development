@@ -219,9 +219,10 @@ Each tool reviews its own open PRs on later runs:
 - **CI is green:** the draft is marked ready. **Held by the cooldown:** it waits.
   A secure-it PR held for young versions is retired once they have all aged; the
   next run plans a fresh one.
-- **CI failed:** the agent adapts the PR, **at most twice per PR**; an attempt
-  counts even if it changes nothing. If CI still fails after the second, the next
-  review closes the PR and deletes its branch, and a later run starts over.
+- **CI failed:** the agent adapts the PR, **at most twice**; an attempt counts even
+  if it changes nothing. If CI still fails after the second, the next review closes
+  the PR and deletes its branch, and a later run starts over. A run that replans an
+  open PR (its target changed) starts that count again.
 
 Which PRs the agent can adapt:
 
