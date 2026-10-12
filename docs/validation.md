@@ -73,7 +73,7 @@ tests in this repository). Case numbers refer to each fixture's `EXPECTED.md`.
 | Behaviour | Fixture case | Evidence |
 |---|---|---|
 | Gate: new findings fail, inherited ones warn; finding identity | gradle 4, npm-actions 7; npm-bundles A | real tool run; npm-bundles: branch only |
-| Gate: default-branch scan; PR judged when it changes | all fixtures (push and PR runs) | real tool run |
+| Gate: default-branch scan; PR judged when it changes | gradle, npm-actions, bump-it-wrapper (push and PR runs); npm-bundles, conventions | real tool run; npm-bundles, conventions: branch only |
 | Malware fails and can't be excepted; malware repairs first | — | unit tests only (no real malware can be published) |
 | Release age and cooldown hold; proven young fix | npm-bundles A (young carrier) | real tool run, branch only (held draft); retirement after 2026-10-15 pending |
 | npm required young-dependency proof | — | unit tests only |

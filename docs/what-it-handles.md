@@ -222,7 +222,7 @@ Each tool reviews its own open PRs on later runs:
 - **CI failed:** the agent adapts the PR, **at most twice**; an attempt counts even
   if it changes nothing. If CI still fails after the second, the next review closes
   the PR and deletes its branch, and a later run starts over. A run that replans an
-  open PR (its target changed) starts that count again.
+  open PR (its computed plan changed) starts that count again.
 
 Which PRs the agent can adapt:
 
