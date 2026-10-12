@@ -211,8 +211,9 @@ There are no dependency floors or npm publisher checks for Actions.
 
 Each tool reviews its own open PRs on later runs:
 
-- **Someone else changed it:** a push by a person, or a rewritten description,
-  makes the tool leave that PR alone.
+- **Someone else changed it:** a push by a person, or a description whose hidden
+  tool-state marker was removed, makes the tool leave that PR alone. Editing the
+  rest of the description doesn't.
 - **The base moved:** the tool recomputes the plan and updates the PR, merging the
   new base or redoing the change if the plan changed.
 - **CI is green:** the draft is marked ready. **Held by the cooldown:** it waits.

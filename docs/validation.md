@@ -1,6 +1,6 @@
 # Validation evidence
 
-These results were observed on 2026-10-07. They supplement the automated tests;
+Each section is dated with when its results were observed. They supplement the automated tests;
 they do not replace verification of a new plan or its current-head CI. GitHub App
 mode is deferred; this evidence uses the supported PAT mode.
 
@@ -38,6 +38,61 @@ The real java-conventions Guava probe also exercised the refusal path: the
 security floor was **retained** because its parents still resolved vulnerable
 Guava without it. A successful removal on a fixture is not permission to remove
 that repository's still-needed floor.
+
+## Real runs on the fixture repositories — 2026-10-12
+
+supply-chain v0.4.2 ran for real on the owner's fixture repositories (`leanish/supply-chain_TEST_*`, private
+test inputs kept out of regular passes; see each repository's `VALIDATION.md` for heads, costs and details):
+
+- **Majors that need code.** secure-it adapted code while building a security major
+  (gradle case 12: SnakeYAML 1.33 → 2.0) and during review after a later break (case 17).
+  bump-it adapted failing majors during review (gradle case 11: JUnit 6; npm-actions case 16:
+  glob 13). Each review sequence ran `rebased` → red CI → `adapted` → green → `marked-ready`.
+- **npm selection.** bump-it capped `@types/node` at 24 from `engines.node` and the CI matrix
+  (npm-actions case 13), skipped the deprecated mimic-fn 5.0.0 for 4.0.0 (case 14), moved stylelint
+  16.17.0 → 16.18.0 inside the stylelint-order 8.1.1 major for its peer range, and blocked a
+  stylelint 17 major no installed plugin accepted (case 15). A first seed of case 15 failed
+  verification on the npm publisher-identity check (`file-entry-cache`/`flat-cache` moved to
+  another repository), as intended; it was re-seeded.
+- **Renames.** The fixtures were renamed from `test-*`; a read-only check confirmed all 28 open
+  tool PRs were still recognised, and real reviews plus a full pass found no duplicates.
+
+## Fixture coverage
+
+What the fixture repositories exercise, by evidence state: **real tool run** (the tools ran for
+real and the outcome is recorded), **seed/probe** (seeded and probed locally, outcome not yet
+recorded from a tool run), or **unit tests only** (no fixture end-to-end evidence; covered by the
+tests in this repository). Case numbers refer to each fixture's `EXPECTED.md`.
+
+| Behaviour | Fixture case | Evidence |
+|---|---|---|
+| Gate: new findings fail, inherited ones warn; finding identity | gradle 4, npm-actions 7, npm-bundles A | real tool run |
+| Gate: default-branch scan; PR judged when it changes | all fixtures (push and PR runs) | real tool run |
+| Malware fails and can't be excepted; malware repairs first | — | unit tests only (no real malware can be published) |
+| Release age and cooldown hold; proven young fix | npm-bundles A (young carrier) | real tool run (held draft); retirement after 2026-10-15 pending |
+| npm required young-dependency proof | — | unit tests only |
+| npm publisher identity | npm-actions 7 (minimist blocker), 15 (first seed) | real tool run |
+| npm signature or provenance failure | — | unit tests only |
+| Actions pins: full SHA plus release tag | gradle, npm-actions, conventions 8 | real tool run |
+| Gradle inventory: buildSrc, plugins, configurations | gradle 3/5, conventions 1/5 | real tool run |
+| Gradle declared versus resolved | gradle 10, npm-actions 10 | seed/probe |
+| secure-it npm direct fix | npm-actions 7 (JSON5) | real tool run |
+| secure-it npm parent search, override and floor | npm-actions B, 7 (glob/minimatch) | real tool run |
+| secure-it bundled fix through its carrier | npm-bundles A | real tool run |
+| secure-it Gradle parent search and floor | gradle 4/C (consumed seeds; re-seed steps in its EXPECTED) | real tool run |
+| secure-it floor removal | gradle (#13 open) | real tool run (PR open) |
+| secure-it verification retry | — | unit tests only |
+| Major needing code, adapted while building the PR | gradle 12 | real tool run |
+| Major needing code, adapted during review | gradle 11, 17; npm-actions 16 | real tool run |
+| bump-it routine and separate majors | gradle 2/3/5, npm-actions 7/10, 8 | real tool run |
+| bump-it `@types/node` cap | npm-actions 13 | real tool run |
+| bump-it deprecated targets skipped | npm-actions 14 | real tool run |
+| bump-it peer companions; impossible set blocked | npm-actions 15 | real tool run |
+| bump-it Gradle wrapper | bump-it-wrapper | real tool run |
+| bump-it young locked npm copies (0.4.1) and remembered aged moves (0.4.2) | — | unit tests only (a seed stops being young after seven days) |
+| bump-it major cap and deferral | — | unit tests only |
+| Human pushes left alone; journal recovery; publication races | — | unit tests only |
+| Local advisory cache | — | unit tests only (real passes use it) |
 
 ## Automated checks and skips
 
