@@ -36,7 +36,7 @@ export interface TargetInputs {
   readonly overrides: RepositoryOverrides;
   /** Copy path → the version a direct dependency's copy must be at. */
   readonly direct: ReadonlyMap<string, string>;
-  /** Copy path → its retained target: base, or an accepted aged, non-deprecated version when it cannot be pinned. */
+  /** Copy path → its retained target: base, or an aged, non-deprecated version accepted while it couldn't be pinned. */
   readonly retained?: ReadonlyMap<string, string>;
 }
 
