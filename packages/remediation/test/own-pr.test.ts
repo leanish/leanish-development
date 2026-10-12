@@ -4,15 +4,16 @@ import { branchFor, isOwnPullRequest, ownPullRequests, stateOf, topicOf, withMar
 import { BASE_SHA, HEAD_SHA, ownPr, RULES } from "./fake-github.ts";
 
 describe("own PRs", () => {
-  it.each(["secure-it", "bump-it"] as const)("publishes %s's label and doesn't recognise the old leanish:agent=<tool> label alone", (tool) => {
+  it.each(["secure-it", "bump-it"] as const)("names %s's label and body marker after the tool", (tool) => {
     const rules = ownPullRequests(tool);
     const pr = ownPr({ headRef: `${tool}/2026-10-05-security`, body: "No marker.", labels: [`leanish:${tool}`] });
     expect(rules.label).toBe(`leanish:${tool}`);
-    expect(rules.marker).toBe(`<!-- leanish:agent=${tool} -->`);
+    expect(rules.marker).toBe(`<!-- leanish:${tool} -->`);
     expect(isOwnPullRequest(rules, pr, "leanish/widget", "main")).toBe(true);
-    expect(isOwnPullRequest(rules, { ...pr, labels: [`leanish:agent=${tool}`] }, "leanish/widget", "main")).toBe(false);
+    expect(isOwnPullRequest(rules, { ...pr, body: rules.marker, labels: [] }, "leanish/widget", "main")).toBe(true);
     const other = tool === "secure-it" ? "bump-it" : "secure-it";
     expect(isOwnPullRequest(rules, { ...pr, labels: [`leanish:${other}`] }, "leanish/widget", "main")).toBe(false);
+    expect(isOwnPullRequest(rules, { ...pr, labels: [], body: ownPullRequests(other).marker }, "leanish/widget", "main")).toBe(false);
     expect(isOwnPullRequest(rules, { ...pr, headRepo: "someone/widget" }, "leanish/widget", "main")).toBe(false);
     expect(isOwnPullRequest(rules, { ...pr, state: "closed" }, "leanish/widget", "main")).toBe(false);
   });
@@ -45,7 +46,7 @@ describe("own PRs", () => {
     expect(once).toBe(`Fixes snappy.\n\n<!-- leanish:state head=${HEAD_SHA} base=${BASE_SHA} adaptations=0 -->\n${RULES.marker}\n`);
     const twice = withMarker(RULES, `${once}\nMore.`, { head: BASE_SHA, base: HEAD_SHA, adaptations: 2 });
     expect(twice.match(/leanish:state/g)).toHaveLength(1);
-    expect(twice.match(/leanish:agent=secure-it/g)).toHaveLength(1);
+    expect(twice.split(RULES.marker)).toHaveLength(2);
     expect(stateOf(twice)).toEqual({ head: BASE_SHA, base: HEAD_SHA, adaptations: 2 });
     expect(stateOf("no state")).toBeUndefined();
     expect(() => withMarker(RULES, "x", { head: "nope", base: BASE_SHA, adaptations: 0 })).toThrow("invalid PR state");

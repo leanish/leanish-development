@@ -1,6 +1,6 @@
 // Adapted from leanish/leanish-development agents/bump-it/src/own-pr.ts at c6282df: one set of rules per tool
 // (secure-it, bump-it) instead of bump-it's constants, and the PR's state (what the tool last published) in its body;
-// publishes leanish:<tool> labels instead of leanish:agent=<tool> ones, keeping the body marker.
+// labels and body markers are named leanish:<tool>.
 import type { GitHubPullRequest } from "../../agent-basics/src/types/clients.ts";
 
 export type ToolName = "secure-it" | "bump-it";
@@ -14,7 +14,7 @@ export interface OwnPullRequests {
   readonly marker: string;
 }
 
-const MARKER = (tool: ToolName) => `<!-- leanish:agent=${tool} -->`;
+const MARKER = (tool: ToolName) => `<!-- leanish:${tool} -->`;
 const STATE = /<!-- leanish:state head=([0-9a-f]{40}) base=([0-9a-f]{40}) adaptations=(\d+) -->/;
 
 /**
