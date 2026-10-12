@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- secure-it and bump-it no longer recognise a PR by the old `leanish:agent=<tool>` label
+  alone: a PR is theirs when it carries the body marker or the `leanish:<tool>` label (every
+  PR they publish carries the marker).
+
 ## 0.4.2 - 2026-10-12
 
 ### Fixed

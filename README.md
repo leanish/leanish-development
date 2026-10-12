@@ -39,9 +39,8 @@ Licensed under Apache-2.0.
 Each tool uses distinct write/read PAT values. Default Keychain services are
 `leanish-secure-it-write` / `leanish-secure-it-read` and
 `leanish-bump-it-write` / `leanish-bump-it-read`; optional `secrets` overrides can
-share a pair between tools. PR labels are `leanish:secure-it` and `leanish:bump-it`;
-legacy labels remain recognised. GitHub App mode is future work; PAT mode will
-remain supported when it arrives.
+share a pair between tools. PR labels are `leanish:secure-it` and `leanish:bump-it`.
+GitHub App mode is future work; PAT mode will remain supported when it arrives.
 
 ## Packages
 
