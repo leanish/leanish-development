@@ -15,7 +15,11 @@ lists its changes in [the CHANGELOG](../CHANGELOG.md).
    (candidate tags never move either). Before any release PR:
    - run the tools for real from a checkout of the candidate, as the
      [adoption guide](adopting-tools.md) describes, on adopting repositories
-     where the release's changes apply;
+     where the release's changes apply, including the owner's fixture
+     repositories (they're kept out of regular passes and only run when a
+     candidate pass opts them in). A candidate's tool code doesn't change those
+     repositories' gate pins: when the candidate changes the gate, get its CI
+     evidence from runs pinned to the candidate;
    - have whoever didn't implement the release's changes review the candidate's
      whole state, unprimed: say what to review, not where to look. Real runs only
      reach the cases the adopting repositories have today; this review looks for

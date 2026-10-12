@@ -10,8 +10,11 @@ Tool PRs use `leanish:secure-it` or `leanish:bump-it`. Open PRs carrying the old
 `leanish:agent=<tool>` label are still recognised; updates add the new label and
 keep the old one. The body marker is unchanged.
 
-Adopt [the CI gate](../packages/ci/README.md#adopting-the-gate) first: default-branch
-daily scans and PR comparisons are what these tools act on and read. They do not replace R7's CI coverage. Read [the security model](security-model.md)
+Adopt [the CI gate](../packages/ci/README.md#adopting-the-gate) first. The tools read
+their PRs' CI (the gate's comparison included) during review; they compute their own
+plans from the repository and the registries, not from the gate's daily scan. Keep the
+daily default-branch scan anyway: it is what reports new advisories on an unchanged
+`main` between tool runs. The tools do not replace R7's CI coverage. Read [the security model](security-model.md)
 and [coverage gaps](coverage-gaps.md) before giving a tool repository access.
 
 ## Prerequisites
