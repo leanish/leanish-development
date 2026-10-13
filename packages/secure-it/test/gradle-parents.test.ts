@@ -135,6 +135,17 @@ describe("moving a Gradle parent instead of flooring what it brings", () => {
     expect(fixes.map((fix) => [fix.name, fix.notes])).toEqual([[OKIO, [expect.stringContaining(`${OKHTTP} is pinned with strictly(...) at :compileClasspath: the owner's pin`)]]]);
   });
 
+  it("still takes a parent whose only strict pin is outside its reach", async () => {
+    const base = inventory("4.9.3");
+    const pinnedElsewhere: GradleInventory = { ...base, builds: base.builds.map((build) => ({ ...build, configurations: [...build.configurations,
+      { id: ":buildscript.classpath", kind: "buildscript", resolved: [], unresolved: [], error: undefined, declared: [], strictConstraints: [{ group: "com.squareup.okhttp3", name: "okhttp", version: "4.9.3" }] }] })) };
+    const probes: string[] = [];
+    const fixes = await withGradleParents([okio()], { base: BASE, gradle: pinnedElsewhere, named: (group) => group === "com.squareup.okhttp3", inventories: references(probes),
+      env: environment(), config: parseConfig({}) });
+    expect(probes).toEqual(["4.10.0", "4.11.0", "4.12.0"]);
+    expect(fixes.map((fix) => fix.name)).toEqual([OKHTTP]);
+  });
+
   it.each([
     ["the inventory doesn't record edges", { edges: false }, "doesn't record who brings it"],
     ["a reference run fails", { fail: true }, "searching its parents failed"],

@@ -318,6 +318,9 @@ describe("bumpCandidates", () => {
       { id: ":compileClasspath", kind: "project" as const, resolved: [], unresolved: [], error: undefined, declared: [declared("pinned", true), declared("shared"), declared("free")] },
       { id: ":testCompileClasspath", kind: "project" as const, resolved: [], unresolved: [], error: undefined, declared: [declared("pinned"), declared("shared"), declared("free")],
         strictConstraints: [{ group: "com.acme", name: "shared", version: "1.0" }] },
+      // As Gradle pins its embedded Kotlin on every buildscript classpath: no declaration of it there, so free moves.
+      { id: ":buildscript.classpath", kind: "buildscript" as const, resolved: [], unresolved: [], error: undefined, declared: [],
+        strictConstraints: [{ group: "com.acme", name: "free", version: "1.0" }] },
     ] }] } };
     const found = await bumpCandidates(head, environment({}, {}), gradle as never);
     expect(found.bumps.map((bump) => bump.name)).toEqual(["com.acme:free"]);

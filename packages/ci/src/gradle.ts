@@ -334,6 +334,8 @@ function flag<Name extends "strict" | "moved">(value: unknown, name: Name): { [k
 /**
  * Every coordinate (`group:name`) a configuration pins with a strict version, declared or as a constraint, with the
  * locations that pin it. The tools never move such a pin, nor plan a change that would need it moved: it's the owner's.
+ * Only the configurations a change touches count (`pinnedAmong`): Gradle itself pins its embedded Kotlin strictly on
+ * every buildscript and settings classpath, which says nothing about the project's own classpaths.
  */
 export function strictPins(gradle: GradleInventory | undefined): Map<string, string[]> {
   const pins = new Map<string, Set<string>>();
@@ -347,6 +349,12 @@ export function strictPins(gradle: GradleInventory | undefined): Map<string, str
     }
   }
   return new Map([...pins].map(([name, locations]) => [name, [...locations].sort()]));
+}
+
+/** The locations among `locations` (where a move or fix would act) that pin `name` strictly; empty when none does. */
+export function pinnedAmong(pins: ReadonlyMap<string, ReadonlyArray<string>>, name: string, locations: Iterable<string>): string[] {
+  const pinned = pins.get(name) ?? [];
+  return [...new Set(locations)].filter((location) => pinned.includes(location)).sort();
 }
 
 /** Why a strictly pinned coordinate is left alone, for notes and blocked fixes. */

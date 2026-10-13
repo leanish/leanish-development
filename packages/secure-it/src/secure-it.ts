@@ -12,7 +12,7 @@ import { type SecurityCandidates, type SecurityFix, securityCandidates } from ".
 import { type CooldownEvaluation, heldUntil } from "../../ci/src/cooldown.ts";
 import type { NpmPeerPlanner } from "../../ci/src/npm-peers.ts";
 import { type GateEnvironment, type GradleInputs, readSettings } from "../../ci/src/gate.ts";
-import { type GradleInventory, strictPinNote, strictPins } from "../../ci/src/gradle.ts";
+import { type GradleInventory, pinnedAmong, strictPinNote, strictPins } from "../../ci/src/gradle.ts";
 import { namingFailures } from "../../ci/src/http.ts";
 import { FileRepositoryAdvisoryCache } from "../../remediation/src/repository-advisory-cache.ts";
 import { BundleReader } from "../../ci/src/npm-bundles.ts";
@@ -309,12 +309,12 @@ function withNotesOf(published: ChangePlan, recomputed: ChangePlan): ChangePlan 
   return recomputed.notes === undefined ? rest : { ...rest, notes: recomputed.notes };
 }
 
-/** `fixes` with each Maven fix of a strictly pinned coordinate made non-actionable, so it's reported as blocked. */
+/** `fixes` with each Maven fix of a coordinate pinned strictly where it would act made non-actionable, so it's reported as blocked. */
 export function withStrictPinsBlocked(fixes: ReadonlyArray<SecurityFix>, gradle: GradleInventory | undefined): SecurityFix[] {
   const pins = strictPins(gradle);
   return fixes.map((fix) => {
-    const locations = fix.ecosystem === "Maven" ? pins.get(fix.name) : undefined;
-    return locations === undefined ? fix : { ...fix, to: undefined, problem: strictPinNote(fix.name, locations) };
+    const pinned = fix.ecosystem === "Maven" ? pinnedAmong(pins, fix.name, fix.locations) : [];
+    return pinned.length === 0 ? fix : { ...fix, to: undefined, problem: strictPinNote(fix.name, pinned) };
   });
 }
 
@@ -322,8 +322,8 @@ async function computeRemoval(execution: Execution, base: PlanBase): Promise<Com
   const pins = strictPins(base.gradle);
   // A floor declared with strictly(...) is the owner's pin too: it stays, whatever the proof would say.
   const strict = (floor: Floor) => {
-    const locations = floor.ecosystem === "Maven" ? pins.get(floor.package) : undefined;
-    return locations === undefined ? undefined : strictPinNote(floor.package, locations);
+    const pinned = floor.ecosystem === "Maven" ? pinnedAmong(pins, floor.package, floor.locations) : [];
+    return pinned.length === 0 ? undefined : strictPinNote(floor.package, pinned);
   };
   return selectRemovals(await floorsOf(base.tree), (floors) => execution.deps.floorProbe(execution.context, base.tree, floors, execution.env),
     (text) => createHash("sha256").update(text).digest("hex"), strict);
