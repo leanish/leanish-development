@@ -19,6 +19,13 @@
 - The tools' PR body marker is `<!-- leanish:<tool> -->`, named like their label; a PR is theirs
   when it carries either.
 
+### Fixed
+
+- Installing OSV-Scanner is safe when several tool commands sharing a state directory install
+  it at the same time (the first pass with a fresh state directory, or after a version bump):
+  each download gets its own temporary name before the atomic rename, instead of one fixed name
+  that a concurrent install could move away mid-check.
+
 ## 0.4.2 - 2026-10-12
 
 ### Fixed

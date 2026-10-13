@@ -17,14 +17,16 @@ sha256=$(node -p "require('$tools')['osv-scanner'].sha256['$platform'] ?? ''")
 
 mkdir -p "$dest"
 binary="$dest/osv-scanner"
-curl -fsSL --retry 3 -o "$binary.download" \
+# A download name of its own: commands sharing a state dir may install at the same time, and the rename is atomic.
+download=$(mktemp "$binary.download.XXXXXX")
+trap 'rm -f "$download"' EXIT
+curl -fsSL --retry 3 -o "$download" \
   "https://github.com/google/osv-scanner/releases/download/v$version/osv-scanner_$platform"
-actual=$( (command -v sha256sum >/dev/null && sha256sum "$binary.download" || shasum -a 256 "$binary.download") | cut -d' ' -f1)
+actual=$( (command -v sha256sum >/dev/null && sha256sum "$download" || shasum -a 256 "$download") | cut -d' ' -f1)
 if [ "$actual" != "$sha256" ]; then
-  rm -f "$binary.download"
   echo "osv-scanner $version ($platform) has sha256 $actual, expected $sha256" >&2
   exit 1
 fi
-mv "$binary.download" "$binary"
-chmod +x "$binary"
+chmod +x "$download"
+mv -f "$download" "$binary"
 echo "$binary"
