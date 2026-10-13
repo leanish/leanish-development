@@ -1,6 +1,6 @@
 # Supply-chain: requirements and behavior
 
-**Scope: release 0.4.2 (2026-10-12).** Coverage depends on each adopter's configuration. This document describes the implemented contract, including its limits.
+**Scope: release 0.4.2 (2026-10-12) plus the unreleased changes in the [changelog](../CHANGELOG.md) (strict pins, agent output rules).** Coverage depends on each adopter's configuration. This document describes the implemented contract, including its limits.
 
 For the plain-language guide, see [What supply-chain handles](what-it-handles.md).
 

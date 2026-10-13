@@ -119,15 +119,16 @@ async function parentFor(fix: FixWork, floored: ReadonlyArray<string>, work: Rea
 
 async function tryRoot(fix: FixWork, floored: ReadonlyArray<string>, root: string, reach: ReadonlyArray<string>, work: ReadonlyArray<FixWork>, inputs: GradleParentInputs, spend: () => boolean): Promise<Parent | string> {
   const { config, env } = inputs;
-  const pinned = pinnedAmong(strictPins(inputs.gradle), root, reach);
+  // The root's own fix, actionable or not: a move of the root must fix its own fixable targets too (a blocked fix
+  // whose targets no one version fixes leaves the floor).
+  const own = work.find((entry) => entry.ecosystem === "Maven" && entry.name === root);
+  // Folding merges the own fix's locations into the move, so a pin there (one that blocked that fix) counts too.
+  const pinned = pinnedAmong(strictPins(inputs.gradle), root, [...reach, ...(own?.locations ?? [])]);
   if (pinned.length > 0) return strictPinNote(root, pinned);
   const declared = [...new Set(reach.flatMap((location) => declaredAt(inputs.gradle, location, root)).filter((version) => version !== UNVERSIONED))];
   if (declared.length !== 1) return `declared at ${declared.length === 0 ? "no version" : declared.sort().join(", ")}, not one version to move`;
   const from = declared[0]!;
   const parent = { ecosystem: "Maven" as const, name: root };
-  // The root's own fix, actionable or not: a move of the root must fix its own fixable targets too (a blocked fix
-  // whose targets no one version fixes leaves the floor).
-  const own = work.find((entry) => entry.ecosystem === "Maven" && entry.name === root);
   const ownTargets = own === undefined ? [] : own.targets.filter((target) => !own.unfixable.includes(target));
   // What the move must carry: what it already carries for earlier modules, and this one; every candidate proves them all.
   const claims: CarriedPackage[] = [

@@ -135,6 +135,19 @@ describe("moving a Gradle parent instead of flooring what it brings", () => {
     expect(fixes.map((fix) => [fix.name, fix.notes])).toEqual([[OKIO, [expect.stringContaining(`${OKHTTP} is pinned with strictly(...) at :compileClasspath: the owner's pin`)]]]);
   });
 
+  it("keeps a strict-blocked parent blocked: a pin on its own vulnerable copy counts, even outside its declaration's reach", async () => {
+    const base = inventory("4.9.3");
+    const gradle: GradleInventory = { ...base, builds: base.builds.map((build) => ({ ...build, configurations: [...build.configurations,
+      { id: ":tool", kind: "project", resolved: [], unresolved: [], error: undefined, declared: [], strictConstraints: [{ group: "com.squareup.okhttp3", name: "okhttp", version: "4.9.1" }] }] })) };
+    const blockedOwn: SecurityFix = { ...okio(), name: OKHTTP, from: "4.9.1", locations: [":tool"], targets: ["GHSA-okhttp"], to: undefined, problem: "pinned" };
+    const probes: string[] = [];
+    const fixes = await withGradleParents([blockedOwn, okio()], { base: BASE, gradle, named: (group) => group === "com.squareup.okhttp3", inventories: references(probes),
+      env: environment(), config: parseConfig({}) });
+    expect(probes).toEqual([]);
+    expect(fixes.find((fix) => fix.name === OKHTTP)).toBe(blockedOwn);
+    expect(fixes.find((fix) => fix.name === OKIO)?.notes).toEqual([expect.stringContaining(`${OKHTTP} is pinned with strictly(...) at :tool`)]);
+  });
+
   it("still takes a parent whose only strict pin is outside its reach", async () => {
     const base = inventory("4.9.3");
     const pinnedElsewhere: GradleInventory = { ...base, builds: base.builds.map((build) => ({ ...build, configurations: [...build.configurations,
