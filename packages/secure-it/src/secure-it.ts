@@ -12,7 +12,7 @@ import { type SecurityCandidates, type SecurityFix, securityCandidates } from ".
 import { type CooldownEvaluation, heldUntil } from "../../ci/src/cooldown.ts";
 import type { NpmPeerPlanner } from "../../ci/src/npm-peers.ts";
 import { type GateEnvironment, type GradleInputs, readSettings } from "../../ci/src/gate.ts";
-import type { GradleInventory } from "../../ci/src/gradle.ts";
+import { type GradleInventory, strictPinNote, strictPins } from "../../ci/src/gradle.ts";
 import { namingFailures } from "../../ci/src/http.ts";
 import { FileRepositoryAdvisoryCache } from "../../remediation/src/repository-advisory-cache.ts";
 import { BundleReader } from "../../ci/src/npm-bundles.ts";
@@ -273,12 +273,13 @@ export async function withParentsPlanned(found: SecurityCandidates, base: PlanBa
 /**
  * Parents first, on every fix of the run before it's split into units (a parent's own fix may land in another unit
  * otherwise): npm parents where an override would be needed, Gradle parents where a floor would; then npm carriers
- * that would need an override are blocked.
+ * that would need an override are blocked. A Gradle fix of a strictly pinned coordinate is blocked before anything:
+ * the pin is the owner's to move.
  */
 async function parentsFirst(fixes: ReadonlyArray<SecurityFix>, base: PlanBase, env: GateEnvironment, inventories: GradleInventories): Promise<FixWork[]> {
   const lockfiles = await lockfilesOf(base.tree);
   const { config, exceptions } = await readSettings(base.tree);
-  let work = await withParents(fixes, { lockfiles, env, config, exceptions });
+  let work = await withParents(withStrictPinsBlocked(fixes, base.gradle), { lockfiles, env, config, exceptions });
   if (base.gradle !== undefined) {
     const sources = await gradleSourceIndex(base.tree);
     work = await withGradleParents(work, { base: base.tree, gradle: base.gradle, named: sources.named, inventories, env, config });
@@ -308,9 +309,24 @@ function withNotesOf(published: ChangePlan, recomputed: ChangePlan): ChangePlan 
   return recomputed.notes === undefined ? rest : { ...rest, notes: recomputed.notes };
 }
 
+/** `fixes` with each Maven fix of a strictly pinned coordinate made non-actionable, so it's reported as blocked. */
+export function withStrictPinsBlocked(fixes: ReadonlyArray<SecurityFix>, gradle: GradleInventory | undefined): SecurityFix[] {
+  const pins = strictPins(gradle);
+  return fixes.map((fix) => {
+    const locations = fix.ecosystem === "Maven" ? pins.get(fix.name) : undefined;
+    return locations === undefined ? fix : { ...fix, to: undefined, problem: strictPinNote(fix.name, locations) };
+  });
+}
+
 async function computeRemoval(execution: Execution, base: PlanBase): Promise<ComputedRemoval> {
+  const pins = strictPins(base.gradle);
+  // A floor declared with strictly(...) is the owner's pin too: it stays, whatever the proof would say.
+  const strict = (floor: Floor) => {
+    const locations = floor.ecosystem === "Maven" ? pins.get(floor.package) : undefined;
+    return locations === undefined ? undefined : strictPinNote(floor.package, locations);
+  };
   return selectRemovals(await floorsOf(base.tree), (floors) => execution.deps.floorProbe(execution.context, base.tree, floors, execution.env),
-    (text) => createHash("sha256").update(text).digest("hex"));
+    (text) => createHash("sha256").update(text).digest("hex"), strict);
 }
 
 async function applyRemoval(execution: Execution, removal: ComputedRemoval): Promise<Content> {

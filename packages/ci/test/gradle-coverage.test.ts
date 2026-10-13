@@ -120,6 +120,7 @@ dependencies {
   testImplementation "fixture:test-lib:1.0"
   annotationProcessor "fixture:processor:1.0"
   tool "fixture:tool:1.0"
+  constraints { implementation("fixture:constrained") { version { strictly "1.5" } } }
 }
 `);
     await write(build, "sub/build.gradle", `plugins {
@@ -196,7 +197,16 @@ dependencies { implementation "fixture:included-dep:1.0" }
       ":testRuntimeClasspath",
     ]);
     expect(declared[0]).toMatchObject({ group: "fixture", version: "2.0", reason: "GHSA-test-floor: lowest fixed version" });
+    expect(declared[0]!.strict).toBeUndefined();
     expect(gradleResolutionProblems(inventory, [])).toEqual([]);
+  });
+
+  it("exports strict dependency constraints, inherited ones included, apart from the declarations", () => {
+    const configurations = inventory.builds.find((build) => build.build === ".")!.configurations;
+    const pinned = configurations.filter((configuration) => (configuration.strictConstraints ?? []).length > 0);
+    expect(pinned.map((configuration) => configuration.id).sort()).toEqual([":compileClasspath", ":runtimeClasspath", ":testCompileClasspath", ":testRuntimeClasspath"]);
+    expect(pinned[0]!.strictConstraints).toEqual([{ group: "fixture", name: "constrained", version: "1.5" }]);
+    expect(configurations.flatMap((configuration) => configuration.declared).some((declared) => declared.name === "constrained")).toBe(false);
   });
 
   it("exports dependencies a configuration only gets when it resolves (defaults), in every project, as declared", () => {
@@ -310,17 +320,25 @@ dependencies {
     if (referenceRoot !== undefined) await rm(referenceRoot, { recursive: true, force: true });
   });
 
-  it("moves declarations in place, a strict version staying strict, on the buildscript classpath too", async () => {
+  it("moves declarations in place, on the buildscript classpath too, leaving a strict pin and recording it as strict", async () => {
     const inventory = await reference({ moves: [
       { name: "fixture:plain", from: "1.0", to: "2.0", locations: IMPLEMENTATION },
-      { name: "fixture:strict", from: "1.0", to: "2.0", locations: IMPLEMENTATION },
       { name: "fixture:classpath-dep", from: "1.0", to: "2.0", locations: [":buildscript.classpath"] },
     ] });
     for (const location of IMPLEMENTATION) {
-      // wants-strict asks for strict 3.0: still strictly 2.0 after the move.
-      expect(at(inventory, location)).toMatchObject({ resolved: ["plain:2.0", "strict:2.0", "transitive:1.0", "wants-strict:1.0"], declared: ["plain:2.0", "strict:2.0", "wants-strict:1.0"], error: undefined });
+      // wants-strict asks for strict 3.0, but the build's own strictly 1.0 wins.
+      expect(at(inventory, location)).toMatchObject({ resolved: ["plain:2.0", "strict:1.0", "transitive:1.0", "wants-strict:1.0"], declared: ["plain:2.0", "strict:1.0", "wants-strict:1.0"], error: undefined });
     }
+    const runtime = inventory.builds[0]!.configurations.find((configuration) => configuration.id === ":runtimeClasspath")!;
+    expect(runtime.declared.filter((declared) => declared.strict === true).map((declared) => declared.name)).toEqual(["strict"]);
     expect(at(inventory, ":buildscript.classpath")).toMatchObject({ resolved: ["classpath-dep:2.0"], declared: ["classpath-dep:2.0"] });
+  }, 600_000);
+
+  it("refuses to move a strict version, failing the configurations it reaches: the pin is the owner's", async () => {
+    const inventory = await reference({ moves: [{ name: "fixture:strict", from: "1.0", to: "2.0", locations: IMPLEMENTATION }] });
+    for (const location of IMPLEMENTATION) {
+      expect(at(inventory, location).error).toContain("fixture:strict is pinned with strictly(1.0), the owner's pin, which no plan moves");
+    }
   }, 600_000);
 
   it("adds floors through a parent, next to a configuration's defaults", async () => {

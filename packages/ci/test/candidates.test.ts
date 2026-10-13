@@ -308,6 +308,25 @@ describe("bumpCandidates", () => {
     ]);
   });
 
+  it("never moves a coordinate pinned with strictly(...) anywhere, declared or as a constraint, noting the pins", async () => {
+    const head = await tree({}, {
+      "build.gradle.kts": 'dependencies { implementation("com.acme:shared:1.0"); implementation("com.acme:pinned:1.0"); implementation("com.acme:free:1.0") }',
+    });
+    const declared = (name: string, strict = false) => ({ group: "com.acme", name, version: "1.0", reason: undefined, ...(strict ? { strict: true as const } : {}) });
+    const gradle = { head: { tree: "worktree", builds: [{ build: ".", configurations: [
+      // Strict in one configuration only: its plain declaration elsewhere doesn't move either.
+      { id: ":compileClasspath", kind: "project" as const, resolved: [], unresolved: [], error: undefined, declared: [declared("pinned", true), declared("shared"), declared("free")] },
+      { id: ":testCompileClasspath", kind: "project" as const, resolved: [], unresolved: [], error: undefined, declared: [declared("pinned"), declared("shared"), declared("free")],
+        strictConstraints: [{ group: "com.acme", name: "shared", version: "1.0" }] },
+    ] }] } };
+    const found = await bumpCandidates(head, environment({}, {}), gradle as never);
+    expect(found.bumps.map((bump) => bump.name)).toEqual(["com.acme:free"]);
+    expect(found.notes).toEqual([
+      "com.acme:pinned is pinned with strictly(...) at :compileClasspath: the owner's pin, which the tools never move",
+      "com.acme:shared is pinned with strictly(...) at :testCompileClasspath: the owner's pin, which the tools never move",
+    ]);
+  });
+
   it.each(["24.19.0", "22.0.0"])("caps Node types from %s at the runtime minimum before choosing routine and major targets", async (from) => {
     const versions = ["22.0.0", "22.1.0", "24.19.0", "24.20.0", "26.6.3"];
     const root = { engines: { node: ">=24" }, devDependencies: { "@types/node": `^${from}` } };

@@ -129,7 +129,11 @@ function locations(inventory: GradleInventory): Map<string, LocationEntries> {
       entries.set(gradleLocation(build.build, configuration.id), {
         kind: configuration.kind,
         resolved: configuration.resolved.map((module) => `${module.group}:${module.name}:${module.version}`).sort(),
-        declared: configuration.declared.map((declared) => `${declared.group}:${declared.name} ${declared.version ?? UNVERSIONED}`).sort(),
+        // Strictness counts: a build-logic change can turn a pin into a plain declaration at the same version.
+        declared: [
+          ...configuration.declared.map((declared) => `${declared.group}:${declared.name} ${declared.version ?? UNVERSIONED}${declared.strict === true ? " (strict)" : ""}`),
+          ...(configuration.strictConstraints ?? []).map((pin) => `${pin.group}:${pin.name} ${pin.version} (strict constraint)`),
+        ].sort(),
         failures: [...(configuration.error === undefined ? [] : [configuration.error]), ...configuration.unresolved.map((entry) => `${entry.requested}: ${entry.failure}`)],
       });
     }

@@ -28,7 +28,7 @@ import type { CarriedPackage } from "../../ci/src/carrier-candidates.ts";
 import type { Config } from "../../ci/src/config.ts";
 import { severityRank } from "../../ci/src/candidates.ts";
 import { type GateEnvironment, snapshotOptions, versionCatalogs } from "../../ci/src/gate.ts";
-import { type GradleConfiguration, type GradleInventory, gradleLocation } from "../../ci/src/gradle.ts";
+import { type GradleConfiguration, type GradleInventory, gradleLocation, strictPinNote, strictPins } from "../../ci/src/gradle.ts";
 import type { PackageVersion } from "../../ci/src/package-version.ts";
 import { type SnapshotOptions, takeSnapshot } from "../../ci/src/take-snapshot.ts";
 import type { Tree } from "../../ci/src/tree.ts";
@@ -119,6 +119,8 @@ async function parentFor(fix: FixWork, floored: ReadonlyArray<string>, work: Rea
 
 async function tryRoot(fix: FixWork, floored: ReadonlyArray<string>, root: string, reach: ReadonlyArray<string>, work: ReadonlyArray<FixWork>, inputs: GradleParentInputs, spend: () => boolean): Promise<Parent | string> {
   const { config, env } = inputs;
+  const pinned = strictPins(inputs.gradle).get(root);
+  if (pinned !== undefined) return strictPinNote(root, pinned);
   const declared = [...new Set(reach.flatMap((location) => declaredAt(inputs.gradle, location, root)).filter((version) => version !== UNVERSIONED))];
   if (declared.length !== 1) return `declared at ${declared.length === 0 ? "no version" : declared.sort().join(", ")}, not one version to move`;
   const from = declared[0]!;

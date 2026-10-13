@@ -40,11 +40,17 @@ export async function selectRemovals(
   floors: ReadonlyArray<Floor>,
   probe: (floors: ReadonlyArray<Floor>) => Promise<RemovalProbe>,
   hash: (text: string) => string,
+  kept: (floor: Floor) => string | undefined = () => undefined,
 ): Promise<ComputedRemoval> {
   const eligible: Floor[] = [];
   const notes: string[] = [];
   const ordered = floors.filter((floor) => floor.purpose === "security").sort((a, b) => floorIdentity(a).localeCompare(floorIdentity(b)));
   for (const floor of ordered) {
+    const reason = kept(floor);
+    if (reason !== undefined) {
+      notes.push(retained(floor, [reason]));
+      continue;
+    }
     const checked = await checkRemoval([floor], probe);
     if (checked.problems.length === 0) eligible.push(floor);
     else notes.push(retained(floor, checked.problems));

@@ -64,7 +64,7 @@ function configuration(id: string, okhttp: string, moved = false, edges = true, 
 }
 
 const inventory = (okhttp: string, moved = false, edges = true, brings = BRINGS): GradleInventory => ({
-  schemaVersion: 2, tree: "base", builds: [{ build: ".", configurations: [configuration(":compileClasspath", okhttp, moved, edges, brings), configuration(":runtimeClasspath", okhttp, moved, edges, brings)] }],
+  schemaVersion: 3, tree: "base", builds: [{ build: ".", configurations: [configuration(":compileClasspath", okhttp, moved, edges, brings), configuration(":runtimeClasspath", okhttp, moved, edges, brings)] }],
 });
 
 const BASE: Tree = { id: "base", read: async () => undefined, list: async () => [] };
@@ -124,6 +124,17 @@ describe("moving a Gradle parent instead of flooring what it brings", () => {
     expect(notes).toEqual([expect.stringContaining("no version past the wait brings")]);
   });
 
+  it("never takes a parent pinned with strictly(...): the floor stays, without a probe", async () => {
+    const probes: string[] = [];
+    const base = inventory("4.9.3");
+    const gradle: GradleInventory = { ...base, builds: base.builds.map((build) => ({ ...build, configurations: build.configurations.map((configuration, index) =>
+      index === 0 ? { ...configuration, declared: configuration.declared.map((declared) => ({ ...declared, strict: true as const })) } : configuration) })) };
+    const fixes = await withGradleParents([okio()], { base: BASE, gradle, named: (group) => group === "com.squareup.okhttp3", inventories: references(probes),
+      env: environment(), config: parseConfig({}) });
+    expect(probes).toEqual([]);
+    expect(fixes.map((fix) => [fix.name, fix.notes])).toEqual([[OKIO, [expect.stringContaining(`${OKHTTP} is pinned with strictly(...) at :compileClasspath: the owner's pin`)]]]);
+  });
+
   it.each([
     ["the inventory doesn't record edges", { edges: false }, "doesn't record who brings it"],
     ["a reference run fails", { fail: true }, "searching its parents failed"],
@@ -163,7 +174,7 @@ describe("Gradle parents, regressions", () => {
       declared: [{ group: "g", name: "d", version: d, reason: undefined }], edges, error: undefined, ...extra,
     };
   };
-  const gradleOf = (d: string, brings: Brings, moved = false): GradleInventory => ({ schemaVersion: 2, tree: "base", builds: [{ build: ".", configurations: [
+  const gradleOf = (d: string, brings: Brings, moved = false): GradleInventory => ({ schemaVersion: 3, tree: "base", builds: [{ build: ".", configurations: [
     { ...config(":runtimeClasspath", d, brings), declared: [{ group: "g", name: "d", version: d, reason: undefined, ...(moved ? { moved: true as const } : {}) }] },
   ] }] });
   function env(brings: Brings, affected: Record<string, string[]>): GateEnvironment {
@@ -208,7 +219,7 @@ describe("Gradle parents, regressions", () => {
 
   it("keeps the floor when the declaration brings it in only some of the vulnerable configurations", async () => {
     const brings: Brings = { "1.0": { x: "1.0" }, "1.1": { x: "2.0" } };
-    const gradle: GradleInventory = { schemaVersion: 2, tree: "base", builds: [{ build: ".", configurations: [
+    const gradle: GradleInventory = { schemaVersion: 3, tree: "base", builds: [{ build: ".", configurations: [
       config(":runtimeClasspath", "1.0", brings),
       { ...config(":testRuntimeClasspath", "1.0", brings), edges: [{ from: "root project 'app'", to: `${X}:1.0`, constraint: false }] },
     ] }] };
@@ -230,7 +241,7 @@ describe("Gradle parents, regressions", () => {
   it("tries a root that's a failing fix itself first, and shares one probe budget across roots", async () => {
     const E = "g:e";
     const versions = ["1.0", "1.1", "1.2", "1.3", "1.4"];
-    const gradle: GradleInventory = { schemaVersion: 2, tree: "base", builds: [{ build: ".", configurations: [{
+    const gradle: GradleInventory = { schemaVersion: 3, tree: "base", builds: [{ build: ".", configurations: [{
       id: ":runtimeClasspath", kind: "project",
       resolved: [{ group: "g", name: "d", version: "1.0" }, { group: "g", name: "e", version: "1.0" }, { group: "g", name: "x", version: "1.0" }],
       unresolved: [], error: undefined,

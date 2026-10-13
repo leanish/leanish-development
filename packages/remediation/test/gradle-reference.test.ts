@@ -69,6 +69,10 @@ describe("the plan's Gradle reference", () => {
     expect(referenceDifferences(reference, inventory(["1.0.0", undefined], "9.0.0"))).toEqual([":runtimeClasspath, unlike the plan's reference, also resolves g:lib:9.0.0 and no longer resolves g:lib:1.0.0"]);
     expect(referenceDifferences(reference, inventory(["1.0.0"]))).toEqual([":runtimeClasspath, unlike the plan's reference, no longer declares g:lib (no version)"]);
     expect(referenceDifferences(reference, inventory(["1.0.0", undefined, undefined]))).toEqual([":runtimeClasspath, unlike the plan's reference, also declares g:lib (no version)"]);
+    // Strictness counts: a pin turned into a plain declaration at the same version, or a strict constraint dropped.
+    const pinned = inventory(["1.0.0"], "1.0.0", { declared: [{ group: "g", name: "lib", version: "1.0.0", reason: undefined, strict: true }], strictConstraints: [{ group: "g", name: "other", version: "2.0" }] });
+    expect(referenceDifferences(pinned, pinned)).toEqual([]);
+    expect(referenceDifferences(pinned, inventory(["1.0.0"]))).toEqual([":runtimeClasspath, unlike the plan's reference, also declares g:lib 1.0.0 and no longer declares g:lib 1.0.0 (strict), g:other 2.0 (strict constraint)"]);
     expect(referenceDifferences(reference, inventory(["1.0.0", undefined], "1.0.0", { kind: "buildscript" }))).toEqual([":runtimeClasspath is a buildscript configuration in the edit, project in the plan's reference"]);
     expect(referenceDifferences(reference, inventory(["1.0.0", undefined], "1.0.0", { unresolved: [{ requested: "g:lib:2.0.0", failure: "not found" }] }))).toEqual([":runtimeClasspath doesn't resolve in the edit: g:lib:2.0.0: not found"]);
     expect(referenceDifferences(inventory(["1.0.0", undefined], "1.0.0", { error: "boom" }), reference)).toEqual([":runtimeClasspath doesn't resolve in the plan's reference: boom"]);
