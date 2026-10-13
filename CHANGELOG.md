@@ -2,17 +2,29 @@
 
 ## Unreleased
 
+### Added
+
+- `packages/ci/dependency-floors.schema.json`, the JSON Schema of `.github/dependency-floors.json`,
+  tested to agree with the gate's parser. secure-it's skill embeds it with how a `gradle-floor`
+  move maps to a record, so the agent no longer guesses the format (missing `purpose`, `name`
+  instead of `package`) when a repository has no floors file yet.
+
+### Changed
+
+- secure-it's skill says to floor a configuration a plugin fills with defaults (`checkstyle`)
+  in a declarations-only parent configuration (`isCanBeResolved = false`,
+  `isCanBeConsumed = false`), and not to add configurations Gradle can resolve, which
+  verification rejects.
+
+- The tools' PR body marker is `<!-- leanish:<tool> -->`, named like their label; a PR is theirs
+  when it carries either.
+
 ### Fixed
 
 - Installing OSV-Scanner is safe when several tool commands sharing a state directory install
   it at the same time (the first pass with a fresh state directory, or after a version bump):
   each download gets its own temporary name before the atomic rename, instead of one fixed name
   that a concurrent install could move away mid-check.
-
-### Changed
-
-- The tools' PR body marker is `<!-- leanish:<tool> -->`, named like their label; a PR is theirs
-  when it carries either.
 
 ## 0.4.2 - 2026-10-12
 
