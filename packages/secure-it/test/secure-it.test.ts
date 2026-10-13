@@ -429,6 +429,18 @@ describe("secure-it run", () => {
     expect(planOf(h.github.prs.get(42)!.body)?.moves.find((move) => move.name === "actions/checkout")?.commitSha).toBe(HEAD_SHA);
   });
 
+  it("reports a fix of a strictly pinned Gradle coordinate as blocked, and gives the agent only the rest", async () => {
+    const maven = (name: string) => vite({ ecosystem: "Maven", name, from: "1.0", locations: [":runtimeClasspath"], to: { version: "1.1", line: "1", aged: true, major: false, blockers: [] } });
+    const declared = [{ group: "g", name: "lib", version: "1.0", reason: undefined }, { group: "g", name: "pinned", version: "1.0", reason: undefined, strict: true as const }];
+    const inventory: GradleInventory = { schemaVersion: 3, tree: "base", builds: [{ build: ".", configurations: [{ id: ":runtimeClasspath", kind: "project", declared,
+      resolved: declared.map(({ group, name, version }) => ({ group, name, version })), unresolved: [], error: undefined }] }] };
+    const h = harness({ fixes: [vite(), maven("g:lib"), maven("g:pinned")] });
+    const deps = { ...h.deps, gradle: () => ({ ofCommit: async () => inventory, ofWorkingTree: async () => inventory }) };
+    expect(await secureIt(deps).run(h.context)).toMatchObject({ outcome: "published", packages: ["Maven|g:lib", "npm|vite"],
+      blocked: [{ packages: ["Maven|g:pinned"], reasons: [expect.stringContaining("g:pinned is pinned with strictly(...) at :runtimeClasspath")] }] });
+    expect(h.agentCalls.map((call) => (call.input["moves"] as Array<{ name: string }>).map((move) => move.name).sort())).toEqual([["g:lib", "vite"]]);
+  });
+
   it("retries a failed batch from base once without named package groups and discloses them", async () => {
     const h = harness({ fixes: [vite(), leftPad()] });
     const sequence: string[] = [];
@@ -686,6 +698,16 @@ describe("secure-it floor-removal units", () => {
     expect(await secureIt({ ...h.deps, floorProbe: f.probe }).run(h.context)).toMatchObject({ outcome: "completed", units: [{ topic: "security", outcome: "published" }, { topic: "floor-removal", outcome: "published" }] });
     expect(h.agentCalls).toHaveLength(1);
     expect(h.workspace.publications).toHaveLength(2);
+  });
+  it("never offers a floor the build pins with strictly(...) for removal", async () => {
+    const f = removalFixture("Maven");
+    const inventory: GradleInventory = { schemaVersion: 3, tree: "base", builds: [{ build: ".", configurations: [{ id: ":runtimeClasspath", kind: "project",
+      declared: [{ group: "g", name: "lib", version: "1.0", reason: "CVE-2026-12345: fixed", strict: true }], resolved: [{ group: "g", name: "lib", version: "1.0" }], unresolved: [], error: undefined }] }] };
+    const h = harness({ fixes: [], files: f.base });
+    const floorProbe = async () => { throw new Error("must not probe a strictly pinned floor"); };
+    const result = await secureIt({ ...h.deps, floorProbe, gradle: () => ({ ofCommit: async () => inventory, ofWorkingTree: async () => inventory }) }).run(h.context);
+    expect(result).toMatchObject({ units: [{ topic: "floor-removal", outcome: "nothing-to-remove", notes: [expect.stringContaining("g:lib is pinned with strictly(...) at :runtimeClasspath")] }] });
+    expect(h.workspace.publications).toEqual([]);
   });
   it("keeps malware priority and never probes removals while any malicious package remains", async () => {
     const f = removalFixture();
