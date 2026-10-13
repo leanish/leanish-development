@@ -107,6 +107,8 @@ or touch git metadata. Leave no temporary files: everything in the working tree 
 
 ## Code and comments
 
+Within the files this skill lets you edit:
+
 - Change only what the moves, and a major's adaptation, need, in each file's style: formatting, import order, naming.
 - When your edit makes a comment, Javadoc/KDoc/JSDoc or (in a major) a doc false, fix it in the same edit, keeping the
   context it carries: case labels, advisory IDs, the reason for a choice. Leave accurate comments as they are.

@@ -46,7 +46,7 @@ describe("floor-removal verification", () => {
     expect(runCompare).toHaveBeenCalledOnce();
     expect(await verifyPlan({ ...input, plan: { ...input.plan, kind: "routine", floorRemoval: undefined } })).toContainEqual(expect.stringContaining("was removed"));
   });
-  it("refuses a changed strictly(...) pin before compare, in a removal and in a security plan", async () => {
+  it("refuses a changed strictly(...) pin before compare, in a removal and in a routine or major security plan", async () => {
     const { input, was, now } = fixture();
     const build = (version: string) => `dependencies { implementation("g:pinned") { version { strictly("${version}") } } }\n`;
     const pinned = { ...input, base: tree("base", { ...was, "build.gradle.kts": build("1.0") }), head: tree("head", { ...now, "build.gradle.kts": build("2.0") }),
@@ -55,8 +55,11 @@ describe("floor-removal verification", () => {
     expect(await verifyPlan(pinned)).toEqual(refused);
     const security: ChangePlan = { topic: "security", malware: false, packages: ["Maven|g:lib"], severity: "HIGH", moves: [{ ecosystem: "Maven", name: "g:lib", from: "1.0", to: "1.1",
       mechanism: "gradle-declared", locations: [":runtimeClasspath"], advisories: [ID], major: false, commitSha: undefined, declaredAs: undefined }] };
-    expect(await verifyPlan({ ...pinned, plan: security, base: tree("base", { "build.gradle.kts": build("1.0") }), head: tree("head", { "build.gradle.kts": build("2.0") }),
-      changedFiles: ["build.gradle.kts"] })).toEqual(refused);
+    for (const major of [false, true]) {
+      const plan = { ...security, moves: security.moves.map((move) => ({ ...move, major })) };
+      expect(await verifyPlan({ ...pinned, plan, base: tree("base", { "build.gradle.kts": build("1.0") }), head: tree("head", { "build.gradle.kts": build("2.0") }),
+        changedFiles: ["build.gradle.kts"] })).toEqual(refused);
+    }
     expect(runCompare).not.toHaveBeenCalled();
   });
   it("rejects a removal that the cooldown holds, or whose cooldown wasn't evaluated", async () => {

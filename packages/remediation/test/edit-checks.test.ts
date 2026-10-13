@@ -26,6 +26,11 @@ describe("strict pins", () => {
     expect(await changed("build.gradle.kts", KTS, KTS.replace('{ version { strictly("1.0") } }', '{ version {  strictly("1.0") } }'))).toHaveLength(1);
   });
 
+  it("refuses reordering two different strictly lines", async () => {
+    const other = 'dependencies { implementation("g:other") { version { strictly("2.0") } } }\n';
+    expect(await strictPinsChanged(["build.gradle.kts"], tree({ "build.gradle.kts": `${KTS}${other}` }), tree({ "build.gradle.kts": `${other}${KTS}` }))).toHaveLength(1);
+  });
+
   it("counts duplicate strictly lines, so dropping one of two identical pins is refused", async () => {
     const twice = `${KTS}${KTS}`;
     expect(await strictPinsChanged(["build.gradle.kts"], tree({ "build.gradle.kts": twice }), tree({ "build.gradle.kts": KTS }))).toHaveLength(1);
