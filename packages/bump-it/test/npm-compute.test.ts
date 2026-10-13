@@ -659,6 +659,44 @@ describe("exact npm computation", () => {
     expect(result.changes).toContainEqual({ lockfile: "package-lock.json", path, name: "held", from: "1.0.1", to: "2.0.0" });
     expect(h.calls.map((args) => args[0])).toEqual(["install", "update", "install", "install", "install", "install", "install"]);
   });
+  it("checks the current version again when an updated parent no longer admits a retained locked copy", async () => {
+    const h = await fixture();
+    // held 1.0.1 is young and locked, so it's retained; the planned parent 1.1.0 asks for held ^2, which npm resolves.
+    const base = { ...lock(), packages: { ...lock().packages,
+      "node_modules/parent": { version: "1.0.0", dependencies: { child: "^1", held: "^1" } }, "node_modules/held": { version: "1.0.1" } } };
+    await writeFile(join(h.dir, "package-lock.json"), json(base));
+    const npm: NpmCommand = async (dir, args) => {
+      if (args[0] === "--version") return { code: 0, stdout: "11.20.0", stderr: "" };
+      h.calls.push([...args]);
+      const root = JSON.parse(await readFile(join(dir, "package.json"), "utf8"));
+      await writeFile(join(dir, "package-lock.json"), json({ ...base, packages: { ...base.packages, "": root,
+        "node_modules/parent": { version: "1.1.0", dependencies: { child: "^1", held: "^2" } }, "node_modules/held": { version: "2.0.0" } } }));
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const result = await computeNpm({ ...h.inputs, npm, baseLocks: new Map([["package-lock.json", base]]),
+      sources: { ...h.inputs.sources, published: async (name, version) => new Date(name === "held" && version === "1.0.1" ? "2026-10-06" : "2026-09-01"),
+        versions: async (name) => name === "held" ? ["1.0.1", "2.0.0"] : name === "child" ? ["1.0.0"] : ["1.0.0", "1.1.0"] },
+    });
+    expect(result.changes).toContainEqual({ lockfile: "package-lock.json", path: "node_modules/held", name: "held", from: "1.0.1", to: "2.0.0" });
+  });
+  it("still refuses a young or deprecated version an updated parent's range brings in place of a retained copy", async () => {
+    const h = await fixture();
+    const base = { ...lock(), packages: { ...lock().packages,
+      "node_modules/parent": { version: "1.0.0", dependencies: { child: "^1", held: "^1" } }, "node_modules/held": { version: "1.0.1" } } };
+    await writeFile(join(h.dir, "package-lock.json"), json(base));
+    const npm: NpmCommand = async (dir, args) => {
+      if (args[0] === "--version") return { code: 0, stdout: "11.20.0", stderr: "" };
+      h.calls.push([...args]);
+      const root = JSON.parse(await readFile(join(dir, "package.json"), "utf8"));
+      await writeFile(join(dir, "package-lock.json"), json({ ...base, packages: { ...base.packages, "": root,
+        "node_modules/parent": { version: "1.1.0", dependencies: { child: "^1", held: "^2" } }, "node_modules/held": { version: "2.0.0" } } }));
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    await expect(computeNpm({ ...h.inputs, npm, baseLocks: new Map([["package-lock.json", base]]),
+      sources: { ...h.inputs.sources, published: async (name) => new Date(name === "held" ? "2026-10-06" : "2026-09-01"),
+        versions: async (name) => name === "held" ? ["1.0.1", "2.0.0"] : name === "child" ? ["1.0.0"] : ["1.0.0", "1.1.0"] },
+    })).rejects.toThrow("held at node_modules/held is 2.0.0, not its locked 1.0.1; cannot pin this copy and its replacement is young, deprecated or unreadable");
+  });
   it.each(["young", "missing", "invalid", "throwing"])("rejects unpinned drift when the replacement's publish time is %s", async (time) => {
     const h = await fixture();
     const path = "node_modules/parent/node_modules/held";

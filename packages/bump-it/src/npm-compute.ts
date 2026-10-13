@@ -177,7 +177,7 @@ async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions
   let decisions: Decision[] = [];
   for (let pass = 0; ; pass++) {
     const graph = new NpmGraph(JSON.parse(await readFile(at(lockName), "utf8")));
-    unpinned = withStaleAccepted(graph, accepted, unpinned, overrides);
+    unpinned = withStaleTargets(graph, retained, accepted, unpinned, overrides);
     await assertUnpinnedRetention(graph, retained, unpinned, lockfile, inputs.sources);
     rememberAccepted(graph, retained, unpinned, accepted);
     // Pinnable copies stay at base; unpinnable copies may keep an aged, non-deprecated replacement.
@@ -288,21 +288,27 @@ function retainedTargets(graph: NpmGraph, retained: ReadonlyMap<string, Copy>, u
 }
 
 /**
- * A later pass can change what a remembered copy's dependents or the repository's overrides
- * ask for. A remembered version they no longer admit is dropped, and the copy's current
- * version is checked again like any unpinned replacement.
+ * A later pass can change what a retained copy's dependents or the repository's overrides ask
+ * for (a refreshed parent can need a new major of it). A target they no longer admit, the
+ * locked version or a remembered replacement, is dropped, and the copy's current version is
+ * checked again like any unpinned replacement. A locked version whose constraints can't be
+ * judged here stays pinned, as it always was.
  */
-function withStaleAccepted(graph: NpmGraph, accepted: Map<string, string>, unpinned: ReadonlySet<string>, overrides: ReturnType<typeof repositoryOverrides>): Set<string> {
+function withStaleTargets(graph: NpmGraph, retained: ReadonlyMap<string, Copy>, accepted: Map<string, string>, unpinned: ReadonlySet<string>, overrides: ReturnType<typeof repositoryOverrides>): Set<string> {
   const result = new Set(unpinned);
-  for (const [path, version] of accepted) {
+  for (const [path, locked] of retained) {
     const copy = graph.copies().find((candidate) => candidate.path === path);
-    if (copy === undefined) continue;
+    // A copy that's gone, or another package now at its path, is `retainedTargets`' to handle.
+    if (copy === undefined || copy.name !== locked.name) continue;
+    const remembered = accepted.get(path);
     const overridden = overrides.rangeFor(copy.installedAs) ?? overrides.rangeFor(copy.name);
     const specs = overridden !== undefined ? [overridden] : graph.edgesTo(path).map((edge) => edge.spec);
     // What can't be judged here (a spec that isn't a version range, a scoped or complex
     // override) can't keep a remembered version either: its current version is checked instead.
-    const complex = overrides.isComplex(copy.installedAs) || overrides.isComplex(copy.name);
-    if (!complex && specs.map(rangeOf).every((range) => range !== undefined && semver.satisfies(version, range))) continue;
+    const ranges = overrides.isComplex(copy.installedAs) || overrides.isComplex(copy.name) ? [undefined] : specs.map(rangeOf);
+    const judged = ranges.every((range) => range !== undefined);
+    if (remembered === undefined && !judged) continue;
+    if (judged && ranges.every((range) => semver.satisfies(remembered ?? locked.version, range!))) continue;
     accepted.delete(path);
     result.add(path);
   }

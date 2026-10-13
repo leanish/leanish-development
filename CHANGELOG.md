@@ -43,6 +43,11 @@
 
 ### Fixed
 
+- bump-it no longer fails a routine when a refreshed parent's range stops admitting a young
+  locked copy it was keeping: the copy's current version is checked like any unpinned
+  replacement (aged and not deprecated) instead of being pinned back to the old version pass
+  after pass.
+
 - Installing OSV-Scanner is safe when several tool commands sharing a state directory install
   it at the same time (the first pass with a fresh state directory, or after a version bump):
   each download gets its own temporary name before the atomic rename, instead of one fixed name

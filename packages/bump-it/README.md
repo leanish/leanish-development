@@ -67,7 +67,9 @@ packages/remediation/run.sh bump-it review leanish/widget   # every few hours
   that is not deprecated. A move to another young, deprecated or unreadable version fails the unit. An accepted aged
   move is kept when that copy becomes pinnable in a later pass, while its dependents' ranges and the repository's
   plain overrides still admit it; otherwise, or when a constraint can't be judged (a spec that isn't a version range, a
-  scoped or complex override), the copy's current version is checked again like any unpinned replacement. Bundled copies follow
+  scoped or complex override), the copy's current version is checked again like any unpinned replacement. The same
+  goes for a pinned base version once an updated dependent's range no longer admits it (a refreshed parent asking for
+  a new major): the current version is checked like any unpinned replacement. Bundled copies follow
   their carrier and may change when it moves to an aged target. Young locked directs outside the plan stay at base too.
   Own packages keep their age exemption,
   and a configured exclusion alone does not freeze transitives. Majors keep their induced graph for `compare` to judge.
