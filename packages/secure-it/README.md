@@ -17,6 +17,11 @@ packages/remediation/run.sh secure-it review leanish/sqs-codec   # every few hou
    - A package with a blocked copy (no fix or an identity break) is left out and reported, without blocking other
      packages. Keeping copies together preserves verification's requirement that targeted advisories affect no
      version of a planned package left in the tree. Advisories no version fixes stay, inherited.
+   - A Gradle fix is blocked and reported when its coordinate is pinned with `strictly(...)` (declared or as a
+     dependency constraint) where the fix would act: where it's vulnerable, and every configuration declaring it. The
+     pin is the owner's; the gate keeps failing until they decide. Such a coordinate is never taken as a parent that
+     carries another fix (that fix gets a floor instead), and a floor declared strictly is never removed. Pins only
+     in other configurations, such as Gradle's own strict constraints on its embedded Kotlin, don't count.
    - Malware takes priority: every malicious package goes together, and if any malicious fix cannot move, nothing
      else is planned. No other unit runs while malware remains on the base.
 3. **Plans the change** (`plan.ts`), for each version and location. For npm, code reads locked and candidate manifests
@@ -46,7 +51,7 @@ packages/remediation/run.sh secure-it review leanish/sqs-codec   # every few hou
    - An open PR for the same routine/major/malware unit, with an identical plan and a recognised head: keep its commits and refresh the plan section if its notes changed; its review owns further work. The unit reports `already-open`. Other major units still proceed. An already-open malware unit is left to review without planning other work.
    - One with a different plan, while its head is still the tool's: that PR is reconciled. The default branch is merged into it, every file it changed goes back to the base's content, and the new plan is applied on top, so nothing the old plan did lingers. It's pushed as a normal commit.
    - One someone else pushed to: the fix goes in a PR of its own.
-5. **The tool resolves npm; the agent applies non-npm moves** (skill [`secure-it`](skills/secure-it/SKILL.md)). It changes code only for a major move, with `majorEffort`.
+5. **The tool resolves npm; the agent applies non-npm moves** (skill [`secure-it`](skills/secure-it/SKILL.md)). It changes code only for a major move, with `majorEffort`. The skill also asks for focused edits in each file's style, comments the edit made false fixed without losing their context, code kept only for an unsupported old major removed, and PR text that maps advisories to packages, gives `from → to`, states each major's adaptation verdict and the checks run.
    npm may resolve transitive changes a planned move requires, under the supplied release-age window and exclusions.
    The tool resolves those versions; the agent never changes npm dependency fields or lockfiles. Direct
    dependencies outside the plan stay unchanged; in Gradle, the edit must resolve and declare exactly what the plan's
@@ -68,6 +73,7 @@ packages/remediation/run.sh secure-it review leanish/sqs-codec   # every few hou
 6. **Verifies before publishing** (`verify.ts`):
    - existing floor records and declarations are preserved before comparison: compatibility floors never change; security-floor updates match exact planned moves and retain their scope and history; only planned security floors may be added or removed in an explicit floor-removal plan;
    - the gate's own policy (its config, its exceptions, workflows and actions outside planned pins) is untouched, major or not;
+   - no line mentioning `strictly` changed in a Gradle build, settings or catalog file (floor removals included), and the edit keeps the reference's strict declarations and constraints;
    - `compare` against the base passes;
    - every move landed at exactly `to` at every planned location (Gradle: declared at exactly `to`);
    - none of the targeted advisories affects what's left, using compare's head findings from the same snapshot;
@@ -110,7 +116,8 @@ run report and the PR's plan notes. Incomplete inventories or advisory coverage 
   on a buildscript or settings classpath (which resolves while its script compiles) is dropped as its dependencies
   are finalized. The inventory runs
   sandboxed with `--no-daemon` and configuration caching disabled. A declaration already used in resolution cannot
-  be safely removed by this probe, so that floor is retained with a reason. After proof, the agent removes only the
+  be safely removed by this probe, so that floor is retained with a reason, as is a floor declared with
+  `strictly(...)` (the owner's pin), which isn't probed at all. After proof, the agent removes only the
   named declarations from the real build files; it cannot edit the tool-written floor/npm files or adapt code.
 
 Before publication, verification requires exactly the planned records and declarations to disappear, preserves
