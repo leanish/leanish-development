@@ -11,11 +11,20 @@
 
 ### Changed
 
+- The planners leave Gradle `strictly(...)` pins alone too. The Gradle inventory (schema 3)
+  marks strict declarations and records strict dependency constraints, and rejects output from
+  an older inventory script. bump-it never moves a coordinate pinned strictly in a configuration that
+  declares it, and notes the pin; secure-it reports a fix as blocked when its coordinate is
+  pinned strictly where the fix would act (where it's vulnerable, and
+  every configuration declaring it), never takes such a coordinate as a parent that
+  carries a fix, and keeps a floor declared strictly. Only the configurations a change touches
+  count: Gradle pins its embedded Kotlin strictly on every buildscript and settings classpath,
+  which doesn't block fixing a Kotlin library on the project's classpaths. The reference refuses to
+  move a strict version and compares strictness with the edit.
+
 - bump-it and secure-it never change a Gradle `strictly(...)` pin: their skills say so (the
   agent answers cannot-apply when a plan needs it), and verification refuses an edit that
-  changes a line mentioning `strictly` in a build, settings or catalog file, so a plan that
-  needs such a change fails visibly. The planners still select strict declarations, and a pin
-  written across lines or changed through a variable isn't mechanically protected yet.
+  changes a line mentioning `strictly` in a build, settings or catalog file.
 
 - The skills ask for better agent output: only the needed changes, in the file's style;
   comments and docs the edit makes false fixed without losing their context; code kept only for

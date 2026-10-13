@@ -5,8 +5,9 @@
 //
 // The plan file: { repositoryRoot, moves: [{name, from, to, locations}], floors: [{name, version, reason, locations}] }.
 // A move rewrites, in place and once, each declaration of `name` at `from` (as the inventory reads its version) that
-// a configuration at one of its locations inherits, keeping the version's form (strictly, require or prefer) and its
-// rejects: what editing that declaration's version does. The declarations moved are shared, by identity, with the
+// a configuration at one of its locations inherits, keeping the version's form (require or prefer) and its rejects:
+// what editing that declaration's version does. A strict version (`strictly`) is its owner's pin: the planners never
+// choose one, so a move that reaches one fails. The declarations moved are shared, by identity, with the
 // inventory script (`gradle.ext.supplyChainReferenceMoved`), which marks them `moved` wherever they're read, so the
 // inventory shows everywhere each reached (whatever inherits it), which the caller checks the plan lists. A plugins-DSL
 // plugin is its marker's declaration on the buildscript classpath, so the reference runs the new plugin, with its own
@@ -52,16 +53,16 @@ def declaredVersion = { ExternalModuleDependency dependency ->
     def constraint = dependency.versionConstraint
     dependency.version ?: constraint.strictVersion ?: constraint.requiredVersion ?: constraint.preferredVersion ?: null
 }
-// One plain form only (strictly, require or prefer `from`), rejects kept; anything richer can't be moved faithfully.
+// One plain form only (require or prefer `from`), rejects kept; anything richer can't be moved faithfully, and a strict
+// version is never moved.
 def rewrite = { ExternalModuleDependency dependency, String from, String to ->
     def was = dependency.versionConstraint
+    if (was.strictVersion) throw new GradleException("supply-chain reference: ${dependency.group}:${dependency.name} is pinned with strictly(${was.strictVersion}), the owner's pin, which no plan moves")
     def rejects = [*was.rejectedVersions]
-    def strict = was.strictVersion ?: null
     def required = was.requiredVersion ?: null
     def preferred = was.preferredVersion ?: null
-    def form = strict == from && required == from && preferred == null ? "strictly"
-        : strict == null && required == from && preferred == null ? "require"
-        : strict == null && required == null && preferred == from ? "prefer"
+    def form = required == from && preferred == null ? "require"
+        : required == null && preferred == from ? "prefer"
         : null
     if (form == null || was.branch != null) throw new GradleException("supply-chain reference: can't move ${dependency.group}:${dependency.name}'s ${was.displayName} faithfully")
     dependency.version { version ->
@@ -69,7 +70,7 @@ def rewrite = { ExternalModuleDependency dependency, String from, String to ->
         if (!rejects.isEmpty()) version.reject(*rejects)
     }
     def now = dependency.versionConstraint
-    def expected = [form == "strictly" ? to : null, form == "prefer" ? null : to, form == "prefer" ? to : null, rejects]
+    def expected = [null, form == "prefer" ? null : to, form == "prefer" ? to : null, rejects]
     if ([now.strictVersion ?: null, now.requiredVersion ?: null, now.preferredVersion ?: null, [*now.rejectedVersions]] != expected) {
         throw new GradleException("supply-chain reference: moving ${dependency.group}:${dependency.name} to ${to} gave ${now.displayName}")
     }

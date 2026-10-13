@@ -20,7 +20,7 @@ import { isObject } from "./json.ts";
 import { versionKey } from "./package-version.ts";
 import { type RunProcess, withoutCredentials } from "./process.ts";
 
-export const GRADLE_INVENTORY_SCHEMA_VERSION = 2;
+export const GRADLE_INVENTORY_SCHEMA_VERSION = 3;
 const INIT_SCRIPT = fileURLToPath(new URL("../gradle/supply-chain-inventory.init.gradle", import.meta.url));
 
 export interface Coordinates {
@@ -35,6 +35,8 @@ export interface DeclaredDependency {
   readonly version: string | undefined;
   /** Gradle's `because(...)`. */
   readonly reason: string | undefined;
+  /** Its version is strict (`strictly(...)`): the owner's pin, which the tools never move. */
+  readonly strict?: true;
   /** In a reference's inventory only: the reference script moved this declaration (`supply-chain-reference.init.gradle`). */
   readonly moved?: true;
 }
@@ -46,6 +48,8 @@ export interface GradleConfiguration {
   readonly resolved: ReadonlyArray<Coordinates>;
   readonly unresolved: ReadonlyArray<{ readonly requested: string; readonly failure: string }>;
   readonly declared: ReadonlyArray<DeclaredDependency>;
+  /** The strict dependency constraints (`constraints { … strictly(…) }`) it declares or inherits; absent when built by hand. */
+  readonly strictConstraints?: ReadonlyArray<Coordinates>;
   /**
    * The resolved graph's edges: who brought what, as `group:name:version` for modules and Gradle's display name for
    * anything else (`project :app`, the configuration's own root). A constraint edge only raised a version. Every
@@ -184,6 +188,10 @@ async function readRun(out: string, requested: string): Promise<Map<string, Buil
     if (!isObject(content) || typeof content["build"] !== "string" || typeof content["project"] !== "string") {
       throw new Error(`Gradle inventory of build ${requested}: ${file} is malformed`);
     }
+    // An older script's output would read as having no strict pins.
+    if (content["schemaVersion"] !== GRADLE_INVENTORY_SCHEMA_VERSION) {
+      throw new Error(`Gradle inventory of build ${requested}: ${file} has schemaVersion ${String(content["schemaVersion"])}, not ${GRADLE_INVENTORY_SCHEMA_VERSION}`);
+    }
     const label = normalize(join(requested, content["build"]));
     if (content["project"] === "manifest") {
       const manifest = content["manifest"];
@@ -298,8 +306,15 @@ function parseConfiguration(raw: unknown, where: string): GradleConfiguration {
         name: text(item["name"], "name"),
         version: optional(item["version"], "version"),
         reason: optional(item["reason"], "reason"),
-        ...movedFlag(item["moved"]),
+        ...flag(item["strict"], "strict"),
+        ...flag(item["moved"], "moved"),
       };
+    }),
+    ...(raw["strictConstraints"] === undefined ? {} : {
+      strictConstraints: list("strictConstraints").map((entry) => {
+        const item = isObject(entry) ? entry : {};
+        return { group: text(item["group"], "group"), name: text(item["name"], "name"), version: text(item["version"], "version") };
+      }),
     }),
     edges: list("edges").map((entry) => {
       const item = isObject(entry) ? entry : {};
@@ -310,11 +325,41 @@ function parseConfiguration(raw: unknown, where: string): GradleConfiguration {
   };
 }
 
-function movedFlag(value: unknown): { moved?: true } {
+function flag<Name extends "strict" | "moved">(value: unknown, name: Name): { [key in Name]?: true } {
   if (value === undefined) return {};
-  if (value !== true) throw new Error("Gradle inventory: a declaration's moved flag must be true when present");
-  return { moved: true };
+  if (value !== true) throw new Error(`Gradle inventory: a declaration's ${name} flag must be true when present`);
+  return { [name]: true } as { [key in Name]?: true };
 }
+
+/**
+ * Every coordinate (`group:name`) a configuration pins with a strict version, declared or as a constraint, with the
+ * locations that pin it. The tools never move such a pin, nor plan a change that would need it moved: it's the owner's.
+ * Only the configurations a change touches count (`pinnedAmong`): Gradle itself pins its embedded Kotlin strictly on
+ * every buildscript and settings classpath, which says nothing about the project's own classpaths.
+ */
+export function strictPins(gradle: GradleInventory | undefined): Map<string, string[]> {
+  const pins = new Map<string, Set<string>>();
+  for (const build of gradle?.builds ?? []) {
+    for (const configuration of build.configurations) {
+      const strict = [...configuration.declared.filter((declared) => declared.strict === true), ...(configuration.strictConstraints ?? [])];
+      for (const pin of strict) {
+        const name = `${pin.group}:${pin.name}`;
+        pins.set(name, (pins.get(name) ?? new Set()).add(gradleLocation(build.build, configuration.id)));
+      }
+    }
+  }
+  return new Map([...pins].map(([name, locations]) => [name, [...locations].sort()]));
+}
+
+/** The locations among `locations` (where a move or fix would act) that pin `name` strictly; empty when none does. */
+export function pinnedAmong(pins: ReadonlyMap<string, ReadonlyArray<string>>, name: string, locations: Iterable<string>): string[] {
+  const pinned = pins.get(name) ?? [];
+  return [...new Set(locations)].filter((location) => pinned.includes(location)).sort();
+}
+
+/** Why a strictly pinned coordinate is left alone, for notes and blocked fixes. */
+export const strictPinNote = (name: string, locations: ReadonlyArray<string>) =>
+  `${name} is pinned with strictly(...) at ${locations.join(", ")}: the owner's pin, which the tools never move`;
 
 /** `:runtimeClasspath` for the root build, `buildSrc/:runtimeClasspath` for another. */
 export function gradleLocation(build: string, configuration: string): string {

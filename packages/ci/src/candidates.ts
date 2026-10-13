@@ -37,7 +37,7 @@ import {
   snapshotOptions,
   versionCatalogs,
 } from "./gate.ts";
-import { gradleLocation } from "./gradle.ts";
+import { gradleLocation, pinnedAmong, strictPinNote, strictPins } from "./gradle.ts";
 import { gradleSourceIndex } from "./gradle-sources.ts";
 import type { NpmLockfile } from "./inventory.ts";
 import { directDependencies, type LockedPackage, NPM_REGISTRY } from "./npm-lock.ts";
@@ -598,7 +598,9 @@ async function newestAged(
 /**
  * The directly declared dependencies of the scanned tree, one per version, with where each is declared, sorted. A
  * Gradle dependency counts only when the repository's Gradle sources name it (see `gradleSourceIndex`): plugins add
- * dependencies too, and a bump needs a declaration to move. The rest are listed in `notes`.
+ * dependencies too, and a bump needs a declaration to move. A coordinate pinned with `strictly(...)` (declared or as a
+ * constraint) in any configuration that declares it isn't moved at all, in any configuration: the pin is the owner's.
+ * The rest are listed in `notes`.
  */
 async function directOf(head: Tree, state: ScanState, floors: ReadonlyArray<Floor>): Promise<{ direct: Direct[]; notes: string[] }> {
   const byVersion = new Map<string, { pkg: PackageVersion; locations: Set<string>; declarations: NpmDeclaration[] }>();
@@ -625,12 +627,23 @@ async function directOf(head: Tree, state: ScanState, floors: ReadonlyArray<Floo
   const builds = state.inventory.gradle?.builds ?? [];
   const sources = builds.length === 0 ? undefined : await gradleSourceIndex(head);
   const unnamed = new Map<string, Set<string>>();
+  const declaredIn = new Map<string, Set<string>>();
+  for (const build of builds) {
+    for (const configuration of build.configurations) {
+      for (const declared of configuration.declared) {
+        const name = `${declared.group}:${declared.name}`;
+        declaredIn.set(name, (declaredIn.get(name) ?? new Set()).add(gradleLocation(build.build, configuration.id)));
+      }
+    }
+  }
+  const allPins = strictPins(state.inventory.gradle);
+  const pins = new Map([...declaredIn].map(([name, locations]) => [name, pinnedAmong(allPins, name, locations)] as const).filter(([, pinned]) => pinned.length > 0));
   for (const build of builds) {
     for (const configuration of build.configurations) {
       for (const declared of configuration.declared) {
         if (declared.version === undefined) continue;
         const name = `${declared.group}:${declared.name}`;
-        if (floored.has(`${name}@${declared.version}`)) continue;
+        if (floored.has(`${name}@${declared.version}`) || pins.has(name)) continue;
         const location = gradleLocation(build.build, configuration.id);
         if (!sources!.named(declared.group, declared.name)) {
           const key = `${name}@${declared.version}`;
@@ -641,8 +654,11 @@ async function directOf(head: Tree, state: ScanState, floors: ReadonlyArray<Floo
       }
     }
   }
-  const notes = [...unnamed.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([key, locations]) =>
-    `${key}: not named in the repository's Gradle sources (${[...locations].sort().join(", ")}), so it isn't moved automatically; a plugin may add it, or it uses notation bump-it doesn't read`);
+  const notes = [
+    ...[...unnamed.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([key, locations]) =>
+      `${key}: not named in the repository's Gradle sources (${[...locations].sort().join(", ")}), so it isn't moved automatically; a plugin may add it, or it uses notation bump-it doesn't read`),
+    ...[...pins.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([name, locations]) => strictPinNote(name, locations)),
+  ];
   for (const pkg of state.packages.filter((located) => located.ecosystem === "GitHub Actions")) {
     for (const location of pkg.locations) add(pkg, location);
   }

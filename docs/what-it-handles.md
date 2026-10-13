@@ -1,6 +1,6 @@
 # What supply-chain handles
 
-This guide describes supply-chain 0.4.2. The [changelog](../CHANGELOG.md) lists what changed in each release.
+This guide describes supply-chain 0.4.2 plus its unreleased changes (handling of `strictly(...)` pins, agent output rules). The [changelog](../CHANGELOG.md) lists what changed in each release.
 
 - **The gate** checks a pull request (PR) whenever it changes. It also scans the
   default branch each day with current advisories.
@@ -183,12 +183,21 @@ Gradle, so its dependency changes are checked alongside any floors in the plan.
 It requires the edited build to declare and resolve the same dependencies as
 the base build with those planned changes applied by Gradle.
 
+A version pinned with `strictly(...)`, declared or as a dependency constraint,
+is the repository owner's decision. secure-it reports a fix blocked when the pin
+holds where the fix would act, and the gate keeps failing until the owner moves
+it. A strictly pinned parent is never moved to carry a fix; the vulnerable
+dependency gets a floor instead. Gradle's own strict constraints on its embedded
+Kotlin (buildscript and settings classpaths) don't block fixes elsewhere.
+
 ### What bump-it updates
 
 bump-it updates dependencies and plugins whose versioned declarations it can
 identify in repository sources. It chooses the highest eligible aged version.
 It does not explicitly bump Gradle transitives or raise floors. A parent or
 plugin update can change transitives; the gate checks those resulting versions.
+A dependency pinned with `strictly(...)` where it's declared is never moved; the
+run notes the pin.
 
 It also updates the root Gradle wrapper. It selects official, stable releases,
 checks published Gradle advisories and checksums, and generates the wrapper twice
@@ -250,7 +259,8 @@ Compatibility floors stay. bump-it neither raises nor removes floors.
 
 secure-it first tests removals individually. It then tests the proposed set
 **together, without relying on dependency locks**. All recorded advisories must
-stay absent. Failed or incomplete proofs keep the relevant floors, with reasons.
+stay absent. Failed or incomplete proofs keep the relevant floors, with reasons. A floor
+declared with `strictly(...)` is the owner's pin and always stays.
 Removal gets a separate PR, not a PR mixed with version fixes.
 
 For example, the BeanUtils floor stays while Digester still brings vulnerable

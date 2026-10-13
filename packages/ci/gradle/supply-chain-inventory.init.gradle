@@ -7,8 +7,9 @@
 // processors, tools such as checkstyle or pitest) and the buildscript classpath (where the
 // plugins DSL and `buildscript {}` put plugins), plus the settings classpath once per build:
 // every module component the resolution selected, every dependency it couldn't resolve, and
-// the external dependencies declared in or inherited by that configuration, with their version
-// and `because(...)` reason (what the floors check reads). The CLI reads the files as data.
+// the external dependencies declared in or inherited by that configuration, with their version,
+// `because(...)` reason (what the floors check reads) and whether the version is strict, plus the
+// strict dependency constraints (`constraints { … strictly(…) }`): a strict version is its owner's pin. The CLI reads the files as data.
 // Declarations are read only once every configuration of the build has resolved: resolving adds
 // some (`defaultDependencies`, such as a code-quality plugin's tool, or `withDependencies`).
 //
@@ -51,7 +52,7 @@ def relativeToRequested = { File dir ->
 def componentKey = { id -> id instanceof ModuleComponentIdentifier ? "${id.group}:${id.module}:${id.version}".toString() : id.displayName }
 
 def resolveEntry = { configuration, String id, String kind ->
-    def entry = [id: id, kind: kind, resolved: [], unresolved: [], declared: [], edges: [], error: null]
+    def entry = [id: id, kind: kind, resolved: [], unresolved: [], declared: [], strictConstraints: [], edges: [], error: null]
     try {
         def result = configuration.incoming.resolutionResult
         result.allComponents.each { component ->
@@ -84,7 +85,11 @@ def declare = { configuration, Map entry ->
             name   : dependency.name,
             version: dependency.version ?: constraint.strictVersion ?: constraint.requiredVersion ?: constraint.preferredVersion ?: null,
             reason : dependency.reason,
-        ] + (moved.contains(dependency) ? [moved: true] : [:])
+        ] + (constraint.strictVersion ? [strict: true] : [:]) + (moved.contains(dependency) ? [moved: true] : [:])
+    }
+    configuration.allDependencyConstraints.each { constraint ->
+        def strict = constraint.versionConstraint.strictVersion
+        if (strict) entry.strictConstraints << [group: constraint.group, name: constraint.name, version: strict]
     }
     entry
 }
@@ -106,7 +111,7 @@ def declareProject = { resolved -> resolved.collect { configuration, entry -> de
 // One file per (build, project), named so no two can collide.
 def write = { String build, String project, Map content ->
     def name = URLEncoder.encode(build + "|" + project, "UTF-8") + ".json"
-    new File(outDir, name).text = JsonOutput.prettyPrint(JsonOutput.toJson([schemaVersion: 2, build: build, project: project] + content))
+    new File(outDir, name).text = JsonOutput.prettyPrint(JsonOutput.toJson([schemaVersion: 3, build: build, project: project] + content))
 }
 
 settingsEvaluated { settings ->

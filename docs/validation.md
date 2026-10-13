@@ -62,6 +62,23 @@ passes. Heads, costs and details are in each one's `VALIDATION.md`:
 - **Renames.** The fixtures were renamed from `test-*`; a read-only check confirmed all 28 open
   tool PRs were still recognised, and real reviews plus a full pass found no duplicates.
 
+## Strict pins on a new fixture — 2026-10-13
+
+The `strictly(...)` handling ran for real, from its branch, on
+[supply-chain_TEST_strict](https://github.com/leanish/supply-chain_TEST_strict/blob/main/VALIDATION.md), whose
+`EXPECTED.md` lists nine cases (strict declarations, a strict constraint, a strict pin in one configuration only, a
+strict vulnerable version, a strict parent, a strict security floor, and an inactive strict branch).
+
+- **secure-it** blocked and reported the fixes of strictly pinned coordinates (snakeyaml, commons-io, guava,
+  jackson-databind), floored okio and jackson-core instead of moving their strict parents (okhttp,
+  jackson-databind), kept the strict commons-compress floor, and fixed the plain ones (commons-text, commons-lang3).
+- **bump-it** moved only the plain declarations (commons-lang3, commons-text and the active joda-time line), left
+  the inactive `strictly` line byte for byte, and noted each pin.
+- **A finding:** Gradle pins its embedded Kotlin strictly on every buildscript and settings classpath; the first run
+  treated that as the owner's pin and blocked fixing kotlin-stdlib on the runtime classpath. Pins now count only in
+  the configurations a change touches; the second run floored kotlin-stdlib (its parent okhttp is strict).
+- No PR changed a `strictly` line; CI passed on all three PRs.
+
 ## Fixture coverage
 
 What the fixture repositories exercise, by evidence state: **real tool run** (the tools ran for
@@ -88,6 +105,7 @@ tests in this repository). Case numbers refer to each fixture's `EXPECTED.md`.
 | secure-it bundled fix through its carrier | npm-bundles A | real tool run, branch only |
 | secure-it Gradle parent search and floor | gradle 4/C (consumed seeds; re-seed steps in its EXPECTED) | real tool run |
 | secure-it floor removal | gradle (#13) | real tool run (#13 ready, CI green, not merged) |
+| `strictly(...)` pins left to the owner (both tools); Gradle's own Kotlin pins not counted | strict 1–9 | real tool run, from the branch before release |
 | secure-it verification retry | — | unit tests only |
 | Major needing code, adapted while building the PR | gradle 12 | real tool run |
 | Major needing code, adapted during review | gradle 11, 17; npm-actions 16 | real tool run |

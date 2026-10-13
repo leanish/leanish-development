@@ -19,6 +19,11 @@ packages/remediation/run.sh bump-it review leanish/widget   # every few hours
   PR, including every declaration of that package with a selected major move. Each unit starts from the default branch,
   and a unit's failure does not stop others. Gradle transitives are never explicitly moved; induced changes are judged
   by `compare`. Recorded security and compatibility floors stay untouched.
+- A Gradle coordinate pinned with `strictly(...)` (declared or as a dependency constraint) in a configuration that
+  declares it is never moved, in any configuration: the pin is the owner's. The run's notes list each such pin. Pins
+  only elsewhere (Gradle's own strict constraints on its embedded Kotlin, on buildscript and settings classpaths) don't
+  count. The agent is told never to change a `strictly` version, and verification refuses an edit that changes a
+  line mentioning `strictly`.
 - `@types/node` targets never exceed the lowest supported Node major found in `engines.node`, `.nvmrc`,
   `.node-version`, `volta.node`, or static `actions/setup-node` CI versions (including matrices). Root, lockfile-root
   and declaring-workspace constraints are combined by taking the minimum; a newer development or CI runtime never
@@ -78,9 +83,9 @@ packages/remediation/run.sh bump-it review leanish/widget   # every few hours
   target, or npm cannot retain a required target, that unit fails. Exact repository pins are reported separately as pins.
 - The agent never changes npm dependency fields or lockfiles. The tool-written graph already includes refreshed or
   induced transitives, even when those versions are absent from the explicit move list; the agent preserves them.
-  It may adapt code and manifest scripts/config only for a major, using `majorEffort` (configure Sol with high effort). The [skill](skills/bump-it/SKILL.md) defines the boundary.
+  It may adapt code and manifest scripts/config only for a major, using `majorEffort` (configure Sol with high effort). The [skill](skills/bump-it/SKILL.md) defines the boundary. The skill also asks for focused edits in each file's style, comments the edit made false fixed without losing their context, code kept only for an unsupported old major removed, and PR text that gives `from → to`, states each major's adaptation verdict and the checks run.
 - Verification fences off policy changes first, requires exact planned lockfiles and dependency fields, exact planned
-  Gradle declarations, unchanged unplanned declarations and floors, correct action pins and all generated wrapper bytes/modes plus official checksums. Only after every local
+  Gradle declarations, unchanged unplanned declarations and floors, unchanged `strictly` lines, correct action pins and all generated wrapper bytes/modes plus official checksums. Only after every local
   check passes does it run `compare`, which must also pass. A report of local problems means `compare` has not run.
 - Open PRs count only when the head matches their body state or the exact tool journal entry. Same plan: leave it to
   review. Changed plan: merge base, revert all old PR edits to base, apply the new plan, verify and push a normal commit.
