@@ -2,7 +2,19 @@
 
 ## Unreleased
 
+### Added
+
+- `packages/ci/dependency-floors.schema.json`, the JSON Schema of `.github/dependency-floors.json`,
+  tested to agree with the gate's parser. secure-it's skill embeds it with how a `gradle-floor`
+  move maps to a record, so the agent no longer guesses the format (missing `purpose`, `name`
+  instead of `package`) when a repository has no floors file yet.
+
 ### Changed
+
+- secure-it's skill says to floor a configuration a plugin fills with defaults (`checkstyle`)
+  in a declarations-only parent configuration (`isCanBeResolved = false`,
+  `isCanBeConsumed = false`), and not to add configurations Gradle can resolve, which
+  verification rejects.
 
 - The tools' PR body marker is `<!-- leanish:<tool> -->`, named like their label; a PR is theirs
   when it carries either.
