@@ -131,6 +131,15 @@ describe("bump verification", () => {
     const { input } = await fixture();
     expect(await verifyPlan({ ...input, changedFiles: [...input.changedFiles, "src/main.ts"] })).toContain("only a major may change src/main.ts");
   });
+  it("refuses a changed strictly(...) pin in a routine or a major, without calling compare", async () => {
+    const build = (version: string) => `dependencies { implementation("g:pinned") { version { strictly("${version}") } } }\n`;
+    for (const { input, baseFiles, headFiles } of [await fixture(), await fixture(true)]) {
+      const problems = await verifyPlan({ ...input, base: tree("base", { ...baseFiles, "build.gradle.kts": build("1.0") }),
+        head: tree("head", { ...headFiles, "build.gradle.kts": build("2.0") }), changedFiles: [...input.changedFiles, "build.gradle.kts"] });
+      expect(problems).toContainEqual(expect.stringContaining("changed a Gradle strictly(...) pin in build.gradle.kts"));
+    }
+    expect(runCompare).not.toHaveBeenCalled();
+  });
   it("requires head to resolve and declare exactly what the plan's reference does, and the plan to have landed in it", async () => {
     const plan = await planFor(routineUnit([candidate({ ecosystem: "Maven", name: "g:lib", from: "1.0", locations: [":runtimeClasspath"], declarations: [] })]), { files: new Map(), changes: [], notes: [] }, async () => undefined);
     const script = (version: string) => ({ "build.gradle.kts": `dependencies { implementation("g:lib:${version}") }` });

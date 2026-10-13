@@ -6,7 +6,7 @@ import { type CooldownEvaluation, heldLines } from "../../ci/src/cooldown.ts";
 import { type GateEnvironment, type GradleInputs, readSettings, runCompare, treeSources } from "../../ci/src/gate.ts";
 import type { GradleInventory } from "../../ci/src/gradle.ts";
 import type { Tree } from "../../ci/src/tree.ts";
-import { actionsOutsidePlan, declaredAt, directChangesOutside, directVersions, FLOORS_FILE, isDependencyFile, policyFence } from "../../remediation/src/edit-checks.ts";
+import { actionsOutsidePlan, declaredAt, directChangesOutside, directVersions, FLOORS_FILE, isDependencyFile, policyFence, strictPinsChanged } from "../../remediation/src/edit-checks.ts";
 
 import type { WrapperFile } from "./wrapper-generation.ts";
 import { WRAPPER_FILES, type WrapperPlanner } from "./gradle-wrapper.ts";
@@ -58,6 +58,7 @@ export async function verifyPlan(inputs: VerifyInputs): Promise<string[]> {
     problems.push("bump-it may not change dependency floors");
   }
   problems.push(...await floorProblems(base, head, gradle));
+  problems.push(...await strictPinsChanged(inputs.changedFiles, base, head));
   problems.push(...directChangesOutside(await directVersions(base), await directVersions(head), (ecosystem, name, where) => includesDeclaration(plan, ecosystem, name, where)));
   // Gradle: the plan landed in the reference, and head resolves and declares exactly what the reference does.
   problems.push(...referenceProblems(gradle.base, inputs.reference, referenceMoves(plan), []), ...referenceDifferences(inputs.reference, gradle.head));

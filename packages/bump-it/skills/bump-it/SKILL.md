@@ -89,6 +89,10 @@ or touch git metadata. Leave no temporary files: everything in the working tree 
   peerDependenciesMeta, overrides, workspaces). Only a major may adapt a manifest's other fields (scripts, config).
 - `gradle-declared`: edit the declarations in every configuration location, to exactly `to`, keeping the repository's
   version catalog and build conventions. Never add or change transitive constraints or raise a floor.
+- Never change a Gradle `strictly(...)` version (a catalog's `strictly = ...` included), even when it pins a moved
+  dependency at `from`: a strict version is the repository owner's deliberate pin. If the plan can't be applied
+  without changing one, answer cannot-apply naming the file and the declaration. The tool refuses an edit that changes
+  a `strictly` line.
 - `gradle-wrapper`: already generated and applied by the tool. Never touch wrapper files: gradlew, gradlew.bat,
   gradle/wrapper/gradle-wrapper.properties or gradle/wrapper/gradle-wrapper.jar. Keep their bytes and executable
   modes unchanged in every editing mode. Do not run the wrapper task or download/replace a wrapper yourself.
@@ -100,6 +104,14 @@ or touch git metadata. Leave no temporary files: everything in the working tree 
 - Never change .github/dependency-floors.json, supply-chain.json, supply-chain-exceptions.json, or workflows/actions
   beyond the supplied pins.
 - Code, tests, docs and manifest scripts/config may change only for `kind: major`, to adapt to that major.
+
+## Code and comments
+
+- Change only what the moves, and a major's adaptation, need, in each file's style: formatting, import order, naming.
+- When your edit makes a comment, Javadoc/KDoc/JSDoc or (in a major) a doc false, fix it in the same edit, keeping the
+  context it carries: case labels, advisory IDs, the reason for a choice. Leave accurate comments as they are.
+- Adapting to a major, remove code kept only for versions the repository no longer supports (judged by its declared
+  ranges, peer ranges included); keep it while a declared range still spans both majors.
 
 ## Verify
 
@@ -118,6 +130,17 @@ Commit statuses permissions, never the Checks API. Fix only what this major brok
 
 ## Answer
 
-End with one fenced json block and nothing after it. For applied, include summary and publication (title, body,
-commitMessage): lower-case, concrete text about the update and any adaptation. The tool adds its table and plan block.
-For cannot-apply, give summary and omit publication or set it to null. Never claim a check passed unless you ran it successfully.
+End with one fenced json block and nothing after it.
+
+- `applied`: a `summary`, and a `publication` with:
+  - `title`: lower case, what changes (`moving glob to 11.0.3`).
+  - `body`: what moves and why, with `from → to` wherever the text names a move. For each major, a verdict: what you
+    adapted, a line per file with why, or "no adaptation needed" with the reason (which of its breaking changes you
+    checked against which usage). Base it on what you read; never invent a rationale. Then the checks: each command
+    you ran with its result, and any you couldn't run, with why. The tool appends its table and plan block, so don't
+    repeat them; don't narrate your process; leave out environment noise (sandbox denials, daemon fallbacks,
+    warnings) unless it changes what a reviewer should trust.
+  - `commitMessage`: in the repository's style.
+- `cannot-apply`: a `summary` of what stopped you; omit `publication` or set it to null.
+
+Never claim a check passed unless you ran it successfully.

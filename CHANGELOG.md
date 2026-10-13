@@ -11,6 +11,18 @@
 
 ### Changed
 
+- bump-it and secure-it never change a Gradle `strictly(...)` pin: their skills say so (the
+  agent answers cannot-apply when a plan needs it), and verification refuses an edit that
+  changes a line mentioning `strictly` in a build, settings or catalog file. A plan covering an
+  active strict pin now fails visibly instead of moving it.
+
+- The skills ask for better agent output: only the needed changes, in the file's style;
+  comments and docs the edit makes false fixed without losing their context; code kept only for
+  an unsupported old major removed; and PR text that maps advisories to packages, gives
+  `from → to`, states each major's adaptation verdict and the checks run, without repeating the
+  tool's table, narrating the process or carrying sandbox noise. secure-it's skill also says
+  the floors file holds only `floors`, never the schema's keywords.
+
 - secure-it's skill says to floor a configuration a plugin fills with defaults (`checkstyle`)
   in a declarations-only parent configuration (`isCanBeResolved = false`,
   `isCanBeConsumed = false`), and not to add configurations Gradle can resolve, which

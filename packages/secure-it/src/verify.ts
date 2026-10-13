@@ -51,6 +51,7 @@ import {
   type PlannedPin,
   policyFence,
   resolvedAt,
+  strictPinsChanged,
   UNVERSIONED,
 } from "../../remediation/src/edit-checks.ts";
 import { referenceDifferences, type ReferenceFloor, type ReferenceMove, referenceProblems } from "../../remediation/src/gradle-reference.ts";
@@ -92,6 +93,9 @@ export async function verifyPlan(inputs: VerifyInputs): Promise<string[]> {
   if (npm.length > 0) return npm;
   const floors = await preservedFloors(plan, base, head, gradle);
   if (floors.length > 0) return floors;
+
+  const strict = await strictPinsChanged(inputs.changedFiles, base, head);
+  if (strict.length > 0) return strict;
 
   if (plan.kind === "floor-removal") return verifyRemovalEdit(inputs);
 
