@@ -204,13 +204,126 @@ that rewrites a lockfile. Never lower/unset the window or add exclusions of your
   plugin's own declaration alone: yours goes next to it). In each configuration of `locations` (`:runtimeClasspath`,
   `buildSrc/:compileClasspath`, …), declare it explicitly at exactly `<to>`, with `because("<advisories, comma-separated>:
   <one line on why>")`, in the configuration the resolving one extends (e.g. `implementation` for `runtimeClasspath`,
-  `testImplementation` for `testRuntimeClasspath`); use the catalog when the build uses one. Then add its floor entry to
-  `floorsFile` with `"ecosystem": "Maven"`, `"selector"` the same configuration locations, `"declaredIn"` the file you
-  edited.
+  `testImplementation` for `testRuntimeClasspath`); use the catalog when the build uses one. When the location is itself
+  the configuration you'd declare on and a plugin fills it with defaults only while it has no dependencies of its own
+  (`checkstyle`, a code-quality tool's configuration), declaring on it would drop the plugin's tool: declare the floor in
+  a new helper configuration that it extends instead. Then add its record to `floorsFile` (see below).
 - `action-pin`: replace each `uses:` of the action in `locations` with `<name>@<commitSha> # <to>`.
+
+Don't add configurations Gradle can resolve: verification inventories the edit's resolvable configurations and compares
+them with the plan's reference, so a new one fails it. A helper configuration you introduce sets both
+`isCanBeResolved = false` and `isCanBeConsumed = false` (declarations only).
 
 Read the repository's `AGENTS.md` (or `CONTRIBUTING.md`) first if it has one, and follow its conventions for build
 files and commit messages.
+
+## The floors file
+
+`floorsFile` (`.github/dependency-floors.json`) records every floor; create it as `{ "floors": [] }` if it's missing, and
+keep its existing records. A `gradle-floor` move's record: `"ecosystem": "Maven"`, `"package"` the move's `name`,
+`"version"` its `to`, `"declaredIn"` the build file you declared it in, `"selector"` its `locations`, `"purpose":
+"security"`, `"advisories"` its `advisories`, `"reason"` one line on why, `"added"` `today`. The gate rejects a file
+that doesn't follow this schema (it also requires `added` to be a real date, and no two records of one package in one
+file claiming the same configuration):
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/leanish/supply-chain/packages/ci/dependency-floors.schema.json",
+  "title": ".github/dependency-floors.json",
+  "description": "Every floor (a minimum version forced on a dependency) with its reason. Beyond this schema, the gate also requires `added` to be a real calendar date, and no two floors for one package in one file may claim the same configuration or override.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["floors"],
+  "properties": {
+    "floors": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/floor" }
+    }
+  },
+  "$defs": {
+    "text": {
+      "description": "Nonempty, without leading or trailing whitespace.",
+      "type": "string",
+      "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+    },
+    "key": {
+      "description": "Nonempty after trimming.",
+      "type": "string",
+      "pattern": "\\S"
+    },
+    "advisory": {
+      "type": "string",
+      "pattern": "^(?:GHSA(?:-[23456789cfghjmpqrvwx]{4}){3}|CVE-\\d{4}-\\d{4,}|MAL-\\d{4}-\\d+)$"
+    },
+    "floor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ecosystem", "package", "version", "declaredIn", "selector", "purpose", "reason", "added"],
+      "properties": {
+        "ecosystem": { "enum": ["Maven", "npm"] },
+        "package": { "$ref": "#/$defs/text", "description": "Maven: group:name. npm: the package name." },
+        "version": { "$ref": "#/$defs/text", "description": "The floor: the exact version declared (Maven) or the override's minimum (npm)." },
+        "declaredIn": { "$ref": "#/$defs/text", "description": "The file that declares it: a Gradle build file, or the package.json with the override." },
+        "selector": { "description": "Maven: the Gradle configuration locations it must hold in (`:checkstyle`, `buildSrc/:compileClasspath`). npm: the overrides key paths that pin it, each a key or a list of keys." },
+        "purpose": { "enum": ["security", "compatibility"] },
+        "advisories": {
+          "description": "Security floors name every advisory they fix; compatibility floors name none (an empty list, null or no field).",
+          "type": ["array", "null"],
+          "items": { "$ref": "#/$defs/advisory" }
+        },
+        "reason": { "$ref": "#/$defs/text", "description": "One line on why." },
+        "added": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "description": "YYYY-MM-DD." }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "purpose": { "const": "security" } }, "required": ["purpose"] },
+          "then": { "required": ["advisories"], "properties": { "advisories": { "type": "array", "minItems": 1 } } }
+        },
+        {
+          "if": { "properties": { "purpose": { "const": "compatibility" } }, "required": ["purpose"] },
+          "then": { "properties": { "advisories": { "anyOf": [{ "type": "null" }, { "type": "array", "maxItems": 0 }] } } }
+        },
+        {
+          "if": { "properties": { "ecosystem": { "const": "Maven" } }, "required": ["ecosystem"] },
+          "then": {
+            "properties": {
+              "selector": {
+                "anyOf": [
+                  { "$ref": "#/$defs/key" },
+                  { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/key" } }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "ecosystem": { "const": "npm" } }, "required": ["ecosystem"] },
+          "then": {
+            "properties": {
+              "selector": {
+                "anyOf": [
+                  { "$ref": "#/$defs/key" },
+                  {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "anyOf": [
+                        { "$ref": "#/$defs/key" },
+                        { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/key" } }
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
+```
 
 ## `mode: resolve`
 
