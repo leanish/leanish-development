@@ -175,6 +175,10 @@ that rewrites a lockfile. Never lower/unset the window or add exclusions of your
 - Only the non-npm moves: Gradle declarations, build and settings files, `gradle/libs.versions.toml`,
   and `floorsFile` (`.github/dependency-floors.json`).
 - Code, tests and docs **only when a move has `major: true`**, and only to adapt to that major.
+- Never change a Gradle `strictly(...)` version (a catalog's `strictly = ...` included), even when it pins a moved
+  dependency at `from`: a strict version is the repository owner's deliberate pin. If the plan can't be applied
+  without changing one, answer `cannot-apply` naming the file and the declaration. The tool refuses an edit that
+  changes a `strictly` line.
 - Direct dependencies outside the supplied moves keep their declarations and locked versions. Never edit another
   dependency's version by hand or add an unplanned override or floor.
 - Preserve existing floor records and declarations, except the exact `floorRemovals` described above. Never alter a compatibility floor. A Gradle security floor may move
@@ -217,10 +221,21 @@ them with the plan's reference, so a new one fails it. A helper configuration yo
 Read the repository's `AGENTS.md` (or `CONTRIBUTING.md`) first if it has one, and follow its conventions for build
 files and commit messages.
 
+## Code and comments
+
+Within the files this skill lets you edit:
+
+- Change only what the moves, and a major's adaptation, need, in each file's style: formatting, import order, naming.
+- When your edit makes a comment, Javadoc/KDoc/JSDoc or (in a major) a doc false, fix it in the same edit, keeping the
+  context it carries: case labels, advisory IDs, the reason for a choice. Leave accurate comments as they are.
+- Adapting to a major, remove code kept only for versions the repository no longer supports (judged by its declared
+  ranges, peer ranges included); keep it while a declared range still spans both majors.
+
 ## The floors file
 
 `floorsFile` (`.github/dependency-floors.json`) records every floor; create it as `{ "floors": [] }` if it's missing, and
-keep its existing records. A `gradle-floor` move's record: `"ecosystem": "Maven"`, `"package"` the move's `name`,
+keep its existing records. The file holds only the `floors` key: the schema below describes it, and the schema's own
+keywords (`$schema`, `$id`, `title`, `description`, ...) never go into the file. A `gradle-floor` move's record: `"ecosystem": "Maven"`, `"package"` the move's `name`,
 `"version"` its `to`, `"declaredIn"` the build file you declared it in, `"selector"` its `locations`, `"purpose":
 "security"`, `"advisories"` its `advisories`, `"reason"` one line on why, `"added"` `today`. The gate rejects a file
 that doesn't follow this schema (it also requires `added` to be a real date, and no two records of one package in one
@@ -344,11 +359,19 @@ within what you may change. If the failure isn't caused by the move, or fixing i
 
 End with one fenced `json` block, nothing after it:
 
-- `applied`, with `publication`: a title like `moving snappy-java to 1.1.10.10 for 7 advisories` (lower case, what
-  changes); a body that says why (the advisories, in a sentence or two; for a carrier move, which bundled packages
-  it replaces and with what, e.g. "aws-cdk-lib 2.273.0 ships brace-expansion 5.0.12") and, for a major, what you adapted (secure-it
-  adds the table of moves itself). Also mention required transitive changes npm made and why. The tool may have
-  pinned them through an independently gated required-dependency age proof; otherwise they are npm's induced
-  resolution. Leave all tool-written bytes unchanged. The tool verifies them before publishing. Use a commit message
-  in the repository's style.
+- `applied`, with a `summary` and a `publication`:
+  - `title`: lower case, what changes (`moving snappy-java to 1.1.10.10 for 7 advisories`).
+  - `body`: why, mapping each advisory to the package it fixes, with `from → to` wherever the text names a move. For
+    a carrier move, say which package each `carries` entry replaces and with what (e.g. "aws-cdk-lib 2.273.0 ships
+    brace-expansion 5.0.12"); its own `advisories` can be empty. Mention a transitive change npm made only when a
+    reviewer needs it (a version a fix required, a peer companion). For each major, a verdict: what you adapted, a
+    line per file with why, or "no adaptation needed" with the reason (which of its breaking changes you checked
+    against which usage). Base it on what you read; never invent a rationale. Then the checks: each command you ran
+    with its result, and any you couldn't run, with why. secure-it appends the table of moves itself, so don't repeat
+    it; don't narrate your process; leave out environment noise (sandbox denials, daemon fallbacks, warnings) unless
+    it changes what a reviewer should trust.
+  - `commitMessage`: in the repository's style.
+  Leave all tool-written bytes unchanged; the tool verifies them before publishing.
 - `cannot-apply`, with a `summary` of what stopped you. Omit `publication` or set it to `null`.
+
+Never claim a check passed unless you ran it successfully.

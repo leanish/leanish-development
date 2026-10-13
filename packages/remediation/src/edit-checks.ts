@@ -7,12 +7,14 @@
  *     reads its policy from head);
  *   - planned action pins landed (the tag's commit with `# <tag>`), and no
  *     other action use changed;
+ *   - no Gradle `strictly(...)` pin changed;
  *   - the declared npm versions, per declaration, to compare base with head;
  *   - which files are dependency files (an edit that isn't a major may only
  *     touch those) and which conflicted files take the base's side when the
  *     default branch is merged in.
  */
 import { basename } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { isMap, isScalar, isSeq, parseDocument } from "yaml";
 
@@ -84,6 +86,28 @@ export async function actionsOutsidePlan(pins: ReadonlyArray<PlannedPin>, base: 
   const now = count(await occurrences(head));
   const changed = [...new Set([...was.keys(), ...now.keys()])].filter((entry) => was.get(entry) !== now.get(entry)).map((entry) => labels.get(entry)!).sort();
   return changed.map((label) => `the action use ${label} changed outside the plan`);
+}
+
+/**
+ * The Gradle build, settings and catalog files where the edit changed a line mentioning `strictly`: a strict version
+ * is its owner's deliberate pin, which no plan moves. Each changed file's `strictly` lines must stay the same, in
+ * order and byte for byte. A textual guard, so it has limits: a pin written across lines, or a strict line reading a
+ * variable the edit changed, escapes it, and moving an unchanged pin within its file passes.
+ */
+export async function strictPinsChanged(changedFiles: ReadonlyArray<string>, base: Tree, head: Tree): Promise<string[]> {
+  const strictLines = (text: string | undefined) => (text ?? "").split("\n").filter((line) => line.includes("strictly"));
+  const problems: string[] = [];
+  for (const path of changedFiles.filter(isGradleVersionFile)) {
+    if (!isDeepStrictEqual(strictLines(await base.read(path)), strictLines(await head.read(path)))) {
+      problems.push(`the edit changed a Gradle strictly(...) pin in ${path}: strict versions are the owner's, which no plan moves`);
+    }
+  }
+  return problems;
+}
+
+function isGradleVersionFile(path: string): boolean {
+  const name = basename(path);
+  return name.endsWith(".gradle") || name.endsWith(".gradle.kts") || name.endsWith(".versions.toml");
 }
 
 /** `npm|name|where` → version, for every direct npm declaration: per lockfile, workspace and key. Gradle's are compared with the plan's reference (`gradle-reference.ts`). */
