@@ -12,7 +12,7 @@ import { type SecurityCandidates, type SecurityFix, securityCandidates } from ".
 import { type CooldownEvaluation, heldUntil } from "../../ci/src/cooldown.ts";
 import type { NpmPeerPlanner } from "../../ci/src/npm-peers.ts";
 import { type GateEnvironment, type GradleInputs, readSettings } from "../../ci/src/gate.ts";
-import { type GradleInventory, pinnedAmong, strictPinNote, strictPins } from "../../ci/src/gradle.ts";
+import { type GradleInventory, gradleLocation, pinnedAmong, strictPinNote, strictPins } from "../../ci/src/gradle.ts";
 import { namingFailures } from "../../ci/src/http.ts";
 import { FileRepositoryAdvisoryCache } from "../../remediation/src/repository-advisory-cache.ts";
 import { BundleReader } from "../../ci/src/npm-bundles.ts";
@@ -309,13 +309,23 @@ function withNotesOf(published: ChangePlan, recomputed: ChangePlan): ChangePlan 
   return recomputed.notes === undefined ? rest : { ...rest, notes: recomputed.notes };
 }
 
-/** `fixes` with each Maven fix of a coordinate pinned strictly where it would act made non-actionable, so it's reported as blocked. */
+/**
+ * `fixes` with each Maven fix of a coordinate pinned strictly where it would act made non-actionable, so it's reported
+ * as blocked. Where it would act: where it's vulnerable, and every configuration that declares it, since moving a
+ * declaration moves it wherever it's inherited, a pinned configuration that already resolves a clean version included.
+ */
 export function withStrictPinsBlocked(fixes: ReadonlyArray<SecurityFix>, gradle: GradleInventory | undefined): SecurityFix[] {
   const pins = strictPins(gradle);
   return fixes.map((fix) => {
-    const pinned = fix.ecosystem === "Maven" ? pinnedAmong(pins, fix.name, fix.locations) : [];
+    const pinned = fix.ecosystem === "Maven" ? pinnedAmong(pins, fix.name, [...fix.locations, ...declaringLocations(gradle, fix.name)]) : [];
     return pinned.length === 0 ? fix : { ...fix, to: undefined, problem: strictPinNote(fix.name, pinned) };
   });
+}
+
+function declaringLocations(gradle: GradleInventory | undefined, name: string): string[] {
+  return (gradle?.builds ?? []).flatMap((build) => build.configurations
+    .filter((configuration) => configuration.declared.some((declared) => `${declared.group}:${declared.name}` === name))
+    .map((configuration) => gradleLocation(build.build, configuration.id)));
 }
 
 async function computeRemoval(execution: Execution, base: PlanBase): Promise<ComputedRemoval> {

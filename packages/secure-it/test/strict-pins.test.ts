@@ -34,6 +34,18 @@ describe("strict pins in secure-it", () => {
     ]));
   });
 
+  it("blocks a fix whose declaration also reaches a configuration that pins it, even one already resolving a clean version", () => {
+    // implementation("g:shared:1.0") reaches both; compile pins a clean 1.5 with a strict constraint, so only runtime is vulnerable.
+    const shared: GradleInventory = { schemaVersion: 3, tree: "base", builds: [{ build: ".", configurations: [
+      { id: ":runtimeClasspath", kind: "project", resolved: [], unresolved: [], error: undefined, declared: [{ group: "g", name: "shared", version: "1.0", reason: undefined }] },
+      { id: ":compileClasspath", kind: "project", resolved: [], unresolved: [], error: undefined, declared: [{ group: "g", name: "shared", version: "1.0", reason: undefined }],
+        strictConstraints: [{ group: "g", name: "shared", version: "1.5" }] },
+    ] }] };
+    const selection = selectWork(withStrictPinsBlocked([maven("g:shared"), maven("g:free")], shared));
+    expect(selection.units.map((unit) => unit.work.map((fix) => fix.name))).toEqual([["g:free"]]);
+    expect(selection.blocked).toEqual([{ packages: ["Maven|g:shared"], reasons: [expect.stringContaining("g:shared is pinned with strictly(...) at :compileClasspath")] }]);
+  });
+
   it("keeps a floor the owner declares with strictly(...) and still proves removing the others", async () => {
     const floor = (pkg: string): Floor => ({ ecosystem: "Maven", package: pkg, version: "2.0", declaredIn: "build.gradle.kts", locations: [":runtimeClasspath"],
       overridePaths: [], purpose: "security", advisories: ["GHSA-a"], reason: "fix", added: "2026-10-01" });

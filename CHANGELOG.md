@@ -15,7 +15,8 @@
   marks strict declarations and records strict dependency constraints, and rejects output from
   an older inventory script. bump-it never moves a coordinate pinned strictly in a configuration that
   declares it, and notes the pin; secure-it reports a fix as blocked when its coordinate is
-  pinned strictly where the fix would act, never takes such a coordinate as a parent that
+  pinned strictly where the fix would act (where it's vulnerable, and
+  every configuration declaring it), never takes such a coordinate as a parent that
   carries a fix, and keeps a floor declared strictly. Only the configurations a change touches
   count: Gradle pins its embedded Kotlin strictly on every buildscript and settings classpath,
   which doesn't block fixing a Kotlin library on the project's classpaths. The reference refuses to
