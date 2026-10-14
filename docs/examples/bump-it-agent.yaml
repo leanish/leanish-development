@@ -2,11 +2,11 @@
 repos:
   - repo: acme/widget
     branch: main
+# Or Codex: { codingAgent: codex, model: sol, effort: medium }.
 agent:
-  codingAgent: codex
-  model: sol
-  effort: medium
-  majorEffort: high
+  codingAgent: claude-code
+  model: claude-haiku-5-5
+  effort: high
 # Default Keychain services: leanish-bump-it-write and leanish-bump-it-read.
 # Optional overrides; both tools may use the same write/read pair:
 # secrets: { write: shared-write, read: shared-read }

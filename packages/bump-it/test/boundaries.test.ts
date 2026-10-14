@@ -26,7 +26,7 @@ describe("tool boundaries", () => {
     expect(skill.body).toContain("Never touch wrapper files");
     expect(skill.body).toContain("Do not run the wrapper task");
     expect(skill.outputSchema).toMatchObject({ additionalProperties: false });
-    expect(skill.compatibleCodingAgents).toEqual(["codex"]);
+    expect(skill.compatibleCodingAgents).toEqual(["codex", "claude-code"]);
   });
   it("hashes and restores wrapper jars as binary, refusing symlinks and unsafe restore paths", async () => {
     const root = await temp();

@@ -28,7 +28,9 @@ giving a tool repository access.
   `min-release-age-exclude`. Older npm reports the affected unit failed, with
   the needed exclusions and detected version, before publication. Using 11.17+
   from the start avoids that conditional failure.
-- **Codex login** for the same user that will run launchd. The runner reuses a
+- **Codex login** for the same user that will run launchd, whichever agent you
+  choose: the tool runs repository code (the Gradle inventory, npm resolution)
+  under `codex sandbox`. The runner reuses a
   file-backed `auth.json` under `$CODEX_HOME` or `~/.codex`; a keyring-only login
   cannot be reused. See [Codex credential storage](https://developers.openai.com/codex/auth/#credential-storage).
   For a file-backed login, run:
@@ -40,10 +42,16 @@ giving a tool repository access.
   codex debug models
   ```
 
-  Do not copy credentials into this repository or a plist. Choose a listed model
-  and supported efforts; `sol` resolves against that CLI's catalog. The CLI must
-  support the sandbox/profile options this runner uses; run from a normal macOS
-  login session, not inside a sandbox that prevents Seatbelt from being applied.
+  Do not copy credentials into this repository or a plist. For `codingAgent: codex`,
+  choose a listed model and a supported effort; `sol` resolves against that CLI's
+  catalog. The CLI must support the sandbox/profile options this runner uses; run
+  from a normal macOS login session, not inside a sandbox that prevents Seatbelt
+  from being applied.
+- **For `codingAgent: claude-code`: the `claude` CLI** 2.1.259 or newer (tested
+  with 2.1.296), logged in for the same user, with `CLAUDE_CONFIG_DIR` unset.
+  Runs use that login's plan and its usage windows, shared with any interactive
+  use; a run that hits a limit fails and its logged failure says so. Model:
+  for example `claude-haiku-5-5`.
 - For Gradle repositories, **a suitable JDK** and their checked-in executable
   `gradlew`. Add `JAVA_HOME` to launchd's environment if your installation needs
   it. Gradle runs build code under the tool's sandbox and can access the network.
@@ -266,7 +274,7 @@ lower bounds, not invented zero cost. The tools ship dated OpenAI Standard rates
 replaces them for other tiers/providers. Estimates are not a subscription bill. `maxNewMajorsPerRun` limits
 new-major volume, not total spend. Pending/green review ticks use no model; base
 reconciliation and failed-CI adaptations can. npm/wrapper-only bump-it routines
-need no model, while majors use `majorEffort`. Failed attempts also consume usage.
+need no model; every other call uses `agent.effort`. Failed attempts also consume usage.
 
 ## Troubleshooting real runs
 

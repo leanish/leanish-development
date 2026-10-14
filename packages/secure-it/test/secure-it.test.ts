@@ -30,7 +30,7 @@ const NOW = new Date("2026-10-07T06:00:00Z");
 const CONFIG = parseToolConfig(
   "secure-it",
   `repos: [{ repo: ${REPO} }]
-agent: { codingAgent: codex, model: sol, effort: medium, majorEffort: high }
+agent: { codingAgent: codex, model: sol, effort: medium }
 secrets: { write: w, read: r }
 commitIdentity: { name: leanish, email: leanish@example.com }
 dirs: { state: /tmp/state, cache: /tmp/cache }
@@ -70,7 +70,7 @@ interface Harness {
   readonly deps: SecureItDeps;
   readonly github: FakeGitHub;
   readonly workspace: InMemoryWorkspace;
-  readonly agentCalls: Array<{ entrypoint: string; input: Record<string, unknown>; effort?: string }>;
+  readonly agentCalls: Array<{ entrypoint: string; input: Record<string, unknown> }>;
   readonly written: string[];
   readonly reverted: string[];
   readonly journal: MemoryJournal;
@@ -98,7 +98,7 @@ function harness(options: { prs?: GitHubPullRequest[]; fixes?: SecurityFix[]; an
     readToken: "read-token",
     fetch: globalThis.fetch,
     isolation: {},
-    agent: (async (call: { entrypoint: string; input: Record<string, unknown>; effort?: string }) => {
+    agent: (async (call: { entrypoint: string; input: Record<string, unknown> }) => {
       agentCalls.push(call);
       return options.answer ?? APPLIED;
     }) as ToolRunContext["agent"],
@@ -212,7 +212,7 @@ describe("secure-it run", () => {
     const result = await secureIt(h.deps).run(h.context);
     expect(result).toMatchObject({ outcome: "published", pullRequest: "https://github.com/leanish/widget/pull/42" });
     expect(h.agentCalls).toHaveLength(1);
-    expect(h.agentCalls[0]).toMatchObject({ entrypoint: "secure-it", effort: "medium", input: { mode: "apply", today: "2026-10-07", moves: [{ name: "vite", to: "8.3.3", mechanism: "npm-direct" }, { name: "left-pad", to: "1.0.1" }] } });
+    expect(h.agentCalls[0]).toMatchObject({ entrypoint: "secure-it", input: { mode: "apply", today: "2026-10-07", moves: [{ name: "vite", to: "8.3.3", mechanism: "npm-direct" }, { name: "left-pad", to: "1.0.1" }] } });
     const pr = h.github.prs.get(42)!;
     expect(pr).toMatchObject({ headRef: "secure-it/2026-10-07-security", isDraft: true, title: "moving vite to 8.3.3" });
     expect(planOf(pr.body)?.moves.map((move) => move.name)).toEqual(["vite", "left-pad"]);
@@ -339,7 +339,7 @@ describe("secure-it run", () => {
     const deps = { ...h.deps, gate: async () => ({ ...gate, fetch: async (url: string) => ({ ok: true, status: 200, headers: { get: () => null },
       json: async () => ({ time: String(url).endsWith("left-pad") ? { "1.0.0": "2026-10-06T00:00:00Z" } : { "8.3.1": "2026-09-01T00:00:00Z", "8.3.3": "2026-09-01T00:00:00Z" }, versions: {} }), text: async () => "" }) }),
       npm: async (_context: ToolRunContext, args: ReadonlyArray<string>) => { npm.push([...args]); return { code: 0, stdout: "11.20.0", stderr: "" }; } };
-    const context = { ...h.context, agent: (async (call: { entrypoint: string; input: Record<string, unknown>; effort?: string }) => {
+    const context = { ...h.context, agent: (async (call: { entrypoint: string; input: Record<string, unknown> }) => {
       if (!(call.input["npmAgeExclusions"] as string[]).includes("left-pad")) throw new Error("notarget: locked left-pad is too young");
       return h.context.agent(call);
     }) as ToolRunContext["agent"] };
@@ -361,7 +361,7 @@ describe("secure-it run", () => {
       if (exclusions.includes("other")) throw new Error("unplanned package was excluded");
     };
     expect(() => install([])).toThrow("notarget");
-    const context = { ...h.context, releaseAgeExclude: ["@leanish/*"], agent: (async (call: { entrypoint: string; input: Record<string, unknown>; effort?: string }) => {
+    const context = { ...h.context, releaseAgeExclude: ["@leanish/*"], agent: (async (call: { entrypoint: string; input: Record<string, unknown> }) => {
       install(call.input["npmAgeExclusions"] as ReadonlyArray<string>);
       return h.context.agent(call);
     }) as ToolRunContext["agent"] };
@@ -385,7 +385,7 @@ describe("secure-it run", () => {
     const h = harness({ fixes: [major, leftPad()] });
     const result = await secureIt(h.deps).run(h.context);
     expect(result).toMatchObject({ outcome: "completed", units: [{ topic: "security", outcome: "published" }, { topic: "vite-major", outcome: "published" }] });
-    expect(h.agentCalls.map((call) => call.effort)).toEqual(["medium", "high"]);
+    expect(h.agentCalls.map((call) => (call.input["moves"] as Array<{ major: boolean }>).map((move) => move.major))).toEqual([[false], [true]]);
     expect(h.workspace.publications.map((entry) => [entry.prepared.branch, entry.prepared.baseSha])).toEqual([
       ["secure-it/2026-10-07-security", BASE_SHA], ["secure-it/2026-10-07-vite-major", BASE_SHA],
     ]);
@@ -482,10 +482,10 @@ describe("secure-it run", () => {
     expect(h.workspace.publications).toEqual([]);
   });
 
-  it("uses the major effort when a move is a major", async () => {
+  it("sets no per-call effort for a major: the config's applies to every call", async () => {
     const h = harness({ fixes: [vite({ to: { version: "9.0.1", line: "9", aged: true, major: true, blockers: [] } })] });
     await secureIt(h.deps).run(h.context);
-    expect(h.agentCalls[0]?.effort).toBe("high");
+    expect(h.agentCalls[0]).not.toHaveProperty("effort");
   });
 });
 

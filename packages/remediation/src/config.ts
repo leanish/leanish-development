@@ -8,10 +8,9 @@
  *     - repo: leanish/sqs-codec
  *       branch: main             # optional: the default branch otherwise
  *   agent:
- *     codingAgent: codex         # the only runner that can write today
- *     model: sol
- *     effort: medium
- *     majorEffort: high          # majors and their reviews
+ *     codingAgent: codex         # or claude-code
+ *     model: sol                 # a model the coding agent accepts (claude-code: e.g. claude-haiku-5-5)
+ *     effort: medium             # every agent call, majors included
  *   secrets:                     # optional macOS Keychain service overrides
  *     write: leanish-secure-it-write       # default: leanish-<tool>-write
  *     read: leanish-secure-it-read         # default: leanish-<tool>-read
@@ -40,10 +39,14 @@ export interface ToolRepo {
   readonly branch: string | undefined;
 }
 
+/** The coding agents whose runners can edit a working copy. */
+export const CODING_AGENTS = ["codex", "claude-code"] as const;
+export type CodingAgent = (typeof CODING_AGENTS)[number];
+
 export interface ToolConfig {
   readonly tool: ToolName;
   readonly repos: ReadonlyArray<ToolRepo>;
-  readonly agent: { readonly codingAgent: "codex"; readonly model: string; readonly effort: string; readonly majorEffort: string };
+  readonly agent: { readonly codingAgent: CodingAgent; readonly model: string; readonly effort: string };
   /** Resolved Keychain service names: per-tool defaults with optional per-field overrides. */
   readonly secrets: { readonly write: string; readonly read: string };
   readonly commitIdentity: GitIdentity;
@@ -84,10 +87,15 @@ export function parseToolConfig(tool: ToolName, text: string, where: string, hom
   const duplicate = repos.find((entry, i) => repos.findIndex((other) => other.repo.toLowerCase() === entry.repo.toLowerCase()) !== i);
   if (duplicate !== undefined) throw new Error(`${where}: repos lists ${duplicate.repo} twice`);
 
-  const agent = object(root["agent"], `${where}: agent`, ["codingAgent", "model", "effort", "majorEffort"]);
+  // Checked before the unknown-field check so an older config gets told what replaces it.
+  if (isRecord(root["agent"]) && "majorEffort" in root["agent"]) {
+    throw new Error(`${where}: agent.majorEffort was removed: agent.effort applies to every agent call, majors included`);
+  }
+  const agent = object(root["agent"], `${where}: agent`, ["codingAgent", "model", "effort"]);
   const codingAgent = string(agent["codingAgent"], `${where}: agent.codingAgent`);
-  // Claude Code's runner refuses write access, and both tools write.
-  if (codingAgent !== "codex") throw new Error(`${where}: agent.codingAgent must be codex (the only runner that can edit a working copy); got '${codingAgent}'`);
+  if (!(CODING_AGENTS as ReadonlyArray<string>).includes(codingAgent)) {
+    throw new Error(`${where}: agent.codingAgent must be one of ${CODING_AGENTS.join(", ")}; got '${codingAgent}'`);
+  }
   const secrets = root["secrets"] === undefined ? {} : object(root["secrets"], `${where}: secrets`, ["write", "read"]);
   const write = secrets["write"] === undefined ? `leanish-${tool}-write` : string(secrets["write"], `${where}: secrets.write`);
   const read = secrets["read"] === undefined ? `leanish-${tool}-read` : string(secrets["read"], `${where}: secrets.read`);
@@ -105,10 +113,9 @@ export function parseToolConfig(tool: ToolName, text: string, where: string, hom
     tool,
     repos,
     agent: {
-      codingAgent: "codex",
+      codingAgent: codingAgent as CodingAgent,
       model: string(agent["model"], `${where}: agent.model`),
       effort: string(agent["effort"], `${where}: agent.effort`),
-      majorEffort: string(agent["majorEffort"], `${where}: agent.majorEffort`),
     },
     secrets: { write, read },
     commitIdentity: {
@@ -132,8 +139,12 @@ export function repoOf(config: ToolConfig, repo: string): ToolRepo {
   return found;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function object(value: unknown, where: string, allowed: ReadonlyArray<string>): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error(`${where} must be a mapping`);
+  if (!isRecord(value)) throw new Error(`${where} must be a mapping`);
   const unknown = Object.keys(value).filter((key) => !allowed.includes(key));
   if (unknown.length > 0) throw new Error(`${where}: unknown field(s): ${unknown.join(", ")}`);
   return value as Record<string, unknown>;

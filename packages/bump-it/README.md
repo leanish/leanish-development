@@ -85,7 +85,7 @@ packages/remediation/run.sh bump-it review leanish/widget   # every few hours
   target, or npm cannot retain a required target, that unit fails. Exact repository pins are reported separately as pins.
 - The agent never changes npm dependency fields or lockfiles. The tool-written graph already includes refreshed or
   induced transitives, even when those versions are absent from the explicit move list; the agent preserves them.
-  It may adapt code and manifest scripts/config only for a major, using `majorEffort` (configure Sol with high effort). The [skill](skills/bump-it/SKILL.md) defines the boundary. The skill also asks for focused edits in each file's style, comments the edit made false fixed without losing their context, code kept only for an unsupported old major removed, and PR text that gives `from → to`, states each major's adaptation verdict and the checks run.
+  It may adapt code and manifest scripts/config only for a major. The [skill](skills/bump-it/SKILL.md) defines the boundary. The skill also asks for focused edits in each file's style, comments the edit made false fixed without losing their context, code kept only for an unsupported old major removed, and PR text that gives `from → to`, states each major's adaptation verdict and the checks run.
 - Verification fences off policy changes first, requires exact planned lockfiles and dependency fields, exact planned
   Gradle declarations, unchanged unplanned declarations and floors, unchanged `strictly` lines, correct action pins and all generated wrapper bytes/modes plus official checksums. Only after every local
   check passes does it run `compare`, which must also pass. A report of local problems means `compare` has not run.
@@ -121,7 +121,7 @@ conflicts from base (wrapper jars restored as binary) and re-apply (major code c
 If recomputation blocks a major's direct-peer set, the tick reports an `error` with the reason and retains the PR
 and branch for a later tick; it does not treat the blocked move as completed work.
 Clean same-target major merges preserve existing script/config adaptations. Failed major CI gets at most two
-high-effort adaptations, with the attempt counted before the agent starts. Routine CI failures are reported without
+adaptations, with the attempt counted before the agent starts. Routine CI failures are reported without
 an agent; after the shared two-attempt budget the PR closes. One PR's problem does not stop the tick.
 
 The review reads each PR's own CI. The gate's daily scan of the default branch stays CI's job; the tick doesn't replace it.

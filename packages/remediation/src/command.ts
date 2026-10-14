@@ -21,6 +21,7 @@ import { codexIsolation } from "../../agent-basics/src/isolation.ts";
 import type { CodexRunnerOptions } from "../../agent-basics/src/skill/codex-runner.ts";
 import { ConsoleLogger } from "../../agent-basics/src/logger/console-logger.ts";
 import { reportOnTerminationSignals, RunReport, writeFinalLine } from "../../agent-basics/src/report/run-report.ts";
+import { ClaudeCodeRunner } from "../../agent-basics/src/skill/claude-code-runner.ts";
 import { CodexRunner } from "../../agent-basics/src/skill/codex-runner.ts";
 import { runSkill } from "../../agent-basics/src/skill/run-skill.ts";
 import type { CodingAgentRunner } from "../../agent-basics/src/skill/runner.ts";
@@ -37,7 +38,7 @@ import type { Workspace } from "../../agent-basics/src/working-copy/workspace.ts
 import { readSettings } from "../../ci/src/gate.ts";
 import { workingTree } from "../../ci/src/tree.ts";
 
-import { defaultConfigPath, parseToolConfig, repoOf, type ToolConfig, type ToolRepo } from "./config.ts";
+import { type CodingAgent, defaultConfigPath, parseToolConfig, repoOf, type ToolConfig, type ToolRepo } from "./config.ts";
 import { DEFAULT_MODEL_PRICES } from "./model-prices.ts";
 import type { ToolName } from "./own-pr.ts";
 import { GitHubRequests } from "./github-requests.ts";
@@ -66,7 +67,7 @@ export interface ToolRunContext {
   /** How the agent is isolated; `runSandboxed` runs repository code the same way. */
   readonly isolation: CodexRunnerOptions;
   /** Runs one of the tool's skills on the working copy, with write access and the read-only token. */
-  readonly agent: <TInput, TOutput>(call: { readonly entrypoint: string; readonly input: TInput; readonly effort?: string }) => Promise<TOutput>;
+  readonly agent: <TInput, TOutput>(call: { readonly entrypoint: string; readonly input: TInput }) => Promise<TOutput>;
 }
 
 export interface ToolHandlers {
@@ -85,7 +86,7 @@ export interface Machine {
   readonly now: () => Date;
   readonly readText: (path: string) => Promise<string>;
   readonly workspace: (root: string, token: string, config: ToolConfig) => Workspace;
-  readonly runner: (isolation: CodexRunnerOptions) => CodingAgentRunner;
+  readonly runner: (codingAgent: CodingAgent, isolation: CodexRunnerOptions) => CodingAgentRunner;
   /** run.sh's marker file (`TOOL_REPORT_MARKER`): written once the final line is out, so run.sh doesn't write one too. */
   readonly reportMarker: string | undefined;
 }
@@ -148,7 +149,7 @@ export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray
       releaseAgeExclude,
       buildCacheRoot: config.dirs.cache,
     });
-    const runner = m.runner(isolation);
+    const runner = m.runner(config.agent.codingAgent, isolation);
     const prices = config.modelPrices === undefined
       ? DEFAULT_MODEL_PRICES
       : parseModelPrices(JSON.parse(await m.readText(config.modelPrices)), config.modelPrices);
@@ -186,7 +187,7 @@ export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray
           workingCopies: [workingCopy],
           codingAgent: config.agent.codingAgent,
           model: config.agent.model,
-          effort: call.effort ?? config.agent.effort,
+          effort: config.agent.effort,
           access: "write",
           credentials: { env: { GH_TOKEN: read }, secrets: [{ name: "GH_TOKEN", value: read }] },
         }),
@@ -248,6 +249,10 @@ function defaultMachine(): Machine {
     readText: (path) => readFile(path, "utf8"),
     reportMarker: process.env["TOOL_REPORT_MARKER"],
     workspace: (root, token, config) => new LocalGitWorkspace({ workspaceRoot: root, gitAuth: gitCloneAuth(token), commitIdentity: config.commitIdentity }),
-    runner: (isolation) => new CodexRunner(isolation),
+    // Both runners get the same isolation: denied paths, the agent's env and its build cache.
+    runner: (codingAgent, isolation) =>
+      codingAgent === "codex"
+        ? new CodexRunner(isolation)
+        : new ClaudeCodeRunner({ env: isolation.env ?? {}, readDenied: isolation.readDenied ?? [], ...(isolation.buildCacheRoot !== undefined ? { buildCacheRoot: isolation.buildCacheRoot } : {}) }),
   };
 }

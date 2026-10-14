@@ -21,10 +21,9 @@ permissions and schedules.
 |---|---|---|
 | `repos` | Required, nonempty list | Explicit opt-in. Each entry has `repo: owner/repo`; duplicates are rejected case-insensitively. A command still names exactly one repository. |
 | `repos[].branch` | Repository's default branch | Base branch to sync, plan against and target with PRs. |
-| `agent.codingAgent` | Required: `codex` | Currently the only runner that permits edits. |
-| `agent.model` | Required | Concrete model ID or family `sol`, `astra`, `luna`. A family resolves to the newest listed model in the installed CLI's catalog; it is not a pinned model ID. |
-| `agent.effort` | Required; example `medium` | Effort for ordinary agent calls. The runner checks catalog-supported efforts when available. |
-| `agent.majorEffort` | Required; example `high` | Effort for majors, including their review adaptations and conflict resolution. |
+| `agent.codingAgent` | Required: `claude-code` or `codex` | Which CLI runs the agent. Both edit only inside their sandbox; see the [security model](security-model.md#secure-it-and-bump-it). |
+| `agent.model` | Required | `claude-code`: a model the `claude` CLI accepts, such as `claude-haiku-5-5`. `codex`: a concrete model ID or family `sol`, `astra`, `luna`; a family resolves to the newest listed model in the installed CLI's catalog, not a pinned ID. |
+| `agent.effort` | Required; example `high` | Effort for every agent call: routine and security moves, majors, their review adaptations and conflict resolution. A config that still has `agent.majorEffort` is refused with a message saying so. |
 | `secrets` | Optional mapping | Override either or both default services; `{}` uses both defaults. Every opted-in repository uses the same pair. |
 | `secrets.write` | `leanish-<tool>-write` | macOS Keychain service holding the tool's write PAT. |
 | `secrets.read` | `leanish-<tool>-read` | Different service holding a different, read-only PAT for the agent. Both equal names and equal token values are refused. |
@@ -32,7 +31,7 @@ permissions and schedules.
 | `dirs.state` | `~/.local/share/leanish/<tool>` | Workspaces, separate git metadata, publication journal, protected OSV-Scanner and the repository-advisory cache (out of the sandbox's reach). bump-it also stores deferred-major ordering here. Keep this outside temp and cache roots; see the adoption guide. |
 | `dirs.cache` | `~/.cache/leanish/<tool>` | Sandbox-writable cache for Gradle and npm. Keep separate from state and between tools. |
 | `readDeny` | `[]` | Extra absolute paths denied to sandboxed commands, in addition to existing sensitive home paths. These paths' names can reach the model; their contents cannot. Other readable files can reach the model provider. |
-| `modelPrices` | Built-in dated OpenAI Standard prices | Absolute path to an optional JSON table replacing the built-in rates. Unknown models and incomplete measurements still produce explicit cost gaps. |
+| `modelPrices` | Built-in dated OpenAI Standard prices | Absolute path to an optional JSON table replacing the built-in rates. Unknown models and incomplete measurements still produce explicit cost gaps. Claude Code also reports its own list-price estimate per call (`providerCostUsd`); it is not a subscription bill. |
 | `maxNewMajorsPerRun` | bump-it only, `3` | Nonnegative integer. Caps newly opened major PRs, never updates to existing ones. `0` defers all new majors. Deferred majors have priority next run. |
 
 The defaults are `leanish-secure-it-write` / `leanish-secure-it-read` and

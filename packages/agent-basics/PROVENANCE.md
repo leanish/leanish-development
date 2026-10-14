@@ -33,14 +33,15 @@ Lambda), and the target-credentials resolver (the tools pass the agent's read-on
 | `src/logger/redactor.ts` | `core/runtime/src/logger/redactor.ts` | copied | — |
 | `src/report/run-report.ts` | `core/runtime/src/runtime/run-report.ts` | copied | one tool command instead of a run-local dispatch loop: no dispatch, delayed-message or self-publish counts; `tool` and `repo` instead of `agent`; the command's `result` comes with its end |
 | `src/secret-store.ts` | — | new | — |
-| `src/skill/claude-code-runner.ts` | `core/runtime/src/skill/claude-code-runner.ts` | copied | — |
+| `src/skill/claude-code-runner.ts` | `core/runtime/src/skill/claude-code-runner.ts` | copied | write access inside Claude Code's sandbox (edits only in the working copies, git metadata and denied paths out of reach, trust service reachable on write runs, no hooks, outward tools denied, no attribution); usage, cost and failure reasons from stream-json; the answer's schema in the prompt; the JVM proxy shim; proxy credentials scrubbed; a relocated `CLAUDE_CONFIG_DIR` refused |
+| `src/skill/claude-code-stream.ts` | — | new | — |
 | `src/skill/codex-command-env.ts` | `core/runtime/src/skill/codex-command-env.ts` | copied | — |
 | `src/skill/codex-login.ts` | `core/runtime/src/skill/codex-login.ts` | copied | — |
 | `src/skill/codex-model.ts` | `core/runtime/src/skill/codex-model.ts` | copied | — |
 | `src/skill/codex-permissions.ts` | `core/runtime/src/skill/codex-permissions.ts` | copied | `Access` from `types/access.ts` instead of the agent descriptor |
 | `src/skill/codex-quota-baseline.ts` | `core/runtime/src/skill/codex-quota-baseline.ts` | copied | — |
 | `src/skill/codex-rollouts.ts` | `core/runtime/src/skill/codex-rollouts.ts` | copied | — |
-| `src/skill/codex-runner.ts` | `core/runtime/src/skill/codex-runner.ts` | copied | the access comment says write agents can't write git metadata (they never could here) |
+| `src/skill/codex-runner.ts` | `core/runtime/src/skill/codex-runner.ts` | copied | the access comment says write agents can't write git metadata (they never could here); `writeMountGitDirs` and `shellIsolationEnv` exported for the Claude Code runner |
 | `src/skill/codex-usage-meter.ts` | `core/runtime/src/skill/codex-usage-meter.ts` | copied | — |
 | `src/skill/fake-runner.ts` | `core/runtime/src/skill/fake-runner.ts` | copied | — |
 | `src/skill/input-render.ts` | `core/runtime/src/skill/input-render.ts` | copied | — |
@@ -51,7 +52,7 @@ Lambda), and the target-credentials resolver (the tools pass the agent's read-on
 | `src/skill/skill-loader.ts` | `core/runtime/src/skill/skill-loader.ts` | copied | — |
 | `src/skill/skill.ts` | `core/runtime/src/skill/skill.ts` | copied | — |
 | `src/skill/slash-command-prompt.ts` | `core/runtime/src/skill/slash-command-prompt.ts` | copied | — |
-| `src/skill/spawn-capture.ts` | `core/runtime/src/skill/spawn-capture.ts` | copied | — |
+| `src/skill/spawn-capture.ts` | `core/runtime/src/skill/spawn-capture.ts` | copied | an optional per-line stdout callback, decoded across chunks, each line bounded |
 | `src/skill/stage-skills.ts` | `core/runtime/src/skill/stage-skills.ts` | copied | — |
 | `src/skill/synthesize-fixture.ts` | `core/runtime/src/skill/synthesize-fixture.ts` | copied | synthesize nullable-object schemas and their restricted conditional object requirements |
 | `src/skill/tail.ts` | `core/runtime/src/skill/tail.ts` | copied | — |
@@ -65,8 +66,8 @@ Lambda), and the target-credentials resolver (the tools pass the agent's read-on
 | `src/usage/api-cost.ts` | `core/runtime/src/usage/api-cost.ts` | copied | — |
 | `src/usage/model-prices.ts` | `core/runtime/src/usage/model-prices.ts` | copied | — |
 | `src/usage/quota.ts` | `core/runtime/src/usage/quota.ts` | copied | — |
-| `src/usage/skill-usage-record.ts` | `core/runtime/src/usage/skill-usage-record.ts` | copied | — |
-| `src/usage/skill-usage.ts` | `core/runtime/src/usage/skill-usage.ts` | copied | — |
+| `src/usage/skill-usage-record.ts` | `core/runtime/src/usage/skill-usage-record.ts` | copied | carries `providerCostUsd` |
+| `src/usage/skill-usage.ts` | `core/runtime/src/usage/skill-usage.ts` | copied | `providerCostUsd`, the coding agent's own list-price estimate when it reports one |
 | `src/usage/usage-totals.ts` | `core/runtime/src/usage/usage-totals.ts` | copied | — |
 | `src/working-copy/git-clone-auth.ts` | `core/runtime/src/working-copy/git-clone-auth.ts` | copied | `gitCloneAuth(token, host)` replaces `resolveGitCloneAuth(needs, env)`; the tool passes its token |
 | `src/working-copy/in-memory-workspace.ts` | `core/runtime/src/working-copy/in-memory-workspace.ts` | copied | `RepoSource` instead of catalog-it's `Project`; `remote-merging` (a scheduled conflict lists package-lock.json); calls `beforePush`; a test double the tools' tests use |
@@ -74,7 +75,8 @@ Lambda), and the target-credentials resolver (the tools pass the agent's read-on
 | `src/working-copy/local-git-workspace.ts` | `core/runtime/src/working-copy/local-git-workspace.ts` | copied | `RepoSource` instead of catalog-it's `Project`, its id checked before the workspace touches any directory; the `remote-merging` start (a conflicting merge left in progress) and publishing that merge once resolved; `beforePush`, called with the commit before it's pushed; stale remote-tracking refs that conflict with a fetched or pushed branch's path are deleted first; a failed git call's error quotes its stderr (bounded, credentials masked) instead of inheriting or dropping it |
 | `src/working-copy/workspace.ts` | `core/runtime/src/working-copy/workspace.ts` | copied | `RepoSource` instead of catalog-it's `Project` |
 | `test/api-cost.test.ts` | `core/runtime/test/unit/api-cost.test.ts` | copied | imports this package's modules from `../src/` instead of `../../src/` |
-| `test/claude-code-runner.test.ts` | `core/runtime/test/unit/claude-code-runner.test.ts` | copied | imports this package's modules from `../src/` instead of `../../src/` |
+| `test/claude-code-runner.test.ts` | `core/runtime/test/unit/claude-code-runner.test.ts` | copied | imports this package's modules from `../src/` instead of `../../src/`; stub binaries speak stream-json; write access, usage and failure reasons covered |
+| `test/claude-code-stream.test.ts` | — | new | — |
 | `test/codex-model.test.ts` | `core/runtime/test/unit/codex-model.test.ts` | copied | imports this package's modules from `../src/` instead of `../../src/` |
 | `test/codex-permissions.test.ts` | `core/runtime/test/unit/codex-permissions.test.ts` | copied | imports this package's modules from `../src/` instead of `../../src/` |
 | `test/codex-rollouts.test.ts` | `core/runtime/test/unit/codex-rollouts.test.ts` | copied | imports this package's modules from `../src/` instead of `../../src/`, its fixtures from `./fixtures/` |
@@ -99,7 +101,7 @@ Lambda), and the target-credentials resolver (the tools pass the agent's read-on
 | `test/run-skill.test.ts` | `core/runtime/test/unit/run-skill-usage.test.ts`, `run-skill-invocation.test.ts` | adapted | the same cases against `SkillContext`/`SkillCall` |
 | `test/schema-subset.test.ts` | `core/runtime/test/unit/schema-subset.test.ts` | copied | imports this package's modules from `../src/` instead of `../../src/`; regression cases for nullable-object types and restricted conditional required objects, with other unions/conditionals still rejected |
 | `test/skill-loader.test.ts` | `core/runtime/test/unit/skill-loader.test.ts` | copied | imports this package's modules from `../src/` instead of `../../src/` |
-| `test/spawn-capture-env.test.ts` | `core/runtime/test/unit/spawn-capture-env.test.ts` | copied | imports this package's modules from `../src/` instead of `../../src/` |
+| `test/spawn-capture-env.test.ts` | `core/runtime/test/unit/spawn-capture-env.test.ts` | copied | imports this package's modules from `../src/` instead of `../../src/`; the per-line stdout callback covered |
 | `test/stage-skills.test.ts` | `core/runtime/test/unit/stage-skills.test.ts` | copied | imports this package's modules from `../src/` instead of `../../src/` |
 | `test/synthesize-fixture.test.ts` | `core/runtime/test/unit/synthesize-fixture.test.ts` | copied | imports this package's modules from `../src/` instead of `../../src/` |
 | `test/usage-totals.test.ts` | `core/runtime/test/unit/usage-totals.test.ts` | copied | imports this package's modules from `../src/` instead of `../../src/` |

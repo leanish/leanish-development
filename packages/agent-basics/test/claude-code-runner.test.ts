@@ -1,14 +1,17 @@
 // Copied from leanish/leanish-development core/runtime/test/unit/claude-code-runner.test.ts at c6282df; see PROVENANCE.md.
-// Local changes: imports this package's modules from `../src/` instead of `../../src/`.
+// Local changes: imports this package's modules from `../src/` instead of `../../src/`; stub binaries speak stream-json;
+// write access, usage and failure reasons are covered.
+import { execFileSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { ClaudeCodeRunner } from "../src/skill/claude-code-runner.ts";
+import { ClaudeCodeRunner, claudeSettings, DENIED_TOOLS, scrubProxyCredentials } from "../src/skill/claude-code-runner.ts";
 import { SkillLoader } from "../src/skill/skill-loader.ts";
 import type { LoadedSkill } from "../src/skill/skill.ts";
+import type { WorkingCopy } from "../src/types/working-copy.ts";
 import type { SkillUsage } from "../src/usage/skill-usage.ts";
 
 const ASK_FILE = `---
@@ -29,230 +32,261 @@ async function makeAskSkill(): Promise<LoadedSkill> {
   return new SkillLoader({ skillsDirs: [dir] }).loadEntrypoint("ask");
 }
 
+const ANSWER = '```json\n{"answer": "fake answer"}\n```';
+
+const init = (model = "claude-x") => ({ type: "system", subtype: "init", model });
+const message = (id: string, usage: Record<string, unknown>, model = "claude-x") => ({ type: "assistant", message: { id, model, usage, content: [] } });
+const result = (text: string, extra: Record<string, unknown> = {}) => ({ type: "result", subtype: "success", is_error: false, result: text, ...extra });
+
 /**
- * Use a fake `claude` binary that just emits a canned fenced-json
- * response. This exercises the orchestration (staging + spawn + capture)
- * without needing the real CLI installed.
+ * A stub `claude` that records its cwd, argv (one per line) and a few env vars into `<dir>/record`,
+ * prints `events` as stream-json lines, writes `stderr` and exits with `exitCode`.
  */
-async function makeFakeBin(): Promise<string> {
+async function makeStub(events: ReadonlyArray<unknown>, options: { exitCode?: number; stderr?: string } = {}): Promise<{ bin: string; record: string }> {
   const dir = await mkdtemp(join(tmpdir(), "agent-runtime-fake-claude-"));
-  const script = join(dir, "claude");
+  const record = join(dir, "record");
+  await writeFile(join(dir, "events.jsonl"), events.map((event) => JSON.stringify(event)).join("\n") + "\n");
+  const bin = join(dir, "claude");
   await writeFile(
-    script,
-    `#!/bin/sh
-# Echo a fixed response — ignores all args. The runner just needs stdout.
-cat <<'EOF'
-<thinking>fake claude</thinking>
-
-\`\`\`json
-{"answer": "fake answer"}
-\`\`\`
-EOF
-`,
-  );
-  await chmod(script, 0o755);
-  return script;
-}
-
-/**
- * Fake `claude` binary that records its argv + cwd into a file so we can
- * assert on flag wiring (e.g. `--add-dir`).
- */
-async function makeRecordingBin(recordFile: string): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "agent-runtime-recording-claude-"));
-  const script = join(dir, "claude");
-  await writeFile(
-    script,
+    bin,
     `#!/bin/sh
 {
   echo "CWD=$(pwd)"
-  echo "ARGS=$*"
-} > "${recordFile}"
-cat <<'EOF'
-\`\`\`json
-{"answer": "ok"}
-\`\`\`
-EOF
+  for arg in "$@"; do echo "ARG=$arg"; done
+  echo "ENV BASE=[$BASE_VAR] OVERLAP=[$OVERLAP_VAR] CRED=[$CRED_VAR] GRADLE=[$GRADLE_USER_HOME] ZDOTDIR=[$ZDOTDIR] MEMORY=[$CLAUDE_CODE_DISABLE_AUTO_MEMORY] ASKPASS=[$GIT_ASKPASS]"
+  [ -n "$ZDOTDIR" ] && [ -f "$ZDOTDIR/.zshenv" ] && echo "SHIM=present"
+} > "${record}"
+cat "${join(dir, "events.jsonl")}"
+${options.stderr !== undefined ? `echo "${options.stderr}" >&2` : ""}
+exit ${options.exitCode ?? 0}
 `,
   );
-  await chmod(script, 0o755);
-  return script;
+  await chmod(bin, 0o755);
+  return { bin, record };
+}
+
+const args = (record: string) => record.split("\n").filter((line) => line.startsWith("ARG=")).map((line) => line.slice(4));
+const settingsOf = (record: string) => JSON.parse(args(record)[args(record).indexOf("--settings") + 1]!) as Record<string, any>;
+
+/** A working copy whose git metadata lives outside the tree, as the tools' workspace makes them. */
+async function separateGitCopy(): Promise<WorkingCopy> {
+  const root = await mkdtemp(join(tmpdir(), "claude-runner-wc-"));
+  const path = join(root, "tree");
+  const gitDir = join(root, "git");
+  await mkdir(path);
+  execFileSync("git", ["init", "-q", `--separate-git-dir=${gitDir}`, path]);
+  return { projectId: "p", path, gitDir, branch: "main", headSha: "0".repeat(40) };
 }
 
 describe("ClaudeCodeRunner (against a stub binary)", () => {
-  let fakeBin: string;
   let askSkill: LoadedSkill;
 
   beforeAll(async () => {
-    fakeBin = await makeFakeBin();
     askSkill = await makeAskSkill();
   });
 
-  it("stages skills, spawns the binary, and returns the response text", async () => {
-    const runner = new ClaudeCodeRunner({ bin: fakeBin });
-    const result = await runner.run({
-      entrypoint: askSkill,
-      supportSkills: [],
-      renderedArguments: "question: What does X do?",
-      workingCopies: [],
-    });
-    expect(result.responseText).toContain('"answer": "fake answer"');
+  const call = (extra: Partial<Parameters<ClaudeCodeRunner["run"]>[0]> = {}) => ({
+    entrypoint: askSkill,
+    supportSkills: [],
+    renderedArguments: "question: What does X do?",
+    workingCopies: [],
+    ...extra,
+  });
+
+  it("stages skills, invokes the entrypoint by its plugin namespace and returns the result text", async () => {
+    const { bin, record } = await makeStub([init(), result(ANSWER)]);
+    const answer = await new ClaudeCodeRunner({ bin }).run(call());
+    expect(answer.responseText).toContain('"answer": "fake answer"');
+    const text = await readFile(record, "utf8");
+    expect(args(text).slice(0, 4)).toEqual(["--print", "--output-format", "stream-json", "--verbose"]);
+    expect(args(text).slice(6, 9)).toEqual(["--no-session-persistence", "--setting-sources", ""]);
+    // The prompt is the last argument: the namespaced command, the rendered YAML on its own line, then the answer's
+    // schema (Claude Code doesn't show the skill's frontmatter, where it lives).
+    expect(text).toContain("ARG=/agent-runtime-staged:ask\nquestion: What does X do?\nThe skill's frontmatter (not shown to you) defines its answer");
+    expect(text).toContain(JSON.stringify(askSkill.outputSchema, null, 2));
   });
 
   it("mounts the first working copy as cwd and the rest via --add-dir", async () => {
     const wc1 = await mkdtemp(join(tmpdir(), "claude-runner-wc1-"));
     const wc2 = await mkdtemp(join(tmpdir(), "claude-runner-wc2-"));
-    const wc3 = await mkdtemp(join(tmpdir(), "claude-runner-wc3-"));
-    const recordFile = join(await mkdtemp(join(tmpdir(), "claude-record-")), "record.txt");
-    const recBin = await makeRecordingBin(recordFile);
-    const runner = new ClaudeCodeRunner({ bin: recBin });
-    await runner.run({
-      entrypoint: askSkill,
-      supportSkills: [],
-      renderedArguments: "x: 1",
+    const { bin, record } = await makeStub([result(ANSWER)]);
+    await new ClaudeCodeRunner({ bin }).run(call({
       workingCopies: [
         { projectId: "p1", path: wc1, branch: "main", headSha: "0".repeat(40) },
         { projectId: "p2", path: wc2, branch: "main", headSha: "0".repeat(40) },
-        { projectId: "p3", path: wc3, branch: "main", headSha: "0".repeat(40) },
       ],
-    });
-    const record = await readFile(recordFile, "utf8");
+    }));
+    const text = await readFile(record, "utf8");
     // realpath canonicalisation may resolve symlinks on macOS — match the basename.
-    expect(record).toMatch(new RegExp(`CWD=.*${wc1.replace(/^.*\//, "")}`));
-    expect(record).toContain(`--add-dir ${wc2}`);
-    expect(record).toContain(`--add-dir ${wc3}`);
+    expect(text).toMatch(new RegExp(`CWD=.*${wc1.replace(/^.*\//, "")}`));
+    const argv = args(text);
+    expect(argv[argv.indexOf("--add-dir") + 1]).toBe(wc2);
   });
 
-  it("merges per-invocation env over the runner's configured base", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "claude-env-"));
-    const envBin = join(dir, "claude");
-    await writeFile(
-      envBin,
-      `#!/bin/sh
-cat <<EOF
-BASE=[$BASE_VAR] OVERLAP=[$OVERLAP_VAR] CRED=[$CRED_VAR]
-\\\`\\\`\\\`json
-{"answer": "ok"}
-\\\`\\\`\\\`
-EOF
-`,
+  it("merges per-invocation env over the runner's configured base and isolates the commands' shell", async () => {
+    const { bin, record } = await makeStub([result(ANSWER)]);
+    await new ClaudeCodeRunner({ bin, env: { BASE_VAR: "from-runner", OVERLAP_VAR: "from-runner" } }).run(
+      call({ env: { OVERLAP_VAR: "from-invocation", CRED_VAR: "tok" } }),
     );
-    await chmod(envBin, 0o755);
-    const runner = new ClaudeCodeRunner({
-      bin: envBin,
-      env: { BASE_VAR: "from-runner", OVERLAP_VAR: "from-runner" },
-    });
-    const result = await runner.run({
-      entrypoint: askSkill,
-      supportSkills: [],
-      renderedArguments: "x: 1",
-      workingCopies: [],
-      env: { OVERLAP_VAR: "from-invocation", CRED_VAR: "tok" },
-    });
-    expect(result.responseText).toContain("BASE=[from-runner] OVERLAP=[from-invocation] CRED=[tok]");
+    const text = await readFile(record, "utf8");
+    expect(text).toContain("BASE=[from-runner] OVERLAP=[from-invocation] CRED=[tok]");
+    expect(text).toMatch(/ZDOTDIR=\[[^\]]+zdotdir\] MEMORY=\[1\]/);
+    expect(text).toContain("SHIM=present");
   });
 
-  it("passes --effort through to the CLI (verbatim for low/medium/high/xhigh)", async () => {
-    const recordFile = join(await mkdtemp(join(tmpdir(), "claude-effort-")), "record.txt");
-    const recBin = await makeRecordingBin(recordFile);
-    const runner = new ClaudeCodeRunner({ bin: recBin });
-    await runner.run({
-      entrypoint: askSkill,
-      supportSkills: [],
-      renderedArguments: "x: 1",
-      workingCopies: [],
-      effort: "high",
-    });
-    const record = await readFile(recordFile, "utf8");
-    expect(record).toContain("--effort high");
+  it("passes --effort through, mapping the suite-level `minimal` to the CLI's `low`", async () => {
+    for (const [effort, expected] of [["high", "high"], ["minimal", "low"]] as const) {
+      const { bin, record } = await makeStub([result(ANSWER)]);
+      await new ClaudeCodeRunner({ bin }).run(call({ effort }));
+      const argv = args(await readFile(record, "utf8"));
+      expect(argv[argv.indexOf("--effort") + 1]).toBe(expected);
+    }
   });
 
-  it("maps the suite-level `minimal` effort to the CLI's `low` (CLI rejects `minimal`)", async () => {
-    const recordFile = join(await mkdtemp(join(tmpdir(), "claude-effort-")), "record.txt");
-    const recBin = await makeRecordingBin(recordFile);
-    const runner = new ClaudeCodeRunner({ bin: recBin });
-    await runner.run({
-      entrypoint: askSkill,
-      supportSkills: [],
-      renderedArguments: "x: 1",
-      workingCopies: [],
-      effort: "minimal",
-    });
-    const record = await readFile(recordFile, "utf8");
-    expect(record).toContain("--effort low");
-    expect(record).not.toContain("minimal");
+  it("grants write access inside the sandbox: edits in the working copy, git metadata and denied paths out of reach", async () => {
+    const workingCopy = await separateGitCopy();
+    const cache = await mkdtemp(join(tmpdir(), "claude-runner-cache-"));
+    const deniedDir = await mkdtemp(join(tmpdir(), "claude-runner-denied-"));
+    const deniedFile = join(deniedDir, "secret.txt");
+    await writeFile(deniedFile, "x");
+    const { bin, record } = await makeStub([result(ANSWER)]);
+    await new ClaudeCodeRunner({ bin, buildCacheRoot: cache, readDenied: [deniedDir.replace(/$/, "-other"), deniedFile] }).run(
+      call({ workingCopies: [workingCopy], access: "write", env: { GH_TOKEN: "ghs_read" }, secrets: [{ name: "GH_TOKEN", value: "ghs_read" }] }),
+    );
+    const text = await readFile(record, "utf8");
+    const argv = args(text);
+    expect(argv[argv.indexOf("--session-id") + 1]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(argv[argv.indexOf("--permission-mode") + 1]).toBe("acceptEdits");
+    expect(argv[argv.indexOf("--permission-prompts") + 1]).toBe("none");
+    const settings = settingsOf(text);
+    expect(settings.sandbox).toMatchObject({ enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false });
+    expect(settings.sandbox.filesystem.denyWrite).toEqual([workingCopy.gitDir]);
+    expect(settings.sandbox.filesystem.allowWrite).toEqual(expect.arrayContaining([cache, "/private/tmp"]));
+    expect(settings.sandbox.network).toEqual({ allowedDomains: ["*"], allowLocalBinding: true });
+    expect(settings.sandbox.enableWeakerNetworkIsolation).toBe(true);
+    expect(settings.permissions.allow).toEqual(["Bash"]);
+    expect(settings.permissions.deny).toEqual([
+      `Read(/${deniedDir}-other)`, `Read(/${deniedDir}-other/**)`, `Read(/${deniedFile})`, `Edit(/${workingCopy.gitDir}/**)`, ...DENIED_TOOLS,
+    ]);
+    expect(settings.permissions.deny).toEqual(expect.arrayContaining(["Artifact", "SendMessage", "WebFetch"]));
+    expect(settings.disableAllHooks).toBe(true);
+    expect(settings.claudeMdExcludes).toContain("**/CLAUDE.md");
+    expect(settings).toMatchObject({ includeCoAuthoredBy: false, attribution: { commit: "", pr: "" } });
+    expect(text).toContain(`GRADLE=[${join(cache, "gradle")}]`);
+    expect(text).toMatch(/ASKPASS=\[.+git-askpass\]/);
   });
 
-  it("refuses write access before staging anything", async () => {
+  it("keeps read-only runs off the network and out of the working copies", () => {
+    const settings = claudeSettings({ access: "read-only", workingCopies: ["/wc"], gitDirs: [], writableRoots: [], readDenied: [], home: "/home/u", sessionDir: "/home/u/.claude/projects/-wc/s" });
+    expect(settings).toMatchObject({
+      sandbox: { filesystem: { allowWrite: [], denyWrite: ["/wc"], denyRead: [] }, network: { allowedDomains: [] }, enableWeakerNetworkIsolation: false },
+      permissions: { allow: ["Bash"], deny: [...DENIED_TOOLS] },
+      claudeMdExcludes: ["**/CLAUDE.md", "**/CLAUDE.local.md", "/home/u/.claude/CLAUDE.md"],
+    });
+    expect(settings["disableAllHooks"]).toBe(true);
+  });
+
+  it("re-opens only the session's own output directory inside a denied ~/.claude, for Bash", () => {
+    const claudeHome = "/home/u/.claude";
+    const sessionDir = `${claudeHome}/projects/-wc-tree/0b2c`;
+    const settings = claudeSettings({ access: "write", workingCopies: ["/wc/tree"], gitDirs: [], writableRoots: [], readDenied: [claudeHome, "/x"], home: "/home/u", sessionDir });
+    expect(settings).toMatchObject({ sandbox: { filesystem: { denyRead: [claudeHome, "/x"], allowRead: [sessionDir] } } });
+    // The file tools already can't leave the working copies; a ~/.claude rule would also hide the session's own outputs.
+    expect((settings["permissions"] as { deny: string[] }).deny).toEqual(["Read(//x)", "Read(//x/**)", ...DENIED_TOOLS]);
+  });
+
+  it("refuses a write run without a working copy before spawning, reporting zero usage once", async () => {
     const stagingParentDir = await mkdtemp(join(tmpdir(), "claude-runner-staging-"));
-    const runner = new ClaudeCodeRunner({ bin: fakeBin, stagingParentDir });
-    await expect(
-      runner.run({
-        entrypoint: askSkill,
-        supportSkills: [],
-        renderedArguments: "x: 1",
-        workingCopies: [],
-        access: "write",
-      }),
-    ).rejects.toThrowError(/access 'write' isn't supported yet/);
+    const { bin } = await makeStub([result(ANSWER)]);
+    const usages: SkillUsage[] = [];
+    await expect(new ClaudeCodeRunner({ bin, stagingParentDir }).run(call({ access: "write", onUsage: (usage) => usages.push(usage) })))
+      .rejects.toThrowError(/needs at least one working copy/);
     expect(await readdir(stagingParentDir)).toEqual([]);
-  });
-
-  it("propagates non-zero exit codes as errors with stderr tail", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "agent-runtime-failing-claude-"));
-    const failingBin = join(dir, "claude");
-    await writeFile(failingBin, `#!/bin/sh\necho "boom" >&2\nexit 7\n`);
-    await chmod(failingBin, 0o755);
-
-    const runner = new ClaudeCodeRunner({ bin: failingBin });
-    await expect(
-      runner.run({
-        entrypoint: askSkill,
-        supportSkills: [],
-        renderedArguments: "x: 1",
-        workingCopies: [],
-      }),
-    ).rejects.toThrowError(/exited with code 7.*boom/);
-  });
-
-  it("reports the duration and requested model only: no tokens, cost or plan usage (a gap)", async () => {
-    const usages: SkillUsage[] = [];
-    await new ClaudeCodeRunner({ bin: fakeBin }).run({
-      entrypoint: askSkill,
-      supportSkills: [],
-      renderedArguments: "x: 1",
-      workingCopies: [],
-      model: "claude-model-x",
-      onUsage: (usage) => usages.push(usage),
-    });
-    expect(usages).toHaveLength(1);
-    expect(usages[0]).toMatchObject({
-      codingAgent: "claude-code",
-      requestedModel: "claude-model-x",
-      synthetic: false,
-      measurement: "partial",
-      models: [],
-      quota: { status: "unavailable" },
-      gaps: [expect.stringMatching(/doesn't read Claude Code's token usage/)],
-    });
-    expect(usages[0]?.tokens).toBeUndefined();
-    expect(usages[0]?.durationMs).toBeGreaterThanOrEqual(0);
-  });
-
-  it("reports zero usage once when it refuses before spawning", async () => {
-    const usages: SkillUsage[] = [];
-    await expect(
-      new ClaudeCodeRunner({ bin: fakeBin }).run({
-        entrypoint: askSkill,
-        supportSkills: [],
-        renderedArguments: "x: 1",
-        workingCopies: [],
-        access: "write",
-        onUsage: (usage) => usages.push(usage),
-      }),
-    ).rejects.toThrowError(/access 'write'/);
     expect(usages).toEqual([
       expect.objectContaining({ measurement: "complete", tokens: expect.objectContaining({ total: 0 }), quota: { status: "not-applicable", reason: "no provider call was made" } }),
     ]);
+  });
+
+  it("propagates non-zero exit codes with the stderr tail, keeping the usage streamed so far", async () => {
+    const usages: SkillUsage[] = [];
+    const { bin } = await makeStub([init(), message("m1", { input_tokens: 10, output_tokens: 2 })], { exitCode: 7, stderr: "boom" });
+    await expect(new ClaudeCodeRunner({ bin }).run(call({ onUsage: (usage) => usages.push(usage) }))).rejects.toThrowError(/exited with code 7.*boom/);
+    expect(usages[0]).toMatchObject({ measurement: "partial", model: "claude-x", tokens: { input: 10, output: 2, total: 12 } });
+    expect(usages[0]?.gaps).toEqual([expect.stringMatching(/no terminal result event/)]);
+  });
+
+  it("fails on an error result or a missing result event", async () => {
+    const failed = await makeStub([result("ran out of turns", { subtype: "error_max_turns", is_error: true })]);
+    await expect(new ClaudeCodeRunner({ bin: failed.bin }).run(call())).rejects.toThrowError(/ended with error_max_turns: ran out of turns/);
+    const silent = await makeStub([init()]);
+    await expect(new ClaudeCodeRunner({ bin: silent.bin }).run(call())).rejects.toThrowError(/without a result event/);
+  });
+
+  it("reports tokens per request, the CLI's cost and the plan windows it saw", async () => {
+    const usages: SkillUsage[] = [];
+    const window = (five: number, seven: number) => ({
+      type: "rate_limit_event",
+      rate_limit_info: { unifiedWindows: { five_hour: { utilization: five, resetsAt: 1000 }, seven_day: { utilization: seven, resetsAt: 2000 } } },
+    });
+    const { bin } = await makeStub([
+      init("claude-sonnet-x"),
+      window(0.1, 0.5),
+      message("m1", { input_tokens: 5, cache_read_input_tokens: 100, cache_creation_input_tokens: 20, output_tokens: 1 }, "claude-sonnet-x"),
+      message("m1", { input_tokens: 5, cache_read_input_tokens: 100, cache_creation_input_tokens: 20, output_tokens: 4 }, "claude-sonnet-x"),
+      message("m2", { input_tokens: 2, cache_read_input_tokens: 130, cache_creation_input_tokens: 0, output_tokens: 3 }, "claude-sonnet-x"),
+      window(0.12, 0.51),
+      result(ANSWER, {
+        total_cost_usd: 0.0123,
+        modelUsage: {
+          "claude-sonnet-x": { inputTokens: 7, cacheReadInputTokens: 230, cacheCreationInputTokens: 20, outputTokens: 30, thinkingTokens: 5 },
+          "claude-haiku-x": { inputTokens: 50, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, outputTokens: 10 },
+        },
+      }),
+    ]);
+    const answer = await new ClaudeCodeRunner({ bin }).run(call({ model: "claude-sonnet-x", onUsage: (usage) => usages.push(usage) }));
+    expect(answer.model).toBeUndefined();
+    const usage = usages[0]!;
+    expect(usage).toMatchObject({ measurement: "complete", model: "claude-sonnet-x", providerCostUsd: 0.0123, gaps: [] });
+    const sonnet = usage.models.find((model) => model.model === "claude-sonnet-x")!;
+    expect(sonnet.requests).toEqual([
+      { tokens: { input: 125, cachedInput: 100, cacheWriteInput: 20, output: 4, reasoningOutput: 0, total: 129 }, exact: true },
+      { tokens: { input: 132, cachedInput: 130, cacheWriteInput: 0, output: 3, reasoningOutput: 0, total: 135 }, exact: true },
+      { tokens: { input: 0, cachedInput: 0, cacheWriteInput: 0, output: 23, reasoningOutput: 5, total: 23 }, exact: false },
+    ]);
+    expect(usage.models.find((model) => model.model === "claude-haiku-x")?.requests).toEqual([
+      { tokens: { input: 50, cachedInput: 0, cacheWriteInput: 0, output: 10, reasoningOutput: 0, total: 60 }, exact: false },
+    ]);
+    expect(usage.tokens).toEqual({ input: 307, cachedInput: 230, cacheWriteInput: 20, output: 40, reasoningOutput: 5, total: 347 });
+    expect(usage.quota).toMatchObject({ status: "observed", windows: [
+      { limitId: "claude", window: "primary", beforePercent: 10, afterPercent: 12, changePercentPoints: 2 },
+      { limitId: "claude", window: "secondary", beforePercent: 50, afterPercent: 51, changePercentPoints: 1 },
+    ] });
+  });
+
+  it("fails with the reason the CLI reported on stdout when the process exits non-zero with nothing on stderr", async () => {
+    const limited = await makeStub(
+      [init(), result("", { subtype: "error_during_execution", is_error: true, errors: ["You've hit your limit · resets 5pm"] })],
+      { exitCode: 1 },
+    );
+    await expect(new ClaudeCodeRunner({ bin: limited.bin }).run(call())).rejects.toThrowError(/exited with code 1.*the CLI reported: You've hit your limit · resets 5pm/s);
+  });
+
+  it("keeps the sandbox proxy's credentials out of the answer and of failures", async () => {
+    const leaky = "Picked up JAVA_TOOL_OPTIONS: -Dhttps.proxyUser=srt.abc -Dhttps.proxyPassword=s3cret via http://srt.abc:s3cret@localhost:1";
+    const ok = await makeStub([result(`${leaky}\n${ANSWER}`)]);
+    const answer = await new ClaudeCodeRunner({ bin: ok.bin }).run(call());
+    expect(answer.responseText).not.toContain("s3cret");
+    expect(answer.responseText).toContain("proxyPassword=<redacted>");
+    const failed = await makeStub([result(leaky, { subtype: "error_during_execution", is_error: true })], { exitCode: 1 });
+    const error = await new ClaudeCodeRunner({ bin: failed.bin }).run(call()).catch((err: Error) => err);
+    expect((error as Error).message).toContain("http://<redacted>@localhost:1");
+    expect((error as Error).message).not.toContain("s3cret");
+    expect(scrubProxyCredentials("proxyUser=srt.x proxyPassword=y")).toBe("proxyUser=<redacted> proxyPassword=<redacted>");
+  });
+
+  it("refuses a relocated Claude config dir before spawning", async () => {
+    const { bin, record } = await makeStub([result(ANSWER)]);
+    await expect(new ClaudeCodeRunner({ bin, env: { CLAUDE_CONFIG_DIR: "/elsewhere" } }).run(call())).rejects.toThrowError(/CLAUDE_CONFIG_DIR \('\/elsewhere'\) isn't supported/);
+    await expect(readFile(record, "utf8")).rejects.toThrowError(/ENOENT/);
   });
 });

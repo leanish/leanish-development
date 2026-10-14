@@ -1,5 +1,5 @@
 // Copied from leanish/leanish-development core/runtime/test/unit/spawn-capture-env.test.ts at c6282df; see PROVENANCE.md.
-// Local changes: imports this package's modules from `../src/` instead of `../../src/`.
+// Local changes: imports this package's modules from `../src/` instead of `../../src/`; the per-line stdout callback is covered.
 import { existsSync, readFileSync } from "node:fs";
 import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import {
+  MIN_LINE_CAP,
   SCRUBBED_AWS_ENV_VARS,
   scrubbedProcessEnv,
   spawnCapture,
@@ -173,3 +174,31 @@ function isRunning(pid: number): boolean {
     return false;
   }
 }
+
+describe("spawnCapture's stdout lines", () => {
+  it("hands every stdout line to onStdoutLine as it arrives, redacted, also when the run then fails", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "spawn-capture-lines-"));
+    const bin = join(dir, "lines");
+    // Lines split across writes, a secret, and a last line without a newline before a failing exit.
+    await writeFile(bin, "#!/bin/sh\nprintf 'one\\ntw'\nsleep 0.1\nprintf 'o tok-123\\nthree'\nexit 3\n");
+    await chmod(bin, 0o755);
+    const lines: string[] = [];
+    await expect(spawnCapture({
+      bin, args: [], cwd: dir, env: {}, timeoutMs: 10_000, captureCapBytes: 4, label: "Test",
+      secrets: [{ name: "TOKEN", value: "tok-123" }],
+      onStdoutLine: (line) => lines.push(line),
+    })).rejects.toThrow(/exited with code 3/);
+    expect(lines).toEqual(["one", "two <redacted:TOKEN>", "three"]);
+  });
+
+  it("decodes characters split across reads and cuts a runaway line short, dropping its rest", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "spawn-capture-long-"));
+    const bin = join(dir, "long");
+    // "é" is 0xc3 0xa9: the first byte ends one write, the second starts the next. Then a line over the line cap.
+    await writeFile(bin, `#!/bin/sh\nprintf 'caf\\303'\nsleep 0.1\nprintf '\\251\\n'\nhead -c ${MIN_LINE_CAP + 10} /dev/zero | tr '\\0' x\nprintf '\\nnext\\n'\n`);
+    await chmod(bin, 0o755);
+    const lines: string[] = [];
+    await spawnCapture({ bin, args: [], cwd: dir, env: {}, timeoutMs: 10_000, captureCapBytes: 4, label: "Test", onStdoutLine: (line) => lines.push(line) });
+    expect(lines.map((line) => (line.length > 20 ? `x*${line.length}` : line))).toEqual(["café", `x*${MIN_LINE_CAP}`, "next"]);
+  });
+});

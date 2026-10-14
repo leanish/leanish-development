@@ -6,7 +6,7 @@ package is the code around them. See [Adopting the tools](../../docs/adopting-to
 
 - **Config** (`config.ts`): `~/.config/leanish/<tool>/agent.yaml`, read strictly (unknown fields fail). It holds:
   - the repositories, each an explicit opt-in;
-  - the coding agent, model and efforts (`majorEffort` for majors and their reviews);
+  - the coding agent (`claude-code` or `codex`), its model and one effort for every call;
   - optional Keychain service overrides (defaults: `leanish-<tool>-write` and `leanish-<tool>-read`, for the tool's write token and the agent's read-only one);
   - the commit identity, the state and cache directories, and paths the agent may not read;
   - for bump-it, `maxNewMajorsPerRun` (default 3, new majors only).

@@ -16,7 +16,7 @@ import { type Machine, runToolCommand, type ToolHandlers, type ToolRunContext } 
 const CONFIG = `
 repos:
   - repo: leanish/widget
-agent: { codingAgent: codex, model: sol, effort: medium, majorEffort: high }
+agent: { codingAgent: codex, model: sol, effort: medium }
 secrets: { write: tool-write, read: tool-read }
 commitIdentity: { name: leanish, email: 5417585+leanish@users.noreply.github.com }
 dirs: { state: /tmp/tool-state, cache: /tmp/tool-cache }
@@ -185,6 +185,27 @@ describe("runToolCommand", () => {
       const { fake } = machine();
       expect(await runToolCommand({ ...handlers(async () => ({})), tool }, ["run", "leanish/widget", "--config", "/config/agent.yaml"], fake)).toBe(0);
     }
+  });
+
+  it.each(["codex", "claude-code"] as const)("builds the %s runner the config names, with the same isolation, and the config's effort", async (agent) => {
+    const built: Array<{ codingAgent: string; readDenied: ReadonlyArray<string> | undefined; cache: string | undefined }> = [];
+    const efforts: Array<string | undefined> = [];
+    const { fake } = machine({
+      readText: async (path) => {
+        if (path !== "/config/agent.yaml") throw new Error(`ENOENT: ${path}`);
+        return CONFIG.replace("codingAgent: codex", `codingAgent: ${agent}`).replace("effort: medium", "effort: high");
+      },
+      runner: (codingAgent, isolation) => {
+        built.push({ codingAgent, readDenied: isolation.readDenied, cache: isolation.buildCacheRoot });
+        return { codingAgent, async run(invocation) {
+          efforts.push(invocation.effort);
+          return { responseText: '```json\n{"summary":"fixed"}\n```' };
+        } };
+      },
+    });
+    await runToolCommand(handlers(async (context) => { await context.agent({ entrypoint: "fix", input: { package: "lib" } }); return {}; }), ["run", "leanish/widget", "--config", "/config/agent.yaml"], fake);
+    expect(built).toEqual([{ codingAgent: agent, readDenied: expect.arrayContaining([expect.stringMatching(/\.ssh$|Keychains$/)]), cache: "/tmp/tool-cache" }]);
+    expect(efforts).toEqual(["high"]);
   });
 
   it("wires a run: default branch, working copy, the agent with the read-only token, and the result in the final line", async () => {

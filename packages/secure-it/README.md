@@ -12,7 +12,7 @@ packages/remediation/run.sh secure-it review leanish/sqs-codec   # every few hou
 1. **Finds what fails.** It runs `candidates --rule security` on the default branch's head. The Gradle inventory runs the build, so it runs under the agent's sandbox (see below).
 2. **Groups actionable fixes.**
    - Every non-major package goes in one routine security batch, across npm, Gradle and Actions.
-   - Each package needing a major gets its own PR, with `majorEffort`. A package's failing copies stay together: if
+   - Each package needing a major gets its own PR. A package's failing copies stay together: if
      any copy needs a major, all its actionable copies go in that major unit rather than splitting the package.
    - A package with a blocked copy (no fix or an identity break) is left out and reported, without blocking other
      packages. Keeping copies together preserves verification's requirement that targeted advisories affect no
@@ -51,7 +51,7 @@ packages/remediation/run.sh secure-it review leanish/sqs-codec   # every few hou
    - An open PR for the same routine/major/malware unit, with an identical plan and a recognised head: keep its commits and refresh the plan section if its notes changed; its review owns further work. The unit reports `already-open`. Other major units still proceed. An already-open malware unit is left to review without planning other work.
    - One with a different plan, while its head is still the tool's: that PR is reconciled. The default branch is merged into it, every file it changed goes back to the base's content, and the new plan is applied on top, so nothing the old plan did lingers. It's pushed as a normal commit.
    - One someone else pushed to: the fix goes in a PR of its own.
-5. **The tool resolves npm; the agent applies non-npm moves** (skill [`secure-it`](skills/secure-it/SKILL.md)). It changes code only for a major move, with `majorEffort`. The skill also asks for focused edits in each file's style, comments the edit made false fixed without losing their context, code kept only for an unsupported old major removed, and PR text that maps advisories to packages, gives `from → to`, states each major's adaptation verdict and the checks run.
+5. **The tool resolves npm; the agent applies non-npm moves** (skill [`secure-it`](skills/secure-it/SKILL.md)). It changes code only for a major move. The skill also asks for focused edits in each file's style, comments the edit made false fixed without losing their context, code kept only for an unsupported old major removed, and PR text that maps advisories to packages, gives `from → to`, states each major's adaptation verdict and the checks run.
    npm may resolve transitive changes a planned move requires, under the supplied release-age window and exclusions.
    The tool resolves those versions; the agent never changes npm dependency fields or lockfiles. Direct
    dependencies outside the plan stay unchanged; in Gradle, the edit must resolve and declare exactly what the plan's

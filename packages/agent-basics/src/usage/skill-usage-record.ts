@@ -26,6 +26,7 @@ export interface SkillUsageRecord {
   readonly measurement: "complete" | "partial";
   readonly tokens?: TokenUsage;
   readonly models: ReadonlyArray<ModelUsageSummary>;
+  readonly providerCostUsd?: number;
   readonly quota: QuotaUsage;
   readonly apiCost: ApiCostEstimate;
   readonly gaps: ReadonlyArray<string>;
@@ -77,6 +78,7 @@ export function toSkillUsageRecord(
     measurement: usage.measurement,
     ...(usage.tokens !== undefined ? { tokens: usage.tokens } : {}),
     models: usage.models.map((entry) => ({ model: entry.model, tokens: entry.tokens, requests: entry.requests.length })),
+    ...(usage.providerCostUsd !== undefined ? { providerCostUsd: usage.providerCostUsd } : {}),
     quota: usage.quota,
     apiCost,
     gaps: usage.gaps,

@@ -85,6 +85,22 @@ Both tools are in this tree: [`secure-it`](../packages/secure-it) and [`bump-it`
   and modes plus the official distribution URL/checksum and jar SHA-256. Missing recorded hashes fail closed.
   Wrapper planning errors are reported omissions; planned-wrapper verification errors block publication. Generated
   scripts are protected against later agent edits, rather than independently compared with official scripts.
+- **Either coding agent runs in its CLI's sandbox, with the same denials.** `codex` runs under the write profile
+  above. `claude-code` gets the equivalent through Claude Code's own settings, passed inline with no user, project
+  or local settings loaded:
+  - every Bash command runs in the sandbox, with no unsandboxed fallback;
+  - the same denied paths, Keychain included, apply to Bash and, as `Read` rules, to the file tools;
+  - edits stay inside the working copy, and its git metadata is denied to both;
+  - no hooks, MCP servers or CLAUDE.md, and no tools that publish, message, schedule, browse the web or start
+    sub-agents;
+  - no attribution in the PR text the agent writes.
+
+  Write runs reach any host through the sandbox's proxy, as Codex's do. They also reach macOS's certificate trust
+  service (`enableWeakerNetworkIsolation`): without it `gh` can't verify TLS and Node floods its output with
+  trust-settings errors. That service is a possible exfiltration path, which upstream documents. Claude runs use the
+  `claude` CLI's logged-in account and count against its plan windows; a run that hits a limit fails, and the logged
+  failure says why. `codex` is still required either way: the tool's own sandboxed commands (`runSandboxed`) run
+  under `codex sandbox`.
 - **The agent edits a clone whose git metadata it can't write.** It can't commit or push. The `gh` and `git` guards on its PATH stop writes before they reach GitHub; they are guard rails, not a boundary.
 - **The tool decides versions, verifies the result with this gate, and publishes.** Every write to a PR re-reads it first and stops unless it's still the tool's, at the expected head. Nothing merges by itself.
 - **Floor history stays intact.** secure-it compares recorded floors and their declarations before `compare`: compatibility floors never change, and security floors change only at exact planned targets with their scope and history preserved. New floors must be planned security additions. Only a dedicated floor-removal plan may remove exact recorded security floors; compatibility records and declarations remain intact. Remaining target advisories are checked using the head findings from compare's same snapshot.

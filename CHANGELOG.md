@@ -4,12 +4,25 @@
 
 ### Added
 
+- Claude Code as the tools' coding agent: `agent.codingAgent: claude-code` with a Claude model
+  (for example `claude-haiku-5-5`). The agent edits only inside Claude Code's sandbox, with the
+  same denied paths as Codex. Every command runs in the sandbox, git metadata is out of reach,
+  and no hooks, MCP servers or outward tools (publishing, messaging, scheduling, web, sub-agents)
+  are available. The PR text carries no attribution. Write runs reach macOS's certificate trust
+  service, so `gh` can verify TLS. Usage, the CLI's own cost estimate and the reason a run failed
+  (such as a plan limit) come from its stream-json output. Codex is still required for the tool's
+  own sandboxed commands.
+
 - `packages/ci/dependency-floors.schema.json`, the JSON Schema of `.github/dependency-floors.json`,
   tested to agree with the gate's parser. secure-it's skill embeds it with how a `gradle-floor`
   move maps to a record, so the agent no longer guesses the format (missing `purpose`, `name`
   instead of `package`) when a repository has no floors file yet.
 
 ### Changed
+
+- **Breaking:** `agent.majorEffort` is gone. `agent.effort` applies to every agent call, majors
+  included, as in leanish-development's runtime. A config that still sets it is refused with a
+  message saying so.
 
 - The planners leave Gradle `strictly(...)` pins alone too. The Gradle inventory (schema 3)
   marks strict declarations and records strict dependency constraints, and rejects output from
