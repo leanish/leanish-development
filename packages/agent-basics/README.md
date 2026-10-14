@@ -6,8 +6,8 @@ What secure-it and bump-it need to run a coding agent, without leanish-developme
   fenced JSON block, both checked against the skill's schemas (`skill/run-skill.ts`, `skill-loader.ts`,
   `input-render.ts`, `output-parse.ts`, `validator.ts`).
 - **Runners:** Codex (`skill/codex-runner.ts`: a staged `CODEX_HOME`, a sandbox profile per access level, the model
-  family resolved from Codex's own catalog) and Claude Code (`claude-code-runner.ts`: inline settings with nothing
-  else loaded, every command in Claude Code's sandbox, edits only in the working copies, usage and failure reasons
+  family resolved from Codex's own catalog) and Claude Code (`claude-code-runner.ts`: inline settings with no user,
+  project or local ones loaded (an administrator's managed policy still applies), every command in Claude Code's sandbox, edits only in the working copies, usage and failure reasons
   from its stream-json events in `claude-code-stream.ts`). It needs the `claude` CLI 2.1.259 or later
   (`--permission-prompts none`); see [Adopting the tools](../../docs/adopting-tools.md#prerequisites).
 - **Usage:** what each skill run consumed (tokens, quota, an API-price estimate) and the final `run finished` line

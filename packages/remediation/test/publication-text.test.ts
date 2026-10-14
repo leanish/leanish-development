@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { cleanBody, cleanContent, LOCAL_PATH, machineRoots } from "../src/publication-text.ts";
+import { cleanBody, cleanContent, LOCAL_PATH, machineRoots, withCanonical } from "../src/publication-text.ts";
 
 const ROOTS = { workingCopy: ["/Users/dev/.local/share/leanish/bump-it/workspaces/acme__widget"], other: machineRoots({ state: "/Users/dev/.local/share/leanish/bump-it", cache: "/Users/dev/.cache/leanish/bump-it" }, "/Users/dev") };
 const WC = ROOTS.workingCopy[0]!;
@@ -51,5 +51,22 @@ describe("published text keeps the machine out", () => {
   it("cleans the title and commit message too, without dropping their lines", () => {
     const content = cleanContent({ title: `fixing ${WC}/lib`, body: "ok", commitMessage: `moving lib\n\nbuilt with /tmp/x` }, ROOTS);
     expect(content).toEqual({ title: "fixing lib", body: "ok", commitMessage: `moving lib\n\nbuilt with ${LOCAL_PATH}` });
+  });
+
+  it("only cleans a path that starts a token, so URLs and relative paths keep their own /tmp", () => {
+    const text = "https://example.org/tmp/release-notes, src/tmp/Fixture.java and file.txt:/tmp-ish";
+    expect(clean(text)).toBe(text);
+    expect(clean(`${WC}/src/tmp/Fixture.java`)).toBe("src/tmp/Fixture.java");
+  });
+
+  it("keeps a command in backticks, replacing only its local paths", () => {
+    expect(clean("`/Users/dev/.local/bin/npm test -- --runInBand` failed")).toBe(`\`${LOCAL_PATH} test -- --runInBand\` failed`);
+  });
+
+  it("also replaces a directory's canonical path, which commands report", () => {
+    const canonical = (path: string) => (path === "/Volumes/data/link-state" ? "/Volumes/data/state" : path);
+    const roots = { workingCopy: [], other: machineRoots({ state: "/Volumes/data/link-state", cache: "/Volumes/data/cache" }, "/Users/dev", canonical) };
+    expect(cleanBody("wrote /Volumes/data/state/journal.json", roots)).toBe(`wrote ${LOCAL_PATH}`);
+    expect(withCanonical(["/missing"], () => { throw new Error("ENOENT"); })).toEqual(["/missing"]);
   });
 });

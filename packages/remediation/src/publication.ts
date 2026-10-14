@@ -11,7 +11,7 @@ import type { PreparedBranch, WorkingCopy } from "../../agent-basics/src/types/w
 import type { Workspace } from "../../agent-basics/src/working-copy/workspace.ts";
 
 import type { PublicationJournal } from "./journal.ts";
-import { cleanBody, cleanContent, type LocalRoots } from "./publication-text.ts";
+import { cleanBody, cleanContent, type LocalRoots, withCanonical } from "./publication-text.ts";
 import { isOwnPullRequest, type OwnPullRequests, type PullRequestState, stateOf, withMarker } from "./own-pr.ts";
 
 /**
@@ -41,7 +41,7 @@ export interface PublicationContext {
 
 /** Published text keeps the machine out: see publication-text.ts. */
 function rootsOf(context: PublicationContext): LocalRoots {
-  return { workingCopy: [context.workingCopy.path], other: context.localRoots };
+  return { workingCopy: withCanonical([context.workingCopy.path]), other: context.localRoots };
 }
 
 /** A PR's title, description and the commit message of the agent's change. */

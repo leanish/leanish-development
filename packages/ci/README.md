@@ -110,7 +110,8 @@ For every version a PR adds or changes:
   - an npm dependency such a fix provably requires (below);
   - named by a `releaseAge` exception whose advisory, in this run's snapshot, affects a version the PR replaces and not this one (malware advisories don't count).
 
-  Passing this way still leaves the version held by the [cooldown](#the-cooldown-young-versions-are-held-however-justified).
+  Passing this way still leaves the version held by the [cooldown](#the-cooldown-young-versions-are-held-however-justified),
+  except for an own package, which the cooldown never holds.
 - **Source:** every locked package comes from an allowed registry (`npm.registries`, default the npm registry) as its own tarball: on the npm registry exactly `<name>/-/<unscoped name>-<version>.tgz`; elsewhere the full name (scope included) as consecutive path segments followed by that same `-/<unscoped name>-<version>.tgz` or by the exact version (GitHub Packages' `download/@scope/name/<version>/…`), so a lockfile can't keep a name and version while fetching another package's archive. The gate checks age and identity only against the npm registry, so a package from another allowed registry fails, unless it's an own package with an unexpired `identity` exception recording that its publish was reviewed (own packages skip only the wait).
 - **Identity:** a version that replaces another fails on a publisher identity break: provenance dropped or from another repository or workflow, provenance from a repository the replaced version doesn't declare, or (without provenance) a publisher who hadn't published the package up to the replaced version. Every provenance statement must name the exact package, version and locked sha512.
 - Bundles the lockfile doesn't fully record fail: every `bundleDependencies` entry, and what it depends on, needs an `inBundle` entry inside the package that ships it.

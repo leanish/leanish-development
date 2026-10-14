@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 
 import type { PullRequestContent } from "./publication.ts";
@@ -12,15 +13,33 @@ export interface LocalRoots {
 
 export const LOCAL_PATH = "<local path>";
 
-/** The roots outside the working copy for a tool with these state and cache directories. */
-export function machineRoots(dirs: { readonly state: string; readonly cache: string }, home: string = homedir()): ReadonlyArray<string> {
-  return [dirs.state, dirs.cache, "/private/var/folders", "/var/folders", "/private/tmp", "/tmp", home];
+/** The roots outside the working copy for a tool with these state and cache directories, with their canonical paths. */
+export function machineRoots(
+  dirs: { readonly state: string; readonly cache: string },
+  home: string = homedir(),
+  canonical: (path: string) => string = realpathSync,
+): ReadonlyArray<string> {
+  return withCanonical([dirs.state, dirs.cache, "/private/var/folders", "/var/folders", "/private/tmp", "/tmp", home], canonical);
+}
+
+/** The paths, each also as its canonical path when it exists and differs: commands report the physical one. */
+export function withCanonical(paths: ReadonlyArray<string>, canonical: (path: string) => string = realpathSync): ReadonlyArray<string> {
+  const all = new Set(paths);
+  for (const path of paths) {
+    try {
+      all.add(canonical(path));
+    } catch {
+      // A directory that doesn't exist yet has no other name to show up under.
+    }
+  }
+  return [...all];
 }
 
 /**
  * Keeps the local machine out of a PR's title, description and commit message. An absolute path inside the working copy
  * becomes repository-relative (the root itself `.`); one under another local root becomes `<local path>`, whether bare,
- * quoted, in backticks, in a Markdown link, after `NAME=`, as `file://` or with a `:line:column` suffix. The body also
+ * quoted, in backticks, in a Markdown link, after `NAME=`, as `file://` or with a `:line:column` suffix. Only a path that
+ * starts a token counts, so a URL's or a relative path's own `/tmp/...` stays as it is. The body also
  * loses the lines Node prints when the sandbox hides the system's certificate trust settings. HTML comments (the tool's
  * state marker and encoded plan) pass through untouched: this cleans what readers see, not every byte.
  */
@@ -49,13 +68,17 @@ function cleanText(text: string, roots: LocalRoots): string {
   let cleaned = text;
   for (const { root, relative } of all) {
     const at = escape(root);
-    // Quoted: the path runs to the closing quote, spaces included.
-    cleaned = cleaned.replace(new RegExp(`(["'\`])(?:file://)?${at}(?=[/"'\`])([^"'\`\\n]*)(?=\\1)`, "g"), (_, quote: string, rest: string) => `${quote}${replacement(rest, relative)}`);
-    // Bare: the path runs to whitespace or punctuation that can't be part of it.
-    cleaned = cleaned.replace(new RegExp(`(?:file://)?${at}(?=$|[/\\s"'\`)\\]>,;:])([^\\s"'\`)\\]>,;]*)`, "g"), (_, rest: string) => replacement(rest, relative));
+    // In double or single quotes the path runs to the closing quote, spaces included. Backticks hold commands as often
+    // as file names, so there a path ends where a bare one does.
+    cleaned = cleaned.replace(new RegExp(`(["'])(?:file://)?${at}(?=[/"'])([^"'\\n]*)(?=\\1)`, "g"), (_, quote: string, rest: string) => `${quote}${replacement(rest, relative)}`);
+    // Bare: from the start of a token to whitespace or punctuation that can't be part of it.
+    cleaned = cleaned.replace(new RegExp(`${TOKEN_START}(?:file://)?${at}(?=$|[/\\s"'\`)\\]>,;:])([^\\s"'\`)\\]>,;]*)`, "g"), (_, rest: string) => replacement(rest, relative));
   }
   return cleaned;
 }
+
+/** What may come right before a path: nothing, whitespace, a quote, a bracket or `=` (as in `NAME=/path`). */
+const TOKEN_START = "(?<=^|[\\s\"'`(\\[<=,])";
 
 function replacement(rest: string, relative: boolean): string {
   if (!relative) return LOCAL_PATH;

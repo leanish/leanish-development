@@ -91,8 +91,8 @@ Both tools are in this tree: [`secure-it`](../packages/secure-it) and [`bump-it`
   - every Bash command runs in the sandbox, with no unsandboxed fallback;
   - the same denied paths, Keychain included, apply to Bash and, as `Read` rules, to the file tools;
   - edits stay inside the working copy, and its git metadata is denied to both;
-  - no hooks, MCP servers or CLAUDE.md, and no tools that publish, message, schedule, browse the web or start
-    sub-agents;
+  - no MCP servers or CLAUDE.md, no hooks except those an administrator's managed policy enforces, and no tools that
+    publish, message, schedule, browse the web or start sub-agents;
   - no attribution in the PR text the agent writes.
 
   Write runs reach any host through the sandbox's proxy, as Codex's do. They also reach macOS's certificate trust
