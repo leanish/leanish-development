@@ -11,7 +11,7 @@
  *   - `sameTreeAs`: whether the working tree equals a commit.
  */
 import { spawn } from "node:child_process";
-import { chmod, lstat, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, normalize } from "node:path";
 
@@ -25,9 +25,50 @@ function gitArgs(workingCopy: WorkingCopy, args: ReadonlyArray<string>): string[
 }
 
 /** A git command over the working copy's own metadata, without system or global config, hooks or fsmonitor. */
-export async function git(workingCopy: WorkingCopy, args: ReadonlyArray<string>, run: RunProcess): Promise<{ code: number; stdout: string; stderr: string }> {
-  const env = gitEnvironment();
+export async function git(
+  workingCopy: WorkingCopy,
+  args: ReadonlyArray<string>,
+  run: RunProcess,
+  extraEnv: Readonly<Record<string, string>> = {},
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  const env = { ...gitEnvironment(), ...extraEnv };
   return run("git", gitArgs(workingCopy, args), { cwd: workingCopy.path, env });
+}
+
+/** Where the commit verification last read is recorded, in the git metadata the agent can't write. */
+const CANDIDATE_REF = "refs/leanish/candidate";
+
+/**
+ * The working tree as it is now, as a commit no branch points to: its files staged the way publication stages them
+ * (`git add --all` over HEAD), in a throwaway index so the real one is left alone. Recorded as the candidate:
+ * verification reads this commit, and publication refuses any other tree (see `candidateTree`), so nothing written
+ * after the snapshot, by a process the agent left running or anything else, is published unverified.
+ */
+export async function snapshotCandidate(workingCopy: WorkingCopy, run: RunProcess = runProcess): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "candidate-index-"));
+  try {
+    const index = { GIT_INDEX_FILE: join(dir, "index") };
+    const step = async (args: ReadonlyArray<string>, env: Readonly<Record<string, string>> = index): Promise<string> => {
+      const result = await git(workingCopy, args, run, env);
+      if (result.code !== 0) throw new Error(`git ${args[0]} for the verification snapshot failed: ${result.stderr.trim()}`);
+      return result.stdout.trim();
+    };
+    await step(["read-tree", "HEAD"]);
+    await step(["add", "--all"]);
+    const tree = await step(["write-tree"]);
+    const identity = { GIT_AUTHOR_NAME: "supply-chain", GIT_AUTHOR_EMAIL: "supply-chain@localhost", GIT_COMMITTER_NAME: "supply-chain", GIT_COMMITTER_EMAIL: "supply-chain@localhost" };
+    const sha = await step(["commit-tree", tree, "-p", "HEAD", "-m", "verification snapshot"], identity);
+    await step(["update-ref", CANDIDATE_REF, sha], {});
+    return sha;
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/** The tree of the last verification snapshot (see `snapshotCandidate`); undefined when there's none. */
+export async function candidateTree(workingCopy: WorkingCopy, run: RunProcess = runProcess): Promise<string | undefined> {
+  const result = await git(workingCopy, ["rev-parse", "--quiet", "--verify", `${CANDIDATE_REF}^{tree}`], run);
+  return result.code === 0 ? result.stdout.trim() : undefined;
 }
 
 /** `sha`'s files in a new directory (no git metadata), exactly as committed; the caller removes it with `remove`. */
@@ -140,37 +181,32 @@ export async function changedSince(workingCopy: WorkingCopy, sha: string, run: R
   return [...new Set([...tracked.stdout.split("\0"), ...untracked.stdout.split("\0")].filter((path) => path !== ""))].sort();
 }
 
+/** Every path `sha` changed, added or removed relative to `base`. */
+export async function changedBetween(workingCopy: WorkingCopy, base: string, sha: string, run: RunProcess = runProcess): Promise<string[]> {
+  const diff = await git(workingCopy, ["diff", "--name-only", "-z", "--no-renames", base, sha, "--"], run);
+  if (diff.code !== 0) throw new Error(`git diff ${base} ${sha} failed: ${diff.stderr.trim()}`);
+  return diff.stdout.split("\0").filter((path) => path !== "").sort();
+}
+
 /**
- * The changed paths that are symbolic links in the working tree, or sit under a directory that is one. No dependency
- * update needs a link, and verification reads through one while git publishes the link itself.
+ * The paths `sha` made symbolic links (mode 120000) relative to `base`; a directory replaced by a link shows as the
+ * link's own path. No dependency update needs a link, and one can point verification's reads elsewhere.
  */
-export async function symlinkedChanges(workingCopy: WorkingCopy, paths: ReadonlyArray<string>): Promise<string[]> {
-  const found = new Set<string>();
-  for (const path of paths) {
-    const parts = path.split("/");
-    for (let depth = 1; depth <= parts.length; depth++) {
-      const prefix = parts.slice(0, depth).join("/");
-      let linked: boolean;
-      try {
-        linked = (await lstat(join(workingCopy.path, prefix))).isSymbolicLink();
-      } catch (err) {
-        // A removed path has nothing left to follow.
-        const code = (err as NodeJS.ErrnoException).code;
-        if (code === "ENOENT" || code === "ENOTDIR") break;
-        throw err;
-      }
-      if (linked) {
-        found.add(prefix);
-        break;
-      }
-    }
+export async function symlinkedChanges(workingCopy: WorkingCopy, base: string, sha: string, run: RunProcess = runProcess): Promise<string[]> {
+  const diff = await git(workingCopy, ["diff", "--raw", "-z", "--no-renames", base, sha, "--"], run);
+  if (diff.code !== 0) throw new Error(`git diff ${base} ${sha} failed: ${diff.stderr.trim()}`);
+  // `:<old mode> <new mode> <old> <new> <status>` NUL `<path>` NUL, per changed path.
+  const fields = diff.stdout.split("\0");
+  const links: string[] = [];
+  for (let i = 0; i + 1 < fields.length; i += 2) {
+    if (fields[i]!.split(" ")[1] === "120000") links.push(fields[i + 1]!);
   }
-  return [...found].sort();
+  return links.sort();
 }
 
 /** The verification problem for each changed path `symlinkedChanges` found. */
 export function symlinkProblems(links: ReadonlyArray<string>): string[] {
-  return links.map((link) => `the edit made ${link} a symbolic link (or put a changed file under it): the tools publish no links, which verification would read through`);
+  return links.map((link) => `the edit made ${link} a symbolic link: the tools publish no links, which can point verification's reads elsewhere`);
 }
 
 /** Whether the working tree has exactly `sha`'s files. */

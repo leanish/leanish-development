@@ -194,6 +194,13 @@ export class LocalGitWorkspace implements Workspace {
     const merging = (await this.#runStatus(repo, ["rev-parse", "--quiet", "--verify", "MERGE_HEAD"])) === 0;
     if (merging) await this.#assertResolved(repo);
     await this.#run(repo, "add", ["add", "--all"]);
+    if (args.expectedTree !== undefined) {
+      // The commit is made from this index, whose blobs don't change after staging: checking it closes the race.
+      const tree = await this.#writeTree(repo);
+      if (tree !== args.expectedTree) {
+        throw new Error(`publishBranch: the working tree changed after verification (staged ${tree}, verified ${args.expectedTree}); nothing was published`);
+      }
+    }
     const staged = (await this.#runStatus(repo, ["diff", "--cached", "--quiet"])) === 1;
     // A merge in progress is committed even when its result has the branch's own tree: the merge itself is the change.
     if (staged || merging) {
@@ -386,6 +393,12 @@ export class LocalGitWorkspace implements Workspace {
 
   async #rev(repo: Repo, ref: string): Promise<string> {
     const { stdout } = await this.#capture(repo, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
+    return stdout.trim();
+  }
+
+  /** The tree of what the index has staged. */
+  async #writeTree(repo: Repo): Promise<string> {
+    const { stdout } = await this.#capture(repo, ["write-tree"]);
     return stdout.trim();
   }
 

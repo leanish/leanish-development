@@ -25,6 +25,10 @@ import { materializeInCopy } from "../src/npm-materialize.ts";
 import { preservedFloors } from "../src/floor-checks.ts";
 import { RULES, type SecureItDeps, secureIt } from "../src/secure-it.ts";
 
+/** The verification snapshot the fakes hand back, and its tree (publication must stage it). */
+const SNAPSHOT = "5".repeat(40);
+const SNAPSHOT_TREE = "7".repeat(40);
+
 const REPO = "leanish/widget";
 const NOW = new Date("2026-10-07T06:00:00Z");
 const CONFIG = parseToolConfig(
@@ -113,7 +117,9 @@ function harness(options: { prs?: GitHubPullRequest[]; fixes?: SecurityFix[]; an
     npm: async () => ({ code: 0, stdout: "11.20.0\n", stderr: "" }),
     candidates: async () => ({ fixes: options.fixes ?? [vite()], incomplete: [], gaps: [], osvScannerVersion: "2.6.0" }),
     verify: async () => options.problems ?? [],
-    changedSince: async () => ["package.json", "package-lock.json"],
+    snapshot: async () => SNAPSHOT,
+    candidateTree: async () => SNAPSHOT_TREE,
+    changedBetween: async () => ["package.json", "package-lock.json"],
     symlinkedChanges: async () => options.links ?? [],
     journal: () => journal,
     writeFile: async (_wc, path, content) => {
@@ -528,7 +534,8 @@ describe("secure-it review", () => {
       const base = tree(NEW_BASE, baseFiles);
       let verifications = 0;
       const deps: SecureItDeps = { ...h.deps,
-        trees: { commit: async () => base, working: () => tree("merged", current) },
+        // The verification snapshot holds the working tree as it is then.
+        trees: { commit: async (_wc, sha) => (sha === SNAPSHOT ? tree(SNAPSHOT, { ...current }) : base), working: () => tree("merged", current) },
         materializeNpm: async (context, source, recomputed, exclude) => materializeInCopy(context, dir, source, recomputed, exclude, async (cwd, args) => {
           if (args[0] === "--version") return { code: 0, stdout: "11.19.1", stderr: "" };
           const manifest = JSON.parse(await readFile(join(cwd, "package.json"), "utf8"));
@@ -538,7 +545,7 @@ describe("secure-it review", () => {
         writeFile: async (_wc, path, text) => { current[path] = text; },
         verify: async (inputs) => {
           verifications++;
-          return [...await computedNpmProblems(inputs.npmFiles, inputs.head, false, inputs.base, await h.deps.changedSince(h.context.workingCopy, NEW_BASE)),
+          return [...await computedNpmProblems(inputs.npmFiles, inputs.head, false, inputs.base, await h.deps.changedBetween(h.context.workingCopy, NEW_BASE, SNAPSHOT)),
             ...await preservedFloors(inputs.plan, inputs.base, inputs.head, {})];
         },
       };

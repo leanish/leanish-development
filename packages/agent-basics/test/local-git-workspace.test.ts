@@ -290,6 +290,36 @@ describe.skipIf(!hasGit)("LocalGitWorkspace branch publication (real git)", () =
     expect(gitOut(origin, ["ls-tree", "-r", "--name-only", BRANCH])).not.toContain("build/out.txt");
   });
 
+  it("publishes only the verified tree: a working tree changed after verification is refused, nothing pushed", async () => {
+    const { origin } = makeOrigin();
+    const { ws, wc } = await synced(origin);
+    const prep = await ws.prepareBranch(wc, { branch: BRANCH, start: "default" });
+    if (prep.kind !== "prepared") throw new Error("expected a prepared branch");
+    writeFileSync(join(wc.path, "README.md"), "verified\n");
+    // The tree verification read, staged as publication stages it, in a throwaway index.
+    const index = join(mkdtempSync(join(tmpdir(), "verified-index-")), "index");
+    const indexed = (args: string[]) => {
+      const result = spawnSync("git", args, { cwd: wc.path, encoding: "utf8", env: { ...process.env, GIT_INDEX_FILE: index } });
+      if (result.status !== 0) throw new Error(result.stderr);
+      return result.stdout.trim();
+    };
+    indexed(["read-tree", "HEAD"]);
+    indexed(["add", "--all"]);
+    const verified = indexed(["write-tree"]);
+
+    // Something left running writes after verification.
+    writeFileSync(join(wc.path, "README.md"), "unverified\n");
+    await expect(ws.publishBranch(wc, prep.prepared, { message: "upgrading things", expectedTree: verified })).rejects.toThrow(
+      "the working tree changed after verification",
+    );
+    expect(spawnSync("git", ["rev-parse", "--verify", "--quiet", `refs/heads/${BRANCH}`], { cwd: origin }).status).not.toBe(0);
+
+    writeFileSync(join(wc.path, "README.md"), "verified\n");
+    const published = await ws.publishBranch(wc, prep.prepared, { message: "upgrading things", expectedTree: verified });
+    if (published.kind !== "pushed") throw new Error("expected a push");
+    expect(gitOut(origin, ["show", `${BRANCH}:README.md`])).toBe("verified");
+  });
+
   it("updates an existing branch on top of its head with main merged in, keeping a review fix", async () => {
     const { origin, scratch } = makeOrigin();
     git(scratch, ["checkout", "-q", "-b", BRANCH]);

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { WorkingCopy } from "../../agent-basics/src/types/working-copy.ts";
-import { changedSince, exportCommit, sameTreeAs, symlinkedChanges, symlinkProblems } from "../src/git-copies.ts";
+import { candidateTree, changedBetween, changedSince, exportCommit, sameTreeAs, snapshotCandidate, symlinkedChanges, symlinkProblems } from "../src/git-copies.ts";
 
 let root: string;
 let workingCopy: WorkingCopy;
@@ -126,22 +126,56 @@ describe("git copies", () => {
   });
 });
 
-describe("symbolic links in an edit", () => {
-  it("finds changed paths that are links or sit under one, and leaves regular and removed files alone", async () => {
-    const root = await mkdtemp(join(tmpdir(), "symlinked-changes-"));
-    const copy: WorkingCopy = { projectId: "acme/widget", path: root, branch: "main", headSha: "a".repeat(40) };
-    await mkdir(join(root, "real"), { recursive: true });
-    await writeFile(join(root, "real", "package-lock.json"), "{}");
-    await writeFile(join(root, "build.gradle"), "plugins {}");
-    // The agent's moves: a lockfile replaced by a link to the expected bytes, and a directory replaced by a link.
-    await symlink(join(root, "real", "package-lock.json"), join(root, "package-lock.json"));
-    await symlink(join(root, "real"), join(root, "gradle"));
-    const changed = ["build.gradle", "gradle/libs.versions.toml", "package-lock.json", "removed.txt"];
-    expect(await symlinkedChanges(copy, changed)).toEqual(["gradle", "package-lock.json"]);
+describe("the verification snapshot", () => {
+  /** A repository of its own: these tests commit, stage and write freely. */
+  async function repository(): Promise<{ readonly copy: WorkingCopy; readonly run: (args: ReadonlyArray<string>) => string; readonly base: string }> {
+    const dir = await mkdtemp(join(tmpdir(), "candidate-"));
+    const copy: WorkingCopy = { projectId: "leanish/widget", path: join(dir, "wc"), branch: "main", headSha: "", gitDir: join(dir, "git") };
+    spawnSync("git", ["init", "-q", "-b", "main", "--separate-git-dir", copy.gitDir!, copy.path]);
+    const run = (args: ReadonlyArray<string>) => {
+      const result = spawnSync("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", ...args], { cwd: copy.path, encoding: "utf8" });
+      if (result.status !== 0) throw new Error(result.stderr);
+      return result.stdout.trim();
+    };
+    await writeFile(join(copy.path, "package-lock.json"), '{"v":1}\n');
+    await writeFile(join(copy.path, ".gitignore"), "build/\n");
+    run(["add", "--all"]);
+    run(["commit", "-q", "-m", "base"]);
+    return { copy, run, base: run(["rev-parse", "HEAD"]) };
+  }
+
+  it("records the working tree as publication stages it, without touching the index, and keeps it whatever comes later", async () => {
+    const { copy, run, base } = await repository();
+    await writeFile(join(copy.path, "package-lock.json"), '{"v":2}\n');
+    await writeFile(join(copy.path, "added.txt"), "new\n");
+    await mkdir(join(copy.path, "build"), { recursive: true });
+    await writeFile(join(copy.path, "build", "out.txt"), "ignored\n");
+    const candidate = await snapshotCandidate(copy);
+    expect(run(["diff", "--cached", "--name-only"])).toBe("");
+    expect(await changedBetween(copy, base, candidate)).toEqual(["added.txt", "package-lock.json"]);
+    expect(await candidateTree(copy)).toBe(run(["rev-parse", `${candidate}^{tree}`]));
+    // A write after the snapshot changes neither the snapshot nor what publication must find staged.
+    await writeFile(join(copy.path, "package-lock.json"), '{"v":"unverified"}\n');
+    expect(run(["show", `${candidate}:package-lock.json`])).toBe('{"v":2}');
+    expect(await candidateTree(copy)).toBe(run(["rev-parse", `${candidate}^{tree}`]));
+  });
+
+  it("has no candidate before a snapshot", async () => {
+    const { copy } = await repository();
+    expect(await candidateTree(copy)).toBeUndefined();
+  });
+
+  it("finds the paths the snapshot made symbolic links, a directory replaced by one included", async () => {
+    const { copy, base } = await repository();
+    await mkdir(join(copy.path, "real"), { recursive: true });
+    await writeFile(join(copy.path, "real", "lock.json"), '{"v":2}\n');
+    await rm(join(copy.path, "package-lock.json"));
+    await symlink(join(copy.path, "real", "lock.json"), join(copy.path, "package-lock.json"));
+    await symlink(join(copy.path, "real"), join(copy.path, "gradle"));
+    await writeFile(join(copy.path, "plain.txt"), "plain\n");
+    expect(await symlinkedChanges(copy, base, await snapshotCandidate(copy))).toEqual(["gradle", "package-lock.json"]);
     expect(symlinkProblems(["package-lock.json"])).toEqual([
-      "the edit made package-lock.json a symbolic link (or put a changed file under it): the tools publish no links, which verification would read through",
+      "the edit made package-lock.json a symbolic link: the tools publish no links, which can point verification's reads elsewhere",
     ]);
-    expect(await symlinkedChanges(copy, ["build.gradle", "removed.txt"])).toEqual([]);
-    await rm(root, { recursive: true, force: true });
   });
 });

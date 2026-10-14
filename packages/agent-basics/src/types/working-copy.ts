@@ -104,6 +104,11 @@ export interface PublishBranchArgs {
    * so a push that lands while what follows fails can still be recognised. If it throws, nothing is pushed.
    */
   readonly beforePush?: (sha: string) => Promise<void>;
+  /**
+   * The tree verification read. When given, the staged working tree must be exactly this tree, or nothing is committed
+   * or pushed: whatever changed the working tree after verification isn't published unverified.
+   */
+  readonly expectedTree?: string;
 }
 
 export type PublishBranchResult =

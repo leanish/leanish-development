@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,27 +30,35 @@ describe("tool boundaries", () => {
     expect(skill.outputSchema).toMatchObject({ additionalProperties: false });
     expect(skill.compatibleCodingAgents).toEqual(["codex", "claude-code"]);
   });
-  it("hashes and restores wrapper jars as binary, refusing symlinks and unsafe restore paths", async () => {
+  it("reads the wrapper as committed in the snapshot, jar as binary, refusing a linked file; restores from base safely", async () => {
     const root = await temp();
     await mkdir(join(root, "gradle", "wrapper"), { recursive: true });
     const bytes = Buffer.from([0x50, 0x4b, 0xff, 0x00, 0xfe, 0x80]);
     await writeFile(join(root, WRAPPER_JAR), bytes);
+    await writeFile(join(root, "gradle", "wrapper", "gradle-wrapper.properties"), "distributionUrl=x\n");
+    await writeFile(join(root, "gradlew"), "#!/bin/sh\n");
+    await chmod(join(root, "gradlew"), 0o755);
+    await writeFile(join(root, "gradlew.bat"), "@rem\n");
     const wc: WorkingCopy = { projectId: "acme/widget", path: root, gitDir: join(root, ".git"), headSha: "a".repeat(40), branch: "main" };
     const deps = defaultDeps();
-    expect(await deps.wrapperJarSha256(wc)).toBe(createHash("sha256").update(bytes).digest("hex"));
     const git = (...args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
     git("init", "--quiet");
-    git("add", WRAPPER_JAR);
+    git("add", "--all");
     git("-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "fixture");
     const base = git("rev-parse", "HEAD");
+    // The working tree changing afterwards doesn't change what the snapshot holds.
     await writeFile(join(root, WRAPPER_JAR), "corrupted jar");
+    const read = await deps.wrapperAt(wc, base);
+    expect(read.jarSha256).toBe(createHash("sha256").update(bytes).digest("hex"));
+    expect(read.files.find((file) => file.path === "gradlew")?.executable).toBe(true);
     await deps.restoreWrapperFile(wc, base, WRAPPER_JAR);
     expect(await readFile(join(root, WRAPPER_JAR))).toEqual(bytes);
     await expect(deps.restoreWrapperFile(wc, base, "../outside")).rejects.toThrow("invalid wrapper restore");
     await rm(join(root, WRAPPER_JAR));
-    expect(await deps.wrapperJarSha256(wc)).toBeUndefined();
-    await symlink(join(root, "package.json"), join(root, WRAPPER_JAR));
-    await expect(deps.wrapperJarSha256(wc)).rejects.toThrow("regular file");
+    await symlink(join(root, "gradlew.bat"), join(root, WRAPPER_JAR));
+    git("add", "--all");
+    git("-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "linked jar");
+    await expect(deps.wrapperAt(wc, git("rev-parse", "HEAD"))).rejects.toThrow("regular file");
   });
   it("keeps deferred priorities through a file round trip, treating corrupt state as an error", async () => {
     const dir = await temp();

@@ -21,6 +21,10 @@ import { majorUnits, routineUnit, type Unit } from "../src/units.ts";
 import { WRAPPER_FILES, WRAPPER_JAR, WRAPPER_PROPERTIES, WRAPPER_PACKAGE, type WrapperCandidates, type WrapperTarget } from "../src/gradle-wrapper.ts";
 import { candidate } from "./fixtures.ts";
 
+/** The verification snapshot the fakes hand back, and its tree (publication must stage it). */
+const SNAPSHOT = "5".repeat(40);
+const SNAPSHOT_TREE = "7".repeat(40);
+
 const NOW = new Date("2026-10-07T06:00:00Z");
 const NEW_BASE = "f".repeat(40);
 const REPO = "leanish/widget";
@@ -79,15 +83,17 @@ function harness(options: { bumps?: BumpCandidate[]; prs?: GitHubPullRequest[]; 
     writeWrapperFiles: async (_wc, artifacts) => { for (const file of artifacts) files[file.path] = file.bytes.toString(); },
     wrapper: () => ({ candidates: async () => ({}), verify: async () => [] }),
     restoreWrapperFile: async () => {},
-    wrapperJarSha256: async () => undefined,
     gate: async () => ({ run: async () => ({ code: 0, stdout: "", stderr: "" }), fetch: async (url) => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => String(url).includes("/git/") ? { object: { type: "commit", sha: "1".repeat(40) } } : {}, text: async () => "" }), now: () => NOW, osvScanner: "osv-scanner", githubToken: "read-token" }),
     gradle: () => ({ ofCommit: async () => undefined, ofWorkingTree: async () => undefined }),
     trees: { commit: async (_wc, sha) => tree(sha, BASE_FILES), working: () => tree("worktree", files) },
     candidates: async () => ({ bumps: options.bumps ?? [candidate()], incomplete: options.incomplete ?? [], gaps: [], osvScannerVersion: "2.6.0", notes: options.candidateNotes ?? [] }),
     npm: async (_context, unit, base) => { computed.push({ topic: unit.topic, base: base.id }); return options.npm === undefined ? npmOf(unit) : options.npm(unit); },
     verify: async (input) => { verified.push(input.plan); return options.problems ?? []; },
-    changedSince: async () => ["package.json", "package-lock.json"],
+    snapshot: async () => SNAPSHOT,
+    candidateTree: async () => SNAPSHOT_TREE,
+    changedBetween: async () => ["package.json", "package-lock.json"],
     symlinkedChanges: async () => options.links ?? [],
+    wrapperAt: async () => ({ files: wrapperArtifacts(), jarSha256: undefined }),
     journal: () => journal,
     priority: () => ({ read: async () => deferred, write: async (packages) => { deferred = [...packages]; } }),
     writeFile: async (_wc, path, content) => { files[path] = content; },
@@ -118,8 +124,9 @@ describe("bump-it run", () => {
     let jarReads = 0;
     const order: string[] = [];
     const deps = { ...h.deps, wrapper: () => { planners++; return planner; },
-      wrapperJarSha256: async () => { order.push("jar"); jarReads++; return wrapperTarget.jarSha256; },
-      gradle: () => ({ ofCommit: async () => undefined, ofWorkingTree: async () => { order.push("inventory"); return undefined; } }),
+      wrapperAt: async () => { order.push("jar"); jarReads++; return { files: wrapperArtifacts(), jarSha256: wrapperTarget.jarSha256 }; },
+      // The head's inventory comes from the verification snapshot.
+      gradle: () => ({ ofCommit: async (tree: { id: string }) => { if (tree.id === SNAPSHOT) order.push("inventory"); return undefined; }, ofWorkingTree: async () => undefined }),
       verify: async (input: Parameters<BumpItDeps["verify"]>[0]) => {
         expect(input.wrapper).toBe(planner);
         expect(input.wrapperJarSha256).toBe(wrapperTarget.jarSha256);
