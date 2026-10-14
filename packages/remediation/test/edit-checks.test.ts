@@ -51,6 +51,10 @@ describe("strict pins", () => {
     expect(await changed(groovy.replace('versions["pinned"]', 'versions["newer"]'))).toHaveLength(1);
     expect(await changed(groovy.replace("  implementation('g:a')", "  // implementation('g:a')"))).toHaveLength(1);
     expect(await changed(groovy.replace("see the owner", "ask the owner"))).toEqual([]);
+    const inline = 'dependencies {\n  implementation("g:d") { version { /* owner pin */ strictly("1.0") } }\n}\n';
+    expect(await strictPinsChanged(["build.gradle.kts"], tree({ "build.gradle.kts": inline }), tree({ "build.gradle.kts": inline.replace('"1.0"', '"2.0"') }))).toHaveLength(1);
+    const catalog = '[versions]\npinned = { "strictly" = "1.0" }\n';
+    expect(await strictPinsChanged(["gradle/libs.versions.toml"], tree({ "gradle/libs.versions.toml": catalog }), tree({ "gradle/libs.versions.toml": catalog.replace('"1.0"', '"2.0"') }))).toHaveLength(1);
   });
 
   it("counts duplicate strictly lines, so dropping one of two identical pins is refused", async () => {

@@ -91,27 +91,38 @@ export async function actionsOutsidePlan(pins: ReadonlyArray<PlannedPin>, base: 
 /**
  * Whether `strictly` appears in the line's code, not inside a string or a comment: `strictly("1.0")`, Groovy's
  * `strictly pinVersion`, a catalog's `strictly = "1.0"` count; a `because("… strictly pinned …")` or a comment doesn't.
- * Commenting a pin out therefore removes it from the file's strict lines.
+ * Commenting a pin out therefore removes it from the file's strict lines. Each line is read on its own, so the word
+ * inside a string or comment spanning lines counts: that refuses an edit, never lets a pin change through.
  */
 function usesStrictly(line: string): boolean {
   let code = "";
   let quote: string | undefined;
+  let quoted = "";
   for (let i = 0; i < line.length; i++) {
     const char = line[i]!;
     if (quote !== undefined) {
       if (char === "\\") i++;
       else if (char === quote) {
         quote = undefined;
-        code += char;
-      }
+        // A quoted catalog key (`"strictly" = "1.0"`) is the key itself.
+        code += /^\s*=/.test(line.slice(i + 1)) ? quoted : char;
+      } else quoted += char;
       continue;
     }
     if (char === '"' || char === "'") {
       quote = char;
+      quoted = "";
       code += char;
       continue;
     }
-    if (char === "#" || (char === "/" && (line[i + 1] === "/" || line[i + 1] === "*"))) break;
+    if (char === "/" && line[i + 1] === "*") {
+      const end = line.indexOf("*/", i + 2);
+      if (end < 0) break;
+      i = end + 1;
+      code += " ";
+      continue;
+    }
+    if (char === "#" || (char === "/" && line[i + 1] === "/")) break;
     code += char;
   }
   return /\bstrictly\b/.test(code);
