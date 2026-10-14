@@ -5,7 +5,7 @@
 // fetched or pushed branch are dropped first; replace refs disabled; a failed call's error quotes git's stderr, credentials masked.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { assertRepoSourceId, type RepoSource as Project } from "../types/repo-source.ts";
@@ -192,8 +192,10 @@ export class LocalGitWorkspace implements Workspace {
     }
 
     const merging = (await this.#runStatus(repo, ["rev-parse", "--quiet", "--verify", "MERGE_HEAD"])) === 0;
-    if (merging) await this.#assertResolved(repo);
+    // Which paths conflicted is known only before staging resolves them; their markers are checked once staged.
+    const conflicted = merging ? await this.#conflictedPaths(repo) : [];
     await this.#run(repo, "add", ["add", "--all"]);
+    await this.#assertResolved(repo, conflicted);
     if (args.expectedTree !== undefined) {
       // The commit is made from this index, whose blobs don't change after staging: checking it closes the race.
       const tree = await this.#writeTree(repo);
@@ -352,13 +354,17 @@ export class LocalGitWorkspace implements Workspace {
     return stdout.split("\0").filter((path) => path !== "");
   }
 
-  /** Refuses to commit a merge while a conflicted path still has conflict markers. */
-  async #assertResolved(repo: Repo): Promise<void> {
+  /**
+   * Refuses to commit a merge while a path that conflicted still has conflict markers, read from what's staged (what
+   * the commit gets), never the live working tree, which something left running could change for the check alone.
+   */
+  async #assertResolved(repo: Repo, conflicted: ReadonlyArray<string>): Promise<void> {
     const markers = /^(<{7}|>{7})( |$)|^={7}$|^\|{7}( |$)/m;
     const unresolved: string[] = [];
-    for (const path of await this.#conflictedPaths(repo)) {
-      const content = await readFile(join(repo.workTree, path), "utf8").catch(() => "");
-      if (markers.test(content)) unresolved.push(path);
+    for (const path of conflicted) {
+      // A path resolved by removing it has nothing staged.
+      const staged = await this.#capture(repo, ["show", `:${path}`]).then((result) => result.stdout, () => "");
+      if (markers.test(staged)) unresolved.push(path);
     }
     if (unresolved.length > 0) throw new Error(`publishBranch: ${unresolved.join(", ")} still has conflict markers`);
   }
