@@ -289,7 +289,7 @@ permissions:
 jobs:
   supply-chain:
     # A full commit SHA of v0.4.0 or later (earlier gates also need `pull-requests: read` and `statuses: write`).
-    uses: leanish/supply-chain/.github/workflows/supply-chain.yml@<full commit SHA> # v0.4.2
+    uses: leanish/supply-chain/.github/workflows/supply-chain.yml@<full commit SHA> # v0.5.0
     with:
       java-version: "25" # for Gradle builds; several lines for several JDKs, the last one runs Gradle
 ```

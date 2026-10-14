@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 - 2026-10-14
 
 ### Added
 
@@ -83,6 +83,12 @@
   it at the same time (the first pass with a fresh state directory, or after a version bump):
   each download gets its own temporary name before the atomic rename, instead of one fixed name
   that a concurrent install could move away mid-check.
+### Known limits
+
+- The `strictly` text check reads Kotlin triple-quoted strings as ordinary quotes; one containing
+  quotes earlier in a build file can hide a change to a later, inactive strict pin.
+- PRs are recognised by the current tool label and markers only. A PR opened by v0.4.2 whose label
+  couldn't be added is no longer reviewed; close it, and the next run opens a fresh one.
 
 ## 0.4.2 - 2026-10-12
 
