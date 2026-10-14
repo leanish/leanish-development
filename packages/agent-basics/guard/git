@@ -80,18 +80,20 @@ deny_push() {
 }
 
 # A push to a named remote whose every push URL is on this machine; anything else is the tool's job. Only the
-# options the tests and workspaces use are understood: one taking a separate value could hide the destination.
+# options the tests and workspaces use are understood, wherever they are: git reads options after the remote and
+# refspecs too, and one taking a value could hide the destination or run a command (`--receive-pack`).
 check_push() {
-  local arg remote="" urls url j=0
-  while [ "$j" -lt "${#rest[@]}" ]; do
-    arg=${rest[$j]}
-    case "$arg" in
-      -q|--quiet|-v|--verbose|--no-verify|--porcelain|-f|--force|--force-with-lease|--force-with-lease=*|--atomic|-u|--set-upstream|-n|--dry-run|-d|--delete) ;;
-      --) remote=${rest[$((j + 1))]:-}; break ;;
-      -*) deny_push ;;
-      *) remote=$arg; break ;;
-    esac
-    j=$((j + 1))
+  local arg remote="" urls url options=true
+  for arg in "${rest[@]}"; do
+    if [ "$options" = true ]; then
+      case "$arg" in
+        -q|--quiet|-v|--verbose|--no-verify|--porcelain|-f|--force|--force-with-lease|--force-with-lease=*|--atomic|-u|--set-upstream|-n|--dry-run|-d|--delete) continue ;;
+        --) options=false; continue ;;
+        -*) deny_push ;;
+      esac
+    fi
+    # The first operand is the remote; the rest are refspecs.
+    [ -n "$remote" ] || remote=$arg
   done
   # Named remotes only: a URL or path given directly can still be rewritten to a network one
   # (`url.<base>.insteadOf`), while `remote get-url` expands the rewrites and lists every push URL of a remote.

@@ -1,7 +1,7 @@
 // Copied from leanish/leanish-development agents/bump-it/test/local-guard.test.ts at c6282df; see PROVENANCE.md.
 // Local changes: the guards' directory, and their messages say "agent guard"; hooks-off settings, and pushes checked against real git.
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, mkdtempSync, readFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -150,6 +150,8 @@ describe("git guard pushes, with the real git", () => {
   const root = mkdtempSync(join(tmpdir(), "agent-guard-push-"));
   const bare = join(root, "origin.git");
   const work = join(root, "work");
+  // What a receive-pack command smuggled past the guard would create.
+  const marker = join(root, "receive-pack-ran");
   // The real git, skipping any guard already on the PATH (a coding agent running these tests has one first).
   const realGit = (process.env["PATH"] ?? "/usr/bin:/bin")
     .split(":")
@@ -199,6 +201,7 @@ describe("git guard pushes, with the real git", () => {
     [["push", "--quiet", "--force-with-lease=refs/heads/published:HEAD", "origin", ":refs/heads/published"]],
     [["push", "-q", "fileurl", "main:refs/heads/via-file-url"]],
     [["push", "-q", "--", "origin", "main:refs/heads/after-dashes"]],
+    [["push", "origin", "main:refs/heads/options-after", "--quiet", "--no-verify"]],
   ])("passes %j to a local remote", (args) => {
     const outcome = git(args);
     expect(outcome.stderr).not.toContain("agent guard");
@@ -225,10 +228,15 @@ describe("git guard pushes, with the real git", () => {
     [["push", "--recurse-submodules", "no", "network", "main"]],
     [["push", "--recurse-submodules=on-demand", "origin", "main"]],
     [["push", "--repo=origin", "main"]],
+    // Options after the remote or a refspec count as much as those before it.
+    [["push", "--dry-run", "origin", `--receive-pack=touch ${marker}`, "HEAD"]],
+    [["push", "origin", "HEAD", "--exec", `touch ${marker}`]],
+    [["push", "origin", "HEAD", "-o", "ci.skip"]],
   ])("refuses %j", (args) => {
     const outcome = git(args);
     expect(outcome.status).toBe(126);
     expect(outcome.stderr).toContain("agent guard: refused: git push");
+    expect(existsSync(marker)).toBe(false);
   });
 
   it("limits a permitted push to the local transport, submodules pushed along included", async () => {
