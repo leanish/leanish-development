@@ -203,7 +203,13 @@ The gate reads workflow `uses:` entries, composite actions and local reusable
 workflows. Every new or changed remote use needs a full commit SHA and a comment
 naming the full release tag that points to it. Duplicate steps and YAML aliases
 count too. Advisory and release-age checks use the GitHub release, not the tag's
-date. Own Actions can skip the age wait, but still need valid pins.
+date, and trust its age only when the release is immutable: a mutable release's
+tag can be moved to newer code, which would inherit the old release's age. So a
+change to an action without an immutable release fails the gate, and the tools
+don't pick such a version on their own (they leave a note saying why); a person
+updates it, or waits until the action publishes immutable releases. In October
+2026, `actions/checkout`, `actions/upload-artifact` and `actions/download-artifact`
+were among them. Own Actions can skip the age wait, but still need valid pins.
 
 secure-it selects the lowest eligible security fix and pins its tag's commit.
 bump-it selects the highest eligible aged release, with routine updates together

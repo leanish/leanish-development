@@ -40,7 +40,8 @@ To prove a young carrier version as a bundled fix (and for secure-it to choose o
 The release-age wait exists because malicious releases (a stolen publishing token, a hijacked release workflow) tend
 to be noticed and pulled within days. A security fix younger than the wait is exactly what such an attacker would
 ship: the advisory creates urgency, and its severity, however high, says nothing about whether the fixing release
-is genuine. Proving that a version is the rule-picked fix, or the lowest version that fix requires, limits *which*
+is genuine. For GitHub Actions the age comes from the release, and only an immutable release's: an attacker who
+controls an action could otherwise move an old release's tag to new code, which would arrive already "old". Proving that a version is the rule-picked fix, or the lowest version that fix requires, limits *which*
 young version comes in; it doesn't make that version safe, and the build, tests and CI run it either way.
 
 So the gate holds every young version a PR adds or changes, justified or not: the separate `cooldown` check stays
