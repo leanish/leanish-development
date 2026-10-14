@@ -47,7 +47,8 @@ import { resolveWorkingCopyMount } from "./wc-mount.ts";
  *   - `read-only`: no network, the working copies are denied to Bash's writes
  *     and edits need a prompt that never comes (Bash keeps the sandbox's own
  *     temp dir).
- * No hooks run (`disableAllHooks`), whether from settings or from a skill.
+ * No hooks run (`disableAllHooks`), whether from settings or from a skill, except those an administrator's managed
+ * policy enforces, which no inline setting can turn off.
  * The sandbox's proxy announces itself in `HTTPS_PROXY` with credentials the
  * JVM doesn't read from there, so the commands' zsh gets a `.zshenv` (in the
  * staged `ZDOTDIR` that also keeps the user's startup files away) turning it
@@ -316,7 +317,7 @@ export function claudeSettings(request: ClaudeSettingsRequest): Record<string, u
     includeCoAuthoredBy: false,
     attribution: { commit: "", pr: "" },
     autoMemoryEnabled: false,
-    // Nothing runs besides the agent's own tool calls: no hooks from settings or from a skill.
+    // Nothing runs besides the agent's own tool calls: no hooks from settings or from a skill (managed policy aside).
     disableAllHooks: true,
   };
 }

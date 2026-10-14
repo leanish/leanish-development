@@ -4,14 +4,14 @@
 
 ### Added
 
-- Claude Code as the tools' coding agent: `agent.codingAgent: claude-code` with a Claude model
-  (for example `claude-haiku-5-5`). The agent edits only inside Claude Code's sandbox, with the
-  same denied paths as Codex. Every command runs in the sandbox, git metadata is out of reach,
-  and no hooks, MCP servers or outward tools (publishing, messaging, scheduling, web, sub-agents)
-  are available. The PR text carries no attribution. Write runs reach macOS's certificate trust
-  service, so `gh` can verify TLS. Usage, the CLI's own cost estimate and the reason a run failed
-  (such as a plan limit) come from its stream-json output. Codex is still required for the tool's
-  own sandboxed commands.
+- Claude Code as the tools' coding agent: `agent.codingAgent: claude-code` with a Claude model (for
+  example `claude-haiku-5-5`). The agent edits only inside Claude Code's sandbox, with the same
+  denied paths as Codex. Every command runs in the sandbox, git metadata is out of reach, and no MCP
+  servers, outward tools (publishing, messaging, scheduling, web, sub-agents) or hooks beyond an
+  administrator's managed policy are available. The PR text carries no attribution. Write runs reach
+  macOS's certificate trust service, so `gh` can verify TLS. Usage, the CLI's own cost estimate and
+  the reason a run failed (such as a plan limit) come from its stream-json output. Codex is still
+  required for the tool's own sandboxed commands.
 
 - `packages/ci/dependency-floors.schema.json`, the JSON Schema of `.github/dependency-floors.json`,
   tested to agree with the gate's parser. secure-it's skill embeds it with how a `gradle-floor`
