@@ -20,7 +20,7 @@ package is the code around them. Setup and operation are in [Adopting the tools]
     expected head.
   - **Published text** (`publication-text.ts`): the title, body and commit message keep the machine out. A path in the
     working copy becomes repository-relative; one under the home, temp, state or cache directories becomes
-    `<local path>`. HTML comments (the state marker and plan) pass through untouched.
+    `<local path>`. The tool's own `<!-- leanish:… -->` markers (state and plan) pass through untouched.
   - **Journal** (`journal.ts`): before each update push, the tool records the head/base, title, full body (plan
     included) and adaptation count in its state directory. If the body update fails, the next run or review
     recognises the tool's exact head and restores that publication before reuse or CI handling. An old head/base-only

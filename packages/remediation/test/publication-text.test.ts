@@ -41,7 +41,11 @@ describe("published text keeps the machine out", () => {
     ].join("\n"));
   });
 
-  it("leaves HTML comments (the tool's state and plan) untouched and is idempotent", () => {
+  it("cleans other HTML comments, such as one in a code example", () => {
+    expect(clean("```xml\n<!-- generated from /Users/dev/private/build.xml -->\n```")).toBe(`\`\`\`xml\n<!-- generated from ${LOCAL_PATH} -->\n\`\`\``);
+  });
+
+  it("leaves the tool's own markers (its state and plan) untouched and is idempotent", () => {
     const body = `Moved lib in ${WC}/build.gradle.kts\n\n<!-- leanish:plan ${WC}/x -->\n<!-- leanish:state {"head":"a"} -->`;
     const once = clean(body);
     expect(once).toBe(`Moved lib in build.gradle.kts\n\n<!-- leanish:plan ${WC}/x -->\n<!-- leanish:state {"head":"a"} -->`);

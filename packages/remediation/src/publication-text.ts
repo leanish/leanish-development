@@ -40,8 +40,9 @@ export function withCanonical(paths: ReadonlyArray<string>, canonical: (path: st
  * becomes repository-relative (the root itself `.`); one under another local root becomes `<local path>`, whether bare,
  * quoted, in backticks, in a Markdown link, after `NAME=`, as `file://` or with a `:line:column` suffix. Only a path that
  * starts a token counts, so a URL's or a relative path's own `/tmp/...` stays as it is. The body also
- * loses the lines Node prints when the sandbox hides the system's certificate trust settings. HTML comments (the tool's
- * state marker and encoded plan) pass through untouched: this cleans what readers see, not every byte.
+ * loses the lines Node prints when the sandbox hides the system's certificate trust settings. The tool's own markers
+ * (`<!-- leanish:… -->`: its state and encoded plan) pass through untouched; any other HTML comment, a code example's
+ * included, is cleaned like the rest: this cleans what readers see, not every byte.
  */
 export function cleanContent(content: PullRequestContent, roots: LocalRoots): PullRequestContent {
   return {
@@ -106,7 +107,7 @@ function withoutNoise(text: string): string {
 
 function outsideComments(body: string, clean: (text: string) => string): string {
   return body
-    .split(/(<!--[\s\S]*?-->)/)
+    .split(/(<!-- leanish:[\s\S]*?-->)/)
     .map((part, i) => (i % 2 === 1 ? part : clean(part)))
     .join("");
 }

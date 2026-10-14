@@ -104,8 +104,8 @@ function usesStrictly(line: string): boolean {
       if (char === "\\") i++;
       else if (char === quote) {
         quote = undefined;
-        // A quoted catalog key (`"strictly" = "1.0"`) is the key itself.
-        code += /^\s*=/.test(line.slice(i + 1)) ? quoted : char;
+        // A quoted name is still code: a catalog key (`"strictly" = "1.0"`) or a Groovy call (`delegate."strictly"("1.0")`).
+        code += /^\s*[=(]/.test(line.slice(i + 1)) ? quoted : char;
       } else quoted += char;
       continue;
     }

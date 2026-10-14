@@ -29,7 +29,7 @@ permissions and schedules are in the [adoption guide](adopting-tools.md).
 | `commitIdentity.name`, `commitIdentity.email` | Required | Author and committer for the tool's commits; also the identity exposed to agent commands. No developer-global git identity is inherited. |
 | `dirs.state` | `~/.local/share/leanish/<tool>` | Workspaces, separate git metadata, publication journal, protected OSV-Scanner and the repository-advisory cache (out of the sandbox's reach). bump-it also stores deferred-major ordering here. Keep this outside temp and cache roots; see the adoption guide. |
 | `dirs.cache` | `~/.cache/leanish/<tool>` | Sandbox-writable cache for Gradle and npm. Keep separate from state and between tools. |
-| `readDeny` | `[]` | Extra absolute paths denied to sandboxed commands, in addition to existing sensitive home paths. These paths' names can reach the model; their contents cannot. Other readable files can reach the model provider. |
+| `readDeny` | `[]` | Extra absolute paths denied to sandboxed commands, in addition to existing sensitive home paths. These paths' names can reach the model; their contents cannot. Other readable files can reach the model provider. With `claude-code`, a path containing a glob character (`* ? [ ] { } ! \`) is refused: Claude Code reads its permission rules as patterns. |
 | `modelPrices` | Built-in dated OpenAI Standard prices | Absolute path to an optional JSON table replacing the built-in rates; see [below](#optional-price-table). Claude models have no built-in rate. |
 | `maxNewMajorsPerRun` | bump-it only, `3` | Nonnegative integer. Caps newly opened major PRs, never updates to existing ones. `0` defers all new majors. Deferred majors have priority next run. |
 
