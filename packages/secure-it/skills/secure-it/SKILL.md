@@ -179,8 +179,9 @@ that rewrites a lockfile. Never lower/unset the window or add exclusions of your
 - Code, tests and docs **only when a move has `major: true`**, and only to adapt to that major.
 - Never change a Gradle `strictly(...)` version (a catalog's `strictly = ...` included), even when it pins a moved
   dependency at `from`: a strict version is the repository owner's deliberate pin. If the plan can't be applied
-  without changing one, answer `cannot-apply` naming the file and the declaration. The tool refuses an edit that
-  changes a `strictly` line.
+  without changing one, answer `cannot-apply` naming the file and the declaration. Never write one either: your
+  declarations use a plain version, even when what brings the vulnerable version pins it strictly. The tool refuses
+  an edit that adds, changes or removes a `strictly` line.
 - Direct dependencies outside the supplied moves keep their declarations and locked versions. Never edit another
   dependency's version by hand or add an unplanned override or floor.
 - Preserve existing floor records and declarations, except the exact `floorRemovals` described above. Never alter a compatibility floor. A Gradle security floor may move
@@ -206,14 +207,15 @@ that rewrites a lockfile. Never lower/unset the window or add exclusions of your
   `gradle-declared`.
 - `gradle-declared`: a dependency the build declares. Change its version where it's declared (the version catalog if
   it comes from there, else the build file).
-- `gradle-floor`: a transitive dependency, or one a plugin declares (no file of the repository declares it, so leave the
-  plugin's own declaration alone: yours goes next to it). In each configuration of `locations` (`:runtimeClasspath`,
-  `buildSrc/:compileClasspath`, …), declare it explicitly at exactly `<to>`, with `because("<advisories, comma-separated>:
-  <one line on why>")`, in the configuration the resolving one extends (e.g. `implementation` for `runtimeClasspath`,
-  `testImplementation` for `testRuntimeClasspath`); use the catalog when the build uses one. When the location is itself
-  the configuration you'd declare on and a plugin fills it with defaults only while it has no dependencies of its own
-  (`checkstyle`, a code-quality tool's configuration), declaring on it would drop the plugin's tool: declare the floor in
-  a new helper configuration that it extends instead. Then add its record to `floorsFile` (see below).
+- `gradle-floor`: a transitive dependency, or one a plugin declares (no file of the repository declares it, so leave
+  the plugin's own declaration alone: yours goes next to it). In each configuration of `locations`
+  (`:runtimeClasspath`, `buildSrc/:compileClasspath`, …), declare it explicitly at exactly `<to>` as a plain version
+  (`implementation("<name>:<to>")`, never `strictly`), with `because("<advisories, comma-separated>: <one line on
+  why>")`, in the configuration the resolving one extends (e.g. `implementation` for `runtimeClasspath`,
+  `testImplementation` for `testRuntimeClasspath`); use the catalog when the build uses one. When the location is
+  itself the configuration you'd declare on and a plugin fills it with defaults only while it has no dependencies of
+  its own (`checkstyle`, a code-quality tool's configuration), declaring on it would drop the plugin's tool: declare
+  the floor in a new helper configuration that it extends instead. Then add its record to `floorsFile` (see below).
 - `action-pin`: replace each `uses:` of the action in `locations` with `<name>@<commitSha> # <to>`.
 
 Don't add configurations Gradle can resolve: verification inventories the edit's resolvable configurations and compares

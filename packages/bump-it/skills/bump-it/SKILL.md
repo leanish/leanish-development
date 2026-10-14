@@ -91,8 +91,8 @@ or touch git metadata. Leave no temporary files: everything in the working tree 
   version catalog and build conventions. Never add or change transitive constraints or raise a floor.
 - Never change a Gradle `strictly(...)` version (a catalog's `strictly = ...` included), even when it pins a moved
   dependency at `from`: a strict version is the repository owner's deliberate pin. If the plan can't be applied
-  without changing one, answer cannot-apply naming the file and the declaration. The tool refuses an edit that changes
-  a `strictly` line.
+  without changing one, answer cannot-apply naming the file and the declaration. Never write one either: your
+  declarations use a plain version. The tool refuses an edit that adds, changes or removes a `strictly` line.
 - `gradle-wrapper`: already generated and applied by the tool. Never touch wrapper files: gradlew, gradlew.bat,
   gradle/wrapper/gradle-wrapper.properties or gradle/wrapper/gradle-wrapper.jar. Keep their bytes and executable
   modes unchanged in every editing mode. Do not run the wrapper task or download/replace a wrapper yourself.
