@@ -37,6 +37,7 @@ import { ensureOsvScanner, verifyingRun } from "../../remediation/src/osv-scanne
 import { branchFor, ownPullRequests, stateOf, topicOf } from "../../remediation/src/own-pr.ts";
 import { revertToBase } from "../../remediation/src/reconcile.ts";
 import { clearLeftoverBranch, closeAndDelete, ownOpenPullRequests, type PublicationContext, publishNew, publishUpdate, recoverPublication, rewriteText } from "../../remediation/src/publication.ts";
+import { machineRoots } from "../../remediation/src/publication-text.ts";
 import { type BaseMerge, type CooldownState, reviewOpenPullRequests, type ReviewSteps } from "../../remediation/src/review.ts";
 
 import { removalTransform } from "./floor-gradle.ts";
@@ -125,6 +126,7 @@ function publicationOf(context: ToolRunContext, deps: SecureItDeps): Publication
     base: context.base,
     workingCopy: context.workingCopy,
     journal: deps.journal(context),
+    localRoots: machineRoots(context.config.dirs),
   };
 }
 

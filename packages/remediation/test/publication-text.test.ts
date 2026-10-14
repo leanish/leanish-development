@@ -1,0 +1,55 @@
+import { describe, expect, it } from "vitest";
+
+import { cleanBody, cleanContent, LOCAL_PATH, machineRoots } from "../src/publication-text.ts";
+
+const ROOTS = { workingCopy: ["/Users/dev/.local/share/leanish/bump-it/workspaces/acme__widget"], other: machineRoots({ state: "/Users/dev/.local/share/leanish/bump-it", cache: "/Users/dev/.cache/leanish/bump-it" }, "/Users/dev") };
+const WC = ROOTS.workingCopy[0]!;
+const clean = (text: string) => cleanBody(text, ROOTS);
+
+describe("published text keeps the machine out", () => {
+  it("makes working-copy paths repository-relative, in every form they show up in", () => {
+    expect(clean(`Edited ${WC}/src/Main.java:12:3 and \`${WC}/build.gradle.kts\`; see [the file](file://${WC}/README.md).`))
+      .toBe("Edited src/Main.java:12:3 and `build.gradle.kts`; see [the file](README.md).");
+    expect(clean(`ran in ${WC}, then "${WC}/docs/my notes.md"`)).toBe('ran in ., then "docs/my notes.md"');
+  });
+
+  it("replaces other local paths, keeping the command around them", () => {
+    expect(clean("`GRADLE_USER_HOME=/Users/dev/.cache/leanish/bump-it/gradle ./gradlew check` passed"))
+      .toBe(`\`GRADLE_USER_HOME=${LOCAL_PATH} ./gradlew check\` passed`);
+    expect(clean("wrote /private/var/folders/x1/T/out.log and /tmp/scratch, read '/Users/dev/My Documents/a.txt'"))
+      .toBe(`wrote ${LOCAL_PATH} and ${LOCAL_PATH}, read '${LOCAL_PATH}'`);
+  });
+
+  it("leaves alike-named paths, URLs, relative paths and portable home expressions alone", () => {
+    const text = "/Users/developer/x, https://github.com/acme/widget/blob/main/src/Main.java, src/Main.java, ~/.gitconfig, $HOME/.m2";
+    expect(clean(text)).toBe(text);
+    expect(clean(`${WC}-other/file`)).toBe(`${LOCAL_PATH}`);
+  });
+
+  it("drops Node's trust-settings banner and keeps every other line, failures included", () => {
+    const body = [
+      "Checks:",
+      "ERROR: failed to copy trust settings of system certificate-25291",
+      "ERROR: failed to copy trust settings of system certificate",
+      "- `gh api …` failed: x509: OSStatus -26276 (couldn't read the release notes)",
+      "- `npm test`: Operation not permitted writing the cache, so the tests didn't run",
+    ].join("\n");
+    expect(clean(body)).toBe([
+      "Checks:",
+      "- `gh api …` failed: x509: OSStatus -26276 (couldn't read the release notes)",
+      "- `npm test`: Operation not permitted writing the cache, so the tests didn't run",
+    ].join("\n"));
+  });
+
+  it("leaves HTML comments (the tool's state and plan) untouched and is idempotent", () => {
+    const body = `Moved lib in ${WC}/build.gradle.kts\n\n<!-- leanish:plan ${WC}/x -->\n<!-- leanish:state {"head":"a"} -->`;
+    const once = clean(body);
+    expect(once).toBe(`Moved lib in build.gradle.kts\n\n<!-- leanish:plan ${WC}/x -->\n<!-- leanish:state {"head":"a"} -->`);
+    expect(clean(once)).toBe(once);
+  });
+
+  it("cleans the title and commit message too, without dropping their lines", () => {
+    const content = cleanContent({ title: `fixing ${WC}/lib`, body: "ok", commitMessage: `moving lib\n\nbuilt with /tmp/x` }, ROOTS);
+    expect(content).toEqual({ title: "fixing lib", body: "ok", commitMessage: `moving lib\n\nbuilt with ${LOCAL_PATH}` });
+  });
+});

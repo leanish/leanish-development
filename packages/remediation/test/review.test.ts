@@ -21,7 +21,7 @@ function workingCopy(baseSha = BASE_SHA): WorkingCopy {
 
 function context(github: FakeGitHub, workspace = new InMemoryWorkspace(), wc = workingCopy(), journal = new MemoryJournal()): ReviewContext {
   workspace.setRemoteHead("secure-it/2026-10-05-snappy-java", HEAD_SHA);
-  return { rules: RULES, github, workspace, workingCopy: wc, logger: new ConsoleLogger({ minLevel: "error" }), repo: REPO, base: "main", journal };
+  return { rules: RULES, github, workspace, workingCopy: wc, logger: new ConsoleLogger({ minLevel: "error" }), repo: REPO, base: "main", journal, localRoots: [] };
 }
 
 /** Steps that record what they were asked, rebasing by updating the PR and adapting by pushing. */

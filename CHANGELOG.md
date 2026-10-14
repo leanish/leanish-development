@@ -20,6 +20,15 @@
 
 ### Changed
 
+- Published PR text keeps the local machine out. In the title, description and commit message, a path inside the
+  working copy becomes repository-relative, and one under the home directory, the temp dirs or the tool's state and
+  cache becomes `<local path>`. Node's sandbox trust-settings banner lines are dropped. The tool's state marker and
+  encoded plan are left as they are. The journal records the cleaned text, so a recovery restores it.
+
+- The skills ask for the repository's checks in every mode, and for a major's release notes or changelog, linked in
+  its verdict (or a note saying they couldn't be read). secure-it creates the floors file only when a change adds a
+  floor, and a floor removal leaves the owner's plain declaration of the same coordinate in place.
+
 - **Breaking:** `agent.majorEffort` is gone; remove it from `agent.yaml`. `agent.effort` applies
   to every agent call, majors included, as in leanish-development's runtime.
 

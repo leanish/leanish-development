@@ -1,0 +1,85 @@
+import { homedir } from "node:os";
+
+import type { PullRequestContent } from "./publication.ts";
+
+/** Where a published text's local paths come from: the working copy, and the rest of the machine. */
+export interface LocalRoots {
+  /** The working copy (and its canonical path when different): paths inside it become repository-relative. */
+  readonly workingCopy: ReadonlyArray<string>;
+  /** Other absolute directories whose paths never reach a PR: the home directory, the temp dirs, the tool's state and cache. */
+  readonly other: ReadonlyArray<string>;
+}
+
+export const LOCAL_PATH = "<local path>";
+
+/** The roots outside the working copy for a tool with these state and cache directories. */
+export function machineRoots(dirs: { readonly state: string; readonly cache: string }, home: string = homedir()): ReadonlyArray<string> {
+  return [dirs.state, dirs.cache, "/private/var/folders", "/var/folders", "/private/tmp", "/tmp", home];
+}
+
+/**
+ * Keeps the local machine out of a PR's title, description and commit message. An absolute path inside the working copy
+ * becomes repository-relative (the root itself `.`); one under another local root becomes `<local path>`, whether bare,
+ * quoted, in backticks, in a Markdown link, after `NAME=`, as `file://` or with a `:line:column` suffix. The body also
+ * loses the lines Node prints when the sandbox hides the system's certificate trust settings. HTML comments (the tool's
+ * state marker and encoded plan) pass through untouched: this cleans what readers see, not every byte.
+ */
+export function cleanContent(content: PullRequestContent, roots: LocalRoots): PullRequestContent {
+  return {
+    title: cleanText(content.title, roots),
+    body: cleanBody(content.body, roots),
+    commitMessage: cleanText(content.commitMessage, roots),
+  };
+}
+
+/** A body's text cleaned the same way, outside its HTML comments. */
+export function cleanBody(body: string, roots: LocalRoots): string {
+  return outsideComments(body, (text) => withoutNoise(cleanText(text, roots)));
+}
+
+function cleanText(text: string, roots: LocalRoots): string {
+  const all = [
+    ...roots.workingCopy.map((root) => ({ root, relative: true })),
+    ...roots.other.map((root) => ({ root, relative: false })),
+  ]
+    .filter(({ root }) => root.startsWith("/") && root.length > 1)
+    .map(({ root, relative }) => ({ root: root.replace(/\/+$/, ""), relative }))
+    // The most specific root first: the working copy usually sits under the home directory.
+    .sort((a, b) => b.root.length - a.root.length || Number(b.relative) - Number(a.relative));
+  let cleaned = text;
+  for (const { root, relative } of all) {
+    const at = escape(root);
+    // Quoted: the path runs to the closing quote, spaces included.
+    cleaned = cleaned.replace(new RegExp(`(["'\`])(?:file://)?${at}(?=[/"'\`])([^"'\`\\n]*)(?=\\1)`, "g"), (_, quote: string, rest: string) => `${quote}${replacement(rest, relative)}`);
+    // Bare: the path runs to whitespace or punctuation that can't be part of it.
+    cleaned = cleaned.replace(new RegExp(`(?:file://)?${at}(?=$|[/\\s"'\`)\\]>,;:])([^\\s"'\`)\\]>,;]*)`, "g"), (_, rest: string) => replacement(rest, relative));
+  }
+  return cleaned;
+}
+
+function replacement(rest: string, relative: boolean): string {
+  if (!relative) return LOCAL_PATH;
+  const inside = rest.replace(/^\/+/, "");
+  return inside === "" ? "." : inside;
+}
+
+/** Node prints this, once per system certificate, when the sandbox hides the trust settings: it says nothing about the change. */
+const TRUST_SETTINGS_NOISE = /^[ \t]*(?:ERROR: )?failed to copy trust settings of system certificate(?:-\d+)?[ \t]*$/;
+
+function withoutNoise(text: string): string {
+  return text
+    .split("\n")
+    .filter((line) => !TRUST_SETTINGS_NOISE.test(line))
+    .join("\n");
+}
+
+function outsideComments(body: string, clean: (text: string) => string): string {
+  return body
+    .split(/(<!--[\s\S]*?-->)/)
+    .map((part, i) => (i % 2 === 1 ? part : clean(part)))
+    .join("");
+}
+
+function escape(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}

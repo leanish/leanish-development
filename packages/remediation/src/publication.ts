@@ -2,7 +2,8 @@
 // own-PR rules; a repository can have several open PRs of a tool (one per topic); the workspace and logger are passed
 // in instead of bump-it's runtime; Dependabot closing is left out; the PR body records the published state;
 // the pre-push journal stores the matching title, body, plan and adaptation count for recovery;
-// adds the current label when publishing, restoring a body, recording state or marking a PR ready.
+// adds the current label when publishing, restoring a body, recording state or marking a PR ready; published text keeps
+// local paths out.
 import { GitHubApiError } from "../../agent-basics/src/github/github-client.ts";
 import type { GitHubClient, GitHubPullRequest } from "../../agent-basics/src/types/clients.ts";
 import type { Logger } from "../../agent-basics/src/types/logger.ts";
@@ -10,6 +11,7 @@ import type { PreparedBranch, WorkingCopy } from "../../agent-basics/src/types/w
 import type { Workspace } from "../../agent-basics/src/working-copy/workspace.ts";
 
 import type { PublicationJournal } from "./journal.ts";
+import { cleanBody, cleanContent, type LocalRoots } from "./publication-text.ts";
 import { isOwnPullRequest, type OwnPullRequests, type PullRequestState, stateOf, withMarker } from "./own-pr.ts";
 
 /**
@@ -33,6 +35,13 @@ export interface PublicationContext {
   readonly workingCopy: WorkingCopy;
   /** Where each push is recorded before the PR's body says so (see journal.ts). */
   readonly journal: PublicationJournal;
+  /** Directories outside the working copy whose paths never reach a PR (see publication-text.ts). */
+  readonly localRoots: ReadonlyArray<string>;
+}
+
+/** Published text keeps the machine out: see publication-text.ts. */
+function rootsOf(context: PublicationContext): LocalRoots {
+  return { workingCopy: [context.workingCopy.path], other: context.localRoots };
 }
 
 /** A PR's title, description and the commit message of the agent's change. */
@@ -74,8 +83,9 @@ export async function clearLeftoverBranch(github: GitHubClient, rules: OwnPullRe
 export async function publishNew(
   context: PublicationContext,
   prepared: PreparedBranch,
-  content: PullRequestContent,
+  agentContent: PullRequestContent,
 ): Promise<GitHubPullRequest | undefined> {
+  const content = cleanContent(agentContent, rootsOf(context));
   if (prepared.remoteHeadSha !== null) throw new Error(`${context.rules.tool}: ${prepared.branch} exists already; update its PR instead`);
   const pushed = await context.workspace.publishBranch(context.workingCopy, prepared, { message: content.commitMessage });
   if (pushed.kind === "unchanged") return undefined;
@@ -94,10 +104,12 @@ export async function publishUpdate(
   context: PublicationContext,
   prepared: PreparedBranch,
   number: number,
-  content: PullRequestContent,
+  agentContent: PullRequestContent,
   adaptations?: number,
 ): Promise<{ readonly pr: GitHubPullRequest; readonly pushed: boolean }> {
   const { github, repo } = context;
+  // Cleaned before the journal records it, so a recovery restores the same text.
+  const content = cleanContent(agentContent, rootsOf(context));
   const remoteHead = existingHead(context, prepared);
   const current = await reReadOwn(context, number, remoteHead);
   const attempts = adaptations ?? stateOf(current.body)?.adaptations ?? 0;
@@ -161,7 +173,7 @@ export async function rewriteText(context: PublicationContext, number: number, e
   const state = stateOf(current.body);
   if (state === undefined) throw new Error(`${current.url}: no recorded state to keep while rewriting its text`);
   // From the body as it is now, so an edit made since the caller read it (an owner's note, say) is kept.
-  const updated = await context.github.updatePullRequest({ repo: context.repo, number, title: current.title, body: withMarker(context.rules, rewrite(current.body), state) });
+  const updated = await context.github.updatePullRequest({ repo: context.repo, number, title: current.title, body: withMarker(context.rules, cleanBody(rewrite(current.body), rootsOf(context)), state) });
   await ensureLabel(context, updated);
   return updated;
 }

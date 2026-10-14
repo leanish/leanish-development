@@ -12,7 +12,7 @@ const WC: WorkingCopy = { projectId: "leanish/widget", path: "/synthetic/leanish
 const CONTENT = { title: "fixing snappy-java", body: "Moves snappy-java to 1.1.10.10.", commitMessage: "moving snappy-java to 1.1.10.10" };
 
 function context(github: FakeGitHub, workspace = new InMemoryWorkspace(), journal = new MemoryJournal()): PublicationContext {
-  return { rules: RULES, github, workspace, logger: new ConsoleLogger({ minLevel: "error" }), repo: "leanish/widget", base: "main", workingCopy: WC, journal };
+  return { rules: RULES, github, workspace, logger: new ConsoleLogger({ minLevel: "error" }), repo: "leanish/widget", base: "main", workingCopy: WC, journal, localRoots: ["/Users/dev"] };
 }
 
 const fresh: PreparedBranch = { branch: "secure-it/2026-10-07-vite", baseSha: BASE_SHA, remoteHeadSha: null, preparedSha: BASE_SHA };
@@ -108,6 +108,25 @@ describe("publication", () => {
     expect(await journal.last("leanish/widget", 7)).toEqual({ head: PUSHED_SHA, base: BASE_SHA,
       publication: { title: CONTENT.title, body: withMarker(RULES, CONTENT.body, { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 }), adaptations: 0 } });
     expect(stateOf(github.prs.get(7)!.body)?.head).toBe(HEAD_SHA);
+  });
+
+  it("publishes, journals and rewrites text with local paths cleaned, so a recovery restores the cleaned text", async () => {
+    const leaky = { title: "fixing snappy-java", body: `Checked with \`GRADLE_USER_HOME=/Users/dev/cache ./gradlew check\` in ${WC.path}/lib.`, commitMessage: `moving snappy-java\n\nin ${WC.path}` };
+    const cleanBody = "Checked with `GRADLE_USER_HOME=<local path> ./gradlew check` in lib.";
+    const github = new FakeGitHub(ownPr());
+    github.fail("updatePullRequest");
+    const journal = new MemoryJournal();
+    const workspace = new InMemoryWorkspace();
+    await expect(publishUpdate(context(github, workspace, journal), existing, 7, leaky)).rejects.toThrow("unexpected response");
+    expect(workspace.publications.at(-1)?.args.message).toBe("moving snappy-java\n\nin .");
+    expect((await journal.last("leanish/widget", 7))?.publication?.body).toBe(withMarker(RULES, cleanBody, { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 }));
+    const fresh2 = new FakeGitHub();
+    await publishNew(context(fresh2), fresh, leaky);
+    expect([...fresh2.prs.values()][0]?.body).toContain(cleanBody);
+    const state = { head: HEAD_SHA, base: BASE_SHA, adaptations: 1 };
+    const rewritten = new FakeGitHub(ownPr({ body: withMarker(RULES, "old note", state) }));
+    await rewriteText(context(rewritten), 7, HEAD_SHA, () => "new note from /Users/dev/state/plan.json");
+    expect(rewritten.prs.get(7)!.body).toContain("new note from <local path>");
   });
 
   it("refuses to publish over a PR that moved or stopped being the tool's", async () => {
