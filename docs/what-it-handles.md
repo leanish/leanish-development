@@ -183,7 +183,7 @@ it. A strictly pinned parent is never moved to carry a fix; the vulnerable
 dependency gets a floor instead. Gradle's own strict constraints on its embedded
 Kotlin (buildscript and settings classpaths) don't block fixes elsewhere.
 Neither tool changes a strict pin: verification refuses an edit that changes a
-strict-version line (`strictly(...)` and its Groovy and catalog forms) in a build, settings or catalog file.
+line with `strictly` in its code (not in a string or a comment) in a build, settings or catalog file.
 
 ### What bump-it updates
 

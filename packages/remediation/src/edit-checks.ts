@@ -118,7 +118,7 @@ function usesStrictly(line: string): boolean {
 }
 
 /**
- * The Gradle build, settings and catalog files where the edit changed a strict-version line: a strict version is its
+ * The Gradle build, settings and catalog files where the edit changed a line with `strictly` in its code: a strict version is its
  * owner's deliberate pin, which no plan moves. A line counts when `strictly` is in its code (see `usesStrictly`).
  * Each changed file's strict lines must stay the same, in order and byte for byte. A textual guard, so it has
  * limits: a pin written across lines, or a strict line reading a variable the edit changed, escapes it, and moving
