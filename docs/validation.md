@@ -2,8 +2,7 @@
 
 Each section is dated with when its results were observed. The evidence supplements the automated
 tests; it doesn't replace verification of a new plan or its current-head CI. It uses PAT mode (GitHub
-App mode is deferred). Every run recorded here predates Claude Code as an agent option: where an
-agent ran, it was Codex.
+App mode is deferred). Where an agent ran, it was Codex, except in the section on Claude Code.
 
 ## Gradle wrapper generation (E2) — 2026-10-07
 
@@ -80,6 +79,25 @@ strict vulnerable version, a strict parent, a strict security floor, and an inac
   the configurations a change touches; the second run floored kotlin-stdlib (its parent okhttp is strict).
 - No PR changed a `strictly` line; CI passed on all three PRs.
 
+## Claude Code as the agent — 2026-10-14
+
+Both tools ran with `codingAgent: claude-code` (`claude-haiku-5-5`, effort `high`) on
+[supply-chain_TEST_strict](https://github.com/leanish/supply-chain_TEST_strict), from the branch that adds it.
+
+- **bump-it** published the routine ([#4](https://github.com/leanish/supply-chain_TEST_strict/pull/4)): the plain
+  declarations and the wrapper moved, every strict pin was left alone, and the PR text named its checks with their
+  results and no local paths.
+- **secure-it**, first run: the agent declared the new okio, jackson-core and kotlin-stdlib floors with
+  `strictly(...)`, and verification refused both units. The skills now say floors use a plain version, never `strictly`.
+- **secure-it**, second run: the floor was plain, but its `because(...)` said "okhttp is strictly pinned", and the
+  check refused any line containing the word. It now looks for `strictly` in a line's code only, outside strings and
+  comments.
+- **secure-it**, third run: published the security batch with its floors
+  ([#5](https://github.com/leanish/supply-chain_TEST_strict/pull/5)) and the okio floor
+  ([#6](https://github.com/leanish/supply-chain_TEST_strict/pull/6)), and blocked the four strictly pinned
+  coordinates as before.
+- CI passed on all three PRs.
+
 ## Fixture coverage
 
 What the fixture repositories exercise, by evidence state. Case numbers refer to each fixture's `EXPECTED.md`.
@@ -120,8 +138,8 @@ What the fixture repositories exercise, by evidence state. Case numbers refer to
 | bump-it major cap and deferral | — | unit tests only |
 | Human pushes left alone; journal recovery; publication races | — | unit tests only |
 | Local advisory cache | — | unit tests only (real passes use it) |
-| Claude Code as the coding agent | — | unit tests only (no fixture run recorded here) |
-| Local paths kept out of published PR text | — | unit tests only (no fixture run recorded here) |
+| Claude Code as the coding agent | TEST_strict | real tool run (see above) |
+| Local paths kept out of published PR text | TEST_strict | real tool run: no local path in the three PRs; the cleanup itself is unit-tested |
 
 ## Automated checks and skips
 
