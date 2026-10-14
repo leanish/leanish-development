@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- The agent's git commands ignore the system's git config (`GIT_CONFIG_NOSYSTEM`), as the
+  tool's own already did: a system credential helper, such as Homebrew's `osxkeychain`, could
+  otherwise hand them the developer's own GitHub credentials.
+
 ## 0.5.0 - 2026-10-14
 
 ### Added
