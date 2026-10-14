@@ -249,7 +249,7 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     const usage = usages[0]!;
     expect(usage).toMatchObject({ measurement: "complete", model: "claude-sonnet-x", providerCostUsd: 0.0123, gaps: [] });
     const sonnet = usage.models.find((model) => model.model === "claude-sonnet-x")!;
-    // The output the events didn't count yet goes to the largest request, which then isn't exact.
+    // What the terminal totals add (here only output the events hadn't counted) goes to the largest request, now inexact.
     expect(sonnet.requests).toEqual([
       { tokens: { input: 125, cachedInput: 100, cacheWriteInput: 20, output: 4, reasoningOutput: 0, total: 129 }, exact: true },
       { tokens: { input: 132, cachedInput: 130, cacheWriteInput: 0, output: 26, reasoningOutput: 5, total: 158 }, exact: false },

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { ClaudeStreamCollector } from "../src/skill/claude-code-stream.ts";
+import { estimateApiCost } from "../src/usage/api-cost.ts";
 
 const feed = (events: ReadonlyArray<unknown>, raw: ReadonlyArray<string> = []) => {
   const collector = new ClaudeStreamCollector();
@@ -65,5 +66,14 @@ describe("ClaudeStreamCollector", () => {
       { tokens: expect.objectContaining({ input: 10, output: 1 }), exact: true },
     ]);
     expect(usage.measurement).toBe("complete");
+  });
+
+  it("leaves a long-context price unknown when the remainder mixes unseen requests with uncounted output", () => {
+    const usage = feed([message("a", { input_tokens: 300_000, output_tokens: 1 }), result({ m: { inputTokens: 300_010, outputTokens: 102 } })]).usage();
+    expect(usage.models[0]?.requests).toEqual([{ tokens: expect.objectContaining({ input: 300_010, output: 102 }), exact: false }]);
+    const price = { inputPerMTok: 1, cachedInputPerMTok: 0.1, cacheWritePerMTok: 1.25, outputPerMTok: 10, basis: "test", source: "test", asOf: "2026-10-14",
+      longContextThresholdTokens: 200_000, longContext: { inputPerMTok: 2, cachedInputPerMTok: 0.2, cacheWritePerMTok: 2.5, outputPerMTok: 20 } };
+    const cost = estimateApiCost({ ...usage, codingAgent: "claude-code", durationMs: 1, synthetic: false }, new Map([["m", price]]));
+    expect(cost.usd).toBeNull();
   });
 });

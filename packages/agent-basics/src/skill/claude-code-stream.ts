@@ -228,15 +228,16 @@ function maxTokens(left: TokenUsage, right: TokenUsage): TokenUsage {
 }
 
 /**
- * Adds what the terminal totals hold beyond the streamed requests. Output alone (the events stop counting before a
- * message ends) belongs to one of those requests, whose input decides its price tier, so it's folded into the largest
- * one, marked inexact: a price over the long-context threshold then becomes unknown instead of the ordinary tier's.
- * Anything with input (sub-agents', background requests) is a request of its own, also inexact.
+ * Adds what the terminal totals hold beyond the streamed requests. It can't be split safely: part of it is output the
+ * events stopped counting before a message ended, which belongs to a streamed request whose input decides its price
+ * tier, and part may be requests never streamed (sub-agents', background ones). So it's folded into the largest
+ * streamed request, marked inexact: a price over the long-context threshold then becomes unknown instead of the
+ * ordinary tier's. With no streamed request it's one inexact request of its own.
  */
 function withRemainder(requests: ReadonlyArray<RequestUsage>, remainder: TokenUsage): RequestUsage[] {
   if (remainder.total === 0) return [...requests];
   const largest = requests.reduce<number>((best, request, i) => (best < 0 || request.tokens.input > requests[best]!.tokens.input ? i : best), -1);
-  if (remainder.input > 0 || largest < 0) return [...requests, { tokens: remainder, exact: false }];
+  if (largest < 0) return [{ tokens: remainder, exact: false }];
   return requests.map((request, i) => (i === largest ? { tokens: sumTokens([request.tokens, remainder]), exact: false } : request));
 }
 
