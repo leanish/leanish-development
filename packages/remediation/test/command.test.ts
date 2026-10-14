@@ -204,7 +204,7 @@ describe("runToolCommand", () => {
       },
     });
     await runToolCommand(handlers(async (context) => { await context.agent({ entrypoint: "fix", input: { package: "lib" } }); return {}; }), ["run", "leanish/widget", "--config", "/config/agent.yaml"], fake);
-    expect(built).toEqual([{ codingAgent: agent, readDenied: expect.arrayContaining([expect.stringMatching(/\.ssh$|Keychains$/)]), cache: "/tmp/tool-cache" }]);
+    expect(built).toEqual([{ codingAgent: agent, readDenied: expect.arrayContaining([expect.stringMatching(/auth\.json$/)]), cache: "/tmp/tool-cache" }]);
     expect(efforts).toEqual(["high"]);
   });
 

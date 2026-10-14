@@ -2,6 +2,7 @@
 // Local changes: imports this package's modules from `../src/` instead of `../../src/`; stub binaries speak stream-json;
 // write access, usage and failure reasons are covered.
 import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -162,7 +163,7 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     const settings = settingsOf(text);
     expect(settings.sandbox).toMatchObject({ enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false });
     expect(settings.sandbox.filesystem.denyWrite).toEqual([workingCopy.gitDir]);
-    expect(settings.sandbox.filesystem.allowWrite).toEqual(expect.arrayContaining([cache, "/private/tmp"]));
+    expect(settings.sandbox.filesystem.allowWrite).toEqual(expect.arrayContaining([cache, realpathSync("/tmp")]));
     expect(settings.sandbox.network).toEqual({ allowedDomains: ["*"], allowLocalBinding: true });
     expect(settings.sandbox.enableWeakerNetworkIsolation).toBe(true);
     expect(settings.permissions.allow).toEqual(["Bash"]);

@@ -156,7 +156,7 @@ export function spawnCapture(options: SpawnCaptureOptions): Promise<SkillInvocat
       pendingLine = lines.pop() ?? "";
       for (const line of lines) {
         if (discarding) discarding = false;
-        else emitLine(line);
+        else emitLine(line.length > maxLine ? line.slice(0, maxLine) : line);
       }
       if (pendingLine.length > maxLine) {
         if (!discarding) emitLine(pendingLine.slice(0, maxLine));
