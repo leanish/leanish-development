@@ -101,7 +101,7 @@ Lambda), and the target-credentials resolver (the tools pass the agent's read-on
 | `test/run-skill.test.ts` | `core/runtime/test/unit/run-skill-usage.test.ts`, `run-skill-invocation.test.ts` | adapted | the same cases against `SkillContext`/`SkillCall` |
 | `test/schema-subset.test.ts` | `core/runtime/test/unit/schema-subset.test.ts` | copied | imports this package's modules from `../src/` instead of `../../src/`; regression cases for nullable-object types and restricted conditional required objects, with other unions/conditionals still rejected |
 | `test/skill-loader.test.ts` | `core/runtime/test/unit/skill-loader.test.ts` | copied | imports this package's modules from `../src/` instead of `../../src/` |
-| `test/spawn-capture-env.test.ts` | `core/runtime/test/unit/spawn-capture-env.test.ts` | copied | imports this package's modules from `../src/` instead of `../../src/`; the per-line stdout callback covered |
+| `test/spawn-capture-env.test.ts` | `core/runtime/test/unit/spawn-capture-env.test.ts` | copied | imports this package's modules from `../src/` instead of `../../src/`; the per-line stdout callback covered; timeout tests synchronize startup and assert process state |
 | `test/stage-skills.test.ts` | `core/runtime/test/unit/stage-skills.test.ts` | copied | imports this package's modules from `../src/` instead of `../../src/` |
 | `test/synthesize-fixture.test.ts` | `core/runtime/test/unit/synthesize-fixture.test.ts` | copied | imports this package's modules from `../src/` instead of `../../src/` |
 | `test/usage-totals.test.ts` | `core/runtime/test/unit/usage-totals.test.ts` | copied | imports this package's modules from `../src/` instead of `../../src/` |
