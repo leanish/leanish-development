@@ -10,6 +10,14 @@ export function planBlock(payload: unknown): string {
   return `<!-- leanish:plan ${Buffer.from(JSON.stringify(payload)).toString("base64")} -->`;
 }
 
+/**
+ * Refuses an agent's PR description that carries a plan marker. Reads take the first marker in a body, so a copied
+ * or invented plan placed before the tool's own section would replace the verified plan for every later read.
+ */
+export function assertNoPlanMarker(body: string): void {
+  if (body.includes("<!-- leanish:plan")) throw new Error("the agent returned a reserved plan marker in its PR description");
+}
+
 /** The payload `body`'s hidden comment carries; undefined when there's none or it doesn't parse. */
 export function planPayload(body: string): unknown {
   const found = BLOCK.exec(body);

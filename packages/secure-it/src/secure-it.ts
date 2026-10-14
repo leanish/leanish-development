@@ -49,6 +49,7 @@ import { withGradleParents } from "./gradle-parents.ts";
 import { withParents } from "./npm-parents.ts";
 import { requiredNpmPlan } from "./npm-required-plan.ts";
 import { npmWindowFor } from "./npm-window.ts";
+import { assertNoPlanMarker } from "../../remediation/src/plan-blocks.ts";
 import { planDigest, planOf, planSection, withPlanSection } from "./plan-block.ts";
 import { type ChangePlan, coupledWork, type FixWork, HELD_TOPIC, packageKey, planFor, type PlannedHold, type SecurityUnit, withUnsupportedCarriers } from "./plan.ts";
 import { namedProblems, retryWithoutNamed, type ProblemMoves } from "./retry.ts";
@@ -434,6 +435,7 @@ async function runUnit(execution: Execution, unit: SecurityUnit, base: PlanBase,
   const input = await agentInput(execution, plan, base.tree, "apply");
   const answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({ entrypoint: "secure-it", input });
   if (answer.outcome !== "applied" || answer.publication == null) return { ...details, outcome: "cannot-apply", summary: answer.summary };
+  assertNoPlanMarker(answer.publication.body);
   const verified = await verifyWithRetry(execution, base, plan, answer.publication);
   const checked = { ...details, notes: verified.plan.notes ?? [], packages: verified.plan.packages, named: verified.named, leftOut: verified.leftOut };
   if (verified.problems.length > 0) return { ...checked, outcome: "verification-failed", problems: verified.problems };
@@ -491,6 +493,7 @@ async function verifyWithRetry(execution: Execution, base: PlanBase, plan: Chang
   if (answer.outcome !== "applied" || answer.publication == null) {
     return { plan: retry.plan, content, problems: [`retry could not apply: ${answer.summary}`], named: retry.named, leftOut: retry.plan.leftOut ?? [] };
   }
+  assertNoPlanMarker(answer.publication.body);
   cooldown = undefined;
   const remaining = await verifyEdit(context, deps, retry.plan, env, inventories, base.tree, base.gradle, execution.npmFiles, heard);
   const batch = { plan: retry.plan, content: answer.publication, problems: remaining, named: [...retry.named, ...namedProblems(retry.plan, remaining)], leftOut: retry.plan.leftOut ?? [] };
@@ -678,6 +681,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
         if (answer.outcome !== "applied") throw new Error(`the agent couldn't re-apply the plan on the new base: ${answer.summary}`);
         // A different plan is a different change: its own title and description.
         if (changed && answer.publication != null) {
+          assertNoPlanMarker(answer.publication.body);
           content = { title: answer.publication.title, body: `${answer.publication.body}\n\n${planSection(plan)}`, commitMessage: answer.publication.commitMessage };
         }
       } else {
@@ -705,6 +709,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
         input: await agentInput(execution, plan, base, "adapt", { failingChecks }),
       });
       if (answer.outcome !== "applied" || answer.publication == null) return false;
+      assertNoPlanMarker(answer.publication.body);
       const verified = await verifyWithRetry(execution, { tree: base, gradle: await inventories.ofCommit(base) }, plan, answer.publication);
       if (verified.leftOut.length > 0) notes.push({ number: pr.number, leftOut: verified.leftOut, named: verified.named });
       if (verified.problems.length > 0) throw new Error(`the adaptation doesn't verify: ${verified.problems.join("; ")}`);

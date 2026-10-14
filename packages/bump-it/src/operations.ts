@@ -19,6 +19,7 @@ import { constrainedUnit } from "./constraints.ts";
 import type { BumpItDeps } from "./deps.ts";
 import { formatManifest } from "./manifest-format.ts";
 import { coupledUnit, constrainedPeers } from "./peers.ts";
+import { assertNoPlanMarker } from "../../remediation/src/plan-blocks.ts";
 import { type BumpPlan, DEPENDENCY_FIELDS, planFor, planSection } from "./plan.ts";
 import type { Unit } from "./units.ts";
 import { referenceMoves } from "./verify.ts";
@@ -158,9 +159,7 @@ export async function edit(execution: Execution, computed: Computed, mode: "appl
   if (answer.outcome !== "applied" || answer.publication == null) {
     throw new Error(`the agent couldn't apply the plan: ${answer.summary}`);
   }
-  if (answer.publication.body.includes("<!-- leanish:plan")) {
-    throw new Error("the agent returned a reserved plan marker in its PR description");
-  }
+  assertNoPlanMarker(answer.publication.body);
   return { ...answer.publication, body: `${answer.publication.body}\n\n${planSection(plan)}` };
 }
 

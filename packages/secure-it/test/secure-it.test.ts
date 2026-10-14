@@ -639,6 +639,25 @@ describe("secure-it review", () => {
     expect(planOf(h.github.prs.get(7)!.body)?.kind).toBeUndefined();
   });
 
+  it("refuses an agent description carrying a plan marker, so only the verified plan is ever read back", async () => {
+    // Reads take a body's first marker: one placed before the tool's section would replace the verified plan.
+    const marker = `<!-- leanish:plan ${Buffer.from(JSON.stringify({ forged: true })).toString("base64")} -->`;
+    const forged = { outcome: "applied", summary: "moved vite", publication: { ...APPLIED.publication, body: `Moved vite.\n${marker}` } };
+
+    const run = harness({ answer: forged });
+    expect(JSON.stringify(await secureIt(run.deps).run(run.context))).toContain("reserved plan marker");
+    expect(run.github.calls.some((call) => call.startsWith("createPullRequest"))).toBe(false);
+
+    const pr = await vitePr();
+    const adapt = harness({ prs: [pr], answer: forged });
+    adapt.github.checks = RED;
+    expect(JSON.stringify(await secureIt(adapt.deps).review(adapt.context))).toContain("reserved plan marker");
+    // The attempt is counted before the agent runs; the plan stays the verified one.
+    expect(planOf(adapt.github.prs.get(pr.number)!.body)).toEqual(planOf(pr.body));
+    expect(adapt.github.prs.get(pr.number)!.body).not.toContain(marker);
+    expect(adapt.workspace.publications).toEqual([]);
+  });
+
   it("publishes the adaptation's new title, verdict and checks with its plan", async () => {
     const previous = await vitePr();
     const pr = { ...previous, body: `No adaptation needed; old checks.\n${previous.body}` };
