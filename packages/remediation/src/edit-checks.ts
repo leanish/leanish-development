@@ -118,6 +118,8 @@ function lineCode(line: string, state: CodeState, path: string): string {
         const end = interpolationEnd(line, i + 2);
         // One that doesn't close on its line could hide a pin on the next ones.
         if (end === undefined) throw new Error("a string interpolation spanning lines can't be verified");
+        // Comments and escapes inside one could move where it seems to close: not read, so refused.
+        if (/\/\*|\/\/|\\/.test(line.slice(i + 2, end))) throw new Error("a string interpolation with comments or escapes can't be verified");
         if (/\bstrictly\b/.test(line.slice(i + 2, end))) {
           throw new Error("a strictly(...) inside a string interpolation can't be verified");
         }
