@@ -1,8 +1,17 @@
 // Copied from leanish/leanish-development core/runtime/src/skill/claude-code-runner.ts at c6282df; see PROVENANCE.md.
+// Local changes: write access in Claude Code's sandbox, usage and failure reasons from its stream-json events.
+import { randomUUID } from "node:crypto";
+import { statSync } from "node:fs";
+import { mkdir, realpath, rm, rmdir, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
 
 import { deliverSkillUsage, type SkillUsage, ZERO_TOKENS } from "../usage/skill-usage.ts";
-import { buildSlashCommandPrompt } from "./slash-command-prompt.ts";
+import { ClaudeStreamCollector } from "./claude-code-stream.ts";
+import { githubToolsEnv } from "./codex-command-env.ts";
+import { assertAbsolute, assertOutsideDenied } from "./codex-permissions.ts";
+import { shellIsolationEnv, writeMountGitDirs } from "./codex-runner.ts";
 import { spawnCapture } from "./spawn-capture.ts";
 import { stageSkills } from "./stage-skills.ts";
 import type {
@@ -15,22 +24,40 @@ import { resolveWorkingCopyMount } from "./wc-mount.ts";
 /**
  * Coding-agent runner that drives the `claude` (Claude Code) CLI via
  * subprocess. Per ADR-0002, skills are staged into a temp directory and
- * mounted via `--plugin-dir`. The rendered slash-command body is sent as
- * the print-mode prompt.
+ * mounted via `--plugin-dir`; the prompt invokes the entrypoint by its plugin
+ * namespace (`/agent-runtime-staged:<name>`) followed by the rendered YAML.
  *
- * Multi-working-copy mount: the first working copy becomes the spawn `cwd`;
- * every other working copy is passed as `--add-dir <path>` so the
- * subprocess can read and edit across all of them. (Claude Code's
- * `--add-dir` flag is the canonical mechanism for additional working
- * directories.)
+ * Isolation mirrors the Codex runner's profile (`codex-permissions.ts`) with
+ * Claude Code's own mechanisms, all passed inline (`--settings <json>`), with
+ * no user, project or local settings loaded (`--setting-sources ""`), no
+ * CLAUDE.md and no auto memory:
+ *   - Bash runs in the sandbox, which must be available (`failIfUnavailable`),
+ *     with no unsandboxed fallback and no approval prompts (allowed whole, as
+ *     Codex's commands are); `readDenied` is denied to it and, as
+ *     `Read(...)` rules (exact for files, recursive for directories), to the
+ *     file tools too;
+ *   - `write`: the file tools may edit only inside the working copies
+ *     (`acceptEdits`; every other prompt is denied, `--permission-prompts
+ *     none`), Bash may also write the temp dirs and `writableRoots`, and each
+ *     working copy's git metadata (outside the working tree) is denied to both;
+ *     network: any host, through the sandbox's proxy;
+ *     macOS's certificate trust service stays reachable from the sandbox
+ *     (`enableWeakerNetworkIsolation`): without it Go tools such as `gh` can't
+ *     verify TLS and Node floods its output with trust-settings errors;
+ *   - `read-only`: no network, the working copies are denied to Bash's writes
+ *     and edits need a prompt that never comes (Bash keeps the sandbox's own
+ *     temp dir).
+ * No hooks run (`disableAllHooks`), whether from settings or from a skill, except those an administrator's managed
+ * policy enforces, which no inline setting can turn off.
+ * The sandbox's proxy announces itself in `HTTPS_PROXY` with credentials the
+ * JVM doesn't read from there, so the commands' zsh gets a `.zshenv` (in the
+ * staged `ZDOTDIR` that also keeps the user's startup files away) turning it
+ * into proxy system properties.
  *
- * `effort` plumbing: Claude Code exposes `--effort <low|medium|high|xhigh|max>`.
- * Our internal `Effort` type is `minimal | low | medium | high | xhigh`;
- * we map `minimal → low` (the CLI rejects `minimal`) and pass the rest
- * through verbatim. An operator who wants `max` can set
- * `descriptor.effort = "xhigh"` and rely on `effortLevelMap` if the CLI
- * surface changes; the mapping is documented inline so the contract
- * isn't a hidden table.
+ * Usage comes from the stream-json events, read as they arrive
+ * (`claude-code-stream.ts`), so it survives a failure or timeout: tokens per
+ * request, the CLI's own list-price cost estimate (`providerCostUsd`) and the
+ * account's plan windows when the CLI reports them.
  */
 export interface ClaudeCodeRunnerOptions {
   /** Override the `claude` binary path. Defaults to `"claude"` (PATH lookup). */
@@ -43,10 +70,17 @@ export interface ClaudeCodeRunnerOptions {
   readonly env?: Readonly<Record<string, string>>;
   /** stdout / stderr capture cap, in bytes. Defaults to 8 MiB. */
   readonly captureCapBytes?: number;
+  /** Extra directories a `write` invocation may write to, besides its working copies and the temp dirs. */
+  readonly writableRoots?: ReadonlyArray<string>;
+  /** Build-tool cache: `GRADLE_USER_HOME` and `npm_config_cache` point inside it, and a `write` run may write to it. */
+  readonly buildCacheRoot?: string;
+  /** Absolute paths the agent may not read, through Bash or the file tools. */
+  readonly readDenied?: ReadonlyArray<string>;
 }
 
 const DEFAULT_TIMEOUT_MS = 14 * 60 * 1000;
 const DEFAULT_CAPTURE_CAP_BYTES = 8 * 1024 * 1024;
+const PLUGIN_NAME = "agent-runtime-staged";
 
 export class ClaudeCodeRunner implements CodingAgentRunner {
   readonly codingAgent = "claude-code";
@@ -56,6 +90,9 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
   readonly #stagingParentDir: string | undefined;
   readonly #env: Readonly<Record<string, string>>;
   readonly #captureCapBytes: number;
+  readonly #writableRoots: ReadonlyArray<string>;
+  readonly #cacheEnv: Readonly<Record<string, string>>;
+  readonly #readDenied: ReadonlyArray<string>;
 
   constructor(options: ClaudeCodeRunnerOptions = {}) {
     this.#bin = options.bin ?? "claude";
@@ -63,42 +100,86 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
     this.#stagingParentDir = options.stagingParentDir;
     this.#env = options.env ?? {};
     this.#captureCapBytes = options.captureCapBytes ?? DEFAULT_CAPTURE_CAP_BYTES;
+    const cacheRoot = options.buildCacheRoot;
+    this.#writableRoots = [...(options.writableRoots ?? []), ...(cacheRoot !== undefined ? [cacheRoot] : [])];
+    assertAbsolute(this.#writableRoots, "writableRoots/buildCacheRoot");
+    this.#cacheEnv =
+      cacheRoot === undefined ? {} : { GRADLE_USER_HOME: join(cacheRoot, "gradle"), npm_config_cache: join(cacheRoot, "npm") };
+    this.#readDenied = options.readDenied ?? [];
+    assertAbsolute(this.#readDenied, "readDenied");
+    assertLiteral(this.#readDenied, "readDenied");
+    assertOutsideDenied(this.#writableRoots, this.#readDenied, "writable root");
   }
 
-  /**
-   * Usage: the duration and requested model only. Claude Code's token counts
-   * aren't read yet, so a run that reached the CLI reports no tokens, cost or
-   * plan usage (a gap); one that failed before it reports zero.
-   */
   async run(invocation: SkillInvocation): Promise<SkillInvocationResult> {
     const startedAt = performance.now();
+    const collector = new ClaudeStreamCollector();
     let spawned = false;
     try {
-      return await this.#run(invocation, () => {
+      return await this.#run(invocation, collector, () => {
         spawned = true;
       });
     } finally {
-      deliverSkillUsage(invocation.onUsage, claudeCodeUsage(invocation, Math.round(performance.now() - startedAt), spawned));
+      deliverSkillUsage(invocation.onUsage, claudeCodeUsage(invocation, Math.round(performance.now() - startedAt), spawned, collector));
     }
   }
 
-  async #run(invocation: SkillInvocation, onSpawn: () => void): Promise<SkillInvocationResult> {
-    if (invocation.access === "write") {
-      // `--print` grants no tool permissions, so every edit would be denied
-      // silently; fail before staging instead.
-      throw new Error(
-        "ClaudeCodeRunner: access 'write' isn't supported yet (the claude-code runner grants no write permissions) — use codingAgent: codex, or access: read-only",
-      );
+  async #run(invocation: SkillInvocation, collector: ClaudeStreamCollector, onSpawn: () => void): Promise<SkillInvocationResult> {
+    // The session's saved outputs and the login are found, opened and removed under ~/.claude; a relocated config dir
+    // would move them where none of that reaches.
+    const configDir = [process.env, this.#env, invocation.env ?? {}].map((env) => nonEmpty(env["CLAUDE_CONFIG_DIR"])).find((dir) => dir !== undefined);
+    if (configDir !== undefined) throw new Error(`ClaudeCodeRunner: CLAUDE_CONFIG_DIR ('${configDir}') isn't supported; unset it so the CLI uses ~/.claude`);
+    const access = invocation.access ?? "read-only";
+    const workingCopies = invocation.workingCopies.map((wc) => wc.path);
+    assertOutsideDenied(workingCopies, this.#readDenied, "working copy");
+    const gitDirs = access === "write" ? await writeMountGitDirs(invocation.workingCopies) : [];
+    assertLiteral(gitDirs, "a working copy's git metadata");
+    if (access === "write") {
+      for (const root of this.#writableRoots) await mkdir(root, { recursive: true, mode: 0o700 });
     }
     const staged = await stageSkills({
       entrypoint: invocation.entrypoint,
       supportSkills: invocation.supportSkills,
+      pluginName: PLUGIN_NAME,
       ...(this.#stagingParentDir !== undefined ? { parentDir: this.#stagingParentDir } : {}),
     });
+    const mount = resolveWorkingCopyMount(invocation.workingCopies);
+    const sessionId = randomUUID();
+    const sessionDir = join(homedir(), ".claude", "projects", (await realpath(mount.cwd).catch(() => mount.cwd)).replace(/[^A-Za-z0-9]/g, "-"), sessionId);
+    let failed = false;
     try {
-      const prompt = buildSlashCommandPrompt(invocation);
-      const mount = resolveWorkingCopyMount(invocation.workingCopies);
-      const args: string[] = ["--print", "--plugin-dir", staged.dir];
+      const shell = await shellIsolationEnv(staged.dir);
+      await writeFile(join(shell["ZDOTDIR"]!, ".zshenv"), PROXY_SHIM);
+      const githubEnv = nonEmpty({ ...this.#env, ...invocation.env }["GH_TOKEN"]) !== undefined ? await githubToolsEnv(staged.dir) : {};
+      const settings = claudeSettings({
+        access,
+        workingCopies,
+        gitDirs,
+        writableRoots: access === "write" ? [...this.#writableRoots, ...(await tempDirs())] : [],
+        readDenied: this.#readDenied,
+        home: homedir(),
+        sessionDir,
+      });
+      const args: string[] = [
+        "--print",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--session-id",
+        sessionId,
+        "--no-session-persistence",
+        "--setting-sources",
+        "",
+        "--strict-mcp-config",
+        "--permission-mode",
+        access === "write" ? "acceptEdits" : "default",
+        "--permission-prompts",
+        "none",
+        "--plugin-dir",
+        staged.dir,
+        "--settings",
+        JSON.stringify(settings),
+      ];
       for (const dir of mount.addDirs) {
         args.push("--add-dir", dir);
       }
@@ -108,49 +189,239 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
       if (invocation.effort !== undefined) {
         args.push("--effort", mapEffortForClaudeCli(invocation.effort));
       }
-      args.push(prompt);
+      args.push(slashCommandPrompt(invocation));
 
       onSpawn();
-      return await spawnCapture({
-        bin: this.#bin,
-        args,
-        cwd: mount.cwd,
-        // Per-invocation env (target-project credentials) wins over the
-        // runner's configured base.
-        env: { ...this.#env, ...invocation.env },
-        timeoutMs: this.#timeoutMs,
-        captureCapBytes: this.#captureCapBytes,
-        label: "ClaudeCodeRunner",
-        ...(invocation.secrets !== undefined ? { secrets: invocation.secrets } : {}),
-      });
+      let stderrTail: string | undefined;
+      try {
+        ({ stderrTail } = await spawnCapture({
+          bin: this.#bin,
+          args,
+          cwd: mount.cwd,
+          // Per-invocation env (target-project credentials) wins over the runner's configured base; the cache
+          // routing, shell isolation and the CLI's own switches go last, so nothing may shadow them.
+          env: {
+            ...this.#env,
+            ...invocation.env,
+            ...this.#cacheEnv,
+            ...shell,
+            ...githubEnv,
+            CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+            DISABLE_AUTOUPDATER: "1",
+          },
+          timeoutMs: this.#timeoutMs,
+          captureCapBytes: this.#captureCapBytes,
+          label: "ClaudeCodeRunner",
+          scrubAmbientCredentials: true,
+          onStdoutLine: (line) => collector.accept(line),
+          ...(invocation.secrets !== undefined ? { secrets: invocation.secrets } : {}),
+        }));
+      } catch (err) {
+        // The CLI reports why a run failed (a plan limit, an execution error) in its result event on stdout, which a
+        // failed process's message (its stderr tail) doesn't carry.
+        // Scrubbed before it's cut short: a cut could split a credential the scrub would no longer recognise.
+        const reason = scrubProxyCredentials(collector.answer?.text ?? "");
+        const detail = reason === "" ? "" : `; the CLI reported: ${reason.slice(-2000)}`;
+        throw new Error(`${scrubProxyCredentials((err as Error).message)}${detail}`);
+      }
+      const answer = collector.answer;
+      if (answer === undefined) throw new Error("ClaudeCodeRunner: the CLI ended without a result event");
+      if (answer.isError) {
+        throw new Error(`ClaudeCodeRunner: the run ended with ${answer.subtype}: ${scrubProxyCredentials(answer.text).slice(-2000)}`);
+      }
+      const model = collector.model;
+      return {
+        responseText: scrubProxyCredentials(answer.text),
+        ...(stderrTail !== undefined ? { stderrTail: scrubProxyCredentials(stderrTail) } : {}),
+        ...(model !== undefined && model !== invocation.model ? { model } : {}),
+      };
+    } catch (err) {
+      failed = true;
+      throw err;
     } finally {
-      await staged.cleanup();
+      // Each step runs whatever the others do. A step that fails fails a run that had succeeded, saying what was left
+      // behind; it never replaces the run's own failure.
+      const leftBehind: string[] = [];
+      // The session's saved outputs (written despite --no-session-persistence) mustn't outlive it.
+      await rm(sessionDir, { recursive: true, force: true }).catch((err: Error) => leftBehind.push(`the session's saved outputs (${err.message})`));
+      // The working copy's project dir, once no session is left in it; another session may still be using it.
+      await rmdir(dirname(sessionDir)).catch(() => undefined);
+      await staged.cleanup().catch((err: Error) => leftBehind.push(`the staged skills and shell (${err.message})`));
+      if (leftBehind.length > 0 && !failed) throw new Error(`ClaudeCodeRunner: the run ended, but cleaning up failed: ${leftBehind.join("; ")}`);
     }
   }
 }
 
-function claudeCodeUsage(invocation: SkillInvocation, durationMs: number, spawned: boolean): SkillUsage {
+export interface ClaudeSettingsRequest {
+  readonly access: "read-only" | "write";
+  readonly workingCopies: ReadonlyArray<string>;
+  readonly gitDirs: ReadonlyArray<string>;
+  /** Bash's writable roots besides the working copies (write runs only). */
+  readonly writableRoots: ReadonlyArray<string>;
+  readonly readDenied: ReadonlyArray<string>;
+  readonly home: string;
+  /**
+   * Where Claude Code keeps this session's long command outputs (`~/.claude/projects/<cwd slug>/<session id>`): it shows
+   * the model their path, so Bash may read that one directory even when `~/.claude` is denied.
+   */
+  readonly sessionDir: string;
+}
+
+/**
+ * Claude Code tools the agent never gets. Codex's runs have none of them, and an unanswered prompt shouldn't be the
+ * only thing standing in their way: publishing, messaging, scheduling and web access reach past the working copies;
+ * worktrees move the session out of its working copy (and its saved outputs out of the session dir); other sessions
+ * and background monitors are outside the call; sub-agents may pick their own model and effort.
+ */
+export const DENIED_TOOLS = [
+  "Artifact", "ArtifactComments", "ArtifactData", "ShareOnboardingGuide", "DesignSync", "PushNotification", "SendMessage",
+  "RemoteTrigger", "CronCreate", "CronDelete", "ScheduleWakeup", "Workflow", "WebFetch", "WebSearch",
+  "EnterWorktree", "ExitWorktree", "ListAgents", "Monitor", "Task", "Agent",
+] as const;
+
+/** The inline settings of one run; see the class comment. Exported for tests. */
+export function claudeSettings(request: ClaudeSettingsRequest): Record<string, unknown> {
+  const write = request.access === "write";
+  // The file tools can't read outside the working copies anyway (that needs a prompt, and none is answered); an explicit
+  // `~/.claude` rule would also stop them from reading the session's saved outputs, so it's left to that default.
+  const claudeHome = join(request.home, ".claude");
+  const opensSession = request.readDenied.includes(claudeHome);
+  return {
+    sandbox: {
+      enabled: true,
+      failIfUnavailable: true,
+      allowUnsandboxedCommands: false,
+      autoAllowBashIfSandboxed: true,
+      filesystem: {
+        allowWrite: write ? [...request.writableRoots] : [],
+        denyWrite: write ? [...request.gitDirs] : [...request.workingCopies],
+        denyRead: [...request.readDenied],
+        ...(opensSession ? { allowRead: [request.sessionDir] } : {}),
+      },
+      network: write ? { allowedDomains: ["*"], allowLocalBinding: true } : { allowedDomains: [] },
+      // Lets sandboxed commands reach macOS's trust service, which `gh` (Go) and Node need to verify TLS. It is a possible
+      // exfiltration path, and only write runs, which already reach any host, get it.
+      enableWeakerNetworkIsolation: write,
+    },
+    permissions: {
+      // Every command runs in the sandbox (no unsandboxed fallback), as Codex runs every command in its own: without
+      // this, Claude Code still asks about commands it can't analyse statically (`echo "$?"`), and nobody answers.
+      allow: ["Bash"],
+      deny: [
+        ...request.readDenied.filter((path) => path !== claudeHome).flatMap(readRules),
+        ...request.gitDirs.map((dir) => `Edit(/${dir}/**)`),
+        ...DENIED_TOOLS,
+      ],
+    },
+    // The skill tells the agent to read the repository's own instructions; nothing else is injected.
+    claudeMdExcludes: ["**/CLAUDE.md", "**/CLAUDE.local.md", join(request.home, ".claude", "CLAUDE.md")],
+    // The tools publish the agent's PR text and commit message as written: no Claude Code attribution in them.
+    includeCoAuthoredBy: false,
+    attribution: { commit: "", pr: "" },
+    autoMemoryEnabled: false,
+    // Nothing runs besides the agent's own tool calls: no hooks from settings or from a skill (managed policy aside).
+    disableAllHooks: true,
+  };
+}
+
+/**
+ * Claude Code reads its permission rules as glob patterns, so a path with a glob character (`secrets[prod].json`)
+ * would deny something other than itself. Such paths are refused rather than escaped: an escape the matcher didn't
+ * honour would fail open.
+ */
+function assertLiteral(paths: ReadonlyArray<string>, what: string): void {
+  const glob = paths.find((path) => /[*?[\]{}!\\]/.test(path));
+  if (glob !== undefined) throw new Error(`ClaudeCodeRunner: ${what} '${glob}' has a glob character, which Claude Code's permission rules would read as a pattern`);
+}
+
+/** `Read` rules for one denied path: exact for a file, recursive for a directory, both when it doesn't exist (yet). */
+function readRules(path: string): string[] {
+  let directory: boolean | undefined;
+  try {
+    directory = statSync(path).isDirectory();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+  if (directory === undefined) return [`Read(/${path})`, `Read(/${path}/**)`];
+  return directory ? [`Read(/${path}/**)`] : [`Read(/${path})`];
+}
+
+/** The temp dirs Codex's write profile also opens: the user's temp dir (the JVM's `java.io.tmpdir` on macOS) and /tmp. */
+async function tempDirs(): Promise<string[]> {
+  const dirs = await Promise.all([tmpdir(), "/tmp"].map((dir) => realpath(dir).catch(() => dir)));
+  return [...new Set(dirs)];
+}
+
+function slashCommandPrompt(invocation: SkillInvocation): string {
+  const command = `/${PLUGIN_NAME}:${invocation.entrypoint.name}`;
+  const parts = [command, ...(invocation.renderedArguments.length === 0 ? [] : [invocation.renderedArguments])];
+  const schema = invocation.entrypoint.outputSchema;
+  // Claude Code drops a skill's frontmatter when it loads it, and the answer's schema lives there; Codex reads the
+  // whole SKILL.md, so the agent gets the same contract here.
+  if (schema !== undefined) {
+    parts.push(`The skill's frontmatter (not shown to you) defines its answer: end your final message with one \`\`\`json block valid against this JSON Schema.\n\`\`\`json\n${JSON.stringify(schema, null, 2)}\n\`\`\``);
+  }
+  return parts.join("\n");
+}
+
+/**
+ * The commands' zsh startup (in the staged `ZDOTDIR`): the sandbox routes network through an authenticating proxy
+ * it announces as `HTTPS_PROXY=http://user:pass@host:port`; the JVM ignores that variable, so it gets the same proxy
+ * as system properties (Basic auth allowed for tunnels).
+ */
+const PROXY_SHIM = `if [[ -n "\${HTTPS_PROXY:-}" ]]; then
+  _p=\${HTTPS_PROXY#*://}; _p=\${_p%%/*}
+  _cred=; [[ $_p == *@* ]] && { _cred=\${_p%@*}; _p=\${_p##*@}; }
+  _h=\${_p%:*}; _port=\${_p##*:}
+  _o="-Djdk.http.auth.tunneling.disabledSchemes= -Djdk.http.auth.proxying.disabledSchemes= -Dhttp.nonProxyHosts=localhost|127.0.0.1"
+  for _s in http https; do
+    _o="$_o -D$_s.proxyHost=$_h -D$_s.proxyPort=$_port"
+    [[ -n $_cred ]] && _o="$_o -D$_s.proxyUser=\${_cred%%:*} -D$_s.proxyPassword=\${_cred#*:}"
+  done
+  export JAVA_TOOL_OPTIONS="\${JAVA_TOOL_OPTIONS:-} $_o"
+  unset _p _cred _h _port _o _s
+fi
+`;
+
+/** The sandbox proxy's per-command credentials, wherever they show up (JVM banners, URLs). */
+export function scrubProxyCredentials(text: string): string {
+  return text
+    .replace(/(proxy(?:User|Password)=)[^\s"\\]+/g, "$1<redacted>")
+    .replace(/(\/\/)[^\s/@"\\]+:[^\s/@"\\]+@/g, "$1<redacted>@");
+}
+
+function nonEmpty(value: string | undefined): string | undefined {
+  return value === undefined || value === "" ? undefined : value;
+}
+
+function claudeCodeUsage(invocation: SkillInvocation, durationMs: number, spawned: boolean, collector: ClaudeStreamCollector): SkillUsage {
   const base = {
     codingAgent: "claude-code",
     ...(invocation.model !== undefined ? { requestedModel: invocation.model } : {}),
     durationMs,
     synthetic: false,
-    models: [],
   };
   if (!spawned) {
     return {
       ...base,
+      models: [],
       measurement: "complete",
       tokens: ZERO_TOKENS,
       quota: { status: "not-applicable", reason: "no provider call was made" },
       gaps: [],
     };
   }
+  const usage = collector.usage();
+  const model = collector.model;
   return {
     ...base,
-    measurement: "partial",
-    quota: { status: "unavailable" },
-    gaps: ["the claude-code runner doesn't read Claude Code's token usage, so there are no tokens, cost or plan usage"],
+    ...(model !== undefined ? { model } : {}),
+    measurement: usage.measurement,
+    ...(usage.tokens !== undefined ? { tokens: usage.tokens } : {}),
+    models: usage.models,
+    ...(usage.providerCostUsd !== undefined ? { providerCostUsd: usage.providerCostUsd } : {}),
+    quota: usage.quota,
+    gaps: usage.gaps,
   };
 }
 

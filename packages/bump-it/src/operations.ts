@@ -154,7 +154,6 @@ export async function edit(execution: Execution, computed: Computed, mode: "appl
   const answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({
     entrypoint: "bump-it",
     input: skillInput(context, plan, mode, [...computed.files.keys(), ...(computed.wrapperFiles ?? []).map((file) => file.path)], extra),
-    effort: plan.kind === "major" ? context.config.agent.majorEffort : context.config.agent.effort,
   });
   if (answer.outcome !== "applied" || answer.publication == null) {
     throw new Error(`the agent couldn't apply the plan: ${answer.summary}`);

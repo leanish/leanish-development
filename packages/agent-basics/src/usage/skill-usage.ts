@@ -27,6 +27,8 @@ export interface SkillUsage {
   readonly tokens?: TokenUsage;
   /** Tokens per model that served requests (a run can switch models, and sub-agents run their own). */
   readonly models: ReadonlyArray<ModelUsage>;
+  /** The coding agent's own estimate of the run's cost at list prices, when it reports one (Claude Code does). */
+  readonly providerCostUsd?: number;
   readonly quota: QuotaUsage;
   /** Why something above is missing, partial or approximate; empty when nothing is. */
   readonly gaps: ReadonlyArray<string>;

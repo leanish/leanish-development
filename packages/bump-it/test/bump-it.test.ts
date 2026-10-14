@@ -25,7 +25,7 @@ const NOW = new Date("2026-10-07T06:00:00Z");
 const NEW_BASE = "f".repeat(40);
 const REPO = "leanish/widget";
 const CONFIG = parseToolConfig("bump-it", `repos: [{ repo: ${REPO} }]
-agent: { codingAgent: codex, model: sol, effort: medium, majorEffort: high }
+agent: { codingAgent: codex, model: sol, effort: medium }
 secrets: { write: w, read: r }
 commitIdentity: { name: leanish, email: leanish@example.com }
 dirs: { state: /synthetic/state, cache: /synthetic/cache }
@@ -52,7 +52,7 @@ function harness(options: { bumps?: BumpCandidate[]; prs?: GitHubPullRequest[]; 
   const workspace = new InMemoryWorkspace();
   const wc: WorkingCopy = { projectId: REPO, path: "/synthetic/widget", gitDir: "/synthetic/git", headSha: options.baseSha ?? BASE_SHA, branch: "main" };
   const files: Record<string, string> = { ...BASE_FILES };
-  const agentCalls: Array<{ effort?: string; input: Record<string, unknown> }> = [];
+  const agentCalls: Array<{ input: Record<string, unknown> }> = [];
   const computed: Array<{ topic: string; base: string }> = [];
   const verified: BumpPlan[] = [];
   const reverted: string[] = [];
@@ -72,7 +72,7 @@ function harness(options: { bumps?: BumpCandidate[]; prs?: GitHubPullRequest[]; 
     return originalPrepare(workingCopy, args);
   };
   for (const pr of options.prs ?? []) workspace.setRemoteHead(pr.headRef, pr.headSha);
-  const context: ToolRunContext = { config: CONFIG, repo: { repo: REPO, branch: undefined }, base: "main", github, workspace, workingCopy: wc, now: NOW, releaseAgeDays: 7, releaseAgeExclude: [], readToken: "read-token", fetch: globalThis.fetch, isolation: {}, logger: new ConsoleLogger({ minLevel: "error" }), agent: (async (call: { effort?: string; input: Record<string, unknown> }) => { agentCalls.push(call); return options.refuse ? { outcome: "cannot-apply", summary: "can't migrate" } : { outcome: "applied", summary: "updated", publication: { title: "upgrading lib", body: "Adapts to the upgrade.", commitMessage: "upgrading lib" } }; }) as ToolRunContext["agent"] };
+  const context: ToolRunContext = { config: CONFIG, repo: { repo: REPO, branch: undefined }, base: "main", github, workspace, workingCopy: wc, now: NOW, releaseAgeDays: 7, releaseAgeExclude: [], readToken: "read-token", fetch: globalThis.fetch, isolation: {}, logger: new ConsoleLogger({ minLevel: "error" }), agent: (async (call: { input: Record<string, unknown> }) => { agentCalls.push(call); return options.refuse ? { outcome: "cannot-apply", summary: "can't migrate" } : { outcome: "applied", summary: "updated", publication: { title: "upgrading lib", body: "Adapts to the upgrade.", commitMessage: "upgrading lib" } }; }) as ToolRunContext["agent"] };
   const deps: BumpItDeps = {
     generateWrapper: async () => wrapperArtifacts(),
     readWrapperFiles: async () => wrapperArtifacts(),
@@ -110,7 +110,7 @@ const wrapperCandidates = (): WrapperCandidates => ({
 });
 
 describe("bump-it run", () => {
-  it("adds wrapper moves to the routine and its own high-effort major, sharing the planner and reading the jar before verification", async () => {
+  it("adds wrapper moves to the routine and its own major, sharing the planner and reading the jar before verification", async () => {
     const h = harness({ bumps: [] });
     const planner = { candidates: async () => wrapperCandidates(), verify: async () => [] };
     let planners = 0;
@@ -133,7 +133,7 @@ describe("bump-it run", () => {
     expect(jarReads).toBe(2);
     expect(order).toEqual(["inventory", "jar", "inventory", "jar"]);
     expect(h.agentCalls).toMatchObject([
-      { effort: "high", input: { kind: "major", moves: [{ mechanism: "gradle-wrapper", to: "9.0" }], toolWritten: WRAPPER_FILES } },
+      { input: { kind: "major", moves: [{ mechanism: "gradle-wrapper", to: "9.0" }], toolWritten: WRAPPER_FILES } },
     ]);
     expect(h.verified[1]?.package).toBe(WRAPPER_PACKAGE);
   });
@@ -234,20 +234,21 @@ describe("bump-it run", () => {
     expect(h.agentCalls[0]?.input["moves"]).toEqual(expect.arrayContaining([expect.objectContaining({ name: "companion", to: "1.0.1", major: false })]));
   });
 
-  it("publishes npm routine without a model and each major with high effort, always from the original base", async () => {
+  it("publishes npm routine without a model and each major through the agent, always from the original base", async () => {
     const h = harness();
     expect(await bumpIt(h.deps).run(h.context)).toMatchObject({ units: [{ topic: "routine", outcome: "published" }, { topic: "lib-major", outcome: "published" }] });
     expect(h.agentCalls).toHaveLength(1);
-    expect(h.agentCalls[0]).toMatchObject({ effort: "high", input: { kind: "major", mode: "apply", toolWritten: ["package-lock.json", "package.json"] } });
+    expect(h.agentCalls[0]).toMatchObject({ input: { kind: "major", mode: "apply", toolWritten: ["package-lock.json", "package.json"] } });
     expect(h.computed.every((entry) => entry.base === BASE_SHA)).toBe(true);
     expect(h.workspace.preparations.map((entry) => entry.args.start)).toEqual(["default", "default"]);
     expect(planOf(h.github.prs.get(42)!.body)?.kind).toBe("routine");
     expect(stateOf(h.github.prs.get(43)!.body)).toMatchObject({ head: PUSHED_SHA, base: BASE_SHA });
   });
-  it("uses the agent only for non-npm routine moves, with normal effort", async () => {
+  it("uses the agent only for non-npm routine moves, with no per-call effort (the config's applies to every call)", async () => {
     const h = harness({ bumps: [candidate({ ecosystem: "Maven", name: "g:lib", locations: [":runtimeClasspath"], declarations: [], major: undefined })] });
     await bumpIt(h.deps).run(h.context);
-    expect(h.agentCalls).toMatchObject([{ effort: "medium", input: { kind: "routine", moves: [{ mechanism: "gradle-declared" }] } }]);
+    expect(h.agentCalls).toMatchObject([{ input: { kind: "routine", moves: [{ mechanism: "gradle-declared" }] } }]);
+    expect(h.agentCalls[0]).not.toHaveProperty("effort");
   });
   it("can publish a routine transitive-only refresh", async () => {
     const h = harness({ bumps: [], npm: async () => ({ files: new Map([["package-lock.json", "refreshed"]]), changes: [], notes: [] }) });
@@ -361,7 +362,7 @@ describe("bump-it review", () => {
       const deps = { ...h.deps, wrapper: () => ({ candidates: async () => next, verify: async () => [] }) };
       expect(await bumpIt(deps).review(h.context)).toMatchObject({ reviewed: [{ outcome: "rebased" }] });
       expect(h.agentCalls).toHaveLength(target === "9.0" ? 0 : 1);
-      if (target !== "9.0") expect(h.agentCalls[0]).toMatchObject({ effort: "high", input: { mode: "apply" } });
+      if (target !== "9.0") expect(h.agentCalls[0]).toMatchObject({ input: { mode: "apply" } });
       expect(planOf(h.github.prs.get(7)!.body)?.moves[0]?.to).toBe(target);
     }
   });
@@ -382,7 +383,7 @@ describe("bump-it review", () => {
     expect(restored).toEqual([`${NEW_BASE}:${WRAPPER_JAR}`]);
     expect(h.agentCalls).toMatchObject([{ input: { mode: "apply", moves: [{ mechanism: "gradle-wrapper" }] } }]);
   });
-  it("retires an already-landed wrapper major and adapts its failed CI with high effort", async () => {
+  it("retires an already-landed wrapper major and adapts its failed CI", async () => {
     const wrapper = wrapperCandidates();
     const pr = await prFor(majorUnits([], wrapper)[0]!);
     const retired = harness({ bumps: [], prs: [pr], baseSha: NEW_BASE });
@@ -390,7 +391,7 @@ describe("bump-it review", () => {
     const failed = harness({ bumps: [], prs: [pr] });
     failed.github.checks = RED;
     expect(await bumpIt(failed.deps).review(failed.context)).toMatchObject({ reviewed: [{ outcome: "adapted" }] });
-    expect(failed.agentCalls).toMatchObject([{ effort: "high", input: { mode: "adapt", moves: [{ mechanism: "gradle-wrapper" }] } }]);
+    expect(failed.agentCalls).toMatchObject([{ input: { mode: "adapt", moves: [{ mechanism: "gradle-wrapper" }] } }]);
   });
   it("retains a wrapper major when its catalog cannot be recomputed, and protects recorded bytes before adaptation", async () => {
     const pr = await prFor(majorUnits([], wrapperCandidates())[0]!);
@@ -475,13 +476,13 @@ describe("bump-it review", () => {
     expect(h.agentCalls).toEqual([]);
     expect(planOf(h.github.prs.get(7)!.body)?.moves[0]?.to).toBe("1.2.0");
   });
-  it("a major's same target merges with no model; a new target redoes high-effort adaptation", async () => {
+  it("a major's same target merges with no model; a new target redoes the adaptation", async () => {
     const same = harness({ prs: [await prFor(major())], baseSha: NEW_BASE });
     expect(await bumpIt(same.deps).review(same.context)).toMatchObject({ reviewed: [{ outcome: "rebased" }] });
     expect(same.agentCalls).toEqual([]); expect(same.reverted).toEqual([]);
     const changed = harness({ prs: [await prFor(major())], baseSha: NEW_BASE, bumps: [candidate({ major: { version: "3.0.0", line: "3" } })] });
     expect(await bumpIt(changed.deps).review(changed.context)).toMatchObject({ reviewed: [{ outcome: "rebased" }] });
-    expect(changed.agentCalls).toMatchObject([{ effort: "high", input: { mode: "apply" } }]);
+    expect(changed.agentCalls).toMatchObject([{ input: { mode: "apply" } }]);
     expect(changed.reverted).toEqual([NEW_BASE]);
   });
   it("re-applies mechanical conflicts; explicitly sends code conflicts to major resolve", async () => {
@@ -496,15 +497,15 @@ describe("bump-it review", () => {
       return args.start === "remote-merging" && result.kind === "prepared" ? { kind: "conflicted", prepared: result.prepared, conflicted: ["src/lib.ts"] } : result;
     };
     expect(await bumpIt(code.deps).review(code.context)).toMatchObject({ reviewed: [{ outcome: "rebased" }] });
-    expect(code.agentCalls).toMatchObject([{ effort: "high", input: { mode: "resolve", conflicted: ["src/lib.ts"] } }]);
+    expect(code.agentCalls).toMatchObject([{ input: { mode: "resolve", conflicted: ["src/lib.ts"] } }]);
   });
-  it("routine failures do not adapt; a major adapts with high effort and the attempt marker", async () => {
+  it("routine failures do not adapt; a major adapts with the attempt marker", async () => {
     const routineFail = harness({ prs: [await prFor(routine())] }); routineFail.github.checks = RED;
     expect(await bumpIt(routineFail.deps).review(routineFail.context)).toMatchObject({ reviewed: [{ outcome: "adaptation-unchanged" }] });
     expect(routineFail.agentCalls).toEqual([]);
     const h = harness({ prs: [await prFor(major())] }); h.github.checks = { ...RED, statuses: [{ context: "legacy", state: "failure" }] };
     expect(await bumpIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ outcome: "adapted" }] });
-    expect(h.agentCalls).toMatchObject([{ effort: "high", input: { mode: "adapt", failingChecks: ["check", "legacy"] } }]);
+    expect(h.agentCalls).toMatchObject([{ input: { mode: "adapt", failingChecks: ["check", "legacy"] } }]);
     expect(stateOf(h.github.prs.get(7)!.body)?.adaptations).toBe(1);
   });
   it.each([

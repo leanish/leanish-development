@@ -3,6 +3,7 @@ name: secure-it
 description: Apply selected Gradle and action security moves, adapting code only for a major, and write the PR text. The tool writes and protects npm files, verifies with the gate, and publishes.
 compatibleCodingAgents:
   - codex
+  - claude-code
 inputSchema:
   type: object
   additionalProperties: false

@@ -203,8 +203,6 @@ async function prepareNpmFiles(execution: Execution, plan: ChangePlan, base: Tre
   return window;
 }
 
-const effortFor = (context: ToolRunContext, plan: ChangePlan) => (plan.moves.some((move) => move.major) ? context.config.agent.majorEffort : context.config.agent.effort);
-
 interface Execution {
   readonly context: ToolRunContext;
   readonly deps: SecureItDeps;
@@ -345,7 +343,7 @@ async function applyRemoval(execution: Execution, removal: ComputedRemoval): Pro
   const content = { title: "removing redundant security floors", body: planSection(plan), commitMessage: "removing redundant security floors" };
   if (!plan.floorRemoval!.floors.some((floor) => floor.ecosystem === "Maven")) return content;
   const answer = await execution.context.agent<ReturnType<typeof skillInput>, SkillAnswer>({
-    entrypoint: "secure-it", input: skillInput(execution.context, plan, [], "apply"), effort: execution.context.config.agent.effort,
+    entrypoint: "secure-it", input: skillInput(execution.context, plan, [], "apply"),
   });
   if (answer.outcome !== "applied") throw new Error(`the agent couldn't remove the planned Gradle declarations: ${answer.summary}`);
   return content;
@@ -432,7 +430,7 @@ async function runUnit(execution: Execution, unit: SecurityUnit, base: PlanBase,
   const reusable = owned[0];
   const prepared = await preparePlan(context, deps, plan, reusable, own, base.tree.id);
   const input = await agentInput(execution, plan, base.tree, "apply");
-  const answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({ entrypoint: "secure-it", input, effort: effortFor(context, plan) });
+  const answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({ entrypoint: "secure-it", input });
   if (answer.outcome !== "applied" || answer.publication == null) return { ...details, outcome: "cannot-apply", summary: answer.summary };
   const verified = await verifyWithRetry(execution, base, plan, answer.publication);
   const checked = { ...details, notes: verified.plan.notes ?? [], packages: verified.plan.packages, named: verified.named, leftOut: verified.leftOut };
@@ -486,7 +484,7 @@ async function verifyWithRetry(execution: Execution, base: PlanBase, plan: Chang
   context.logger.warn("secure-it: retrying the routine without named package groups", { leftOut: retry.leftOut });
   await deps.revert(context.workingCopy, base.tree.id);
   const answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({
-    entrypoint: "secure-it", input: await agentInput(execution, retry.plan, base.tree, "apply"), effort: effortFor(context, retry.plan),
+    entrypoint: "secure-it", input: await agentInput(execution, retry.plan, base.tree, "apply"),
   });
   if (answer.outcome !== "applied" || answer.publication == null) {
     return { plan: retry.plan, content, problems: [`retry could not apply: ${answer.summary}`], named: retry.named, leftOut: retry.plan.leftOut ?? [] };
@@ -674,7 +672,6 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
         const answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({
           entrypoint: "secure-it",
           input: await agentInput(execution, plan, base, code.length > 0 ? "resolve" : "apply", code.length > 0 ? { conflicted: code } : {}),
-          effort: effortFor(context, plan),
         });
         if (answer.outcome !== "applied") throw new Error(`the agent couldn't re-apply the plan on the new base: ${answer.summary}`);
         // A different plan is a different change: its own title and description.
@@ -704,7 +701,6 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       const answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({
         entrypoint: "secure-it",
         input: await agentInput(execution, plan, base, "adapt", { failingChecks }),
-        effort: effortFor(context, plan),
       });
       if (answer.outcome !== "applied" || answer.publication == null) return false;
       const verified = await verifyWithRetry(execution, { tree: base, gradle: await inventories.ofCommit(base) }, plan, { title: pr.title, body: pr.body, commitMessage: answer.publication.commitMessage });

@@ -5,7 +5,7 @@ import { runToolCommand } from "../../src/command.ts";
 
 const CONFIG = `
 repos: [{ repo: leanish/widget, branch: main }]
-agent: { codingAgent: codex, model: sol, effort: medium, majorEffort: high }
+agent: { codingAgent: codex, model: sol, effort: medium }
 secrets: { write: w, read: r }
 commitIdentity: { name: leanish, email: leanish@example.com }
 dirs: { state: /tmp/tool-state, cache: /tmp/tool-cache }

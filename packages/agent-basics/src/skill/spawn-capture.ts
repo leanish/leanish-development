@@ -1,5 +1,7 @@
 // Copied from leanish/leanish-development core/runtime/src/skill/spawn-capture.ts at c6282df; see PROVENANCE.md.
+// Local changes: an optional per-line stdout callback (decoded across chunks, each line bounded).
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 
 import { NOOP_REDACTOR, Redactor, type SecretEntry } from "../logger/redactor.ts";
 import type { SkillInvocationResult } from "./runner.ts";
@@ -26,6 +28,12 @@ export interface SpawnCaptureOptions {
    * inherited base, so the CLI holds only the credentials passed in `env` deliberately.
    */
   readonly scrubAmbientCredentials?: boolean;
+  /**
+   * Called with every complete stdout line (redacted, without its newline) as it arrives, and with a
+   * last unterminated line when the process ends — before the bounded capture can drop it, and also
+   * when the run then fails or times out. For CLIs that stream structured events (usage) on stdout.
+   */
+  readonly onStdoutLine?: (line: string) => void;
 }
 
 /**
@@ -42,6 +50,9 @@ export interface SpawnCaptureOptions {
  * merges after the scrub. Catalog data can never re-add them — the
  * credentials schema bans the `AWS_` prefix outright.
  */
+/** The longest stdout line handed to `onStdoutLine` whole, even under a smaller capture cap. */
+export const MIN_LINE_CAP = 1024 * 1024;
+
 export const SCRUBBED_AWS_ENV_VARS: ReadonlyArray<string> = [
   "AWS_ACCESS_KEY_ID",
   "AWS_SECRET_ACCESS_KEY",
@@ -126,9 +137,47 @@ export function spawnCapture(options: SpawnCaptureOptions): Promise<SkillInvocat
     // first `cap`: the terminal JSON block lands at the END of stdout, and a
     // failure's useful stderr (stack trace / OOM line) is its tail. Trimming
     // the front bounds memory without dropping the part we actually need.
+    // Decoded across chunk boundaries, so a character split between two reads isn't corrupted.
+    const decoder = new StringDecoder("utf8");
+    let pendingLine = "";
+    // A line longer than this is cut short (its consumer then can't parse it) and the rest of it dropped, so one
+    // runaway line can't grow memory without bound.
+    const maxLine = Math.max(cap, MIN_LINE_CAP);
+    let discarding = false;
+    const emitLine = (line: string): void => {
+      try {
+        options.onStdoutLine?.(redactor.redact(line));
+      } catch {
+        // A line consumer's failure must not change the run's outcome.
+      }
+    };
+    const acceptLines = (text: string): void => {
+      const lines = (pendingLine + text).split("\n");
+      pendingLine = lines.pop() ?? "";
+      for (const line of lines) {
+        if (discarding) discarding = false;
+        else emitLine(line.length > maxLine ? line.slice(0, maxLine) : line);
+      }
+      if (pendingLine.length > maxLine) {
+        if (!discarding) emitLine(pendingLine.slice(0, maxLine));
+        discarding = true;
+        pendingLine = "";
+      }
+    };
     child.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString("utf8");
+      const text = decoder.write(chunk);
+      stdout += text;
       if (stdout.length > cap) stdout = stdout.slice(stdout.length - cap);
+      if (options.onStdoutLine !== undefined) acceptLines(text);
+    });
+    child.stdout.on("end", () => {
+      const text = decoder.end();
+      stdout += text;
+      if (stdout.length > cap) stdout = stdout.slice(stdout.length - cap);
+      if (options.onStdoutLine === undefined) return;
+      acceptLines(text);
+      if (pendingLine !== "" && !discarding) emitLine(pendingLine);
+      pendingLine = "";
     });
     child.stderr.on("data", (chunk: Buffer) => {
       stderr += chunk.toString("utf8");

@@ -1,7 +1,7 @@
 ---
 name: bump-it
 description: Apply bump-it's selected Gradle declarations and action pins, adapting code only for a major. npm and wrapper files are written by the tool and must remain unchanged.
-compatibleCodingAgents: [codex]
+compatibleCodingAgents: [codex, claude-code]
 inputSchema:
   type: object
   additionalProperties: false

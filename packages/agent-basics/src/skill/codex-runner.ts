@@ -1,5 +1,5 @@
 // Copied from leanish/leanish-development core/runtime/src/skill/codex-runner.ts at c6282df; see PROVENANCE.md.
-// Local changes: the access comment says write agents can't write git metadata (they never could here).
+// Local changes: the access comment says write agents can't write git metadata (they never could here); two helpers exported for the Claude Code runner.
 import { lstat, mkdir } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
@@ -401,7 +401,7 @@ export class CodexRunner implements CodingAgentRunner {
  * which the agent sees read-only. The agent edits files; the runtime commits
  * and pushes (`Runtime.publishBranch`).
  */
-async function writeMountGitDirs(workingCopies: ReadonlyArray<WorkingCopy>): Promise<string[]> {
+export async function writeMountGitDirs(workingCopies: ReadonlyArray<WorkingCopy>): Promise<string[]> {
   if (workingCopies.length === 0) {
     throw new Error(
       "CodexRunner: access 'write' needs at least one working copy — without one Codex would write in the process's own directory",
@@ -429,7 +429,7 @@ async function separateGitDir(workingCopy: WorkingCopy): Promise<string> {
  * files could still rewrite the env the runner passes. Point zsh at an empty
  * directory and clear bash's `BASH_ENV`.
  */
-async function shellIsolationEnv(stagedHome: string): Promise<Record<string, string>> {
+export async function shellIsolationEnv(stagedHome: string): Promise<Record<string, string>> {
   const zdotdir = join(stagedHome, "zdotdir");
   await mkdir(zdotdir, { recursive: true });
   return { ZDOTDIR: zdotdir, BASH_ENV: "" };

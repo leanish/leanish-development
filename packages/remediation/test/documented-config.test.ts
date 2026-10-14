@@ -16,7 +16,7 @@ describe("documented agent configs", () => {
     const config = parseToolConfig(tool, await readFile(file, "utf8"), fileURLToPath(file), HOME);
 
     expect(repoOf(config, "acme/widget").branch).toBe("main");
-    expect(config.agent).toEqual({ codingAgent: "codex", model: "sol", effort: "medium", majorEffort: "high" });
+    expect(config.agent).toEqual({ codingAgent: "claude-code", model: "claude-haiku-5-5", effort: "high" });
     expect(config.secrets).toEqual({ write: `leanish-${tool}-write`, read: `leanish-${tool}-read` });
     expect(config.dirs).toEqual({ state: `${HOME}/.local/share/leanish/${tool}`, cache: `${HOME}/.cache/leanish/${tool}` });
     expect(config.readDeny).toEqual([]);

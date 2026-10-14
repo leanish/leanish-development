@@ -8,7 +8,7 @@ repos:
   - repo: leanish/sqs-codec
   - repo: leanish/dtv
     branch: main
-agent: { codingAgent: codex, model: sol, effort: medium, majorEffort: high }
+agent: { codingAgent: codex, model: sol, effort: medium }
 secrets: { write: leanish-secure-it-github, read: leanish-secure-it-github-read }
 commitIdentity: { name: leanish, email: 5417585+leanish@users.noreply.github.com }
 readDeny: [~/dev/private, /Volumes/vault]
@@ -53,7 +53,7 @@ describe("tool config", () => {
         { repo: "leanish/sqs-codec", branch: undefined },
         { repo: "leanish/dtv", branch: "main" },
       ],
-      agent: { codingAgent: "codex", model: "sol", effort: "medium", majorEffort: "high" },
+      agent: { codingAgent: "codex", model: "sol", effort: "medium" },
       secrets: { write: "leanish-secure-it-github", read: "leanish-secure-it-github-read" },
       commitIdentity: { name: "leanish", email: "5417585+leanish@users.noreply.github.com" },
       dirs: { state: "/Users/dev/.local/share/leanish/secure-it", cache: "/Users/dev/.cache/leanish/secure-it" },
@@ -66,12 +66,17 @@ describe("tool config", () => {
     expect(() => repoOf(config, "leanish/java-conventions")).toThrow("opts in explicitly");
   });
 
+  it("accepts Claude Code as the coding agent", () => {
+    const text = VALID.replace("codingAgent: codex, model: sol", "codingAgent: claude-code, model: claude-haiku-5-5").replace("effort: medium", "effort: high");
+    expect(parseToolConfig("bump-it", text, "agent.yaml", HOME).agent).toEqual({ codingAgent: "claude-code", model: "claude-haiku-5-5", effort: "high" });
+  });
+
   it("fails on what would quietly change behaviour", () => {
     const failing: Array<[string, string]> = [
       [VALID.replace("readDeny:", "readDenny:"), "unknown field(s): readDenny"],
       [VALID.replace("leanish/sqs-codec", "../sqs-codec"), "repository id '../sqs-codec' isn't owner/slug"],
       [VALID.replace("leanish/dtv", "leanish/sqs-codec"), "lists leanish/sqs-codec twice"],
-      [VALID.replace("codingAgent: codex", "codingAgent: claude-code"), "must be codex"],
+      [VALID.replace("codingAgent: codex", "codingAgent: copilot"), "must be one of codex, claude-code; got 'copilot'"],
       [VALID.replace("read: leanish-secure-it-github-read", "read: leanish-secure-it-github"), "must be different items"],
       [VALID.replace("[~/dev/private, /Volumes/vault]", "[dev/private]"), "readDeny[0] must be an absolute path"],
       [`${VALID}staleScanHours: 36\n`, "unknown field(s): staleScanHours"],
