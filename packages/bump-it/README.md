@@ -25,7 +25,7 @@ packages/remediation/run.sh bump-it review leanish/widget   # every few hours
   declares it is never moved, in any configuration: the pin is the owner's. The run's notes list each such pin. Pins
   only elsewhere (Gradle's own strict constraints on its embedded Kotlin, on buildscript and settings classpaths) don't
   count. The agent is told never to change a `strictly` version, and verification refuses an edit that changes a
-  line mentioning `strictly`.
+  strict-version line (`strictly(...)` and its Groovy and catalog forms).
 - `@types/node` targets never exceed the lowest supported Node major found in `engines.node`, `.nvmrc`,
   `.node-version`, `volta.node`, or static `actions/setup-node` CI versions (including matrices).
   - Root, lockfile-root and declaring-workspace constraints are combined by taking the minimum; a newer development or

@@ -31,6 +31,11 @@ describe("strict pins", () => {
     expect(await strictPinsChanged(["build.gradle.kts"], tree({ "build.gradle.kts": `${KTS}${other}` }), tree({ "build.gradle.kts": `${other}${KTS}` }))).toHaveLength(1);
   });
 
+  it("lets a line that only says the word through, such as a floor's because(...) about a strict parent", async () => {
+    const floor = '  implementation("g:okio:3.4.0") { because("GHSA-x: okhttp is strictly pinned to 4.9.3") }\n';
+    expect(await strictPinsChanged(["build.gradle.kts"], tree({ "build.gradle.kts": KTS }), tree({ "build.gradle.kts": KTS.replace("}\n", `}\n${floor}`) }))).toEqual([]);
+  });
+
   it("counts duplicate strictly lines, so dropping one of two identical pins is refused", async () => {
     const twice = `${KTS}${KTS}`;
     expect(await strictPinsChanged(["build.gradle.kts"], tree({ "build.gradle.kts": twice }), tree({ "build.gradle.kts": KTS }))).toHaveLength(1);

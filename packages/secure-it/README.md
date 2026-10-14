@@ -102,7 +102,7 @@ packages/remediation/run.sh secure-it review leanish/sqs-codec   # every few hou
      floors may be added, or removed in an explicit floor-removal plan;
    - the gate's own policy (its config, its exceptions, workflows and actions outside planned pins) is untouched,
      major or not;
-   - no line mentioning `strictly` changed in a Gradle build, settings or catalog file (floor removals included),
+   - no strict-version line (`strictly(...)` and its Groovy and catalog forms) changed in a Gradle build, settings or catalog file (floor removals included),
      and the edit keeps the reference's strict declarations and constraints;
    - `compare` against the base passes;
    - every move landed at exactly `to` at every planned location (Gradle: declared at exactly `to`);
