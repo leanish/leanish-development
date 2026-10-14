@@ -84,7 +84,9 @@ function environment(affected: Record<string, string[]>, scans: string[][], rout
   return { run, fetch, now: () => NOW, osvScanner: "osv-scanner", githubToken: undefined };
 }
 
-describe("gate", () => {
+// Each test spawns many git commands; under a coding agent's sandbox they run several times slower than here, past
+// vitest's 5s default. Time isn't what these tests check.
+describe("gate", { timeout: 20_000 }, () => {
   it("compares base and head against one scan of their union, failing only what head adds", async () => {
     const base = await commit({ "package-lock.json": lock({ lib: "1.0.0", stable: "1.0.0" }) });
     const head = await commit({ "package-lock.json": lock({ lib: "1.1.0", stable: "1.0.0", added: "2.0.0" }) });

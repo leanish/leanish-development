@@ -101,7 +101,7 @@ Both tools are in this tree: [`secure-it`](../packages/secure-it) and [`bump-it`
   `claude` CLI's logged-in account and count against its plan windows; a run that hits a limit fails, and the logged
   failure says why. `codex` is still required either way: the tool's own sandboxed commands (`runSandboxed`) run
   under `codex sandbox`.
-- **The agent edits a clone whose git metadata it can't write.** It can't commit or push. The `gh` and `git` guards on its PATH stop writes before they reach GitHub; they are guard rails, not a boundary. Its git reads neither the home's nor the system's git config, so a system credential helper (Homebrew's `osxkeychain`) can't hand it the developer's own GitHub credentials.
+- **The agent edits a clone whose git metadata it can't write.** It can't commit or push. The `gh` and `git` guards on its PATH stop writes before they reach GitHub; they are guard rails, not a boundary. Its git reads neither the home's nor the system's git config, so a system credential helper (Homebrew's `osxkeychain`) can't hand it the developer's own GitHub credentials. So that a repository's own tests can run, the `git` guard lets through `-c core.hooksPath=/dev/null` and a push to a remote whose every push URL is on this machine, with git limited to the local transport.
 - **Baseline Git reads are bound to the recorded metadata.** The tools name `gitDir` and the working tree explicitly for
   commit reads, diffs, exports and restoration, disable replace refs, and strip ambient Git configuration. The standalone
   CI CLI discovers its checkout's metadata once before reading commits. Both agent runners also make the working copy's

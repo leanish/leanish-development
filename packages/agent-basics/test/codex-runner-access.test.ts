@@ -4,7 +4,7 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile 
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { CodexLoginKeptError } from "../src/skill/codex-login.ts";
 import { CodexRunner } from "../src/skill/codex-runner.ts";
@@ -264,9 +264,17 @@ describe("CodexRunner sandbox", () => {
   });
 
   it("sets no git askpass without a GH_TOKEN", async () => {
-    const { bin, sideFile } = await stubCodex((side) => `echo "[$GIT_ASKPASS][$GH_CONFIG_DIR]" > "${side}"`);
-    await new CodexRunner({ bin, suppressFlags: [] }).run(invocation([]));
-    expect((await readFile(sideFile, "utf8")).trim()).toBe("[][]");
+    // Whatever runs the tests may set these itself (a coding agent's runner, VS Code's terminal); this is about the runner.
+    vi.stubEnv("GIT_ASKPASS", undefined);
+    vi.stubEnv("GH_CONFIG_DIR", undefined);
+    vi.stubEnv("GH_TOKEN", undefined);
+    try {
+      const { bin, sideFile } = await stubCodex((side) => `echo "[$GIT_ASKPASS][$GH_CONFIG_DIR]" > "${side}"`);
+      await new CodexRunner({ bin, suppressFlags: [] }).run(invocation([]));
+      expect((await readFile(sideFile, "utf8")).trim()).toBe("[][]");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("keeps the user's shell startup files out: an empty ZDOTDIR and no BASH_ENV", async () => {

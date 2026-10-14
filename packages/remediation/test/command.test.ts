@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { FakeCodingAgentRunner } from "../../agent-basics/src/skill/fake-runner.ts";
 import type { SkillInvocation } from "../../agent-basics/src/skill/runner.ts";
@@ -41,9 +41,16 @@ outputSchema:
 let skillsDir: string;
 
 beforeAll(async () => {
+  // The commands build the real isolation, which resolves the Codex login; an empty CODEX_HOME keeps them off the
+  // machine's own, which may be unreadable (as in a coding agent's sandbox). The signal test's child inherits it.
+  vi.stubEnv("CODEX_HOME", await mkdtemp(join(tmpdir(), "tool-codex-home-")));
   skillsDir = await mkdtemp(join(tmpdir(), "tool-skills-"));
   await mkdir(join(skillsDir, "fix"), { recursive: true });
   await writeFile(join(skillsDir, "fix", "SKILL.md"), SKILL);
+});
+
+afterAll(() => {
+  vi.unstubAllEnvs();
 });
 
 /** A machine with fakes everywhere; `stderr` collects the log and the final line. */
