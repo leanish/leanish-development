@@ -98,6 +98,27 @@ Both tools ran with `codingAgent: claude-code` (`claude-haiku-5-5`, effort `high
   coordinates as before.
 - CI passed on all three PRs.
 
+## Release review findings, closed in 0.5.2 — 2026-10-14
+
+The 0.5.1 release review found six ways verification or the gate could let something through; all predated 0.5.0.
+Each is closed by refusing the case visibly rather than handling it in full, and each fix has a test that fails without
+it (checked by removing the fix):
+
+- **Edits published unverified.** A process left running could change the working tree after verification. Both
+  tools now verify a snapshot commit and publish exactly its tree; a real-git test writes after the snapshot and
+  publication refuses, pushing nothing.
+- **Symbolic links.** A changed path that is a link (mode 120000 in the snapshot), a directory replaced by one
+  included, fails verification in both tools.
+- **Mutable GitHub Actions releases.** Only an immutable release dates an action; a mutable one fails the gate and
+  bump-it notes why it skips it.
+- **Gradle configurations appearing during resolution.** A real-Gradle fixture (`SUPPLY_CHAIN_GRADLE_TESTS=1`) makes
+  one configuration resolvable from another's resolution; the inventory now includes it (it was missing before), and
+  configurations that keep appearing fail it.
+- **Same-version npm artifacts.** A lockfile entry that keeps its version but changes `resolved`, `integrity` or
+  bundling fails the gate.
+- **`strictly` in string interpolation.** A Kotlin or Groovy `${…}` containing `strictly`, or one that doesn't close
+  on its line, fails the strict-pin check.
+
 ## Fixture coverage
 
 What the fixture repositories exercise, by evidence state. Case numbers refer to each fixture's `EXPECTED.md`.
