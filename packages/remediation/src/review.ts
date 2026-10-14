@@ -103,6 +103,8 @@ export interface ReviewContext {
   readonly repo: string;
   readonly base: string;
   readonly journal: PublicationJournal;
+  /** Directories outside the working copy whose paths never reach a PR (see publication-text.ts). */
+  readonly localRoots: ReadonlyArray<string>;
 }
 
 /** Runs one tick over the tool's open PRs in `repo`; one entry per PR. */

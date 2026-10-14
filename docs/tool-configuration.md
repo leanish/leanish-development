@@ -10,10 +10,9 @@ Start with the complete examples:
 - [secure-it agent.yaml](examples/secure-it-agent.yaml)
 - [bump-it agent.yaml](examples/bump-it-agent.yaml)
 
-Replace `acme/widget` and the commit identity; override Keychain service names only
-if needed. Paths may be absolute or start with `~/`; the tools expand `~`, but do not expand shell
-variables such as `$HOME`. The [adoption guide](adopting-tools.md) covers setup,
-permissions and schedules.
+Replace `acme/widget` and the commit identity. Paths may be absolute or start
+with `~/`; the tools expand `~`, not shell variables such as `$HOME`. Setup,
+permissions and schedules are in the [adoption guide](adopting-tools.md).
 
 ## agent.yaml
 
@@ -30,22 +29,24 @@ permissions and schedules.
 | `commitIdentity.name`, `commitIdentity.email` | Required | Author and committer for the tool's commits; also the identity exposed to agent commands. No developer-global git identity is inherited. |
 | `dirs.state` | `~/.local/share/leanish/<tool>` | Workspaces, separate git metadata, publication journal, protected OSV-Scanner and the repository-advisory cache (out of the sandbox's reach). bump-it also stores deferred-major ordering here. Keep this outside temp and cache roots; see the adoption guide. |
 | `dirs.cache` | `~/.cache/leanish/<tool>` | Sandbox-writable cache for Gradle and npm. Keep separate from state and between tools. |
-| `readDeny` | `[]` | Extra absolute paths denied to sandboxed commands, in addition to existing sensitive home paths. These paths' names can reach the model; their contents cannot. Other readable files can reach the model provider. |
-| `modelPrices` | Built-in dated OpenAI Standard prices | Absolute path to an optional JSON table replacing the built-in rates. Unknown models and incomplete measurements still produce explicit cost gaps. Claude Code also reports its own list-price estimate per call (`providerCostUsd`); it is not a subscription bill. |
+| `readDeny` | `[]` | Extra absolute paths denied to sandboxed commands, in addition to existing sensitive home paths. These paths' names can reach the model; their contents cannot. Other readable files can reach the model provider. With `claude-code`, a path containing a glob character (`* ? [ ] { } ! \`) is refused: Claude Code reads its permission rules as patterns. |
+| `modelPrices` | Built-in dated OpenAI Standard prices | Absolute path to an optional JSON table replacing the built-in rates; see [below](#optional-price-table). Claude models have no built-in rate. |
 | `maxNewMajorsPerRun` | bump-it only, `3` | Nonnegative integer. Caps newly opened major PRs, never updates to existing ones. `0` defers all new majors. Deferred majors have priority next run. |
 
-The defaults are `leanish-secure-it-write` / `leanish-secure-it-read` and
-`leanish-bump-it-write` / `leanish-bump-it-read`, with no owner or repository in
-the names. Both tools may point to the same write/read pair through overrides;
-the write and read items within a pair must remain distinct. Existing explicit
-service names still work. PAT mode remains an alternative when GitHub App mode
-lands. Unknown fields also fail inside `secrets` and each `repos` entry;
-per-repository secrets are not supported.
+Notes on `secrets`:
 
-`run.sh` has a separate lock directory:
+- The defaults (`leanish-secure-it-write` / `leanish-secure-it-read`,
+  `leanish-bump-it-write` / `leanish-bump-it-read`) name no owner or repository.
+- Both tools may share one write/read pair through overrides; the two items in a
+  pair stay distinct.
+- Existing explicit service names still work.
+- Unknown fields also fail inside `secrets` and each `repos` entry; there are no
+  per-repository secrets.
+
+`run.sh` keeps its locks separately, in
 `${XDG_STATE_HOME:-$HOME/.local/state}/leanish/<tool>/locks`. Changing `dirs.state`
-does not move these locks. Every launcher for the same tool/repository should use
-the same user and `XDG_STATE_HOME`.
+does not move them, so every launcher for the same tool/repository should use the
+same user and `XDG_STATE_HOME`.
 
 ## GitHub API usage and advisory cache
 
@@ -59,37 +60,39 @@ retries and refused requests count separately; cache hits do not. For example:
 {"ts":"2026-10-11T19:00:00.000Z","level":"info","msg":"GitHub API requests","tool":"secure-it","repo":"acme/widget","command":"run","total":3,"byKind":{"GET /repos/{owner}/{repo}/pulls":1,"GET /repos/{owner}/{repo}/security-advisories":2}}
 ```
 
-The counter covers the tool process's GitHub API calls, including planning,
-verification, PRs and checks. GitHub calls made by child commands or coding
-agents, and git clone/fetch/push traffic, are outside this counter. URLs, query
-values, tag names and credentials are not retained in the summary.
+The counter covers the tool process's own GitHub API calls (planning,
+verification, PRs, checks). Calls by child commands or coding agents, and git
+clone/fetch/push traffic, are not counted. The summary keeps no URLs, query
+values, tag names or credentials.
 
-Local tools reuse repository security advisories for **one hour** under
-`dirs.state/repository-advisories-v1`, which agents and sandboxed builds can't write: a
-build that could edit the cache could hide an advisory from verification. The path
-is resolved once (symlinks included), and a state directory that resolves into a
-sandbox-writable directory is refused, as for the protected OSV-Scanner. Entries are keyed by source repository
-and a hash of the read credential, so a different token cannot reuse a private
-response. Each entry contains a complete, parsed-successfully API listing;
-all pages must succeed before it is written. Empty successful listings are
-cached too. Atomic replacement permits concurrent processes; simultaneous
-misses may still fetch separately. Missing, expired, corrupt or unreadable
-entries cause a fresh fetch; inability to write the cache does not fail a run.
-403, 429, server errors, malformed responses and partial listings are never
-cached. Rate-limit errors still fail with the existing diagnostic.
+Local tools reuse repository security advisories for **one hour**, under
+`dirs.state/repository-advisories-v1`:
 
-The one-hour window spans repeated local snapshots and separate commands in a
-weekly pass; an advisory published during it appears after expiry. Delete the
-`repository-advisories-v1` directory to force the next local read to be fresh.
-Each tool uses its own configured cache directory by default. Action tag refs
-are fetched as before, since tags can move. The CI gate CLI always fetches fresh
-repository advisories; its verdict rules and the local verification rules are
-unchanged.
+- **Protected.** Agents and sandboxed builds can't write it; a build that could
+  edit the cache could hide an advisory from verification. The path is resolved
+  once (symlinks included), and a state directory that resolves into a
+  sandbox-writable directory is refused, as for the protected OSV-Scanner.
+- **Keyed** by source repository and a hash of the read credential, so a
+  different token cannot reuse a private response.
+- **Only complete listings.** An entry is written only after every page succeeds
+  and parses; empty listings are cached too. 403, 429, server errors, malformed
+  responses and partial listings are never cached, and rate-limit errors still
+  fail with the existing diagnostic.
+- **Best effort.** Atomic replacement permits concurrent processes, though
+  simultaneous misses may each fetch. Missing, expired, corrupt or unreadable
+  entries cause a fresh fetch; failing to write the cache does not fail a run.
+
+The window spans repeated local snapshots and separate commands in a weekly pass;
+an advisory published during it appears after expiry. Delete the
+`repository-advisories-v1` directory to force a fresh read. Each tool uses its
+own state directory by default. Action tag refs are always fetched, since tags
+can move, and the CI gate CLI always fetches repository advisories fresh; verdict
+and verification rules are unchanged.
 
 ## Repository policy
 
-The base repository owns the version and advisory policy. These formats already
-have a reference in the gate documentation; the tools consume the same files:
+The base repository owns the version and advisory policy. The tools read the same
+files as the gate, documented there:
 
 | File | Reference |
 |---|---|
@@ -97,7 +100,7 @@ have a reference in the gate documentation; the tools consume the same files:
 | `.github/supply-chain-exceptions.json` | [Exceptions](../packages/ci/README.md#exceptions-githubsupply-chain-exceptionsjson): narrowly scoped vulnerability, release-age and reviewed identity exceptions. Malware cannot be excepted. |
 | `.github/dependency-floors.json` | [Floors](../packages/ci/README.md#floors-githubdependency-floorsjson): recorded security/compatibility constraints and npm overrides. |
 
-The tools preserve this policy and exceptions. bump-it never raises floors;
+The tools preserve this policy and its exceptions. bump-it never raises floors;
 secure-it removes only the exact security floors in a jointly verified
 [floor-removal plan](../packages/secure-it/README.md#removing-redundant-security-floors).
 Compatibility floors stay. An own npm scope exempts its own packages from age,
@@ -106,16 +109,30 @@ not their dependencies or the other checks.
 ## Optional price table
 
 `modelPrices` names a JSON object keyed by the **actual model IDs in the report**,
-not family aliases such as `sol`. Each entry requires all four nonnegative USD
-prices per million tokens: `inputPerMTok`, `cachedInputPerMTok`,
-`cacheWritePerMTok`, `outputPerMTok`; and three provenance strings: `basis`
-(assumptions/context tier), `source` (provider pricing URL), `asOf` (date checked,
-`YYYY-MM-DD`). The default [table](../packages/remediation/src/model-prices.ts) covers GPT-6.1 Sol, GPT-6 Sol/Astra/Luna and retained GPT-5.6 Sol/Terra/Luna, checked on 2026-10-08 against [OpenAI pricing](https://developers.openai.com/api/docs/pricing) and its model pages. Rates assume Standard API processing without a regional premium; configure an override for Fast, Flex or other pricing. Long-context rates apply per request above 272,000 input tokens. The table needs periodic refresh; family aliases are resolved by the runner before pricing.
+not family aliases such as `sol`. Each entry requires:
 
-Optional `longContextThresholdTokens` is a positive integer. If a request above
-that threshold has no `longContext` object with the same four price fields, it
-cannot be priced. Unknown fields fail. Prices more than 90 days old still estimate
-the run but add a dated gap. [The parser](../packages/agent-basics/src/usage/model-prices.ts)
-and [cost calculation](../packages/agent-basics/src/usage/api-cost.ts) define this
-format. The result is an API-equivalent estimate of measured tokens, not a
-subscription bill or a spending limit.
+- four nonnegative USD prices per million tokens: `inputPerMTok`,
+  `cachedInputPerMTok`, `cacheWritePerMTok`, `outputPerMTok`;
+- three provenance strings: `basis` (assumptions/context tier), `source`
+  (provider pricing URL), `asOf` (date checked, `YYYY-MM-DD`);
+- optionally, `longContextThresholdTokens` (a positive integer) with a
+  `longContext` object holding the same four prices. A request above the
+  threshold without that object cannot be priced.
+
+Unknown fields fail. Prices more than 90 days old still estimate the run but add
+a dated gap. Models missing from the table, and incomplete measurements, produce
+explicit cost gaps. [The parser](../packages/agent-basics/src/usage/model-prices.ts)
+and [cost calculation](../packages/agent-basics/src/usage/api-cost.ts) define the
+format.
+
+The [default table](../packages/remediation/src/model-prices.ts) covers GPT-6.1
+Sol, GPT-6 Sol/Astra/Luna and retained GPT-5.6 Sol/Terra/Luna, checked on
+2026-10-08 against [OpenAI pricing](https://developers.openai.com/api/docs/pricing)
+and its model pages. It assumes Standard API processing without a regional
+premium; configure a table for Fast, Flex or other pricing, and for Claude models.
+Long-context rates apply per request above 272,000 input tokens. The table needs
+periodic refresh.
+
+The result is an API-equivalent estimate of measured tokens, not a subscription
+bill or a spending limit. Claude Code also reports its own list-price estimate
+per call (`providerCostUsd`); that is not a bill either.

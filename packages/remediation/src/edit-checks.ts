@@ -89,13 +89,57 @@ export async function actionsOutsidePlan(pins: ReadonlyArray<PlannedPin>, base: 
 }
 
 /**
- * The Gradle build, settings and catalog files where the edit changed a line mentioning `strictly`: a strict version
- * is its owner's deliberate pin, which no plan moves. Each changed file's `strictly` lines must stay the same, in
- * order and byte for byte. A textual guard, so it has limits: a pin written across lines, or a strict line reading a
- * variable the edit changed, escapes it, and moving an unchanged pin within its file passes.
+ * Whether `strictly` appears in the line's code, not inside a string or a comment: `strictly("1.0")`, Groovy's
+ * `strictly pinVersion`, a catalog's `strictly = "1.0"` count; a `because("… strictly pinned …")` or a comment doesn't.
+ * Commenting a pin out therefore removes it from the file's strict lines. Each line is read on its own, so the word
+ * inside a string or comment spanning lines counts: that refuses an edit, never lets a pin change through.
+ */
+function usesStrictly(line: string): boolean {
+  let code = "";
+  let quote: string | undefined;
+  let quoted = "";
+  let member = false;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i]!;
+    if (quote !== undefined) {
+      if (char === "\\") i++;
+      else if (char === quote) {
+        quote = undefined;
+        // A quoted name is still code: a catalog key (`"strictly" = "1.0"`), or a Groovy member (`delegate."strictly"`,
+        // called with or without parentheses).
+        code += member || /^\s*[=(]/.test(line.slice(i + 1)) ? quoted : char;
+      } else quoted += char;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      quoted = "";
+      member = /\.\s*$/.test(code);
+      code += char;
+      continue;
+    }
+    if (char === "/" && line[i + 1] === "*") {
+      const end = line.indexOf("*/", i + 2);
+      if (end < 0) break;
+      i = end + 1;
+      code += " ";
+      continue;
+    }
+    if (char === "#" || (char === "/" && line[i + 1] === "/")) break;
+    code += char;
+  }
+  return /\bstrictly\b/.test(code);
+}
+
+/**
+ * The Gradle build, settings and catalog files where the edit changed a line with `strictly` in its code: a strict version is its
+ * owner's deliberate pin, which no plan moves. A line counts when `strictly` is in its code (see `usesStrictly`).
+ * Each changed file's strict lines must stay the same, in order and byte for byte. A textual guard, so it has
+ * limits: a pin written across lines, or a strict line reading a variable the edit changed, escapes it, and moving
+ * an unchanged pin within its file passes.
  */
 export async function strictPinsChanged(changedFiles: ReadonlyArray<string>, base: Tree, head: Tree): Promise<string[]> {
-  const strictLines = (text: string | undefined) => (text ?? "").split("\n").filter((line) => line.includes("strictly"));
+  const strictLines = (text: string | undefined) => (text ?? "").split("\n").filter(usesStrictly);
   const problems: string[] = [];
   for (const path of changedFiles.filter(isGradleVersionFile)) {
     if (!isDeepStrictEqual(strictLines(await base.read(path)), strictLines(await head.read(path)))) {

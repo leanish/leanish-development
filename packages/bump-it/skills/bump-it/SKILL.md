@@ -91,8 +91,8 @@ or touch git metadata. Leave no temporary files: everything in the working tree 
   version catalog and build conventions. Never add or change transitive constraints or raise a floor.
 - Never change a Gradle `strictly(...)` version (a catalog's `strictly = ...` included), even when it pins a moved
   dependency at `from`: a strict version is the repository owner's deliberate pin. If the plan can't be applied
-  without changing one, answer cannot-apply naming the file and the declaration. The tool refuses an edit that changes
-  a `strictly` line.
+  without changing one, answer cannot-apply naming the file and the declaration. Never write one either: your
+  declarations use a plain version. The tool refuses an edit that adds, changes or removes a `strictly(...)` line.
 - `gradle-wrapper`: already generated and applied by the tool. Never touch wrapper files: gradlew, gradlew.bat,
   gradle/wrapper/gradle-wrapper.properties or gradle/wrapper/gradle-wrapper.jar. Keep their bytes and executable
   modes unchanged in every editing mode. Do not run the wrapper task or download/replace a wrapper yourself.
@@ -117,10 +117,14 @@ Within the files this skill lets you edit:
 
 ## Verify
 
-Run the repository's relevant checks. npm commands inherit min-release-age and min-release-age-exclude from the
-runner. Use `npm ci --ignore-scripts` when installation is needed: do not write lockfiles at all. Do not run npm
-install, npm update or any command that rewrites the tool's npm files; --package-lock-only is not a check. Don't run
-Gradle's wrapper task: the tool has already generated and protected the wrapper files.
+In every mode, run the repository's relevant checks after your edit. They're part of the job, never optional; report
+any you couldn't run, with why. For each major, read the release notes or changelog of the versions it crosses (the
+package's GitHub releases with `gh`, its CHANGELOG) before your verdict, and link them in it; if you can't read them,
+say so in the verdict rather than asserting nothing needs adapting. npm commands inherit min-release-age and
+min-release-age-exclude from the runner. Use `npm ci --ignore-scripts` when installation is needed: do not write
+lockfiles at all. Do not run npm install, npm update or any command that rewrites the tool's npm files;
+--package-lock-only is not a check. Don't run Gradle's wrapper task: the tool has already generated and protected the
+wrapper files.
 
 ## Resolve and adapt
 

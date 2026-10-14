@@ -1,6 +1,7 @@
 # What supply-chain handles
 
-This guide describes supply-chain 0.4.2 plus its unreleased changes (handling of `strictly(...)` pins, agent output rules). The [changelog](../CHANGELOG.md) lists what changed in each release.
+This guide describes supply-chain 0.4.2 and the changes listed under "Unreleased" in the
+[changelog](../CHANGELOG.md).
 
 - **The gate** checks a pull request (PR) whenever it changes. It also scans the
   default branch each day with current advisories.
@@ -10,8 +11,8 @@ This guide describes supply-chain 0.4.2 plus its unreleased changes (handling of
 
 The tools select versions and verify their changes before publishing a PR.
 They open drafts and can mark checked PRs ready. **They never merge them.**
-A coding agent edits Gradle and Actions files and adapts code for major upgrades.
-The tool writes npm dependency files.
+A coding agent (Codex or Claude Code) edits Gradle and Actions files and adapts
+code for major upgrades. The tool writes npm dependency files itself.
 
 ## What a passing gate means
 
@@ -19,9 +20,9 @@ A PR must not introduce a vulnerability the base branch did not have.
 Existing vulnerabilities are warnings on that PR. The default-branch scan fails
 on all vulnerabilities without a valid, reviewed exception.
 
-The comparison counts a package and an advisory together. A CVE and GHSA for the same
-advisory count once. Another vulnerable copy of that package is not a new finding.
-A different affected package is.
+A finding is a package and an advisory together. A CVE and GHSA for the same
+advisory count once. Another vulnerable copy of that package is not a new finding;
+a different affected package is.
 
 Malware listed by the advisory sources always fails, even if it was already
 present. Exceptions cannot allow malware. This is advisory-based detection,
@@ -107,21 +108,15 @@ Major upgrades get separate PRs. Candidates must pass identity checks and add no
 new advisories or malware. Existing vulnerabilities can remain.
 
 A routine may find a young version already locked, for example an early security
-fix. npm needs an age exemption to keep it, but that exemption covers the whole
-package name. bump-it pins copies where it can so npm cannot use it to take another
-young release. Plain overrides get temporary exact versions when all their copies
-can share the target, then are restored. Unsupported placements, including shared
-overrides that need different targets, are left unpinned and checked afterwards: a copy may stay
-locked, be removed, or move to an aged version that is not deprecated. Another
-young or deprecated version, or one whose eligibility cannot be read, fails the routine. Bundled copies
-follow their carrier and may change when it takes an aged update. Direct
-dependencies outside the update plan stay locked too. Own packages still update
-without the wait; a configured npm age exclusion alone does not freeze transitives.
-A locked version whose publication date can't be read is treated like a young one.
-An aged version accepted for a copy that couldn't be pinned is kept if a later step
-can pin that copy. If the copy's dependents or the repository's overrides then ask
-for something that version doesn't satisfy, or bump-it can't judge what they ask
-for, the copy's current version is checked again instead.
+fix. A locked version whose publication date can't be read counts as young.
+npm needs an age exemption to keep it, but that exemption covers the whole
+package name, so bump-it pins that package's copies where it can: npm then cannot
+take another young release. Copies it can't pin are checked after resolution:
+each may stay locked, be removed, or move to an aged version that is not
+deprecated. Any other result fails the routine. Bundled copies follow their
+carrier, direct dependencies outside the plan stay locked, and own packages still
+update without the wait. The [scenario rules](requirements.md#35-ci-prs-and-failures)
+give the exact pinning rules.
 
 It avoids deprecated targets. It keeps `@types/node` within the project's lowest
 known supported Node major. Without readable runtime evidence, it stays in the
@@ -180,8 +175,6 @@ dependency, an advisory-bearing reason and a record in
 Declared plugins can move too. Dependencies only a plugin declares can get a
 parent fix or a floor. Verification runs the planned plugin version through
 Gradle, so its dependency changes are checked alongside any floors in the plan.
-It requires the edited build to declare and resolve the same dependencies as
-the base build with those planned changes applied by Gradle.
 
 A version pinned with `strictly(...)`, declared or as a dependency constraint,
 is the repository owner's decision. secure-it reports a fix blocked when the pin
@@ -189,6 +182,8 @@ holds where the fix would act, and the gate keeps failing until the owner moves
 it. A strictly pinned parent is never moved to carry a fix; the vulnerable
 dependency gets a floor instead. Gradle's own strict constraints on its embedded
 Kotlin (buildscript and settings classpaths) don't block fixes elsewhere.
+Neither tool changes a strict pin: verification refuses an edit that changes a
+line with `strictly` in its code (not in a string or a comment) in a build, settings or catalog file.
 
 ### What bump-it updates
 
@@ -227,7 +222,7 @@ Each tool reviews its own open PRs on later runs:
   new base or redoing the change if the plan changed.
 - **CI is green:** the draft is marked ready. **Held by the cooldown:** it waits.
   A secure-it PR held for young versions is retired once they have all aged; the
-  next run plans a fresh one.
+  next run plans a fresh one. A held draft a person marked ready is theirs.
 - **CI failed:** the agent adapts the PR, **at most twice**; an attempt counts even
   if it changes nothing. If CI still fails after the second, the next review closes
   the PR and deletes its branch, and a later run starts over. A run that replans an
@@ -240,6 +235,10 @@ Which PRs the agent can adapt:
   appears later, after the base moved, is adapted during review.
 - **secure-it's non-major fixes:** build and dependency files only, never code.
 - **bump-it's routine PR and floor removals:** never adapted.
+
+In every mode the agent runs the repository's relevant checks and reports any it
+couldn't run. For a major, it links the release notes or changelog it read, or
+says it couldn't read them.
 
 Verification failures are different from CI failures. When secure-it's own
 verification of a routine batch fails, it retries once without the package groups
@@ -270,22 +269,17 @@ BeanUtils. It can go after that dependency is removed or naturally resolves safe
 
 ### What may go unseen or produce an incomplete answer
 
-- No OS-package or container-image scan. Dockerfile CLIs are covered only through
-  configured npm manifests and locks. Yarn and pnpm lockfiles are not read.
-- Vendored JavaScript without a separate package manifest is not detected as a
-  dependency. Shaded Java classes are not separate modules. Their advisories do not
-  match; someone must identify and update the package that ships them.
-- Gradle local files and JARs are not external modules. A build or plugin can hide
-  dependencies from its own inventory. Job isolation protects credentials, not
-  the truth of that inventory. Review build and workflow changes, especially on forks.
-- A missing GitHub source repository, a private/deleted/renamed repository, or an
-  unreadable advisory range leaves a reported gap in repository advisories.
-  OSV coverage still applies. One known range-reading defect can over-report:
-  an AND range written `< 2.0.0, >= 1.0.0` is read as affecting every version.
-- Unchanged unpinned Actions, `docker://` actions, missing local action descriptors
-  and missing local reusable workflows leave reported gaps. A new or changed
-  unpinned remote use fails instead.
-- The local tools reuse a repository's advisory listing for up to an hour, so an
+- The [coverage gaps](coverage-gaps.md) list what the gate can't see: OS packages
+  and container images, vendored or shaded code, Gradle local files and JARs,
+  unreadable advisory sources and ranges, and unpinned, `docker://` or missing
+  local Actions. Every report lists its reported gaps; the limits go unmentioned.
+- Yarn and pnpm lockfiles are not read. Dockerfile CLIs are covered only through
+  configured npm manifests and locks.
+- A build or plugin can hide dependencies from its own inventory. Job isolation
+  protects credentials, not the truth of that inventory. Review build and workflow
+  changes, especially on forks.
+- The local tools reuse a repository's advisory listing for
+  [up to an hour](tool-configuration.md#github-api-usage-and-advisory-cache), so an
   advisory published meanwhile can wait for a later run. The CI gate always reads
   fresh advisories.
 - Signatures, provenance and a seven-day wait do not prove an archive harmless.
@@ -296,11 +290,12 @@ BeanUtils. It can go after that dependency is removed or naturally resolves safe
 
 - Ordinary npm parent search does not move bundled parents. A bundled fix is not
   automated if updating the package shipping it would require an override.
-  A proven young bundled fix also cannot justify its
-  own young, non-bundled dependencies. Such a change fails comparison and is reported.
+  A proven young bundled fix also cannot justify its own young, non-bundled
+  dependencies. Such a change fails comparison and is reported.
 - Bundle proofs have size, time and search budgets. An unreadable or incomplete
-  archive (including one with global tar headers, which `npm pack` never writes) is never treated as clean. Archive authentication covers these proofs
-  and secure-it's bundled moves; it is not a general check of every changed bundle.
+  archive (including one with global tar headers, which `npm pack` never writes)
+  is never treated as clean. Archive authentication covers these proofs and
+  secure-it's bundled moves; it is not a general check of every changed bundle.
   Bundled children follow their archive, without separate release-age checks.
 - npm peers, recursive young-dependency proofs and exact lockfile updates have
   bounds. Unsupported nested placements or conflicts can block a PR. Complex
@@ -312,11 +307,12 @@ BeanUtils. It can go after that dependency is removed or naturally resolves safe
   validated internal workspace links are supported.
 - Gradle parent search handles one vulnerable module at a time. Later choices must
   preserve earlier fixes. It does not maximize fixes across modules. Six probes can
-  miss a later fix. Several parents each covering
-  only part of the affected build cannot replace the floor through this search.
+  miss a later fix. Several parents each covering only part of the affected build
+  cannot replace the floor through this search.
+- A fix behind a `strictly(...)` pin waits for the owner to move the pin.
 - Gradle source recognition is text-based. It misses `kotlin("stdlib")`, escapes
-  inside Kotlin or Groovy strings, and files outside the repository. Comments or names in another build can
-  cause an attempted update that verification rejects.
+  inside Kotlin or Groovy strings, and files outside the repository. Comments or
+  names in another build can cause an attempted update that verification rejects.
 - Several declared versions, shared catalog versions that move unplanned packages,
   replaced declarations, or a plugin major that stops the base build configuring
   can block verification. Routine edits cannot change convention code or catalogs
@@ -339,9 +335,11 @@ BeanUtils. It can go after that dependency is removed or naturally resolves safe
 
 ### Operating limits
 
-- Local tools use macOS Apple Silicon, Keychain, PATs and Codex. GitHub App mode and
-  Linux/Windows launchers are deferred. Node 24 is required; npm 11.17+ is needed
-  for the tools' age exclusions.
+- Local tools need macOS on Apple Silicon, Keychain-held PATs, Node 24+, the Codex
+  CLI (for the tool's sandboxed commands) and a coding agent, Codex or Claude Code.
+  npm 11.17+ is needed for the tools' age exclusions. See the
+  [prerequisites](adopting-tools.md#prerequisites). GitHub App mode and
+  Linux/Windows launchers are deferred.
 - Candidate preview is read-only, but is not a full dry run. `run` and `review`
   can publish changes. The tools read Actions jobs and commit statuses, not another
   app's Checks-only results or GitHub's list of required checks.
@@ -352,8 +350,9 @@ BeanUtils. It can go after that dependency is removed or naturally resolves safe
   merging. A person's PR held by the cooldown stays red until it's pushed to or its
   whole workflow is re-run after the date the hold gives.
 - Verification is about dependencies and policy, not whether a migration behaves
-  correctly. Agent adaptations are bounded (see above). Human pushes are left alone. Publication
-  guards reduce races, but GitHub writes cannot be made atomic with a head check.
+  correctly. Agent adaptations are bounded (see above). Human pushes are left
+  alone. Publication guards reduce races, but GitHub writes cannot be made atomic
+  with a head check.
 
 ## What a person still does
 
@@ -368,9 +367,8 @@ merge past cooldown. Without an enforcing ruleset, still record the decision.
 Young routine fixes and their required companion updates go apart from aged fixes.
 Major repairs stay together even when some of their versions are young.
 The build and tests can already execute a young release while its PR is held.
-Once its held versions age, secure-it retires the draft and plans a fresh PR.
-A human PR needs the whole workflow rerun on its current revision.
-Rerunning cooldown alone uses the old report.
+For a person's PR, rerun the whole workflow on its current revision: rerunning
+only the cooldown check reuses the old report.
 
 For details: [scenario rules](requirements.md), [coverage gaps](coverage-gaps.md),
 [security boundaries](security-model.md),

@@ -8,6 +8,7 @@ import type { ToolHandlers, ToolRunContext } from "../../remediation/src/command
 import { isMechanical } from "../../remediation/src/edit-checks.ts";
 import { branchFor, topicOf, stateOf } from "../../remediation/src/own-pr.ts";
 import { closeAndDelete, ownOpenPullRequests, publishNew, publishUpdate, recoverPublication } from "../../remediation/src/publication.ts";
+import { machineRoots } from "../../remediation/src/publication-text.ts";
 import { reviewOpenPullRequests, type ReviewSteps } from "../../remediation/src/review.ts";
 
 import { WRAPPER_FILES, type WrapperCandidates } from "./gradle-wrapper.ts";
@@ -48,6 +49,7 @@ async function createExecution(context: ToolRunContext, deps: BumpItDeps): Promi
       base: context.base,
       workingCopy: context.workingCopy,
       journal: deps.journal(context),
+      localRoots: machineRoots(context.config.dirs),
     },
   };
 }

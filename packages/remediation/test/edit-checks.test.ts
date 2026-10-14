@@ -31,6 +31,36 @@ describe("strict pins", () => {
     expect(await strictPinsChanged(["build.gradle.kts"], tree({ "build.gradle.kts": `${KTS}${other}` }), tree({ "build.gradle.kts": `${other}${KTS}` }))).toHaveLength(1);
   });
 
+  it("lets a line that only says the word through, such as a floor's because(...) about a strict parent", async () => {
+    const floor = '  implementation("g:okio:3.4.0") { because("GHSA-x: okhttp is strictly pinned to 4.9.3") }\n';
+    expect(await strictPinsChanged(["build.gradle.kts"], tree({ "build.gradle.kts": KTS }), tree({ "build.gradle.kts": KTS.replace("}\n", `}\n${floor}`) }))).toEqual([]);
+  });
+
+  it("counts strictly wherever it's code, in any argument form, and only there", async () => {
+    const groovy = [
+      "dependencies {",
+      "  implementation('g:a') { version { strictly pinVersion } } // the owner's",
+      "  implementation('g:b') { version { strictly getPinnedVersion() } }",
+      "  implementation('g:c') { version { strictly versions[\"pinned\"] } }",
+      "  // strictly pinned above; see the owner",
+      "}",
+    ].join("\n");
+    const changed = (after: string) => strictPinsChanged(["build.gradle"], tree({ "build.gradle": groovy }), tree({ "build.gradle": after }));
+    expect(await changed(groovy.replace("strictly pinVersion", "strictly otherVersion"))).toHaveLength(1);
+    expect(await changed(groovy.replace("getPinnedVersion()", "getNewerVersion()"))).toHaveLength(1);
+    expect(await changed(groovy.replace('versions["pinned"]', 'versions["newer"]'))).toHaveLength(1);
+    expect(await changed(groovy.replace("  implementation('g:a')", "  // implementation('g:a')"))).toHaveLength(1);
+    expect(await changed(groovy.replace("see the owner", "ask the owner"))).toEqual([]);
+    const inline = 'dependencies {\n  implementation("g:d") { version { /* owner pin */ strictly("1.0") } }\n}\n';
+    expect(await strictPinsChanged(["build.gradle.kts"], tree({ "build.gradle.kts": inline }), tree({ "build.gradle.kts": inline.replace('"1.0"', '"2.0"') }))).toHaveLength(1);
+    const quotedCall = "dependencies {\n  if (project.hasProperty('optional')) { implementation('g:e') { version { delegate.\"strictly\"('1.0') } } }\n}\n";
+    expect(await strictPinsChanged(["build.gradle"], tree({ "build.gradle": quotedCall }), tree({ "build.gradle": quotedCall.replace("'1.0'", "'2.0'") }))).toHaveLength(1);
+    const bareCall = quotedCall.replace(`"strictly"('1.0')`, `"strictly" '1.0'`);
+    expect(await strictPinsChanged(["build.gradle"], tree({ "build.gradle": bareCall }), tree({ "build.gradle": bareCall.replace("'1.0'", "'2.0'") }))).toHaveLength(1);
+    const catalog = '[versions]\npinned = { "strictly" = "1.0" }\n';
+    expect(await strictPinsChanged(["gradle/libs.versions.toml"], tree({ "gradle/libs.versions.toml": catalog }), tree({ "gradle/libs.versions.toml": catalog.replace('"1.0"', '"2.0"') }))).toHaveLength(1);
+  });
+
   it("counts duplicate strictly lines, so dropping one of two identical pins is refused", async () => {
     const twice = `${KTS}${KTS}`;
     expect(await strictPinsChanged(["build.gradle.kts"], tree({ "build.gradle.kts": twice }), tree({ "build.gradle.kts": KTS }))).toHaveLength(1);

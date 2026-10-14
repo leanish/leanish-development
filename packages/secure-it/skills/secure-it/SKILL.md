@@ -147,14 +147,15 @@ to invent version choices.
 
 ## Removing redundant floors
 
-When `floorRemovals` is supplied, there are no version moves. The tool already proved this exact set jointly,
-without dependency locks, and wrote the floor records and any npm manifests/lockfiles. Leave every `toolWritten`
-file byte for byte; never run npm install/update or change those files. In the listed Gradle declaration files,
-remove only the explicit dependency at the exact floor version whose `because(...)` names every supplied advisory,
-from every listed configuration. Preserve all other declarations (including compatibility floors), locks, build
-logic and repository code. If the declaration is shared with an unplanned floor, cannot be removed precisely, or
-requires other edits, answer `cannot-apply`. Run relevant checks with `--no-daemon` for Gradle. Do not add or raise
-floors, change parents, or adapt code in a removal plan. The tool writes this PR's text itself.
+When `floorRemovals` is supplied, there are no version moves. The tool already proved this exact set jointly, without
+dependency locks, and wrote the floor records and any npm manifests/lockfiles. Leave every `toolWritten` file byte for
+byte; never run npm install/update or change those files. In the listed Gradle declaration files, remove only the
+explicit dependency at the exact floor version whose `because(...)` names every supplied advisory, from every listed
+configuration. Another declaration of the same coordinate without that `because(...)` (a plain `implementation(...)`,
+say) is the owner's: leave it, and still remove the floor. Preserve all other declarations (including compatibility
+floors), locks, build logic and repository code. If the declaration is shared with an unplanned floor, cannot be
+removed precisely, or requires other edits, answer `cannot-apply`. Run relevant checks with `--no-daemon` for Gradle.
+Do not add or raise floors, change parents, or adapt code in a removal plan. The tool writes this PR's text itself.
 
 ## Tool-written npm files
 
@@ -178,8 +179,9 @@ that rewrites a lockfile. Never lower/unset the window or add exclusions of your
 - Code, tests and docs **only when a move has `major: true`**, and only to adapt to that major.
 - Never change a Gradle `strictly(...)` version (a catalog's `strictly = ...` included), even when it pins a moved
   dependency at `from`: a strict version is the repository owner's deliberate pin. If the plan can't be applied
-  without changing one, answer `cannot-apply` naming the file and the declaration. The tool refuses an edit that
-  changes a `strictly` line.
+  without changing one, answer `cannot-apply` naming the file and the declaration. Never write one either: your
+  declarations use a plain version, even when what brings the vulnerable version pins it strictly. The tool refuses
+  an edit that adds, changes or removes a `strictly(...)` line.
 - Direct dependencies outside the supplied moves keep their declarations and locked versions. Never edit another
   dependency's version by hand or add an unplanned override or floor.
 - Preserve existing floor records and declarations, except the exact `floorRemovals` described above. Never alter a compatibility floor. A Gradle security floor may move
@@ -205,14 +207,15 @@ that rewrites a lockfile. Never lower/unset the window or add exclusions of your
   `gradle-declared`.
 - `gradle-declared`: a dependency the build declares. Change its version where it's declared (the version catalog if
   it comes from there, else the build file).
-- `gradle-floor`: a transitive dependency, or one a plugin declares (no file of the repository declares it, so leave the
-  plugin's own declaration alone: yours goes next to it). In each configuration of `locations` (`:runtimeClasspath`,
-  `buildSrc/:compileClasspath`, …), declare it explicitly at exactly `<to>`, with `because("<advisories, comma-separated>:
-  <one line on why>")`, in the configuration the resolving one extends (e.g. `implementation` for `runtimeClasspath`,
-  `testImplementation` for `testRuntimeClasspath`); use the catalog when the build uses one. When the location is itself
-  the configuration you'd declare on and a plugin fills it with defaults only while it has no dependencies of its own
-  (`checkstyle`, a code-quality tool's configuration), declaring on it would drop the plugin's tool: declare the floor in
-  a new helper configuration that it extends instead. Then add its record to `floorsFile` (see below).
+- `gradle-floor`: a transitive dependency, or one a plugin declares (no file of the repository declares it, so leave
+  the plugin's own declaration alone: yours goes next to it). In each configuration of `locations`
+  (`:runtimeClasspath`, `buildSrc/:compileClasspath`, …), declare it explicitly at exactly `<to>` as a plain version
+  (`implementation("<name>:<to>")`, never `strictly`), with `because("<advisories, comma-separated>: <one line on
+  why>")`, in the configuration the resolving one extends (e.g. `implementation` for `runtimeClasspath`,
+  `testImplementation` for `testRuntimeClasspath`); use the catalog when the build uses one. When the location is
+  itself the configuration you'd declare on and a plugin fills it with defaults only while it has no dependencies of
+  its own (`checkstyle`, a code-quality tool's configuration), declaring on it would drop the plugin's tool: declare
+  the floor in a new helper configuration that it extends instead. Then add its record to `floorsFile` (see below).
 - `action-pin`: replace each `uses:` of the action in `locations` with `<name>@<commitSha> # <to>`.
 
 Don't add configurations Gradle can resolve: verification inventories the edit's resolvable configurations and compares
@@ -234,13 +237,14 @@ Within the files this skill lets you edit:
 
 ## The floors file
 
-`floorsFile` (`.github/dependency-floors.json`) records every floor; create it as `{ "floors": [] }` if it's missing, and
-keep its existing records. The file holds only the `floors` key: the schema below describes it, and the schema's own
-keywords (`$schema`, `$id`, `title`, `description`, ...) never go into the file. A `gradle-floor` move's record: `"ecosystem": "Maven"`, `"package"` the move's `name`,
-`"version"` its `to`, `"declaredIn"` the build file you declared it in, `"selector"` its `locations`, `"purpose":
-"security"`, `"advisories"` its `advisories`, `"reason"` one line on why, `"added"` `today`. The gate rejects a file
-that doesn't follow this schema (it also requires `added` to be a real date, and no two records of one package in one
-file claiming the same configuration):
+`floorsFile` (`.github/dependency-floors.json`) records every floor; keep its existing records. Create it, as `{
+"floors": [] }`, only when it's missing and this change adds a floor. The file holds only the `floors` key: the schema
+below describes it, and the schema's own keywords (`$schema`, `$id`, `title`, `description`, ...) never go into the
+file. A `gradle-floor` move's record: `"ecosystem": "Maven"`, `"package"` the move's `name`, `"version"` its `to`,
+`"declaredIn"` the build file you declared it in, `"selector"` its `locations`, `"purpose": "security"`,
+`"advisories"` its `advisories`, `"reason"` one line on why, `"added"` `today`. The gate rejects a file that doesn't
+follow this schema (it also requires `added` to be a real date, and no two records of one package in one file claiming
+the same configuration):
 
 ```json
 {
@@ -355,6 +359,14 @@ The change was published and CI failed (`failingChecks` names the jobs and statu
 contexts (Commit statuses read). The Checks API is not needed; your token reads only. Fix what the move broke,
 within what you may change. If the failure isn't caused by the move, or fixing it needs more than that, answer
 `cannot-apply` and say why.
+
+## Checks and release notes
+
+In every mode, run the repository's relevant checks after your edit (its README or CI names them; Gradle with
+`--no-daemon`). They're part of the job, never optional; report any you couldn't run, with why. For each major, read
+the release notes or changelog of the versions it crosses (the package's GitHub releases with `gh`, its CHANGELOG)
+before your verdict, and link them in it; if you can't read them, say so in the verdict rather than asserting nothing
+needs adapting.
 
 ## Your answer
 

@@ -1,8 +1,6 @@
 # Coverage gaps
 
-For a plain-language overview of coverage and update limits, see [What supply-chain handles](what-it-handles.md).
-
-What the gate can't see. Two kinds: **reported gaps**, which every report lists next to its verdict (a verdict can pass with them), and **limits**, which no report mentions because the gate can't detect them.
+What the gate can't see, in two kinds: **reported gaps**, which every report lists next to its verdict (a verdict can pass with them), and **limits**, which no report mentions because the gate can't detect them. For a plain-language overview of coverage, see [What supply-chain handles](what-it-handles.md).
 
 ## Reported gaps
 
@@ -19,7 +17,7 @@ What the gate can't see. Two kinds: **reported gaps**, which every report lists 
 - **Code copied into a package without its own manifest**: npm bundles are read package by package (each bundled `node_modules/<name>/package.json`); JavaScript vendored into a package's own files isn't a package anywhere, so its advisories can't match.
 - **Shaded Java dependencies**: classes a library copies (and usually relocates) into its own jar aren't a module in the Gradle inventory, only the jar that ships them is; an advisory on the shaded library doesn't match it, and the only fix is another version of the shading artifact.
 - **What a Gradle build hides from its own inventory** (see the [security model](security-model.md)), and dependencies that aren't external modules: the inventory exports module coordinates only, so local files and JARs aren't covered.
-- **Advisories behind a `strictly(...)` pin**: the tools never move the owner's strict versions, so a fix that needs one stays blocked (reported) and the gate keeps failing until the owner moves the pin.
+- **Advisories behind a `strictly(...)` pin**: the tools never move the owner's strict versions, so secure-it reports a fix that needs one as blocked, and the default branch's scan keeps failing until the owner moves the pin.
 - **Scheduled runs are best effort**: GitHub may delay or skip them, and disables them after 60 days without activity in a public repository.
 
 ## Checks that fail rather than leave a gap
@@ -27,14 +25,16 @@ What the gate can't see. Two kinds: **reported gaps**, which every report lists 
 These apply to versions a PR adds or changes, in `compare`; unchanged versions and the full `scan` don't get them.
 
 - **Packages from another npm registry**: age and identity are checked against the npm registry only, so they fail, or (own packages) need a reviewed `identity` exception.
-- **Maven versions outside Maven Central and the Gradle Plugin Portal**: their release age can't be checked, so they fail unless configured. Own Maven packages skip the age check.
+- **Maven versions outside Maven Central and the Gradle Plugin Portal**: their release age can't be checked, so they fail unless their repository is listed in `maven.repositories`. Own Maven packages skip the age check.
 
 ## Gradle wrapper updates
 
-bump-it selects and verifies the root Gradle wrapper separately from the gate's dependency inventory. It reads
-stable, non-broken releases from services.gradle.org and published repository advisories from gradle/gradle; this
-is not a scan of the distribution archive. Nested wrappers, mirrors, custom distributions and prerelease base
-wrappers are not upgraded. The official wrapper jar is checksummed; generated shell/batch scripts are not
-independently compared with official scripts, but all four generated files are protected byte for byte and by executable
-mode against agent edits. A missing or unreadable advisory range leaves the wrapper out with a reported reason;
-other moves continue. Verification of a planned wrapper fails closed.
+bump-it selects and verifies the root Gradle wrapper outside the gate's dependency inventory:
+
+- It reads stable, non-broken releases from services.gradle.org and published repository advisories from
+  gradle/gradle; it doesn't scan the distribution archive.
+- Nested wrappers, mirrors, custom distributions and prerelease base wrappers are not upgraded.
+- The official wrapper jar is checksummed. The generated shell/batch scripts aren't compared with official ones, but
+  all four generated files are protected against agent edits, byte for byte and by executable mode.
+- A missing or unreadable advisory range leaves the wrapper out with a reported reason; other moves continue.
+  Verification of a planned wrapper fails closed.
