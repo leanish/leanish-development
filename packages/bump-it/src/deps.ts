@@ -12,7 +12,7 @@ import { FileRepositoryAdvisoryCache } from "../../remediation/src/repository-ad
 import { runProcess } from "../../ci/src/process.ts";
 import { gitTree, type Tree, workingTree } from "../../ci/src/tree.ts";
 import type { ToolRunContext } from "../../remediation/src/command.ts";
-import { changedSince } from "../../remediation/src/git-copies.ts";
+import { changedSince, git } from "../../remediation/src/git-copies.ts";
 import { type GradleInventories, sandboxedGradleInventories } from "../../remediation/src/inventories.ts";
 import { FileJournal, type PublicationJournal } from "../../remediation/src/journal.ts";
 import { ensureOsvScanner, verifyingRun } from "../../remediation/src/osv-scanner.ts";
@@ -57,7 +57,7 @@ export function defaultDeps(): BumpItDeps {
     writeWrapperFiles,
     async restoreWrapperFile(workingCopy, baseSha, path) {
       if (!WRAPPER_FILES.includes(path) || !/^[a-f0-9]{40}$/i.test(baseSha)) throw new Error("invalid wrapper restore");
-      const restored = await runProcess("git", ["restore", `--source=${baseSha}`, "--worktree", "--", path], { cwd: workingCopy.path });
+      const restored = await git(workingCopy, ["restore", `--source=${baseSha}`, "--worktree", "--", path], runProcess);
       if (restored.code !== 0) throw new Error(`restoring ${path} from base failed: ${restored.stderr.trim()}`);
     },
     async wrapperJarSha256(workingCopy) {
@@ -75,7 +75,7 @@ export function defaultDeps(): BumpItDeps {
       return { run: verifyingRun(runProcess, osv), fetch: namingFailures(context.fetch), now: () => new Date(), osvScanner: osv.path, githubToken: context.readToken, repositoryAdvisoryCache: new FileRepositoryAdvisoryCache(context.config.dirs.state, writable, context.readToken) };
     },
     gradle: (context) => sandboxedGradleInventories(context.isolation, context.workingCopy),
-    trees: { commit: (workingCopy, sha) => gitTree(workingCopy.path, sha, runProcess), working: (workingCopy) => workingTree(workingCopy.path) },
+    trees: { commit: (workingCopy, sha) => gitTree(workingCopy.path, sha, runProcess, workingCopy.gitDir), working: (workingCopy) => workingTree(workingCopy.path) },
     candidates: bumpCandidates,
     npm: computeOnBase,
     verify: verifyPlan,

@@ -166,6 +166,9 @@ Hidden plans record complete floor identities and file hashes, never npm file co
 
 ## What a review does
 
+A verified CI adaptation replaces the PR title and description with the agent's new verdict and check results,
+keeping the verified plan and publication state markers.
+
 The tick from [`packages/remediation`](../remediation), with secure-it's steps:
 
 - **The base moved:**

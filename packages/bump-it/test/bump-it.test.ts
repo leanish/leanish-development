@@ -528,6 +528,22 @@ describe("bump-it review", () => {
     expect(h.files["package.json"]).toBe(expected);
     expect(h.agentCalls).toEqual([]);
   });
+  it("publishes the adaptation's new title, verdict and checks with its plan", async () => {
+    const previous = await prFor(major());
+    const pr = { ...previous, body: previous.body.replace("Body.", "No adaptation needed; old checks.") };
+    const h = harness({ prs: [pr] });
+    h.github.checks = RED;
+    const publication = { title: "adapting lib", body: "Adapted src/lib.ts; npm test passed.", commitMessage: "adapting lib" };
+    const context = { ...h.context, agent: (async () => ({ outcome: "applied", summary: "adapted", publication })) as ToolRunContext["agent"] };
+    expect(await bumpIt(h.deps).review(context)).toMatchObject({ reviewed: [{ outcome: "adapted" }] });
+    const updated = h.github.prs.get(pr.number)!;
+    expect(updated.title).toBe(publication.title);
+    expect(updated.body).toContain(publication.body);
+    expect(updated.body).not.toContain("No adaptation needed; old checks.");
+    expect(planOf(updated.body)).toEqual(planOf(pr.body));
+    expect(h.workspace.publications[0]?.args.message).toBe(publication.commitMessage);
+  });
+
   it("checks recorded lockfile hashes before letting a major adapt", async () => {
     const h = harness({ prs: [await prFor(major())] }); h.github.checks = RED;
     const prepare = h.workspace.prepareBranch.bind(h.workspace);

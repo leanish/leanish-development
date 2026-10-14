@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { chmod, lstat, mkdtemp, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -41,6 +41,47 @@ afterAll(async () => {
 });
 
 describe("git copies", () => {
+  it("diffs and exports real baseline objects despite replaced commits, blobs and a redirected .git", async () => {
+    const fixture = await mkdtemp(join(tmpdir(), "git-copies-replaced-"));
+    try {
+      const path = join(fixture, "tree");
+      const gitDir = join(fixture, "metadata");
+      const alternate = join(fixture, "alternate");
+      await mkdir(path);
+      const git = (...args: string[]) => {
+        const result = spawnSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.com", ...args], { cwd: path, encoding: "utf8" });
+        if (result.status !== 0) throw new Error(result.stderr);
+        return result.stdout.trim();
+      };
+      git("init", "--quiet", `--separate-git-dir=${gitDir}`);
+      await writeFile(join(path, "package.json"), "original");
+      git("add", ".");
+      git("commit", "--quiet", "-m", "original");
+      const base = git("rev-parse", "HEAD");
+      const blob = git("rev-parse", "HEAD:package.json");
+      await writeFile(join(path, "package.json"), "forged");
+      git("add", ".");
+      git("commit", "--quiet", "-m", "forged");
+      const forged = git("rev-parse", "HEAD");
+      const forgedBlob = git("rev-parse", "HEAD:package.json");
+      git("clone", "--quiet", "--bare", gitDir, alternate);
+      git(`--git-dir=${gitDir}`, "replace", base, forged);
+      git(`--git-dir=${gitDir}`, "replace", blob, forgedBlob);
+      await writeFile(join(path, ".git"), `gitdir: ${alternate}\n`);
+      const wc: WorkingCopy = { projectId: "fixture", path, gitDir, branch: "main", headSha: base };
+      expect(await changedSince(wc, base)).toEqual(["package.json"]);
+      expect(await sameTreeAs(wc, base)).toBe(false);
+      const exported = await exportCommit(wc, base);
+      try {
+        expect(await readFile(join(exported.dir, "package.json"), "utf8")).toBe("original");
+      } finally {
+        await exported.remove();
+      }
+    } finally {
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
+
   it("exports a commit's files into a fresh directory, and removes it", async () => {
     await writeFile(join(workingCopy.path, "package.json"), '{"name":"b"}\n');
     const copy = await exportCommit(workingCopy, first);

@@ -1,5 +1,5 @@
 // Copied from leanish/leanish-development core/runtime/src/skill/codex-permissions.ts at c6282df; see PROVENANCE.md.
-// Local changes: `Access` from `types/access.ts` instead of the agent descriptor.
+// Local changes: `Access` from `types/access.ts`; the working copies' .git pointer files stay read-only too.
 import { isAbsolute, join, relative, sep } from "node:path";
 
 import type { Access } from "../types/access.ts";
@@ -14,7 +14,7 @@ import type { Access } from "../types/access.ts";
  * `auth.json` (the linked login, or whatever replaced it). `read-only`: the working copies readable even
  * under a denied path, no writes, no network. `write`: the working copies, the
  * temp dirs and `writableRoots` writable, each one's git metadata (kept outside
- * the working tree) explicitly read-only — the agent edits files, the runtime
+ * the working tree) and .git entry explicitly read-only — the agent edits files, the runtime
  * commits — network on.
  *
  * Rules on the same path resolve deny > write > read; a more specific path
@@ -26,6 +26,8 @@ export interface CodexPermissionRequest {
   readonly access: Access;
   /** Each working copy's git metadata directory (write runs only); read-only even under a writable root such as `/tmp`. */
   readonly gitDirs: ReadonlyArray<string>;
+  /** The working copies' .git pointer files, read-only too. */
+  readonly gitEntries: ReadonlyArray<string>;
   readonly stagedHome: string;
   /** Absolute; write runs only. */
   readonly writableRoots: ReadonlyArray<string>;
@@ -47,6 +49,7 @@ export function codexPermissionArgs(request: CodexPermissionRequest): string[] {
     filesystem.push([":tmpdir", "write"], [":slash_tmp", "write"]);
     for (const path of request.writableRoots) filesystem.push([path, "write"]);
     for (const path of request.gitDirs) filesystem.push([path, "read"]);
+    for (const path of request.gitEntries) filesystem.push([path, "read"]);
   }
   for (const path of request.readDenied) filesystem.push([path, "deny"]);
   for (const path of request.readAllowed) filesystem.push([path, "read"]);

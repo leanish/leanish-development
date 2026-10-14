@@ -17,15 +17,16 @@ import { dirname, join, normalize } from "node:path";
 
 import type { WorkingCopy } from "../../agent-basics/src/types/working-copy.ts";
 import { runProcess, type RunProcess } from "../../ci/src/process.ts";
+import { gitArgs as repositoryArgs, gitEnvironment } from "../../ci/src/git.ts";
 
 function gitArgs(workingCopy: WorkingCopy, args: ReadonlyArray<string>): string[] {
   if (workingCopy.gitDir === undefined) throw new Error(`${workingCopy.path}'s git metadata must be in a separate directory`);
-  return ["--git-dir", workingCopy.gitDir, "--work-tree", workingCopy.path, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args];
+  return repositoryArgs(workingCopy.path, workingCopy.gitDir, args);
 }
 
 /** A git command over the working copy's own metadata, without system or global config, hooks or fsmonitor. */
 export async function git(workingCopy: WorkingCopy, args: ReadonlyArray<string>, run: RunProcess): Promise<{ code: number; stdout: string; stderr: string }> {
-  const env = { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" };
+  const env = gitEnvironment();
   return run("git", gitArgs(workingCopy, args), { cwd: workingCopy.path, env });
 }
 
@@ -102,7 +103,7 @@ function catFileBatch(workingCopy: WorkingCopy, objects: ReadonlyArray<string>):
   return new Promise((resolve, reject) => {
     const child = spawn("git", gitArgs(workingCopy, ["cat-file", "--batch"]), {
       cwd: workingCopy.path,
-      env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" },
+      env: gitEnvironment(),
       stdio: ["pipe", "pipe", "pipe"],
     });
     const chunks: Buffer[] = [];

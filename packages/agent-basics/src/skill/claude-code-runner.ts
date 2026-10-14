@@ -286,6 +286,7 @@ export function claudeSettings(request: ClaudeSettingsRequest): Record<string, u
   // `~/.claude` rule would also stop them from reading the session's saved outputs, so it's left to that default.
   const claudeHome = join(request.home, ".claude");
   const opensSession = request.readDenied.includes(claudeHome);
+  const gitEntries = request.workingCopies.map((path) => join(path, ".git"));
   return {
     sandbox: {
       enabled: true,
@@ -294,7 +295,7 @@ export function claudeSettings(request: ClaudeSettingsRequest): Record<string, u
       autoAllowBashIfSandboxed: true,
       filesystem: {
         allowWrite: write ? [...request.writableRoots] : [],
-        denyWrite: write ? [...request.gitDirs] : [...request.workingCopies],
+        denyWrite: write ? [...request.gitDirs, ...gitEntries] : [...request.workingCopies],
         denyRead: [...request.readDenied],
         ...(opensSession ? { allowRead: [request.sessionDir] } : {}),
       },
@@ -310,6 +311,7 @@ export function claudeSettings(request: ClaudeSettingsRequest): Record<string, u
       deny: [
         ...request.readDenied.filter((path) => path !== claudeHome).flatMap(readRules),
         ...request.gitDirs.map((dir) => `Edit(/${dir}/**)`),
+        ...gitEntries.map((path) => `Edit(/${path})`),
         ...DENIED_TOOLS,
       ],
     },

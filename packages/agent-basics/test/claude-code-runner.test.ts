@@ -162,13 +162,13 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     expect(argv[argv.indexOf("--permission-prompts") + 1]).toBe("none");
     const settings = settingsOf(text);
     expect(settings.sandbox).toMatchObject({ enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false });
-    expect(settings.sandbox.filesystem.denyWrite).toEqual([workingCopy.gitDir]);
+    expect(settings.sandbox.filesystem.denyWrite).toEqual([workingCopy.gitDir, join(workingCopy.path, ".git")]);
     expect(settings.sandbox.filesystem.allowWrite).toEqual(expect.arrayContaining([cache, realpathSync("/tmp")]));
     expect(settings.sandbox.network).toEqual({ allowedDomains: ["*"], allowLocalBinding: true });
     expect(settings.sandbox.enableWeakerNetworkIsolation).toBe(true);
     expect(settings.permissions.allow).toEqual(["Bash"]);
     expect(settings.permissions.deny).toEqual([
-      `Read(/${deniedDir}-other)`, `Read(/${deniedDir}-other/**)`, `Read(/${deniedFile})`, `Edit(/${workingCopy.gitDir}/**)`, ...DENIED_TOOLS,
+      `Read(/${deniedDir}-other)`, `Read(/${deniedDir}-other/**)`, `Read(/${deniedFile})`, `Edit(/${workingCopy.gitDir}/**)`, `Edit(/${join(workingCopy.path, ".git")})`, ...DENIED_TOOLS,
     ]);
     expect(settings.permissions.deny).toEqual(expect.arrayContaining(["Artifact", "SendMessage", "WebFetch"]));
     expect(settings.disableAllHooks).toBe(true);
@@ -182,7 +182,7 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     const settings = claudeSettings({ access: "read-only", workingCopies: ["/wc"], gitDirs: [], writableRoots: [], readDenied: [], home: "/home/u", sessionDir: "/home/u/.claude/projects/-wc/s" });
     expect(settings).toMatchObject({
       sandbox: { filesystem: { allowWrite: [], denyWrite: ["/wc"], denyRead: [] }, network: { allowedDomains: [] }, enableWeakerNetworkIsolation: false },
-      permissions: { allow: ["Bash"], deny: [...DENIED_TOOLS] },
+      permissions: { allow: ["Bash"], deny: ["Edit(//wc/.git)", ...DENIED_TOOLS] },
       claudeMdExcludes: ["**/CLAUDE.md", "**/CLAUDE.local.md", "/home/u/.claude/CLAUDE.md"],
     });
     expect(settings["disableAllHooks"]).toBe(true);
@@ -194,7 +194,7 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     const settings = claudeSettings({ access: "write", workingCopies: ["/wc/tree"], gitDirs: [], writableRoots: [], readDenied: [claudeHome, "/x"], home: "/home/u", sessionDir });
     expect(settings).toMatchObject({ sandbox: { filesystem: { denyRead: [claudeHome, "/x"], allowRead: [sessionDir] } } });
     // The file tools already can't leave the working copies; a ~/.claude rule would also hide the session's own outputs.
-    expect((settings["permissions"] as { deny: string[] }).deny).toEqual(["Read(//x)", "Read(//x/**)", ...DENIED_TOOLS]);
+    expect((settings["permissions"] as { deny: string[] }).deny).toEqual(["Read(//x)", "Read(//x/**)", "Edit(//wc/tree/.git)", ...DENIED_TOOLS]);
   });
 
   it("refuses a write run without a working copy before spawning, reporting zero usage once", async () => {

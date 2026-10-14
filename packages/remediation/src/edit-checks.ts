@@ -91,59 +91,107 @@ export async function actionsOutsidePlan(pins: ReadonlyArray<PlannedPin>, base: 
 /**
  * Whether `strictly` appears in the line's code, not inside a string or a comment: `strictly("1.0")`, Groovy's
  * `strictly pinVersion`, a catalog's `strictly = "1.0"` count; a `because("… strictly pinned …")` or a comment doesn't.
- * Commenting a pin out therefore removes it from the file's strict lines. Each line is read on its own, so the word
- * inside a string or comment spanning lines counts: that refuses an edit, never lets a pin change through.
+ * Strings and block comments keep their state across continuation lines.
  */
-function usesStrictly(line: string): boolean {
+interface CodeState {
+  quote?: string;
+  quoted: string;
+  member: boolean;
+  blockComment: boolean;
+}
+
+function lineCode(line: string, state: CodeState): string {
   let code = "";
-  let quote: string | undefined;
-  let quoted = "";
-  let member = false;
   for (let i = 0; i < line.length; i++) {
     const char = line[i]!;
-    if (quote !== undefined) {
+    if (state.blockComment) {
+      if (char === "*" && line[i + 1] === "/") { state.blockComment = false; i++; }
+      continue;
+    }
+    if (state.quote !== undefined) {
       if (char === "\\") i++;
-      else if (char === quote) {
-        quote = undefined;
+      else if (char === state.quote) {
+        state.quote = undefined;
         // A quoted name is still code: a catalog key (`"strictly" = "1.0"`), or a Groovy member (`delegate."strictly"`,
         // called with or without parentheses).
-        code += member || /^\s*[=(]/.test(line.slice(i + 1)) ? quoted : char;
-      } else quoted += char;
+        code += state.member || /^\s*[=(]/.test(line.slice(i + 1)) ? state.quoted : char;
+      } else state.quoted += char;
       continue;
     }
     if (char === '"' || char === "'") {
-      quote = char;
-      quoted = "";
-      member = /\.\s*$/.test(code);
+      state.quote = char;
+      state.quoted = "";
+      state.member = /\.\s*$/.test(code);
       code += char;
       continue;
     }
     if (char === "/" && line[i + 1] === "*") {
-      const end = line.indexOf("*/", i + 2);
-      if (end < 0) break;
-      i = end + 1;
+      state.blockComment = true;
+      i++;
       code += " ";
       continue;
     }
     if (char === "#" || (char === "/" && line[i + 1] === "/")) break;
     code += char;
   }
-  return /\bstrictly\b/.test(code);
+  return code;
+}
+
+const MAX_STRICT_LINES = 128;
+const MAX_STRICT_BYTES = 64 * 1024;
+
+function strictStatements(text: string | undefined): string[] {
+  const lines = (text ?? "").split("\n");
+  const state: CodeState = { quoted: "", member: false, blockComment: false };
+  const statements: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const code = lineCode(lines[i]!, state);
+    const at = /\bstrictly\b/.exec(code);
+    if (at === null) continue;
+    const statement = [lines[i]!];
+    const opened: string[] = [];
+    balanceStrict(code.slice(at.index), opened);
+    while (opened.length > 0 && i + 1 < lines.length) {
+      if (statement.length >= MAX_STRICT_LINES || Buffer.byteLength(statement.join("\n")) > MAX_STRICT_BYTES) {
+        throw new Error("a strictly statement exceeds the continuation limit");
+      }
+      statement.push(lines[++i]!);
+      balanceStrict(lineCode(lines[i]!, state), opened);
+    }
+    if (opened.length > 0) throw new Error("an unbalanced strictly statement can't be verified");
+    const captured = statement.join("\n");
+    if (Buffer.byteLength(captured) > MAX_STRICT_BYTES) throw new Error("a strictly statement exceeds the continuation limit");
+    statements.push(captured);
+  }
+  return statements;
+}
+
+function balanceStrict(code: string, opened: string[]): void {
+  for (const char of code) {
+    if (char === "(" || char === "{") opened.push(char);
+    else if (char === ")" || char === "}") {
+      if (opened.length === 0) continue;
+      if (opened.pop() !== (char === ")" ? "(" : "{")) throw new Error("a mismatched strictly statement can't be verified");
+      if (opened.length === 0) return;
+    }
+  }
 }
 
 /**
  * The Gradle build, settings and catalog files where the edit changed a line with `strictly` in its code: a strict version is its
- * owner's deliberate pin, which no plan moves. A line counts when `strictly` is in its code (see `usesStrictly`).
- * Each changed file's strict lines must stay the same, in order and byte for byte. A textual guard, so it has
- * limits: a pin written across lines, or a strict line reading a variable the edit changed, escapes it, and moving
- * an unchanged pin within its file passes.
+ * owner's deliberate pin, which no plan moves. A line counts when `strictly` is in its code, outside strings and comments.
+ * Each strict statement, including balanced continuation lines, must stay the same, in order and byte for byte.
+ * A changed variable outside the statement or moving an unchanged pin within its file still escapes this textual guard.
  */
 export async function strictPinsChanged(changedFiles: ReadonlyArray<string>, base: Tree, head: Tree): Promise<string[]> {
-  const strictLines = (text: string | undefined) => (text ?? "").split("\n").filter(usesStrictly);
   const problems: string[] = [];
   for (const path of changedFiles.filter(isGradleVersionFile)) {
-    if (!isDeepStrictEqual(strictLines(await base.read(path)), strictLines(await head.read(path)))) {
-      problems.push(`the edit changed a Gradle strictly(...) pin in ${path}: strict versions are the owner's, which no plan moves`);
+    try {
+      if (!isDeepStrictEqual(strictStatements(await base.read(path)), strictStatements(await head.read(path)))) {
+        problems.push(`the edit changed a Gradle strictly(...) pin in ${path}: strict versions are the owner's, which no plan moves`);
+      }
+    } catch (err) {
+      problems.push(`${path}: ${(err as Error).message}`);
     }
   }
   return problems;

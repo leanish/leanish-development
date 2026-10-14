@@ -16,6 +16,27 @@ describe("strict pins", () => {
     expect(await strictPinsChanged(["build.gradle.kts", "build.gradle", "gradle/libs.versions.toml"], base, head)).toEqual([]);
   });
 
+  it.each(["build.gradle.kts", "build.gradle"])("protects inactive multiline pins in %s", async (path) => {
+    const before = 'if (hasProperty("legacy")) {\n  dependencies {\n    implementation("g:pinned") { version {\n      strictly(\n        "1.0" // parentheses in strings and comments do not balance: )\n        /* } )\n           { ( */\n      )\n    } }\n  }\n}\n';
+    const check = (after: string) => strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: after }));
+    expect(await check(before)).toEqual([]);
+    expect(await check(before.replace('"1.0"', '"2.0"'))).toHaveLength(1);
+    expect(await check(before.replace(/      strictly\([\s\S]*?      \)\n/, ""))).toHaveLength(1);
+  });
+
+  it("captures nested call and brace continuations, ignoring delimiters inside strings", async () => {
+    const path = "build.gradle";
+    const before = 'strictly(\n  providers.provider {\n    "1.0) }"\n  }.get()\n)\n';
+    expect(await strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: before.replace("1.0", "2.0") }))).toHaveLength(1);
+  });
+
+  it("fails closed on unbalanced or over-budget strict statements", async () => {
+    const path = "build.gradle.kts";
+    for (const text of ['strictly(\n "1.0"\n', `strictly(\n${"\n".repeat(129)})`, `strictly("${"1".repeat(64 * 1024)}")`]) {
+      expect(await strictPinsChanged([path], tree({ [path]: text }), tree({ [path]: text }))).toHaveLength(1);
+    }
+  });
+
   it("refuses a changed, removed, added or reformatted strictly line in build files and any catalog", async () => {
     const changed = (path: string, before: string, after: string) => strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: after }));
     expect(await changed("build.gradle.kts", KTS, KTS.replace('strictly("1.0")', 'strictly("2.0")'))).toEqual([expect.stringContaining("build.gradle.kts")]);

@@ -1,11 +1,13 @@
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { namingFailures } from "../src/http.ts";
-import { workingTree } from "../src/tree.ts";
+import { gitTree, workingTree } from "../src/tree.ts";
+import { runProcess } from "../src/process.ts";
 
 let root: string;
 
@@ -38,6 +40,42 @@ describe("the working tree", () => {
     expect(await tree.list("gradle")).toEqual([]);
     expect(await tree.list("gradle", { symlinks: true })).toEqual(["gradle/tools.toml"]);
     expect(await tree.read("gradle/tools.toml")).toBe("[libraries]\n");
+  });
+});
+
+describe("commit trees", () => {
+  it("keeps the recorded baseline despite a redirected .git and replace refs in either metadata directory", async () => {
+    const fixture = await mkdtemp(join(tmpdir(), "supply-chain-baseline-"));
+    try {
+      const path = join(fixture, "tree");
+      const metadata = join(fixture, "metadata");
+      const redirected = join(fixture, "redirected");
+      const git = (...args: string[]) => execFileSync("git", args, { cwd: path, encoding: "utf8" }).trim();
+      await mkdir(path);
+      git("init", "--quiet", `--separate-git-dir=${metadata}`);
+      await writeFile(join(path, "baseline.txt"), "original baseline");
+      git("add", ".");
+      const commit = () => git("-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "fixture");
+      commit();
+      const sha = git("rev-parse", "HEAD");
+      const tree = await gitTree(path, sha, runProcess, metadata);
+      await writeFile(join(path, "baseline.txt"), "forged baseline");
+      await writeFile(join(path, "forged.txt"), "extra");
+      git("add", ".");
+      commit();
+      const forged = git("rev-parse", "HEAD");
+      git("clone", "--quiet", "--bare", metadata, redirected);
+      git(`--git-dir=${metadata}`, "replace", sha, forged);
+      git(`--git-dir=${redirected}`, "replace", sha, forged);
+      await writeFile(join(path, ".git"), `gitdir: ${redirected}\n`);
+      expect(git("show", `${sha}:baseline.txt`)).toBe("forged baseline");
+      expect(await tree.read("baseline.txt")).toBe("original baseline");
+      expect(await tree.read("forged.txt")).toBeUndefined();
+      expect(await tree.list(".")).toEqual(["baseline.txt"]);
+      expect((await gitTree(path, "HEAD~1", runProcess, metadata)).id).toBe(sha);
+    } finally {
+      await rm(fixture, { recursive: true, force: true });
+    }
   });
 });
 

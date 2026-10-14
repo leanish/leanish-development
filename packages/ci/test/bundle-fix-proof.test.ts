@@ -140,7 +140,7 @@ async function compare(releases: Record<string, Release>, from: string, to: stri
   const headLock = JSON.parse(lock(headCopies)) as { packages: Record<string, object> };
   Object.assign(headLock.packages, options.headExtra ?? {});
   const head = await commit({ "package-lock.json": JSON.stringify(headLock) });
-  return runCompare(await gitTree(repo, base, runProcess), await gitTree(repo, head, runProcess), (options.scan ?? ((given) => given))(env));
+  return runCompare(await gitTree(repo, base, runProcess, join(repo, ".git")), await gitTree(repo, head, runProcess, join(repo, ".git")), (options.scan ?? ((given) => given))(env));
 }
 
 const VULNERABLE = ["brace@5.0.9", "minimatch@10.2.5"];

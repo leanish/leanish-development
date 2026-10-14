@@ -42,6 +42,7 @@ export async function runSandboxed(
     const args = codexPermissionArgs({
       access: "write",
       gitDirs: [workingCopy.gitDir],
+      gitEntries: [join(workingCopy.path, ".git")],
       stagedHome,
       writableRoots: isolation.buildCacheRoot === undefined ? [] : [isolation.buildCacheRoot],
       readDenied: isolation.readDenied ?? [],

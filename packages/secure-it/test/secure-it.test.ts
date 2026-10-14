@@ -639,6 +639,21 @@ describe("secure-it review", () => {
     expect(planOf(h.github.prs.get(7)!.body)?.kind).toBeUndefined();
   });
 
+  it("publishes the adaptation's new title, verdict and checks with its plan", async () => {
+    const previous = await vitePr();
+    const pr = { ...previous, body: `No adaptation needed; old checks.\n${previous.body}` };
+    const publication = { title: "adapting vite", body: "Adapted src/app.ts; npm test passed.", commitMessage: "adapting vite" };
+    const h = harness({ prs: [pr], answer: { outcome: "applied", summary: "adapted", publication } });
+    h.github.checks = RED;
+    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ outcome: "adapted" }] });
+    const updated = h.github.prs.get(pr.number)!;
+    expect(updated.title).toBe(publication.title);
+    expect(updated.body).toContain(publication.body);
+    expect(updated.body).not.toContain("No adaptation needed; old checks.");
+    expect(planOf(updated.body)).toEqual(planOf(pr.body));
+    expect(h.workspace.publications[0]?.args.message).toBe(publication.commitMessage);
+  });
+
   it("has the agent adapt a failing PR, verifies the result, and records the attempt", async () => {
     const h = harness({ prs: [await vitePr()] });
     h.workspace.setRemoteHead("secure-it/2026-10-05-security", HEAD_SHA);

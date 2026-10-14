@@ -43,10 +43,10 @@
   which doesn't block fixing a Kotlin library on the project's classpaths. The reference refuses to
   move a strict version and compares strictness with the edit.
 
-- bump-it and secure-it never change a Gradle `strictly(...)` pin: their skills say so (the
-  agent answers cannot-apply when a plan needs it), and verification refuses an edit that
-  changes a line with `strictly` in its code (not in a string or a comment) in a build, settings
-  or catalog file.
+- bump-it and secure-it never change a Gradle `strictly(...)` pin: their skills say so (the agent
+  answers cannot-apply when a plan needs it), and verification refuses an edit that changes a
+  `strictly` statement, including its balanced continuation lines, in a build, settings or catalog
+  file.
 
 - The skills ask for better agent output: only the needed changes, in the file's style;
   comments and docs the edit makes false fixed without losing their context; code kept only for
@@ -64,6 +64,15 @@
   when it carries either.
 
 ### Fixed
+
+- Both tools bind baseline reads, diffs and exports to their recorded git metadata and disable
+  replace refs, so a redirected working-copy `.git` cannot change verification. Both coding-agent
+  runners also protect the `.git` entry.
+- Strict-pin verification captures balanced multiline `strictly(...)` statements, including
+  inactive branches, rather than only their first line; unreadable or over-budget statements fail
+  verification.
+- CI adaptations publish the agent's new title, verdict and check results with the verified plan,
+  instead of keeping the initial PR description.
 
 - bump-it no longer fails a routine when a refreshed parent's range stops admitting a young
   locked copy it was keeping: the copy's current version is checked like any unpinned
