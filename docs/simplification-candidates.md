@@ -15,7 +15,7 @@ Each entry says what the code protects, what it costs, what removing it would gi
   which uses Gradle itself; this check is the backstop for the ones it can't see.
 - **What it costs:** a hand-written scanner of Kotlin, Groovy and TOML text that skips strings and comments and
   balances brackets across continuation lines. Each language detail it misses is a hole; triple-quoted strings were
-  one (fixed after 0.5.0).
+  one (fixed in 0.5.1).
 - **What removing it would give up:** an agent changing a strict pin in an inactive branch would no longer be caught
   by verification. The skills still tell the agent never to change strict pins, the plan never asks for it, and the
   owner sees the diff in the PR.
