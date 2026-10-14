@@ -1,7 +1,8 @@
 // Copied from leanish/leanish-development agents/bump-it/test/local-guard.test.ts at c6282df; see PROVENANCE.md.
-// Local changes: the guards' directory, and their messages say "agent guard".
+// Local changes: the guards' directory, and their messages say "agent guard"; hooks-off settings, and pushes checked against real git.
 import { spawnSync } from "node:child_process";
-import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtempSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -66,6 +67,8 @@ describe("git guard", () => {
     [["config", "--get", "remote.origin.url"]],
     [["config", "remote.origin.url"]],
     [["config", "user.name", "bump-it"]],
+    [["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "status"]],
+    [["-c", "Core.HooksPath=/dev/null", "status"]],
   ])("passes %j", async (args) => {
     expect((await run("git", args)).allowed).toBe(true);
   });
@@ -79,6 +82,9 @@ describe("git guard", () => {
     [["-c", "remote.origin.pushurl=https://evil.example/x", "push", "origin", BRANCH], "remote.origin.pushurl"],
     [["-c", "credential.helper=store", "fetch"], "credential.helper"],
     [["-c", "core.hooksPath=/tmp/x", "status"], "core.hooksPath"],
+    [["-c", "core.hooksPath=/dev/null/x", "status"], "core.hooksPath"],
+    [["-c", "core.hooksPath", "status"], "core.hooksPath"],
+    [["-c", "core.hooksPath=/dev/null", "-c", "core.hooksPath=/tmp/x", "status"], "core.hooksPath"],
     [["--config-env=core.sshCommand=X", "fetch"], "--config-env"],
     [["remote", "set-url", "origin", "https://evil.example/x"], "git remote set-url"],
     [["remote", "add", "evil", "https://evil.example/x"], "git remote add"],
@@ -135,5 +141,81 @@ describe("gh guard", () => {
     const outcome = await run("gh", args);
     expect(outcome.allowed).toBe(false);
     expect(outcome.stderr).toContain(reason);
+  });
+});
+
+/** The guard in front of the real git, on real repositories: a push passes only to a remote that is all local. */
+describe("git guard pushes, with the real git", () => {
+  // Made now, not in beforeAll: the refused cases' table names the bare repository's path.
+  const root = mkdtempSync(join(tmpdir(), "agent-guard-push-"));
+  const bare = join(root, "origin.git");
+  const work = join(root, "work");
+  const realPath = `${GUARD_DIR}:${process.env["PATH"] ?? "/usr/bin:/bin"}`;
+  const env = { PATH: realPath, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", HOME: "/nonexistent" };
+
+  function git(args: ReadonlyArray<string>, cwd = work): { readonly status: number | null; readonly stderr: string } {
+    const result = spawnSync("/bin/bash", [join(GUARD_DIR, "git"), ...args], { cwd, env, encoding: "utf8" });
+    return { status: result.status, stderr: result.stderr };
+  }
+
+  /** Runs the real git directly (setup), failing on any error. */
+  function setup(args: ReadonlyArray<string>, cwd = work): void {
+    const result = spawnSync("git", args, { cwd, env: { ...env, PATH: process.env["PATH"] ?? "/usr/bin:/bin" }, encoding: "utf8" });
+    if (result.status !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`);
+  }
+
+  beforeAll(async () => {
+    await mkdir(work);
+    setup(["init", "-q", "--bare", bare], root);
+    setup(["init", "-q", "-b", "main"]);
+    setup(["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "init"]);
+    setup(["remote", "add", "origin", bare]);
+    setup(["remote", "add", "fileurl", `file://${bare}`]);
+    setup(["remote", "add", "network", "https://example.invalid/repo.git"]);
+    setup(["remote", "add", "pushurl", bare]);
+    setup(["remote", "set-url", "--push", "pushurl", "https://example.invalid/repo.git"]);
+    setup(["remote", "add", "mixed", bare]);
+    setup(["remote", "set-url", "--add", "--push", "mixed", bare]);
+    setup(["remote", "set-url", "--add", "--push", "mixed", "https://example.invalid/repo.git"]);
+    setup(["remote", "add", "rewritten", `${bare}-rewritten`]);
+    setup(["config", `url.https://example.invalid/.pushInsteadOf`, `${bare}-rewritten`]);
+  });
+
+  it.each([
+    [["push", "-q", "origin", "main"]],
+    [["push", "--no-verify", "--quiet", "origin", "HEAD:refs/heads/published"]],
+    [["push", "--quiet", "--force-with-lease=refs/heads/published:HEAD", "origin", ":refs/heads/published"]],
+    [["push", "-q", "fileurl", "main:refs/heads/via-file-url"]],
+    [["push", "-q", "--", "origin", "main:refs/heads/after-dashes"]],
+  ])("passes %j to a local remote", (args) => {
+    const outcome = git(args);
+    expect(outcome.stderr).not.toContain("agent guard");
+    expect(outcome.status).toBe(0);
+  });
+
+  it("keeps the global options for the remote lookup and the push", () => {
+    const outcome = git(["--git-dir", join(work, ".git"), "push", "-q", "origin", "main:refs/heads/from-git-dir"], root);
+    expect(outcome.status).toBe(0);
+    expect(spawnSync("git", ["--git-dir", bare, "rev-parse", "--verify", "refs/heads/from-git-dir"]).status).toBe(0);
+  });
+
+  it.each([
+    [["push", "network", "main"]],
+    [["push", "pushurl", "main"]],
+    [["push", "mixed", "main"]],
+    [["push", "rewritten", "main"]],
+    [["push"]],
+    [["push", "-q"]],
+    [["push", bare, "main"]],
+    [["push", `file://${bare}`, "main"]],
+    [["push", "no-such-remote", "main"]],
+    [["push", "-o", "ci.skip", "origin", "main"]],
+    [["push", "--recurse-submodules", "no", "network", "main"]],
+    [["push", "--recurse-submodules=on-demand", "origin", "main"]],
+    [["push", "--repo=origin", "main"]],
+  ])("refuses %j", (args) => {
+    const outcome = git(args);
+    expect(outcome.status).toBe(126);
+    expect(outcome.stderr).toContain("agent guard: refused: git push");
   });
 });

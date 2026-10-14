@@ -23,7 +23,7 @@ Lambda), and the target-credentials resolver (the tools pass the agent's read-on
 | File | Source | How | Local changes |
 |---|---|---|---|
 | `guard/gh` | `agents/bump-it/local/guard/gh` | copied | messages say "agent guard" (secure-it and bump-it share these); "the handler" is "the tool" |
-| `guard/git` | `agents/bump-it/local/guard/git` | copied | messages say "agent guard" (secure-it and bump-it share these); "the handler" is "the tool" |
+| `guard/git` | `agents/bump-it/local/guard/git` | adapted | messages say "agent guard" (secure-it and bump-it share these); "the handler" is "the tool"; `-c core.hooksPath=/dev/null` and pushes to all-local remotes pass, so repositories' own tests run |
 | `guard/lib.sh` | `agents/bump-it/local/guard/lib.sh` | copied | messages say "agent guard" (secure-it and bump-it share these); "the handler" is "the tool" |
 | `src/errors.ts` | `core/runtime/src/errors.ts` | copied | only the classes the copied modules use; parameter properties written as fields |
 | `src/github/github-client.ts` | `core/runtime/src/needs/github-client.ts` | copied | `GitHubApiError`'s parameter properties written as fields; headChecks reads Actions runs/jobs and commit statuses directly (no Checks API), paginates and retains latest jobs per workflow/event/name, pending runs, and jobless runs only when no newer run in their workflow/event group supersedes them; keeps each job's steps |
@@ -89,7 +89,7 @@ Lambda), and the target-credentials resolver (the tools pass the agent's read-on
 | `test/git-clone-auth.test.ts` | `core/runtime/test/unit/git-clone-auth.test.ts` | copied | `gitCloneAuth` tests replace the `resolveGitCloneAuth` ones; imports this package's modules from `../src/` instead of `../../src/` |
 | `test/git-failure.test.ts` | — | new | — |
 | `test/github-client.test.ts` | `core/runtime/test/unit/github-client.test.ts` | copied | imports this package's modules from `../src/` instead of `../../src/`, the GitHub client from its module instead of the runtime's package barrel; CI tests use Actions runs/jobs and commit statuses without Checks, including pagination, reruns, separate workflow/event groups, pending/jobless runs (with older jobless failures superseded by newer runs in the same group), skipped jobs and continue-on-error failures, and job steps |
-| `test/guard.test.ts` | `agents/bump-it/test/local-guard.test.ts` | copied | the guards' directory, and their messages say "agent guard" |
+| `test/guard.test.ts` | `agents/bump-it/test/local-guard.test.ts` | adapted | the guards' directory, and their messages say "agent guard"; hooks-off settings, and pushes checked against real git and repositories |
 | `test/input-render.test.ts` | `core/runtime/test/unit/input-render.test.ts` | copied | imports this package's modules from `../src/` instead of `../../src/` |
 | `test/in-memory-workspace.test.ts` | `core/runtime/test/unit/in-memory-workspace.test.ts` | copied | `RepoSource` instead of catalog-it's `Project`; imports this package's modules from `../src/` instead of `../../src/` |
 | `test/isolation.test.ts` | — | new | — |

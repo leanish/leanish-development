@@ -1,9 +1,13 @@
 #!/bin/bash
 # Copied from leanish/leanish-development agents/bump-it/local/guard/git at c6282df; see PROVENANCE.md.
-# Local changes: messages say "agent guard" (secure-it and bump-it share these); "the handler" is "the tool".
+# Local changes: messages say "agent guard" (secure-it and bump-it share these); "the handler" is "the tool";
+# `-c core.hooksPath=/dev/null` and pushes to repositories on this machine pass.
 # agent guard for git: no pushes (the tool publishes; the agent's git
 # metadata is read-only anyway), and origin and credential settings can't be
-# changed. Everything else passes through to the real git.
+# changed. Everything else passes through to the real git. Two exceptions let a
+# repository's own tests run: `-c core.hooksPath=/dev/null` (it only turns hooks
+# off), and a push to a remote whose every URL is on this machine (tests push to
+# bare repositories in temp dirs; that publishes nothing).
 # No `set -u`: macOS's bash 3.2 treats an empty "${array[@]}" as unbound.
 source "$(dirname "$0")/lib.sh"
 real=$(real_bin git)
@@ -18,6 +22,13 @@ risky_key() {
   return 1
 }
 
+# Exactly `core.hooksPath=/dev/null`: the per-command way to run no hooks at all.
+hooks_off() {
+  local key
+  key=$(printf '%s' "${1%%=*}" | tr '[:upper:]' '[:lower:]')
+  [ "$key" = "core.hookspath" ] && [ "$1" != "${1%%=*}" ] && [ "${1#*=}" = "/dev/null" ]
+}
+
 # Global options come before the subcommand.
 args=("$@")
 i=0
@@ -26,7 +37,8 @@ while [ "$i" -lt "${#args[@]}" ]; do
   case "$a" in
     -C|--git-dir|--work-tree|--namespace|--exec-path) i=$((i + 2)) ;;
     -c)
-      risky_key "${args[$((i + 1))]%%=*}" && deny "git -c ${args[$((i + 1))]%%=*}"
+      setting=${args[$((i + 1))]:-}
+      hooks_off "$setting" || { risky_key "${setting%%=*}" && deny "git -c ${setting%%=*}"; }
       i=$((i + 2)) ;;
     --config-env=*) deny "git --config-env" ;;
     -*) i=$((i + 1)) ;;
@@ -34,6 +46,7 @@ while [ "$i" -lt "${#args[@]}" ]; do
   esac
 done
 sub=${args[$i]:-}
+global=("${args[@]:0:$i}")
 rest=("${args[@]:$((i + 1))}")
 
 check_remote() {
@@ -62,8 +75,44 @@ check_config() {
   return 0
 }
 
+deny_push() {
+  deny "git push (the tool pushes what you leave in the working tree)"
+}
+
+# A push to a named remote whose every push URL is on this machine; anything else is the tool's job. Only the
+# options the tests and workspaces use are understood: one taking a separate value could hide the destination.
+check_push() {
+  local arg remote="" urls url j=0
+  while [ "$j" -lt "${#rest[@]}" ]; do
+    arg=${rest[$j]}
+    case "$arg" in
+      -q|--quiet|-v|--verbose|--no-verify|--porcelain|-f|--force|--force-with-lease|--force-with-lease=*|--atomic|-u|--set-upstream|-n|--dry-run|-d|--delete) ;;
+      --) remote=${rest[$((j + 1))]:-}; break ;;
+      -*) deny_push ;;
+      *) remote=$arg; break ;;
+    esac
+    j=$((j + 1))
+  done
+  # Named remotes only: a URL or path given directly can still be rewritten to a network one
+  # (`url.<base>.insteadOf`), while `remote get-url` expands the rewrites and lists every push URL of a remote.
+  [ -n "$remote" ] || deny_push
+  urls=$("$real" "${global[@]}" remote get-url --push --all -- "$remote" 2>/dev/null) || deny_push
+  [ -n "$urls" ] || deny_push
+  while IFS= read -r url; do
+    case "$url" in
+      /*|file:///*) ;;
+      *) deny_push ;;
+    esac
+  done <<EOF
+$urls
+EOF
+  # Backstop for what the URLs don't show, such as submodules pushed along: git and the git commands it starts
+  # may use only the local transport.
+  export GIT_ALLOW_PROTOCOL=file
+}
+
 case "$sub" in
-  push) deny "git push (the tool pushes what you leave in the working tree)" ;;
+  push) check_push ;;
   remote) check_remote ;;
   config) check_config ;;
 esac

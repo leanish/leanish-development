@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- A repository's own tests now run under the agent: the `git` guard lets through
+  `-c core.hooksPath=/dev/null` and a push to a remote whose every push URL is on this machine
+  (the bare repositories tests create), with git limited to the local transport for that push.
+  Tests no longer depend on the machine's Codex login, git askpass or package directory.
+
 ## 0.5.0 - 2026-10-14
 
 ### Added
