@@ -54,7 +54,7 @@ describe("published text keeps the machine out", () => {
   });
 
   it("only cleans a path that starts a token, so URLs and relative paths keep their own /tmp", () => {
-    const text = "https://example.org/tmp/release-notes, src/tmp/Fixture.java and file.txt:/tmp-ish";
+    const text = "https://example.org/tmp/release-notes, https://example.org/releases?path=/tmp/notes, src/tmp/Fixture.java and file.txt:/tmp-ish";
     expect(clean(text)).toBe(text);
     expect(clean(`${WC}/src/tmp/Fixture.java`)).toBe("src/tmp/Fixture.java");
   });

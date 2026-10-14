@@ -56,7 +56,15 @@ export function cleanBody(body: string, roots: LocalRoots): string {
   return outsideComments(body, (text) => withoutNoise(cleanText(text, roots)));
 }
 
+/** Web links stay whole, a path in their query included: they point elsewhere, not at this machine. */
 function cleanText(text: string, roots: LocalRoots): string {
+  return text
+    .split(/(https?:\/\/[^\s"'`)\]>]+)/)
+    .map((part, i) => (i % 2 === 1 ? part : cleanPaths(part, roots)))
+    .join("");
+}
+
+function cleanPaths(text: string, roots: LocalRoots): string {
   const all = [
     ...roots.workingCopy.map((root) => ({ root, relative: true })),
     ...roots.other.map((root) => ({ root, relative: false })),
