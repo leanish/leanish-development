@@ -20,9 +20,8 @@
 
 ### Changed
 
-- **Breaking:** `agent.majorEffort` is gone. `agent.effort` applies to every agent call, majors
-  included, as in leanish-development's runtime. A config that still sets it is refused with a
-  message saying so.
+- **Breaking:** `agent.majorEffort` is gone; remove it from `agent.yaml`. `agent.effort` applies
+  to every agent call, majors included, as in leanish-development's runtime.
 
 - The planners leave Gradle `strictly(...)` pins alone too. The Gradle inventory (schema 3)
   marks strict declarations and records strict dependency constraints, and rejects output from

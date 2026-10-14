@@ -77,8 +77,6 @@ describe("tool config", () => {
       [VALID.replace("leanish/sqs-codec", "../sqs-codec"), "repository id '../sqs-codec' isn't owner/slug"],
       [VALID.replace("leanish/dtv", "leanish/sqs-codec"), "lists leanish/sqs-codec twice"],
       [VALID.replace("codingAgent: codex", "codingAgent: copilot"), "must be one of codex, claude-code; got 'copilot'"],
-      [VALID.replace("effort: medium", "effort: medium, majorEffort: high"), "agent.majorEffort was removed: agent.effort applies to every agent call"],
-      [VALID.replace("effort: medium", "effort: medium, majorEffort: null"), "agent.majorEffort was removed"],
       [VALID.replace("read: leanish-secure-it-github-read", "read: leanish-secure-it-github"), "must be different items"],
       [VALID.replace("[~/dev/private, /Volumes/vault]", "[dev/private]"), "readDeny[0] must be an absolute path"],
       [`${VALID}staleScanHours: 36\n`, "unknown field(s): staleScanHours"],

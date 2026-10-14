@@ -87,10 +87,6 @@ export function parseToolConfig(tool: ToolName, text: string, where: string, hom
   const duplicate = repos.find((entry, i) => repos.findIndex((other) => other.repo.toLowerCase() === entry.repo.toLowerCase()) !== i);
   if (duplicate !== undefined) throw new Error(`${where}: repos lists ${duplicate.repo} twice`);
 
-  // Checked before the unknown-field check so an older config gets told what replaces it.
-  if (isRecord(root["agent"]) && "majorEffort" in root["agent"]) {
-    throw new Error(`${where}: agent.majorEffort was removed: agent.effort applies to every agent call, majors included`);
-  }
   const agent = object(root["agent"], `${where}: agent`, ["codingAgent", "model", "effort"]);
   const codingAgent = string(agent["codingAgent"], `${where}: agent.codingAgent`);
   if (!(CODING_AGENTS as ReadonlyArray<string>).includes(codingAgent)) {
@@ -139,12 +135,8 @@ export function repoOf(config: ToolConfig, repo: string): ToolRepo {
   return found;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function object(value: unknown, where: string, allowed: ReadonlyArray<string>): Record<string, unknown> {
-  if (!isRecord(value)) throw new Error(`${where} must be a mapping`);
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error(`${where} must be a mapping`);
   const unknown = Object.keys(value).filter((key) => !allowed.includes(key));
   if (unknown.length > 0) throw new Error(`${where}: unknown field(s): ${unknown.join(", ")}`);
   return value as Record<string, unknown>;

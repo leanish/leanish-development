@@ -23,7 +23,7 @@ permissions and schedules.
 | `repos[].branch` | Repository's default branch | Base branch to sync, plan against and target with PRs. |
 | `agent.codingAgent` | Required: `claude-code` or `codex` | Which CLI runs the agent. Both edit only inside their sandbox; see the [security model](security-model.md#secure-it-and-bump-it). |
 | `agent.model` | Required | `claude-code`: a model the `claude` CLI accepts, such as `claude-haiku-5-5`. `codex`: a concrete model ID or family `sol`, `astra`, `luna`; a family resolves to the newest listed model in the installed CLI's catalog, not a pinned ID. |
-| `agent.effort` | Required; example `high` | Effort for every agent call: routine and security moves, majors, their review adaptations and conflict resolution. A config that still has `agent.majorEffort` is refused with a message saying so. |
+| `agent.effort` | Required; example `high` | Effort for every agent call: routine and security moves, majors, their review adaptations and conflict resolution. |
 | `secrets` | Optional mapping | Override either or both default services; `{}` uses both defaults. Every opted-in repository uses the same pair. |
 | `secrets.write` | `leanish-<tool>-write` | macOS Keychain service holding the tool's write PAT. |
 | `secrets.read` | `leanish-<tool>-read` | Different service holding a different, read-only PAT for the agent. Both equal names and equal token values are refused. |
