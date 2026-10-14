@@ -14,13 +14,14 @@ version/advisory policy shared by CI and the update tools.
 - **bump-it** chooses the highest eligible versions under the release-age policy:
   one routine PR for minors, patches, npm transitives and Gradle wrappers, and one
   per major. The tool computes npm files and generates wrappers; a coding agent
-  handles other edits and major adaptations. Every proposed change is verified.
+  (Codex or Claude Code) handles other edits and major adaptations. Every proposed
+  change is verified.
 
 The gate runs in GitHub Actions. The tools run on macOS and propose PRs; they do
 not merge them. Node 24 is required; npm 11.17+ is needed for release-age exclusions.
 Packages remain private: adoption uses a reviewed Git commit, with no npm publish.
-The current release is **v0.4.2**; see the [CHANGELOG](CHANGELOG.md) for its changes.
-Licensed under Apache-2.0.
+The current release is **v0.4.2**; the [CHANGELOG](CHANGELOG.md) lists its changes
+and what's unreleased. Licensed under Apache-2.0.
 
 ## Adoption and operation
 
@@ -28,19 +29,14 @@ Licensed under Apache-2.0.
 - [Why this adds value alongside dependency alerts](docs/why.md)
 - [Adopting the gate](packages/ci/README.md#adopting-the-gate), including
   [repository policy, exceptions and floors](packages/ci/README.md)
-- [Adopting secure-it and bump-it](docs/adopting-tools.md): per-tool Keychain
-  defaults, PAT permissions, candidate preview, launchd, logs, costs and troubleshooting
-- [Tool configuration](docs/tool-configuration.md): both agent.yaml files and links
-  to the gate's configuration reference
+- [Adopting secure-it and bump-it](docs/adopting-tools.md): prerequisites, PATs and
+  Keychain, candidate preview, launchd, logs, costs and troubleshooting
+- [Tool configuration](docs/tool-configuration.md): every agent.yaml field, including
+  the coding agent, model and effort
 - [Security model](docs/security-model.md) and [coverage gaps](docs/coverage-gaps.md)
-- [Validation evidence](docs/validation.md): real wrapper and floor-removal proofs
+- [Validation evidence](docs/validation.md): real runs on fixture repositories and
+  what each behaviour's evidence is
 - [Release procedure](docs/releasing.md) and [CHANGELOG](CHANGELOG.md)
-
-Each tool uses distinct write/read PAT values. Default Keychain services are
-`leanish-secure-it-write` / `leanish-secure-it-read` and
-`leanish-bump-it-write` / `leanish-bump-it-read`; optional `secrets` overrides can
-share a pair between tools. PR labels are `leanish:secure-it` and `leanish:bump-it`.
-GitHub App mode is future work; PAT mode will remain supported when it arrives.
 
 ## Packages
 
@@ -51,10 +47,10 @@ GitHub App mode is future work; PAT mode will remain supported when it arrives.
 - [`bump-it`](packages/bump-it): routine/major plans, tool-computed npm changes and
   checksummed Gradle wrapper generation
 - [`remediation`](packages/remediation): shared config, sandboxed inventories,
-  publication race checks and journal recovery, review ticks and `run.sh`
-- [`agent-basics`](packages/agent-basics): coding-agent support copied from
-  leanish-development's runtime, with [provenance](packages/agent-basics/PROVENANCE.md).
-  Applicable fixes are mirrored by hand until both repos share an agent-kit.
+  publication (PR text cleanup, race checks, journal recovery), review ticks and `run.sh`
+- [`agent-basics`](packages/agent-basics): the Codex and Claude Code runners and their
+  support, mostly copied from leanish-development's runtime, with
+  [provenance](packages/agent-basics/PROVENANCE.md)
 
 ## Development
 
@@ -63,7 +59,6 @@ npm ci --ignore-scripts
 npm run check
 ```
 
-CI also sets `SUPPLY_CHAIN_GRADLE_TESTS=1` to exercise a real Gradle inventory.
-Local checks skip those network/build tests unless enabled; the macOS Seatbelt
-probe skips when this process cannot apply a nested sandbox. Neither skip proves
-that integration boundary passed: inspect CI and the real-run evidence separately.
+Some integration tests skip locally (real Gradle unless `SUPPLY_CHAIN_GRADLE_TESTS=1`,
+as CI sets; the Seatbelt probe without a usable `codex sandbox`). A skip isn't a
+pass: see [automated checks and skips](docs/validation.md#automated-checks-and-skips).

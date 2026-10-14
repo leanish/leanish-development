@@ -1,8 +1,9 @@
 # Validation evidence
 
-Each section is dated with when its results were observed. They supplement the automated tests;
-they do not replace verification of a new plan or its current-head CI. GitHub App
-mode is deferred; this evidence uses the supported PAT mode.
+Each section is dated with when its results were observed. The evidence supplements the automated
+tests; it doesn't replace verification of a new plan or its current-head CI. It uses PAT mode (GitHub
+App mode is deferred). Every run recorded here predates Claude Code as an agent option: where an
+agent ran, it was Codex.
 
 ## Gradle wrapper generation (E2) — 2026-10-07
 
@@ -81,11 +82,12 @@ strict vulnerable version, a strict parent, a strict security floor, and an inac
 
 ## Fixture coverage
 
-What the fixture repositories exercise, by evidence state: **real tool run** (the tools ran for
-real and the outcome is recorded), **real tool run, branch only** (the tool's branch is recorded
-but not its CI or comparison results), **seed/probe** (seeded and probed locally, outcome not yet
-recorded from a tool run), or **unit tests only** (no fixture end-to-end evidence; covered by the
-tests in this repository). Case numbers refer to each fixture's `EXPECTED.md`.
+What the fixture repositories exercise, by evidence state. Case numbers refer to each fixture's `EXPECTED.md`.
+
+- **real tool run:** the tools ran for real and the outcome is recorded.
+- **real tool run, branch only:** the tool's branch is recorded, not its CI or comparison results.
+- **seed/probe:** seeded and probed locally; no tool-run outcome recorded yet.
+- **unit tests only:** no fixture end-to-end evidence; covered by this repository's tests.
 
 | Behaviour | Fixture case | Evidence |
 |---|---|---|
@@ -118,15 +120,17 @@ tests in this repository). Case numbers refer to each fixture's `EXPECTED.md`.
 | bump-it major cap and deferral | — | unit tests only |
 | Human pushes left alone; journal recovery; publication races | — | unit tests only |
 | Local advisory cache | — | unit tests only (real passes use it) |
+| Claude Code as the coding agent | — | unit tests only (no fixture run recorded here) |
+| Local paths kept out of published PR text | — | unit tests only (no fixture run recorded here) |
 
 ## Automated checks and skips
 
-`npm run check` runs all workspace typechecks and tests. CI enables the real-Gradle
-suites with `SUPPLY_CHAIN_GRADLE_TESTS=1`: the gate's inventory coverage and
-reference tests, and secure-it's floor-removal and parent-search tests. Local checks
-skip them unless explicitly enabled. The Seatbelt test skips when `codex sandbox`
-cannot apply a sandbox inside the current process. macOS launchd plist checks skip
-on other operating systems. Report these skips separately from passed tests.
+`npm run check` runs all workspace typechecks and tests. Some suites skip unless their environment allows them;
+report these skips separately from passed tests:
 
-The reusable workflow also inventories base/head and runs the gate on the exact
-PR candidate.
+- **Real Gradle** (the gate's inventory coverage and reference tests, secure-it's floor-removal and parent-search
+  tests): only with `SUPPLY_CHAIN_GRADLE_TESTS=1`, which CI sets.
+- **Seatbelt** (`runSandboxed`): only on macOS where `codex sandbox` can apply a sandbox inside the current process.
+- **macOS only:** the launchd plist checks and `run.sh`'s contract tests.
+
+The reusable workflow also inventories base/head and runs the gate on the exact PR candidate.

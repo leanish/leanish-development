@@ -44,12 +44,11 @@ is genuine. Proving that a version is the rule-picked fix, or the lowest version
 young version comes in; it doesn't make that version safe, and the build, tests and CI run it either way.
 
 So the gate holds every young version a PR adds or changes, justified or not: the separate `cooldown` check stays
-red until the last one turns old enough, under the stricter of base's and head's policy, and no exception clears it.
-secure-it puts young fixes in a draft PR of their own (so the aged ones aren't held back), opens it with a warning
-and a table of what came early and why (with provenance, publisher changes and new install scripts, for
-information), never marks it ready, and retires it once everything aged, opening a freshly verified PR instead.
-Taking it earlier is a person's explicit decision: every other check green, the reason written on the PR, an admin
-merge.
+red until the last one turns old enough, and no exception clears it. secure-it keeps such fixes in a draft PR of
+their own, opened with a warning, and retires it once everything aged. Taking it earlier is a person's explicit
+decision: every other check green, the reason written on the PR, an admin merge. Details:
+[the gate's cooldown](../packages/ci/README.md#the-cooldown-young-versions-are-held-however-justified) and
+[secure-it's warning](../packages/secure-it/README.md#the-cooldown-warning).
 
 ## The gate itself
 
@@ -59,7 +58,7 @@ merge.
 - XML from repositories is read under fixed budgets: a 5 MB size cap, 100 levels of nesting, and DOCTYPE entities that are few (50), small (1,000 characters) and rarely expanded (1,000 times); none is fetched. A document over budget, using reserved names such as `__proto__`, or whose root doesn't close at its end (a truncated download) reads as nothing: for a POM, no source repository (a coverage gap); for Maven metadata, a failed check.
 - npm registry lookups encode the whole package name and version as separate URL components. Names from lockfiles cannot add path separators, queries or fragments; empty and dot components are refused before fetching.
 - It fails closed on what it needs to judge: an unreachable registry, OSV or GitHub API, data that doesn't parse, or a build that didn't resolve fails the check, never "clean". What it can't read but doesn't need to judge (a source repository's advisories that return 404, a range it can't parse) is a coverage gap: listed in the report, next to a verdict that can pass.
-- The gate and both tools retry GET/HEAD reads only for connection timeouts or resets (`UND_ERR_CONNECT_TIMEOUT`, `UND_ERR_SOCKET`, `ECONNRESET`, `ETIMEDOUT`): one initial attempt plus at most two retries. Backoff is 250–750 ms, then 500–1500 ms, without adding an overall timeout; caller cancellation and fetch timeouts still apply. Successful bodies are buffered before parsing, so an interrupted read retries the whole request; malformed JSON, HTTP error responses, aborts and write requests are not retried. Exhaustion still fails closed and names the request and final cause. Concurrent lookups stop scheduling on the first failure, drain active work, and report that original failure; POM lookups retain their limit of 16 per process.
+- The gate and both tools retry GET/HEAD reads only on connection timeouts or resets (`UND_ERR_CONNECT_TIMEOUT`, `UND_ERR_SOCKET`, `ECONNRESET`, `ETIMEDOUT`), at most twice, after 250–750 ms, then 500–1500 ms. No overall timeout is added; caller cancellation and fetch timeouts still apply. Bodies are buffered before parsing, so an interrupted read retries the whole request. Malformed JSON, HTTP errors, aborts and writes aren't retried. Exhaustion fails closed, naming the request and final cause. Concurrent lookups stop scheduling at the first failure, drain active work and report that failure; POM lookups stay limited to 16 per process.
 
 ## secure-it and bump-it
 
@@ -70,21 +69,22 @@ Both tools are in this tree: [`secure-it`](../packages/secure-it) and [`bump-it`
   - one read-only, which the coding agent gets as `GH_TOKEN`.
 
   The tool refuses two Keychain items holding the same token. The default services are `leanish-<tool>-write` and `leanish-<tool>-read`; optional `secrets` overrides may point both tools to the same pair. Every opted-in repository uses that pair, with no per-repository secrets.
-- **Secrets live in the macOS Keychain.** Only the tool's own process reads them. The write token never goes into an environment variable; the read-only token is passed to the agent as `GH_TOKEN`, as described above.
-- **Repository code never runs in the tool's process.** The Gradle inventory runs the build under `codex sandbox` with the agent's write profile. Under that profile, checked on macOS, the Keychain isn't reachable, the sensitive home paths (`~/.ssh`, `~/.aws`, the Codex and Claude logins, shell startup files…) can't be read, and writes land only in the working copy, the temp dirs and the build cache. bump-it computes npm changes in exported scratch copies under the same sandbox, with `--package-lock-only --ignore-scripts`, explicit release-age flags and own-scope exclusions. The tool protects exact lockfile bytes and manifest dependency fields; only major migrations may adapt other manifest fields.
+- **Secrets live in the macOS Keychain.** Only the tool's own process reads them. The write token never goes into an environment variable.
+- **Repository code never runs in the tool's process.** The Gradle inventory runs the build under `codex sandbox` with the agent's write profile. Under that profile, checked on macOS, the Keychain isn't reachable, the sensitive home paths (`~/.ssh`, `~/.aws`, the Codex and Claude logins, shell startup files…) can't be read, and writes land only in the working copy, the temp dirs and the build cache. Both tools compute npm changes in exported scratch copies under the same sandbox, with `--package-lock-only --ignore-scripts`, explicit release-age flags and own-scope exclusions. The tool protects exact lockfile bytes and manifest dependency fields; only major migrations may adapt other manifest fields.
 - **The Codex login source stays unreadable.** When a tool reuses a file-backed login, the sandbox denies the resolved `auth.json` and its canonical target when it is a symlink, including with a custom `CODEX_HOME`.
 - **npm's age exclusions do not waive verification.** secure-it excludes planned young or unreadable targets, plus young or unreadable versions already locked in the affected base lockfiles, retaining configured own-scope exclusions. This lets npm keep unrelated locked security fixes. It checks sandboxed npm >= 11.17.0 before tool-run npm uses these flags; agent check commands receive the same exclusions in every mode. Every exclusion is reported; exact target verification and `compare` still judge all induced changes, including their age and identity.
 - **PR CI reads use Actions and commit statuses.** The tools read workflow runs/jobs for the head SHA and the combined commit status, including their failure names for adaptation. No Checks API permission is required. Results from other apps must be published as commit statuses to be visible.
-- **Tool-run Gradle builds never reuse an existing daemon.** Every inventory and tool-run wrapper task passes `--no-daemon` (CI, exported base and working tree): any required daemon is single-use. A sandboxed inventory starts it inside the current build's sandbox; a reused daemon would retain the permissions of the sandbox that started it. Neither inventories nor wrapper generation connects to daemons left in the shared `GRADLE_USER_HOME` by an agent or another build. Agent commands may still start or reuse daemons; tool-run Gradle commands never connect to them. This uses the explicit Gradle flag rather than changing `GRADLE_OPTS`, `org.gradle.jvmargs` or repository properties.
+- **Tool-run Gradle builds never reuse a daemon.** Every inventory and tool-run wrapper task passes `--no-daemon` (in CI, exported base and working tree), so any daemon it needs is single-use and starts inside the current build's sandbox: a reused daemon keeps the permissions of the sandbox that started it. Agent commands may still start or reuse daemons in the shared `GRADLE_USER_HOME`; tool-run commands never connect to them. The flag is explicit; `GRADLE_OPTS`, `org.gradle.jvmargs` and repository properties are left alone.
 - **Gradle wrapper generation stays in the tool's sandbox.** bump-it reads services.gradle.org's release metadata
-  and checksums and one snapshot of gradle/gradle's published advisories. The tool runs the wrapper task twice under
-  `runSandboxed` with `--no-daemon`, in an exported base commit; the model does not generate or edit wrapper files.
-  Changes outside the four wrapper files (tracked or non-ignored files) reject generation. Ignored cache/build
-  output is discarded with the scratch copy. The tool copies the generated bytes into the working tree and records
-  all four hashes and executable modes in the plan. Verification, after the sandboxed inventory, checks those bytes
-  and modes plus the official distribution URL/checksum and jar SHA-256. Missing recorded hashes fail closed.
-  Wrapper planning errors are reported omissions; planned-wrapper verification errors block publication. Generated
-  scripts are protected against later agent edits, rather than independently compared with official scripts.
+  and checksums and one snapshot of gradle/gradle's published advisories, then runs the wrapper task twice under
+  `runSandboxed` with `--no-daemon`, in an exported base commit; the model never generates or edits wrapper files.
+  - Any change outside the four wrapper files (tracked or non-ignored) rejects generation; ignored cache and build
+    output goes with the scratch copy.
+  - The tool copies the generated bytes into the working tree and records all four hashes and executable modes in the
+    plan. Verification, after the sandboxed inventory, checks those bytes and modes plus the official distribution
+    URL/checksum and jar SHA-256; missing recorded hashes fail closed.
+  - Planning errors are reported omissions; verification errors block publication.
+  - Generated scripts are protected against later agent edits, not compared with official scripts.
 - **Either coding agent runs in its CLI's sandbox, with the same denials.** `codex` runs under the write profile
   above. `claude-code` gets the equivalent through Claude Code's own settings, passed inline with no user, project
   or local settings loaded:
@@ -103,54 +103,26 @@ Both tools are in this tree: [`secure-it`](../packages/secure-it) and [`bump-it`
   under `codex sandbox`.
 - **The agent edits a clone whose git metadata it can't write.** It can't commit or push. The `gh` and `git` guards on its PATH stop writes before they reach GitHub; they are guard rails, not a boundary.
 - **The tool decides versions, verifies the result with this gate, and publishes.** Every write to a PR re-reads it first and stops unless it's still the tool's, at the expected head. Nothing merges by itself.
-- **Floor history stays intact.** secure-it compares recorded floors and their declarations before `compare`: compatibility floors never change, and security floors change only at exact planned targets with their scope and history preserved. New floors must be planned security additions. Only a dedicated floor-removal plan may remove exact recorded security floors; compatibility records and declarations remain intact. Remaining target advisories are checked using the head findings from compare's same snapshot.
+- **Published text keeps the machine out.** In a PR's title, description and commit message, absolute paths inside the working copy become repository-relative, and paths under the home, temp, state and cache directories become `<local path>` ([`publication-text.ts`](../packages/remediation/src/publication-text.ts)). HTML comments (the tool's state marker and encoded plan) pass through: this cleans what readers see, not every byte.
+- **Floor history stays intact.** secure-it compares recorded floors and their declarations before `compare`: compatibility floors never change, and security floors change only at exact planned targets with their scope and history preserved. New floors must be planned security additions, and only a dedicated floor-removal plan may remove security floors. Remaining target advisories are checked against compare's head findings from the same snapshot.
 - **Strict pins stay the owner's.** The Gradle inventory marks strict declarations and records strict dependency constraints. Neither tool plans a change that would move a strict version where the change acts; the reference refuses to move one and compares strictness with the edit; and verification refuses, before compare, an edit that changes any line mentioning `strictly` in a Gradle build, settings or catalog file. That last check is textual, a backstop: a pin written across lines, or read from a variable the edit changed, escapes it, while the reference comparison still sees the result.
-- **Floor removal requires a joint unlocked proof.** secure-it exports the base into sandboxed scratch copies.
-  npm resolves without either adjacent lock format, without lifecycle scripts, under the configured window and own
-  scopes. Gradle uses a trusted init script to filter exact advisory-bearing floor declarations and disable
-  dependency locks, with `--no-daemon` and no configuration cache. All selected floors must stay fixed in one joint
-  resolution; incomplete data retains them. The tool writes exact npm/floor bytes; the agent only removes named
-  Gradle declarations. Final verification preserves policy, compatibility floors and unrelated direct declarations,
-  checks the planned npm hashes, and uses compare's head findings to reject any remaining target advisory.
-  Gradle still runs repository code and can misrepresent its own inventory, as documented above; this proof does
-  not create an independent Gradle resolver.
+- **Floor removal requires a joint unlocked proof**, computed in sandboxed scratch copies of base
+  ([how](../packages/secure-it/README.md#removing-redundant-security-floors)). npm resolves without lifecycle scripts;
+  Gradle runs with a trusted init script, `--no-daemon` and no configuration cache. Incomplete data keeps the floors.
+  The tool writes exact npm/floor bytes; the agent only removes named Gradle declarations. Gradle still runs
+  repository code and can misrepresent its own inventory, as noted above: this proof is not an independent Gradle
+  resolver.
 - **A push and its plan recover together.** Before updating a PR branch, the tool journals the intended head/base, title, full body (including the plan), and adaptation count. If the body update fails after the push, the next run or review restores that exact content with a guarded re-read. A legacy head/base-only recovery forces recomputation and verified republication in a run; review refuses readiness or adaptation until then.
 
+Covered elsewhere, with the points that matter here:
 
-The tools' npm resolution phase writes all exact declarations together in an exported base, runs sandboxed npm
-with `--package-lock-only --ignore-scripts` and the window/exclusions, restores planned manifest bytes, and installs
-again. It asserts exact target landing before handing files to an agent; final verification protects lock bytes and
-manifest dependency fields (other manifest fields may change only for a major). Exempting a package name from npm's
-window cannot authorize a different explicit target. Peer copies use temporary declarations only when their
-root/workspace placement is representable; unsupported pins for selected updates fail the unit with a reason. secure-it retains
-npm-induced transitives subject to compare; bump-it additionally selects routine transitive targets in code.
-For bump-it routines, non-bundled transitive copies of a name excluded to preserve a young or unreadable locked
-version get temporary retention pins where supported. Plain overrides are temporarily narrowed to exact versions
-when compatible with every governed copy, then restored. Unsupported placements, including shared overrides whose
-copies need different targets, are left unpinned and checked after resolution:
-they may stay locked, be removed, or move to a version past the release-age wait that is not deprecated. A move to
-another young, deprecated or unreadable version fails the unit. An accepted aged move is kept once a later pass can
-pin that copy; if the copy's dependents or plain overrides stop admitting it, or the constraint can't be judged, its
-current version is checked again the same way. Bundled copies follow their carrier and may change when it moves to an aged target.
-Own packages keep their age exemption. secure-it's exact security targets and major-induced graphs retain their
-existing behavior.
-
-The npm required-dependency age exception starts only at a security fix independently established by the gate's
-version rule and advisory snapshot. Registry requirements and publish times prove that no aged satisfying version
-exists; only the lowest stable non-deprecated target qualifies, unless the requirement reaches another independently
-verified security fix whose version satisfies every applicable range, which is then chosen instead. The gate rebuilds the closure from actual lockfile
-placements, baseline overrides and registry manifests, rather than trusting secure-it's hidden plan or notes.
-Every security root is independently validated on the shared snapshot before its version can constrain the joint
-proof; ordinary head upgrades remain at base. Direct peer companions are solved jointly at their resolved locations,
-including reciprocal requirements. A deterministic complete assignment is selected, preferring aged then lowest
-versions; young choices must have no aged alternative and be lowest with the other assigned peers held fixed.
-Optional declarations replace same-key ordinary dependencies.
-Recursive required targets and aged bridges use the tools' exact-file protection. Depth 8, 128 visited nodes per root,
-2,048 satisfying versions per requirement, unknown metadata or unsupported placement fail explicitly. Optional
-absent dependencies are skipped. Peer searches additionally allow at most 128 companions, 2,048 candidate versions
-each and 4,096 attempted assignments per search; exhaustion grants no partial result. Source, identity, new advisory and malware checks remain in force. Ordinary bumps
-and other ecosystems get no exemption from this proof.
-
-The copied skill runtime allows only the nullable-object type union and a restricted constant-property `if`/`then`
-requiring a non-null object. Both tool schemas use it so `cannot-apply` can omit publication or return null, while
-`applied` must provide a complete publication object. Unknown fields and malformed non-null objects still fail.
+- **npm resolution** (temporary exact pins, narrowed overrides, retention pins) is in the
+  [secure-it](../packages/secure-it/README.md) and [bump-it](../packages/bump-it/README.md#run) READMEs. It runs
+  sandboxed and scriptless; exempting a name from npm's window never authorizes a different explicit target, and final
+  verification protects lock bytes and manifest dependency fields.
+- **The npm required-dependency age exception** is the gate's own proof: it rebuilds the closure from lockfile
+  placements, baseline overrides and registry manifests instead of trusting secure-it's plan or notes, and a limit hit
+  grants nothing ([details](../packages/ci/README.md#npm-dependencies-required-by-a-security-fix)). Ordinary bumps and
+  other ecosystems get no such exemption.
+- **The skill answer schemas** the copied runtime accepts are in [`packages/agent-basics`](../packages/agent-basics/README.md);
+  unknown fields and malformed objects still fail.
