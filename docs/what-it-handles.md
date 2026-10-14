@@ -136,6 +136,8 @@ Maven modules in runtime, compile and test dependencies, annotation processors,
 build tools, plugins, and buildscript and settings classpaths.
 It also covers `buildSrc` and included builds configured by the root build.
 Missing output or unresolved configurations fail. Explicitly ignored ones are not covered.
+A configuration that a plugin adds or makes resolvable while others resolve is resolved too; one that keeps appearing,
+or that another project adds after its own resolution, fails the inventory instead of being left out.
 
 The tools change declared versions; Gradle decides what resolves. A declared
 version can resolve higher when another dependency asks for more, and updating one

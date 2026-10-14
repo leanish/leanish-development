@@ -94,19 +94,39 @@ def declare = { configuration, Map entry ->
     entry
 }
 
-// A project's resolvable configurations, resolved: [configuration, entry] pairs for `declare`.
-def resolveProject = { String projectPath, buildscriptConfigurations, configurations ->
-    def prefix = projectPath == ":" ? ":" : projectPath + ":"
+// Every resolvable configuration of a container, resolved: [configuration, entry] pairs for `declare`. Resolving one
+// can run plugin callbacks that add configurations or make one resolvable, so the container is read again until nothing
+// new turns up; one that keeps changing fails the inventory instead of leaving configurations out.
+def resolveAll = { container, String idPrefix, String kind ->
+    def done = [] as Set
     def resolved = []
-    buildscriptConfigurations.findAll { it.canBeResolved }.sort { it.name }.each {
-        resolved << [it, resolveEntry(it, prefix + "buildscript." + it.name, "buildscript")]
-    }
-    configurations.findAll { it.canBeResolved }.sort { it.name }.each {
-        resolved << [it, resolveEntry(it, prefix + it.name, "project")]
+    def pending = { container.findAll { it.canBeResolved && !done.contains(it.name) }.sort { it.name } }
+    def round = pending()
+    for (int rounds = 1; !round.isEmpty(); rounds++) {
+        if (rounds > 10) throw new GradleException("supply-chain inventory: resolving ${idPrefix}* kept adding resolvable configurations (${round*.name.join(', ')})")
+        round.each {
+            done << it.name
+            resolved << [it, resolveEntry(it, idPrefix + it.name, kind)]
+        }
+        round = pending()
     }
     resolved
 }
+
+// A project's resolvable configurations, resolved: [configuration, entry] pairs for `declare`.
+def resolveProject = { String projectPath, buildscriptConfigurations, configurations ->
+    def prefix = projectPath == ":" ? ":" : projectPath + ":"
+    resolveAll(buildscriptConfigurations, prefix + "buildscript.", "buildscript") + resolveAll(configurations, prefix, "project")
+}
 def declareProject = { resolved -> resolved.collect { configuration, entry -> declare(configuration, entry) } }
+
+// At export, once every project has resolved: a project that gained a resolvable configuration since its own resolution
+// (another project's can add one) fails the inventory rather than leaving it out.
+def assertResolvedAll = { String projectPath, resolved, buildscriptConfigurations, configurations ->
+    def seen = resolved.collect { it[0] } as Set
+    def missing = (buildscriptConfigurations.findAll { it.canBeResolved } + configurations.findAll { it.canBeResolved }).findAll { !seen.contains(it) }
+    if (!missing.isEmpty()) throw new GradleException("supply-chain inventory: ${projectPath} gained resolvable configurations after resolving (${missing*.name.join(', ')})")
+}
 
 // One file per (build, project), named so no two can collide.
 def write = { String build, String project, Map content ->
@@ -133,6 +153,9 @@ gradle.projectsEvaluated { evaluated ->
         evaluated.rootProject.allprojects { project ->
             resolved[project.path] = resolveProject(project.path, project.buildscript.configurations, project.configurations)
         }
+        evaluated.rootProject.allprojects { project ->
+            assertResolvedAll(project.path, resolved[project.path], project.buildscript.configurations, project.configurations)
+        }
         resolved.each { path, configurations -> write(label, path, [configurations: declareProject(configurations)]) }
     }
 }
@@ -155,7 +178,10 @@ if (gradle.parent == null) {
             description = "Exports the resolved dependencies of every resolvable configuration for the supply-chain gate."
             dependsOn resolve
             mustRunAfter everyResolve
-            doLast { write(".", projectPath, [configurations: declareProject(resolvedByProject[projectPath])]) }
+            doLast {
+                assertResolvedAll(projectPath, resolvedByProject[projectPath], buildscriptConfigurations, configurations)
+                write(".", projectPath, [configurations: declareProject(resolvedByProject[projectPath])])
+            }
         }
     }
 }

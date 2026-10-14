@@ -43,6 +43,7 @@ const MODULES: Record<string, string[]> = {
   "fixture:ab-underscore:1.0": [],
   "fixture:defaulted:1.0": [],
   "fixture:sub-defaulted:1.0": [],
+  "fixture:late-lib:1.0": [],
 };
 
 function pom(coordinates: string, dependencies: string[]): string {
@@ -113,13 +114,18 @@ ${repository}
 configurations {
   tool
   defaulted { defaultDependencies { it.add(project.dependencies.create("fixture:defaulted:1.0")) } }
+  aEarly
+  zLate { canBeResolved = false }
 }
+// Resolving one configuration makes another resolvable, as a plugin's callback can.
+configurations.aEarly.incoming.afterResolve { configurations.zLate.canBeResolved = true }
 dependencies {
   implementation "fixture:runtime-lib:1.0"
   implementation("fixture:floored:2.0") { because "GHSA-test-floor: lowest fixed version" }
   testImplementation "fixture:test-lib:1.0"
   annotationProcessor "fixture:processor:1.0"
   tool "fixture:tool:1.0"
+  zLate "fixture:late-lib:1.0"
   constraints { implementation("fixture:constrained") { version { strictly "1.5" } } }
 }
 `);
@@ -183,6 +189,11 @@ dependencies { implementation "fixture:included-dep:1.0" }
     expect(locations("fixture:plugin-build-dep:1.0")).toEqual(expect.arrayContaining(["build-logic/:runtimeClasspath"]));
     expect(locations("fixture:buildsrc-dep:1.0")).toEqual(expect.arrayContaining(["buildSrc/:compileClasspath", "buildSrc/:runtimeClasspath"]));
     expect(locations("fixture:included-dep:1.0")).toEqual(expect.arrayContaining(["included/:runtimeClasspath"]));
+  });
+
+  it("inventories a configuration that another one's resolution made resolvable", () => {
+    const late = inventory.builds.find((build) => build.build === ".")!.configurations.find((configuration) => configuration.id === ":zLate");
+    expect(late?.resolved).toEqual([expect.objectContaining({ group: "fixture", name: "late-lib", version: "1.0" })]);
   });
 
   it("exports declared dependencies, inherited ones included, with their because(...) reason", () => {
