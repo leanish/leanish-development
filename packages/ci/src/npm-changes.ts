@@ -11,7 +11,7 @@
  */
 import { type Config, isOwnPackage } from "./config.ts";
 import type { Exceptions } from "./exceptions.ts";
-import { changedPackages, fromRegistry, type LockedPackage, NPM_REGISTRY, sourceProblems } from "./npm-lock.ts";
+import { changedPackages, fromRegistry, type LockedPackage, NPM_REGISTRY, replacedArtifacts, sourceProblems } from "./npm-lock.ts";
 import { type NpmRegistry, publishTime } from "./npm-registry.ts";
 import { uniqueVersions } from "./package-version.ts";
 import type { ChangedVersion } from "./release-age.ts";
@@ -38,6 +38,11 @@ export async function npmChanges(
   context: NpmChangeContext,
 ): Promise<NpmChanges> {
   const problems = sourceProblems(head, context.config.npm.registries);
+  for (const pkg of replacedArtifacts(base, head)) {
+    problems.push(
+      `${pkg.name}@${pkg.version} at ${pkg.path} changed its source or bytes without changing version: the gate can't tell the new artifact is the same package`,
+    );
+  }
   const changes: ChangedVersion[] = [];
   const ownChanges: ChangedVersion[] = [];
   const today = context.now.toISOString().slice(0, 10);

@@ -185,6 +185,22 @@ export function changedPackages(
   return head.filter((pkg) => before.get(pkg.path) !== `${pkg.name}@${pkg.version}`);
 }
 
+/**
+ * Packages in `head` still at their `base` name and version whose artifact changed: another tarball URL, other bytes,
+ * or bundled where they weren't (or the reverse). Nothing about a version tells a replaced artifact from the original.
+ */
+export function replacedArtifacts(
+  base: ReadonlyArray<LockedPackage>,
+  head: ReadonlyArray<LockedPackage>,
+): LockedPackage[] {
+  const before = new Map(base.map((pkg) => [pkg.path, pkg]));
+  return head.filter((pkg) => {
+    const old = before.get(pkg.path);
+    return old !== undefined && old.name === pkg.name && old.version === pkg.version
+      && (old.resolved !== pkg.resolved || old.integrity !== pkg.integrity || old.bundled !== pkg.bundled);
+  });
+}
+
 /** A dependency a lockfile's root or one of its workspaces declares, with the version installed for it. */
 export interface DirectDependency {
   /** The registry package's name (an `npm:` alias's target). */
