@@ -8,8 +8,7 @@ package is the code around them. Setup and operation are in [Adopting the tools]
 - **Config** (`config.ts`): `~/.config/leanish/<tool>/agent.yaml`, read strictly (unknown fields fail). It holds the
   opted-in repositories, the coding agent (`claude-code` or `codex`) with its model and one effort for every call,
   optional Keychain service overrides, the commit identity, the state and cache directories, paths the agent may not
-  read, an optional price table and, for bump-it, `maxNewMajorsPerRun`. A config that still sets `agent.majorEffort`
-  fails with a message saying `agent.effort` now covers every call. What's about the repository (release age, own
+  read, an optional price table and, for bump-it, `maxNewMajorsPerRun`. What's about the repository (release age, own
   packages, registries) comes from its `.github/supply-chain.json`.
 - **The tool's PRs** (`own-pr.ts`, `publication.ts`):
   - **Recognition:** a PR is the tool's when it comes from one of its branches (`<tool>/<date>-<topic>`) of the

@@ -159,7 +159,7 @@ Adopt the [gate](../packages/ci/README.md#adopting-the-gate) first; its README c
 - Require `supply-chain / supply-chain` and `supply-chain / cooldown`. The tools recognise a cooldown check only as `cooldown` or a name ending in ` / cooldown`.
 - Keep the dependency graph and Dependabot alerts on, and its PR producers off.
 
-Install and operate the local tools as [adopting the tools](adopting-tools.md) describes: prerequisites (the Codex CLI is always needed for the tool's own sandbox; the `claude` CLI only for `codingAgent: claude-code`), a separate `agent.yaml` per tool, distinct Keychain PATs (tool write, agent read-only, no Checks permission), and network access. Upgrading: `agent.majorEffort` is gone and a config that still sets it is refused; `agent.effort` now applies to every call, majors included ([configuration](tool-configuration.md)).
+Install and operate the local tools as [adopting the tools](adopting-tools.md) describes: prerequisites (the Codex CLI is always needed for the tool's own sandbox; the `claude` CLI only for `codingAgent: claude-code`), a separate `agent.yaml` per tool, distinct Keychain PATs (tool write, agent read-only, no Checks permission), and network access.
 
 Preview with `candidates --rule security|bump`: read-only, no model or publication; Gradle needs the exact commit's inventory artifact. It does not simulate final npm, peers, floors or the wrapper. Then run manually, inspect report, diff and CI, and enable scheduling. **run/review can publish and have no dry-run.** See [configuration](tool-configuration.md).
 
