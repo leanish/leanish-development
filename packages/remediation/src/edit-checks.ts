@@ -100,7 +100,7 @@ interface CodeState {
   blockComment: boolean;
 }
 
-function lineCode(line: string, state: CodeState): string {
+function lineCode(line: string, state: CodeState, path: string): string {
   let code = "";
   for (let i = 0; i < line.length; i++) {
     const char = line[i]!;
@@ -109,20 +109,30 @@ function lineCode(line: string, state: CodeState): string {
       continue;
     }
     if (state.quote !== undefined) {
-      if (char === "\\") i++;
-      else if (char === state.quote) {
+      // Kotlin raw strings (and TOML multiline literal strings) do not escape their closing quotes; Groovy does.
+      const escapes = state.quote.length === 1 || path.endsWith(".gradle") || (state.quote === '"""' && !path.endsWith(".gradle.kts"));
+      if (char === "\\" && escapes) i++;
+      else if (line.startsWith(state.quote, i)) {
+        const quote = state.quote;
+        i += quote.length - 1;
+        // Kotlin and TOML allow content quotes immediately before the closing triple delimiter.
+        if (quote.length === 3 && !path.endsWith(".gradle")) {
+          while (line[i + 1] === char) i++;
+        }
         state.quote = undefined;
         // A quoted name is still code: a catalog key (`"strictly" = "1.0"`), or a Groovy member (`delegate."strictly"`,
         // called with or without parentheses).
-        code += state.member || /^\s*[=(]/.test(line.slice(i + 1)) ? state.quoted : char;
-      } else state.quoted += char;
+        if (quote.length === 1) code += state.member || /^\s*[=(]/.test(line.slice(i + 1)) ? state.quoted : char;
+      } else if (state.quote.length === 1) state.quoted += char;
       continue;
     }
     if (char === '"' || char === "'") {
-      state.quote = char;
+      // Consume a triple delimiter together: treating its quotes separately can hide code after an embedded quote.
+      state.quote = line.startsWith(char.repeat(3), i) ? char.repeat(3) : char;
       state.quoted = "";
       state.member = /\.\s*$/.test(code);
       code += char;
+      i += state.quote.length - 1;
       continue;
     }
     if (char === "/" && line[i + 1] === "*") {
@@ -140,12 +150,12 @@ function lineCode(line: string, state: CodeState): string {
 const MAX_STRICT_LINES = 128;
 const MAX_STRICT_BYTES = 64 * 1024;
 
-function strictStatements(text: string | undefined): string[] {
+function strictStatements(text: string | undefined, path: string): string[] {
   const lines = (text ?? "").split("\n");
   const state: CodeState = { quoted: "", member: false, blockComment: false };
   const statements: string[] = [];
   for (let i = 0; i < lines.length; i++) {
-    const code = lineCode(lines[i]!, state);
+    const code = lineCode(lines[i]!, state, path);
     const at = /\bstrictly\b/.exec(code);
     if (at === null) continue;
     const statement = [lines[i]!];
@@ -156,7 +166,7 @@ function strictStatements(text: string | undefined): string[] {
         throw new Error("a strictly statement exceeds the continuation limit");
       }
       statement.push(lines[++i]!);
-      balanceStrict(lineCode(lines[i]!, state), opened);
+      balanceStrict(lineCode(lines[i]!, state, path), opened);
     }
     if (opened.length > 0) throw new Error("an unbalanced strictly statement can't be verified");
     const captured = statement.join("\n");
@@ -187,7 +197,7 @@ export async function strictPinsChanged(changedFiles: ReadonlyArray<string>, bas
   const problems: string[] = [];
   for (const path of changedFiles.filter(isGradleVersionFile)) {
     try {
-      if (!isDeepStrictEqual(strictStatements(await base.read(path)), strictStatements(await head.read(path)))) {
+      if (!isDeepStrictEqual(strictStatements(await base.read(path), path), strictStatements(await head.read(path), path))) {
         problems.push(`the edit changed a Gradle strictly(...) pin in ${path}: strict versions are the owner's, which no plan moves`);
       }
     } catch (err) {

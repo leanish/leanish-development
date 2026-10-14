@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- Verification's check that no edit changes a Gradle `strictly(...)` pin reads triple-quoted
+  strings (Kotlin raw strings, Groovy's `"""` and `'''`, TOML multiline strings) as strings.
+  Before, a quote inside one could hide a change to a later pin in an inactive branch.
+
+- The agent's git commands ignore the system's git config (`GIT_CONFIG_NOSYSTEM`), as the
+  tool's own already did: a system credential helper, such as Homebrew's `osxkeychain`, could
+  otherwise hand them the developer's own GitHub credentials.
+
 - A repository's own tests now run under the agent: the `git` guard lets through
   `-c core.hooksPath=/dev/null` and a push to a remote whose every push URL is on this machine
   (the bare repositories tests create), with git limited to the local transport for that push.

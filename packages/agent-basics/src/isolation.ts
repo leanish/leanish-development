@@ -81,7 +81,9 @@ export interface Machine {
  *     names (never their contents) are visible to it; the rest of the home
  *     stays readable, and so do toolchains and working copies under it;
  *   - replace the home's git and npm config (denied above, and able to hold
- *     credentials) with env: the configured commit identity, npm's
+ *     credentials) with env, and leave out the system's git config (its
+ *     credential helper, such as Homebrew's `osxkeychain`, would hand git the
+ *     developer's own credentials): the configured commit identity, npm's
  *     `ignore-scripts`, the repository's `min-release-age` and its own
  *     packages' `min-release-age-exclude` (npm 11.17 or later reads it);
  *   - put `commandPath` (the guards) first on the PATH of the agent's
@@ -116,6 +118,7 @@ export function codexIsolation(settings: IsolationSettings, machine: Partial<Mac
     buildCacheRoot: settings.buildCacheRoot,
     readDenied: [...new Set(readDenied)],
     env: {
+      GIT_CONFIG_NOSYSTEM: "1",
       GIT_CONFIG_GLOBAL: "/dev/null",
       // git's default excludes file lives under ~/.config too.
       GIT_CONFIG_COUNT: "1",

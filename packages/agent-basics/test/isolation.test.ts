@@ -32,6 +32,7 @@ describe("codexIsolation", () => {
     expect(options.loginHome).toBe(`${HOME}/.codex`);
     expect(options.buildCacheRoot).toBe(SETTINGS.buildCacheRoot);
     expect(options.env).toEqual({
+      GIT_CONFIG_NOSYSTEM: "1",
       GIT_CONFIG_GLOBAL: "/dev/null",
       GIT_CONFIG_COUNT: "1",
       GIT_CONFIG_KEY_0: "core.excludesFile",

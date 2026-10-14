@@ -34,6 +34,8 @@ and what's unreleased. Licensed under Apache-2.0.
 - [Tool configuration](docs/tool-configuration.md): every agent.yaml field, including
   the coding agent, model and effort
 - [Security model](docs/security-model.md) and [coverage gaps](docs/coverage-gaps.md)
+- [Simplification candidates](docs/simplification-candidates.md): code for rare cases that could be removed,
+  and what removing it would give up
 - [Validation evidence](docs/validation.md): real runs on fixture repositories and
   what each behaviour's evidence is
 - [Release procedure](docs/releasing.md) and [CHANGELOG](CHANGELOG.md)
