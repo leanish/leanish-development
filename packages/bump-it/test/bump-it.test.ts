@@ -47,7 +47,7 @@ async function prFor(unit: Unit, overrides: Partial<GitHubPullRequest> = {}): Pr
     ? { ...planned, wrapperFiles: wrapperArtifacts().map(({ bytes: _bytes, ...file }) => file) } : planned;
   return ownPr({ headRef: branchFor(RULES, new Date("2026-10-05T00:00:00Z"), unit.topic), labels: [RULES.label], body: withMarker(RULES, `Body.\n\n${planSection(plan)}`, { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }), ...overrides });
 }
-function harness(options: { bumps?: BumpCandidate[]; prs?: GitHubPullRequest[]; baseSha?: string; problems?: string[]; incomplete?: string[]; candidateNotes?: string[]; deferred?: string[]; refuse?: boolean; npm?: (unit: Unit) => Promise<NpmResult> } = {}) {
+function harness(options: { bumps?: BumpCandidate[]; prs?: GitHubPullRequest[]; baseSha?: string; problems?: string[]; incomplete?: string[]; candidateNotes?: string[]; deferred?: string[]; refuse?: boolean; npm?: (unit: Unit) => Promise<NpmResult>; links?: string[] } = {}) {
   const github = new FakeGitHub(...options.prs ?? []);
   const workspace = new InMemoryWorkspace();
   const wc: WorkingCopy = { projectId: REPO, path: "/synthetic/widget", gitDir: "/synthetic/git", headSha: options.baseSha ?? BASE_SHA, branch: "main" };
@@ -87,6 +87,7 @@ function harness(options: { bumps?: BumpCandidate[]; prs?: GitHubPullRequest[]; 
     npm: async (_context, unit, base) => { computed.push({ topic: unit.topic, base: base.id }); return options.npm === undefined ? npmOf(unit) : options.npm(unit); },
     verify: async (input) => { verified.push(input.plan); return options.problems ?? []; },
     changedSince: async () => ["package.json", "package-lock.json"],
+    symlinkedChanges: async () => options.links ?? [],
     journal: () => journal,
     priority: () => ({ read: async () => deferred, write: async (packages) => { deferred = [...packages]; } }),
     writeFile: async (_wc, path, content) => { files[path] = content; },
@@ -308,6 +309,11 @@ describe("bump-it run", () => {
     expect(invalid.workspace.publications).toEqual([]);
     const refused = harness({ refuse: true });
     expect(await bumpIt(refused.deps).run(refused.context)).toMatchObject({ units: [{ outcome: "published" }, { outcome: "failed" }] });
+  });
+  it("fails a unit whose edit left a symbolic link, whatever the other checks say", async () => {
+    const linked = harness({ links: ["package-lock.json"] });
+    expect(await bumpIt(linked.deps).run(linked.context)).toMatchObject({ units: [{ outcome: "failed", detail: expect.stringContaining("the edit made package-lock.json a symbolic link") }, { outcome: "failed" }] });
+    expect(linked.workspace.publications).toEqual([]);
   });
   it("does nothing with incomplete inventory, or an empty recomputation", async () => {
     const h = harness({ incomplete: ["build failed"] });

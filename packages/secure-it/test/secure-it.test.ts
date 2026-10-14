@@ -76,7 +76,7 @@ interface Harness {
   readonly journal: MemoryJournal;
 }
 
-function harness(options: { prs?: GitHubPullRequest[]; fixes?: SecurityFix[]; answer?: unknown; problems?: string[]; baseSha?: string; files?: Record<string, string> } = {}): Harness {
+function harness(options: { prs?: GitHubPullRequest[]; fixes?: SecurityFix[]; answer?: unknown; problems?: string[]; baseSha?: string; files?: Record<string, string>; links?: string[] } = {}): Harness {
   const github = new FakeGitHub(...(options.prs ?? []));
   const workspace = new InMemoryWorkspace();
   const workingCopy: WorkingCopy = { projectId: REPO, path: "/synthetic/leanish/widget", branch: "main", headSha: options.baseSha ?? BASE_SHA, gitDir: "/synthetic/.git" };
@@ -114,6 +114,7 @@ function harness(options: { prs?: GitHubPullRequest[]; fixes?: SecurityFix[]; an
     candidates: async () => ({ fixes: options.fixes ?? [vite()], incomplete: [], gaps: [], osvScannerVersion: "2.6.0" }),
     verify: async () => options.problems ?? [],
     changedSince: async () => ["package.json", "package-lock.json"],
+    symlinkedChanges: async () => options.links ?? [],
     journal: () => journal,
     writeFile: async (_wc, path, content) => {
       written.push(`${path}=${content}`);
@@ -273,6 +274,13 @@ describe("secure-it run", () => {
     const failing = harness({ problems: ["vite at node_modules/vite is 8.3.2, not 8.3.3"] });
     expect(await secureIt(failing.deps).run(failing.context)).toMatchObject({ outcome: "verification-failed", problems: ["vite at node_modules/vite is 8.3.2, not 8.3.3"] });
     expect(failing.github.calls.some((call) => call.startsWith("createPullRequest"))).toBe(false);
+
+    const linked = harness({ links: ["package-lock.json"] });
+    expect(await secureIt(linked.deps).run(linked.context)).toMatchObject({
+      outcome: "verification-failed",
+      problems: [expect.stringContaining("the edit made package-lock.json a symbolic link")],
+    });
+    expect(linked.github.calls.some((call) => call.startsWith("createPullRequest"))).toBe(false);
 
     const refused = harness({ answer: { outcome: "cannot-apply", summary: "the override would break the build" } });
     expect(await secureIt(refused.deps).run(refused.context)).toMatchObject({ outcome: "cannot-apply", summary: "the override would break the build" });

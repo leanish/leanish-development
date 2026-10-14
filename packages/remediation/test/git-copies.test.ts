@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { WorkingCopy } from "../../agent-basics/src/types/working-copy.ts";
-import { changedSince, exportCommit, sameTreeAs } from "../src/git-copies.ts";
+import { changedSince, exportCommit, sameTreeAs, symlinkedChanges, symlinkProblems } from "../src/git-copies.ts";
 
 let root: string;
 let workingCopy: WorkingCopy;
@@ -123,5 +123,25 @@ describe("git copies", () => {
     const twins = input(["mktree"], `100644 blob ${file}\tREADME\n100644 blob ${file}\treadme\n`);
     const twinCommit = input(["-c", "user.email=t@example.com", "-c", "user.name=t", "commit-tree", twins, "-m", "twins"], "");
     await expect(exportCommit(workingCopy, twinCommit)).rejects.toThrow("has paths that collide: README and readme");
+  });
+});
+
+describe("symbolic links in an edit", () => {
+  it("finds changed paths that are links or sit under one, and leaves regular and removed files alone", async () => {
+    const root = await mkdtemp(join(tmpdir(), "symlinked-changes-"));
+    const copy: WorkingCopy = { projectId: "acme/widget", path: root, branch: "main", headSha: "a".repeat(40) };
+    await mkdir(join(root, "real"), { recursive: true });
+    await writeFile(join(root, "real", "package-lock.json"), "{}");
+    await writeFile(join(root, "build.gradle"), "plugins {}");
+    // The agent's moves: a lockfile replaced by a link to the expected bytes, and a directory replaced by a link.
+    await symlink(join(root, "real", "package-lock.json"), join(root, "package-lock.json"));
+    await symlink(join(root, "real"), join(root, "gradle"));
+    const changed = ["build.gradle", "gradle/libs.versions.toml", "package-lock.json", "removed.txt"];
+    expect(await symlinkedChanges(copy, changed)).toEqual(["gradle", "package-lock.json"]);
+    expect(symlinkProblems(["package-lock.json"])).toEqual([
+      "the edit made package-lock.json a symbolic link (or put a changed file under it): the tools publish no links, which verification would read through",
+    ]);
+    expect(await symlinkedChanges(copy, ["build.gradle", "removed.txt"])).toEqual([]);
+    await rm(root, { recursive: true, force: true });
   });
 });

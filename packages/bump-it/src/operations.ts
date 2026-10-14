@@ -8,6 +8,7 @@ import type { GateEnvironment, GradleInputs } from "../../ci/src/gate.ts";
 import type { NpmPeerPlanner } from "../../ci/src/npm-peers.ts";
 import type { Tree } from "../../ci/src/tree.ts";
 import type { ToolRunContext } from "../../remediation/src/command.ts";
+import { symlinkProblems } from "../../remediation/src/git-copies.ts";
 import { referenceTransform } from "../../remediation/src/gradle-reference.ts";
 import { type GradleInventories, lockfilesOf } from "../../remediation/src/inventories.ts";
 import { branchFor, ownPullRequests, topicOf } from "../../remediation/src/own-pr.ts";
@@ -139,8 +140,9 @@ export async function verify(execution: Execution, computed: Computed): Promise<
     reference,
     changedFiles,
   });
-  if (problems.length > 0) {
-    throw new Error(`verification failed: ${problems.join("; ")}`);
+  const links = symlinkProblems(await deps.symlinkedChanges(context.workingCopy, changedFiles));
+  if (problems.length > 0 || links.length > 0) {
+    throw new Error(`verification failed: ${[...links, ...problems].join("; ")}`);
   }
 }
 

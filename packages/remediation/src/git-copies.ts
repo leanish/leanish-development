@@ -11,7 +11,7 @@
  *   - `sameTreeAs`: whether the working tree equals a commit.
  */
 import { spawn } from "node:child_process";
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, normalize } from "node:path";
 
@@ -138,6 +138,39 @@ export async function changedSince(workingCopy: WorkingCopy, sha: string, run: R
   const untracked = await git(workingCopy, ["ls-files", "--others", "--exclude-standard", "-z"], run);
   if (untracked.code !== 0) throw new Error(`git ls-files failed: ${untracked.stderr.trim()}`);
   return [...new Set([...tracked.stdout.split("\0"), ...untracked.stdout.split("\0")].filter((path) => path !== ""))].sort();
+}
+
+/**
+ * The changed paths that are symbolic links in the working tree, or sit under a directory that is one. No dependency
+ * update needs a link, and verification reads through one while git publishes the link itself.
+ */
+export async function symlinkedChanges(workingCopy: WorkingCopy, paths: ReadonlyArray<string>): Promise<string[]> {
+  const found = new Set<string>();
+  for (const path of paths) {
+    const parts = path.split("/");
+    for (let depth = 1; depth <= parts.length; depth++) {
+      const prefix = parts.slice(0, depth).join("/");
+      let linked: boolean;
+      try {
+        linked = (await lstat(join(workingCopy.path, prefix))).isSymbolicLink();
+      } catch (err) {
+        // A removed path has nothing left to follow.
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "ENOENT" || code === "ENOTDIR") break;
+        throw err;
+      }
+      if (linked) {
+        found.add(prefix);
+        break;
+      }
+    }
+  }
+  return [...found].sort();
+}
+
+/** The verification problem for each changed path `symlinkedChanges` found. */
+export function symlinkProblems(links: ReadonlyArray<string>): string[] {
+  return links.map((link) => `the edit made ${link} a symbolic link (or put a changed file under it): the tools publish no links, which verification would read through`);
 }
 
 /** Whether the working tree has exactly `sha`'s files. */

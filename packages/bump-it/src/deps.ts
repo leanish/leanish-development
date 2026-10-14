@@ -12,7 +12,7 @@ import { FileRepositoryAdvisoryCache } from "../../remediation/src/repository-ad
 import { runProcess } from "../../ci/src/process.ts";
 import { gitTree, type Tree, workingTree } from "../../ci/src/tree.ts";
 import type { ToolRunContext } from "../../remediation/src/command.ts";
-import { changedSince, git } from "../../remediation/src/git-copies.ts";
+import { changedSince, git, symlinkedChanges } from "../../remediation/src/git-copies.ts";
 import { type GradleInventories, sandboxedGradleInventories } from "../../remediation/src/inventories.ts";
 import { FileJournal, type PublicationJournal } from "../../remediation/src/journal.ts";
 import { ensureOsvScanner, verifyingRun } from "../../remediation/src/osv-scanner.ts";
@@ -42,6 +42,8 @@ export interface BumpItDeps {
   readonly npm: (context: ToolRunContext, unit: Unit, base: Tree, env: GateEnvironment, gradle: GradleInputs["head"]) => Promise<NpmResult>;
   readonly verify: (inputs: VerifyInputs) => Promise<string[]>;
   readonly changedSince: (workingCopy: WorkingCopy, sha: string) => Promise<string[]>;
+  /** The changed paths that are symbolic links or sit under one (`symlinkedChanges`). */
+  readonly symlinkedChanges: (workingCopy: WorkingCopy, paths: ReadonlyArray<string>) => Promise<string[]>;
   readonly journal: (context: ToolRunContext) => PublicationJournal;
   readonly priority: (context: ToolRunContext) => MajorPriority;
   readonly writeFile: (workingCopy: WorkingCopy, path: string, content: string) => Promise<void>;
@@ -80,6 +82,7 @@ export function defaultDeps(): BumpItDeps {
     npm: computeOnBase,
     verify: verifyPlan,
     changedSince,
+    symlinkedChanges,
     journal: (context) => new FileJournal(context.config.dirs.state),
     priority: (context) => filePriority(context.config.dirs.state, context.repo.repo),
     writeFile: (workingCopy, path, content) => writeLocalFile(workingCopy.path, path, content),

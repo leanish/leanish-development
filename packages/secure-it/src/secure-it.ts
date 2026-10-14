@@ -25,7 +25,7 @@ import type { ToolHandlers, ToolRunContext } from "../../remediation/src/command
 import { FLOORS_FILE, isMechanical } from "../../remediation/src/edit-checks.ts";
 import { writeLocalFile } from "../../remediation/src/local-files.ts";
 import { gradleSourceIndex } from "../../ci/src/gradle-sources.ts";
-import { changedSince } from "../../remediation/src/git-copies.ts";
+import { changedSince, symlinkedChanges, symlinkProblems } from "../../remediation/src/git-copies.ts";
 import { referenceTransform } from "../../remediation/src/gradle-reference.ts";
 import { type GradleInventories, lockfilesOf, sandboxedGradleInventories } from "../../remediation/src/inventories.ts";
 import { FileJournal, type PublicationJournal } from "../../remediation/src/journal.ts";
@@ -76,6 +76,8 @@ export interface SecureItDeps {
   readonly candidates: (tree: Tree, env: GateEnvironment, gradle: GradleInputs) => Promise<SecurityCandidates>;
   readonly verify: (inputs: VerifyInputs) => Promise<string[]>;
   readonly changedSince: (workingCopy: WorkingCopy, sha: string) => Promise<string[]>;
+  /** The changed paths that are symbolic links or sit under one (`symlinkedChanges`). */
+  readonly symlinkedChanges: (workingCopy: WorkingCopy, paths: ReadonlyArray<string>) => Promise<string[]>;
   readonly journal: (context: ToolRunContext) => PublicationJournal;
   /** Writes `content` at `path` (relative to the working copy): taking the base's side of a conflicted dependency file. */
   readonly writeFile: (workingCopy: WorkingCopy, path: string, content: string) => Promise<void>;
@@ -102,6 +104,7 @@ export function defaultDeps(): SecureItDeps {
     npm: (context, args) => runSandboxed(context.isolation, { workingCopy: context.workingCopy, command: ["npm", ...args] }),
     verify: verifyPlan,
     changedSince: (workingCopy, sha) => changedSince(workingCopy, sha),
+    symlinkedChanges: (workingCopy, paths) => symlinkedChanges(workingCopy, paths),
     journal: (context) => new FileJournal(context.config.dirs.state),
     writeFile: (workingCopy, path, content) => writeLocalFile(workingCopy.path, path, content),
     revert: (workingCopy, baseSha) => revertToBase(workingCopy, baseSha),
@@ -584,10 +587,12 @@ async function verifyEdit(
   } catch (err) {
     return [`the plan's Gradle reference can't be built: ${(err as Error).message}`];
   }
-  return deps.verify({
-    plan, base, head, env, npmFiles, gradle: { base: baseGradle, head: headGradle }, reference, changedFiles: await deps.changedSince(context.workingCopy, base.id),
+  const changedFiles = await deps.changedSince(context.workingCopy, base.id);
+  const links = symlinkProblems(await deps.symlinkedChanges(context.workingCopy, changedFiles));
+  return [...links, ...await deps.verify({
+    plan, base, head, env, npmFiles, gradle: { base: baseGradle, head: headGradle }, reference, changedFiles,
     ...(cooldown === undefined ? {} : { cooldown }),
-  });
+  })];
 }
 
 /**
