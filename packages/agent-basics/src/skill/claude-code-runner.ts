@@ -107,6 +107,7 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
       cacheRoot === undefined ? {} : { GRADLE_USER_HOME: join(cacheRoot, "gradle"), npm_config_cache: join(cacheRoot, "npm") };
     this.#readDenied = options.readDenied ?? [];
     assertAbsolute(this.#readDenied, "readDenied");
+    assertLiteral(this.#readDenied, "readDenied");
     assertOutsideDenied(this.#writableRoots, this.#readDenied, "writable root");
   }
 
@@ -132,6 +133,7 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
     const workingCopies = invocation.workingCopies.map((wc) => wc.path);
     assertOutsideDenied(workingCopies, this.#readDenied, "working copy");
     const gitDirs = access === "write" ? await writeMountGitDirs(invocation.workingCopies) : [];
+    assertLiteral(gitDirs, "a working copy's git metadata");
     if (access === "write") {
       for (const root of this.#writableRoots) await mkdir(root, { recursive: true, mode: 0o700 });
     }
@@ -320,6 +322,16 @@ export function claudeSettings(request: ClaudeSettingsRequest): Record<string, u
     // Nothing runs besides the agent's own tool calls: no hooks from settings or from a skill (managed policy aside).
     disableAllHooks: true,
   };
+}
+
+/**
+ * Claude Code reads its permission rules as glob patterns, so a path with a glob character (`secrets[prod].json`)
+ * would deny something other than itself. Such paths are refused rather than escaped: an escape the matcher didn't
+ * honour would fail open.
+ */
+function assertLiteral(paths: ReadonlyArray<string>, what: string): void {
+  const glob = paths.find((path) => /[*?[\]{}!\\]/.test(path));
+  if (glob !== undefined) throw new Error(`ClaudeCodeRunner: ${what} '${glob}' has a glob character, which Claude Code's permission rules would read as a pattern`);
 }
 
 /** `Read` rules for one denied path: exact for a file, recursive for a directory, both when it doesn't exist (yet). */

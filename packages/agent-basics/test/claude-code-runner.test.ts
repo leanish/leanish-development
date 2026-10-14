@@ -286,6 +286,11 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     expect(scrubProxyCredentials("proxyUser=srt.x proxyPassword=y")).toBe("proxyUser=<redacted> proxyPassword=<redacted>");
   });
 
+  it("refuses a denied path with a glob character, which a permission rule would read as a pattern", () => {
+    expect(() => new ClaudeCodeRunner({ readDenied: ["/work/repo/secrets[prod].json"] })).toThrowError(/'\/work\/repo\/secrets\[prod\]\.json' has a glob character/);
+    expect(() => new ClaudeCodeRunner({ readDenied: ["/work/private"] })).not.toThrow();
+  });
+
   it("refuses a relocated Claude config dir before spawning", async () => {
     const { bin, record } = await makeStub([result(ANSWER)]);
     await expect(new ClaudeCodeRunner({ bin, env: { CLAUDE_CONFIG_DIR: "/elsewhere" } }).run(call())).rejects.toThrowError(/CLAUDE_CONFIG_DIR \('\/elsewhere'\) isn't supported/);
