@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Changed
+
+- The gate workflow uses `actions/download-artifact` v8.0.2 and `actions/upload-artifact` v7.0.2.
+  Adopters get them by repinning `supply-chain.yml` to this release's commit; updating the tools'
+  checkout alone doesn't change the workflow they run.
+
 ### Fixed
 
 - Verification's check that no edit changes a Gradle `strictly(...)` pin reads triple-quoted
@@ -15,6 +21,7 @@
 - A repository's own tests now run under the agent: the `git` guard lets through
   `-c core.hooksPath=/dev/null` and a push to a remote whose every push URL is on this machine
   (the bare repositories tests create), with git limited to the local transport for that push.
+  Only the push options the tests and workspaces use pass, wherever they appear on the command line.
   Tests no longer depend on the machine's Codex login, git askpass or package directory.
 
 ## 0.5.0 - 2026-10-14
