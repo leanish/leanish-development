@@ -9,9 +9,9 @@ import { type ModelUsage, type RequestUsage, sumTokens, type TokenUsage, UNATTRI
  * reads, `cacheWriteInput` the writes). Each assistant message is one model request; its events repeat
  * the message's usage with counters that only grow, so a request keeps the field-wise maximum (a
  * counter that drops is a gap). Output counts in those events stop short of the final ones, so the
- * terminal per-model totals are the reference: what they hold beyond the requests (the rest of the
- * output, sub-agents' and background requests) becomes one inexact request; requests that exceed them
- * are a gap, never clamped. Without the terminal event the usage is a lower bound and the cost unknown.
+ * terminal per-model totals are the reference: what they hold beyond the requests is added inexactly
+ * (see `withRemainder`); requests that exceed them are a gap, never clamped. Without the terminal
+ * event the usage is a lower bound and the cost unknown.
  */
 export class ClaudeStreamCollector {
   readonly #requests = new Map<string, { readonly model: string; tokens: TokenUsage }>();
@@ -88,8 +88,7 @@ export class ClaudeStreamCollector {
         models.push({ model, tokens: totals, requests });
         continue;
       }
-      const rest = remainder.total > 0 ? [{ tokens: remainder, exact: false }] : [];
-      models.push(modelUsage(model, [...requests, ...rest]));
+      models.push(modelUsage(model, withRemainder(requests, remainder)));
     }
     for (const [model, requests] of streamed) {
       measurement = "partial";
@@ -226,6 +225,19 @@ function maxTokens(left: TokenUsage, right: TokenUsage): TokenUsage {
     reasoningOutput: Math.max(left.reasoningOutput, right.reasoningOutput),
     total: input + output,
   };
+}
+
+/**
+ * Adds what the terminal totals hold beyond the streamed requests. Output alone (the events stop counting before a
+ * message ends) belongs to one of those requests, whose input decides its price tier, so it's folded into the largest
+ * one, marked inexact: a price over the long-context threshold then becomes unknown instead of the ordinary tier's.
+ * Anything with input (sub-agents', background requests) is a request of its own, also inexact.
+ */
+function withRemainder(requests: ReadonlyArray<RequestUsage>, remainder: TokenUsage): RequestUsage[] {
+  if (remainder.total === 0) return [...requests];
+  const largest = requests.reduce<number>((best, request, i) => (best < 0 || request.tokens.input > requests[best]!.tokens.input ? i : best), -1);
+  if (remainder.input > 0 || largest < 0) return [...requests, { tokens: remainder, exact: false }];
+  return requests.map((request, i) => (i === largest ? { tokens: sumTokens([request.tokens, remainder]), exact: false } : request));
 }
 
 function modelUsage(model: string, requests: ReadonlyArray<RequestUsage>): ModelUsage {

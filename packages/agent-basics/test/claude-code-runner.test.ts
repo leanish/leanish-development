@@ -42,7 +42,7 @@ const result = (text: string, extra: Record<string, unknown> = {}) => ({ type: "
  * A stub `claude` that records its cwd, argv (one per line) and a few env vars into `<dir>/record`,
  * prints `events` as stream-json lines, writes `stderr` and exits with `exitCode`.
  */
-async function makeStub(events: ReadonlyArray<unknown>, options: { exitCode?: number; stderr?: string } = {}): Promise<{ bin: string; record: string }> {
+async function makeStub(events: ReadonlyArray<unknown>, options: { exitCode?: number; stderr?: string; script?: string } = {}): Promise<{ bin: string; record: string }> {
   const dir = await mkdtemp(join(tmpdir(), "agent-runtime-fake-claude-"));
   const record = join(dir, "record");
   await writeFile(join(dir, "events.jsonl"), events.map((event) => JSON.stringify(event)).join("\n") + "\n");
@@ -56,6 +56,7 @@ async function makeStub(events: ReadonlyArray<unknown>, options: { exitCode?: nu
   echo "ENV BASE=[$BASE_VAR] OVERLAP=[$OVERLAP_VAR] CRED=[$CRED_VAR] GRADLE=[$GRADLE_USER_HOME] ZDOTDIR=[$ZDOTDIR] MEMORY=[$CLAUDE_CODE_DISABLE_AUTO_MEMORY] ASKPASS=[$GIT_ASKPASS]"
   [ -n "$ZDOTDIR" ] && [ -f "$ZDOTDIR/.zshenv" ] && echo "SHIM=present"
 } > "${record}"
+${options.script ?? ""}
 cat "${join(dir, "events.jsonl")}"
 ${options.stderr !== undefined ? `echo "${options.stderr}" >&2` : ""}
 exit ${options.exitCode ?? 0}
@@ -248,10 +249,10 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     const usage = usages[0]!;
     expect(usage).toMatchObject({ measurement: "complete", model: "claude-sonnet-x", providerCostUsd: 0.0123, gaps: [] });
     const sonnet = usage.models.find((model) => model.model === "claude-sonnet-x")!;
+    // The output the events didn't count yet goes to the largest request, which then isn't exact.
     expect(sonnet.requests).toEqual([
       { tokens: { input: 125, cachedInput: 100, cacheWriteInput: 20, output: 4, reasoningOutput: 0, total: 129 }, exact: true },
-      { tokens: { input: 132, cachedInput: 130, cacheWriteInput: 0, output: 3, reasoningOutput: 0, total: 135 }, exact: true },
-      { tokens: { input: 0, cachedInput: 0, cacheWriteInput: 0, output: 23, reasoningOutput: 5, total: 23 }, exact: false },
+      { tokens: { input: 132, cachedInput: 130, cacheWriteInput: 0, output: 26, reasoningOutput: 5, total: 158 }, exact: false },
     ]);
     expect(usage.models.find((model) => model.model === "claude-haiku-x")?.requests).toEqual([
       { tokens: { input: 50, cachedInput: 0, cacheWriteInput: 0, output: 10, reasoningOutput: 0, total: 60 }, exact: false },
@@ -288,5 +289,30 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     const { bin, record } = await makeStub([result(ANSWER)]);
     await expect(new ClaudeCodeRunner({ bin, env: { CLAUDE_CONFIG_DIR: "/elsewhere" } }).run(call())).rejects.toThrowError(/CLAUDE_CONFIG_DIR \('\/elsewhere'\) isn't supported/);
     await expect(readFile(record, "utf8")).rejects.toThrowError(/ENOENT/);
+  });
+
+  it("scrubs a failure's reason before cutting it short, so a cut can't leave part of a credential", async () => {
+    const reason = `${"p".repeat(10)} -Dhttps.proxyPassword=s3cretvalue ${"y".repeat(1985)}`;
+    const { bin } = await makeStub([result(reason, { subtype: "error_during_execution", is_error: true })], { exitCode: 1 });
+    const error = (await new ClaudeCodeRunner({ bin }).run(call()).catch((err: Error) => err)) as Error;
+    expect(error.message).not.toMatch(/cretvalue/);
+  });
+
+  it("fails a run that succeeded when cleaning up fails, saying what was left behind", async () => {
+    const stagingParentDir = await mkdtemp(join(tmpdir(), "claude-runner-staging-"));
+    // The CLI makes its staged dir undeletable (the shell's ZDOTDIR lives in it).
+    const { bin } = await makeStub([result(ANSWER)], { script: 'chmod 500 "$ZDOTDIR/.."' });
+    try {
+      await expect(new ClaudeCodeRunner({ bin, stagingParentDir }).run(call())).rejects.toThrowError(/the run ended, but cleaning up failed: the staged skills and shell/);
+    } finally {
+      for (const dir of await readdir(stagingParentDir)) await chmod(join(stagingParentDir, dir), 0o700);
+    }
+  });
+
+  it("cleans up its staged dir after a timeout", async () => {
+    const stagingParentDir = await mkdtemp(join(tmpdir(), "claude-runner-staging-"));
+    const { bin } = await makeStub([result(ANSWER)], { script: "sleep 5" });
+    await expect(new ClaudeCodeRunner({ bin, stagingParentDir, timeoutMs: 200 }).run(call())).rejects.toThrowError(/did not return within 200ms/);
+    expect(await readdir(stagingParentDir)).toEqual([]);
   });
 });

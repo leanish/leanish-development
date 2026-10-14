@@ -53,4 +53,17 @@ describe("ClaudeStreamCollector", () => {
     const answer = feed([{ type: "result", subtype: "error_during_execution", is_error: true, errors: ["You've hit your limit", { code: "x" }] }]).answer;
     expect(answer).toEqual({ text: 'You\'ve hit your limit\n{"code":"x"}', isError: true, subtype: "error_during_execution" });
   });
+
+  it("folds output the events didn't count into the largest request, so a long-context price becomes unknown, not ordinary", () => {
+    const usage = feed([
+      message("a", { input_tokens: 300_000, output_tokens: 1 }),
+      message("b", { input_tokens: 10, output_tokens: 1 }),
+      result({ m: { inputTokens: 300_010, outputTokens: 102 } }),
+    ]).usage();
+    expect(usage.models[0]?.requests).toEqual([
+      { tokens: expect.objectContaining({ input: 300_000, output: 101 }), exact: false },
+      { tokens: expect.objectContaining({ input: 10, output: 1 }), exact: true },
+    ]);
+    expect(usage.measurement).toBe("complete");
+  });
 });

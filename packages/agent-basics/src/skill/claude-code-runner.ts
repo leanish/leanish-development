@@ -143,6 +143,7 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
     const mount = resolveWorkingCopyMount(invocation.workingCopies);
     const sessionId = randomUUID();
     const sessionDir = join(homedir(), ".claude", "projects", (await realpath(mount.cwd).catch(() => mount.cwd)).replace(/[^A-Za-z0-9]/g, "-"), sessionId);
+    let failed = false;
     try {
       const shell = await shellIsolationEnv(staged.dir);
       await writeFile(join(shell["ZDOTDIR"]!, ".zshenv"), PROXY_SHIM);
@@ -215,14 +216,15 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
       } catch (err) {
         // The CLI reports why a run failed (a plan limit, an execution error) in its result event on stdout, which a
         // failed process's message (its stderr tail) doesn't carry.
-        const reason = collector.answer?.text;
-        const detail = reason === undefined || reason === "" ? "" : `; the CLI reported: ${reason.slice(-2000)}`;
-        throw new Error(scrubProxyCredentials(`${(err as Error).message}${detail}`));
+        // Scrubbed before it's cut short: a cut could split a credential the scrub would no longer recognise.
+        const reason = scrubProxyCredentials(collector.answer?.text ?? "");
+        const detail = reason === "" ? "" : `; the CLI reported: ${reason.slice(-2000)}`;
+        throw new Error(`${scrubProxyCredentials((err as Error).message)}${detail}`);
       }
       const answer = collector.answer;
       if (answer === undefined) throw new Error("ClaudeCodeRunner: the CLI ended without a result event");
       if (answer.isError) {
-        throw new Error(scrubProxyCredentials(`ClaudeCodeRunner: the run ended with ${answer.subtype}: ${answer.text.slice(-2000)}`));
+        throw new Error(`ClaudeCodeRunner: the run ended with ${answer.subtype}: ${scrubProxyCredentials(answer.text).slice(-2000)}`);
       }
       const model = collector.model;
       return {
@@ -230,12 +232,19 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
         ...(stderrTail !== undefined ? { stderrTail: scrubProxyCredentials(stderrTail) } : {}),
         ...(model !== undefined && model !== invocation.model ? { model } : {}),
       };
+    } catch (err) {
+      failed = true;
+      throw err;
     } finally {
-      // Each step runs whatever the others do, and none replaces the run's own failure.
+      // Each step runs whatever the others do. A step that fails fails a run that had succeeded, saying what was left
+      // behind; it never replaces the run's own failure.
+      const leftBehind: string[] = [];
       // The session's saved outputs (written despite --no-session-persistence) mustn't outlive it.
-      await rm(sessionDir, { recursive: true, force: true }).catch(() => undefined);
-      await rmdir(dirname(sessionDir)).catch(() => undefined); // the working copy's project dir, once no session is left in it
-      await staged.cleanup().catch(() => undefined);
+      await rm(sessionDir, { recursive: true, force: true }).catch((err: Error) => leftBehind.push(`the session's saved outputs (${err.message})`));
+      // The working copy's project dir, once no session is left in it; another session may still be using it.
+      await rmdir(dirname(sessionDir)).catch(() => undefined);
+      await staged.cleanup().catch((err: Error) => leftBehind.push(`the staged skills and shell (${err.message})`));
+      if (leftBehind.length > 0 && !failed) throw new Error(`ClaudeCodeRunner: the run ended, but cleaning up failed: ${leftBehind.join("; ")}`);
     }
   }
 }

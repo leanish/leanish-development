@@ -22,17 +22,17 @@ giving a tool repository access.
 - **macOS, currently Apple Silicon:** the secret store uses macOS Keychain,
   `run.sh` uses `lockf`, and the pinned scanner has a macOS arm64 build. Linux's
   scanner pin does not make the current Keychain launcher portable.
-- **Node 24 or newer**, git, `gh`, npm and Codex available on the command path.
+- **Node 24 or newer**, git, `gh`, npm and the Codex CLI available on the command path,
+  whichever agent you choose: the tool runs repository code (the Gradle inventory,
+  npm resolution) under `codex sandbox`, which needs no login.
   Use **npm 11.17.0 or newer** whenever there are own npm scopes, planned young
   security targets or young/unreadable locked base versions: these need
   `min-release-age-exclude`. Older npm reports the affected unit failed, with
   the needed exclusions and detected version, before publication. Using 11.17+
   from the start avoids that conditional failure.
-- **Codex login** for the same user that will run launchd, whichever agent you
-  choose: the tool runs repository code (the Gradle inventory, npm resolution)
-  under `codex sandbox`. The runner reuses a
-  file-backed `auth.json` under `$CODEX_HOME` or `~/.codex`; a keyring-only login
-  cannot be reused. See [Codex credential storage](https://developers.openai.com/codex/auth/#credential-storage).
+- **For `codingAgent: codex`: a Codex login** for the same user that will run
+  launchd. The runner reuses a file-backed `auth.json` under `$CODEX_HOME` or
+  `~/.codex`; a keyring-only login cannot be reused. See [Codex credential storage](https://developers.openai.com/codex/auth/#credential-storage).
   For a file-backed login, run:
 
   ```bash
