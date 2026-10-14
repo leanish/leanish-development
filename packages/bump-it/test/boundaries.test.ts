@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -12,7 +13,8 @@ import { filePriority } from "../src/priority.ts";
 import { assertLocalFile, writeLocalFile } from "../src/files.ts";
 
 const dirs: string[] = [];
-const temp = async () => { const dir = await mkdtemp(join(process.cwd(), ".bump-test-")); dirs.push(dir); return dir; };
+// Under the temp dir, not the package: a sandbox may refuse the `.git/hooks` a test's `git init` writes inside the repository.
+const temp = async () => { const dir = await mkdtemp(join(tmpdir(), "bump-test-")); dirs.push(dir); return dir; };
 afterEach(async () => { for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true }); });
 describe("tool boundaries", () => {
   it("loads a write-capable skill with strict input and output schemas", async () => {
