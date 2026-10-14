@@ -116,10 +116,12 @@ function lineCode(line: string, state: CodeState, path: string): string {
         // `${…}` in a Kotlin or Groovy string is code. The scanner doesn't read it as such, so a strict pin written
         // there fails instead of passing unseen.
         const end = interpolationEnd(line, i + 2);
-        if (/\bstrictly\b/.test(line.slice(i + 2, end ?? line.length))) {
+        // One that doesn't close on its line could hide a pin on the next ones.
+        if (end === undefined) throw new Error("a string interpolation spanning lines can't be verified");
+        if (/\bstrictly\b/.test(line.slice(i + 2, end))) {
           throw new Error("a strictly(...) inside a string interpolation can't be verified");
         }
-        i = end ?? line.length;
+        i = end;
       } else if (line.startsWith(state.quote, i)) {
         const quote = state.quote;
         i += quote.length - 1;

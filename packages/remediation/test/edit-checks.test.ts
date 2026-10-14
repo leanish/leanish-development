@@ -44,6 +44,13 @@ describe("strict pins", () => {
       .toEqual([expect.stringContaining("strictly(...) pin")]);
   });
 
+  it("fails a changed file with an interpolation spanning lines, which could hide a pin", async () => {
+    const path = "build.gradle.kts";
+    const before = 'val note = """${\n  run { strictly("1.0") }\n}"""\n';
+    expect(await strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: before.replace('"1.0"', '"2.0"') })))
+      .toEqual([`${path}: a string interpolation spanning lines can't be verified`]);
+  });
+
   it("reads Groovy's single-quoted strings and TOML strings as plain text", async () => {
     for (const [path, text] of [["build.gradle", "def s = '${strictly(1)}'\n"], ["gradle/libs.versions.toml", 'note = "${strictly}"\n']] as const) {
       expect(await strictPinsChanged([path], tree({ [path]: text }), tree({ [path]: `${text}// changed\n` }))).toEqual([]);
