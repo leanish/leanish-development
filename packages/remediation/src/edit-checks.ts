@@ -112,7 +112,15 @@ function lineCode(line: string, state: CodeState, path: string): string {
       // Kotlin raw strings (and TOML multiline literal strings) do not escape their closing quotes; Groovy does.
       const escapes = state.quote.length === 1 || path.endsWith(".gradle") || (state.quote === '"""' && !path.endsWith(".gradle.kts"));
       if (char === "\\" && escapes) i++;
-      else if (line.startsWith(state.quote, i)) {
+      else if (char === "$" && line[i + 1] === "{" && state.quote.startsWith('"') && !path.endsWith(".toml")) {
+        // `${…}` in a Kotlin or Groovy string is code. The scanner doesn't read it as such, so a strict pin written
+        // there fails instead of passing unseen.
+        const end = interpolationEnd(line, i + 2);
+        if (/\bstrictly\b/.test(line.slice(i + 2, end ?? line.length))) {
+          throw new Error("a strictly(...) inside a string interpolation can't be verified");
+        }
+        i = end ?? line.length;
+      } else if (line.startsWith(state.quote, i)) {
         const quote = state.quote;
         i += quote.length - 1;
         // Kotlin and TOML allow content quotes immediately before the closing triple delimiter.
@@ -145,6 +153,21 @@ function lineCode(line: string, state: CodeState, path: string): string {
     code += char;
   }
   return code;
+}
+
+/** Where a `${` interpolation that starts at `from` closes (its `}`), skipping nested strings; undefined past the line's end. */
+function interpolationEnd(line: string, from: number): number | undefined {
+  let depth = 1;
+  for (let i = from; i < line.length; i++) {
+    const char = line[i]!;
+    if (char === '"' || char === "'") {
+      const close = line.indexOf(char, i + 1);
+      if (close < 0) return undefined;
+      i = close;
+    } else if (char === "{") depth++;
+    else if (char === "}" && --depth === 0) return i;
+  }
+  return undefined;
 }
 
 const MAX_STRICT_LINES = 128;

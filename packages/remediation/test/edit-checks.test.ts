@@ -24,6 +24,32 @@ describe("strict pins", () => {
     expect(await check(before.replace(/      strictly\([\s\S]*?      \)\n/, ""))).toHaveLength(1);
   });
 
+  describe.each([
+    ["build.gradle.kts", '"""'],
+    ["build.gradle.kts", '"'],
+    ["build.gradle", '"'],
+  ])("a strict pin inside a %s %s string interpolation", (path, quote) => {
+    const before = `val note = ${quote}\${run { constraints { implementation("g:a") { version { strictly("1.0") } } } }}${quote}\n`;
+    it("fails the check, changed or not", async () => {
+      expect(await strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: before.replace('"1.0"', '"2.0"') })))
+        .toEqual([`${path}: a strictly(...) inside a string interpolation can't be verified`]);
+    });
+  });
+
+  it("lets ordinary interpolations and escaped dollars through, and still sees pins after them", async () => {
+    const path = "build.gradle.kts";
+    const before = 'val v = "${project.version} ${mapOf("a" to "}").size} \\${strictly(1)}"\nstrictly("1.0")\n';
+    expect(await strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: before.replace("project.version", "rootProject.version") }))).toEqual([]);
+    expect(await strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: before.replace('strictly("1.0")', 'strictly("2.0")') })))
+      .toEqual([expect.stringContaining("strictly(...) pin")]);
+  });
+
+  it("reads Groovy's single-quoted strings and TOML strings as plain text", async () => {
+    for (const [path, text] of [["build.gradle", "def s = '${strictly(1)}'\n"], ["gradle/libs.versions.toml", 'note = "${strictly}"\n']] as const) {
+      expect(await strictPinsChanged([path], tree({ [path]: text }), tree({ [path]: `${text}// changed\n` }))).toEqual([]);
+    }
+  });
+
   it("protects an inactive Kotlin pin after a raw string containing a quote", async () => {
     const path = "build.gradle.kts";
     const before = 'val pattern = """[^"]+""".toRegex()\nif (hasProperty("legacy")) {\n  dependencies { implementation("g:pinned") { version { strictly("1.0") } } }\n}\n';
