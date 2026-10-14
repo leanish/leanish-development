@@ -55,6 +55,8 @@ describe("strict pins", () => {
     expect(await strictPinsChanged(["build.gradle.kts"], tree({ "build.gradle.kts": inline }), tree({ "build.gradle.kts": inline.replace('"1.0"', '"2.0"') }))).toHaveLength(1);
     const quotedCall = "dependencies {\n  if (project.hasProperty('optional')) { implementation('g:e') { version { delegate.\"strictly\"('1.0') } } }\n}\n";
     expect(await strictPinsChanged(["build.gradle"], tree({ "build.gradle": quotedCall }), tree({ "build.gradle": quotedCall.replace("'1.0'", "'2.0'") }))).toHaveLength(1);
+    const bareCall = quotedCall.replace(`"strictly"('1.0')`, `"strictly" '1.0'`);
+    expect(await strictPinsChanged(["build.gradle"], tree({ "build.gradle": bareCall }), tree({ "build.gradle": bareCall.replace("'1.0'", "'2.0'") }))).toHaveLength(1);
     const catalog = '[versions]\npinned = { "strictly" = "1.0" }\n';
     expect(await strictPinsChanged(["gradle/libs.versions.toml"], tree({ "gradle/libs.versions.toml": catalog }), tree({ "gradle/libs.versions.toml": catalog.replace('"1.0"', '"2.0"') }))).toHaveLength(1);
   });

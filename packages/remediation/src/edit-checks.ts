@@ -98,20 +98,23 @@ function usesStrictly(line: string): boolean {
   let code = "";
   let quote: string | undefined;
   let quoted = "";
+  let member = false;
   for (let i = 0; i < line.length; i++) {
     const char = line[i]!;
     if (quote !== undefined) {
       if (char === "\\") i++;
       else if (char === quote) {
         quote = undefined;
-        // A quoted name is still code: a catalog key (`"strictly" = "1.0"`) or a Groovy call (`delegate."strictly"("1.0")`).
-        code += /^\s*[=(]/.test(line.slice(i + 1)) ? quoted : char;
+        // A quoted name is still code: a catalog key (`"strictly" = "1.0"`), or a Groovy member (`delegate."strictly"`,
+        // called with or without parentheses).
+        code += member || /^\s*[=(]/.test(line.slice(i + 1)) ? quoted : char;
       } else quoted += char;
       continue;
     }
     if (char === '"' || char === "'") {
       quote = char;
       quoted = "";
+      member = /\.\s*$/.test(code);
       code += char;
       continue;
     }
