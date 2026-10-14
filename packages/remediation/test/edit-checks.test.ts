@@ -97,4 +97,9 @@ describe("strict pins", () => {
     const after = tree({ "README.md": "strictly 2.0", "build.gradle.kts": KTS.replace('strictly("1.0")', 'strictly("2.0")') });
     expect(await strictPinsChanged(["README.md"], before, after)).toEqual([]);
   });
+
+  it("keeps capturing when a line closes one strictly call and opens another across lines", async () => {
+    const kts = 'dependencies {\n  if (project.hasProperty("legacy")) {\n    constraints { implementation("g:a") { version { strictly("1.0") } }; implementation("g:b") { version { strictly(\n      "1.0"\n    ) } } }\n  }\n}\n';
+    expect(await strictPinsChanged(["build.gradle.kts"], tree({ "build.gradle.kts": kts }), tree({ "build.gradle.kts": kts.replace('      "1.0"', '      "2.0"') }))).toHaveLength(1);
+  });
 });

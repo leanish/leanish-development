@@ -166,13 +166,13 @@ function strictStatements(text: string | undefined): string[] {
   return statements;
 }
 
+/** Balances the whole rest of the line: a second `strictly(` opened after the first closes keeps the statement going. */
 function balanceStrict(code: string, opened: string[]): void {
   for (const char of code) {
     if (char === "(" || char === "{") opened.push(char);
     else if (char === ")" || char === "}") {
       if (opened.length === 0) continue;
       if (opened.pop() !== (char === ")" ? "(" : "{")) throw new Error("a mismatched strictly statement can't be verified");
-      if (opened.length === 0) return;
     }
   }
 }
