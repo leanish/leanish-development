@@ -1,11 +1,10 @@
 // Copied from leanish/leanish-development core/runtime/test/unit/spawn-capture-env.test.ts at c6282df; see PROVENANCE.md.
-// Local changes: imports this package's modules from `../src/` instead of `../../src/`; the per-line stdout callback is covered.
-import { existsSync, readFileSync } from "node:fs";
+// Local changes: imports from `../src/`; the per-line stdout callback is covered; timeout tests synchronize startup and assert process state.
 import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   MIN_LINE_CAP,
@@ -99,69 +98,80 @@ describe("spawnCapture subprocess env", () => {
 });
 
 describe("spawnCapture timeout", () => {
-  it("rejects once the process has exited, even while a grandchild holds its pipes", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "spawn-capture-timeout-"));
-    const pidFile = join(dir, "pid");
-    const started = Date.now();
-
-    // Checked in the rejection handler itself, before anything else can run:
-    // a killed child that hasn't been reaped yet would still answer signal 0.
-    const outcome = await spawnCapture({
+  async function captureGroup(script: string, timeoutMs: number, triggerTimeout: boolean) {
+    const ready = Promise.withResolvers<number>();
+    let pid: number | undefined;
+    // Start the timeout only after the shell acknowledges startup. Real process
+    // events still run; a loaded machine cannot spend the deadline on startup.
+    if (triggerTimeout) vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const inspect = (settled: string) => {
+      if (pid === undefined) throw new Error(`CLI settled before acknowledging startup: ${settled}`);
+      // Inspect in the settlement handler: later checks could hide early rejection.
+      return { settled, cliRunning: isRunning(pid), groupRunning: isRunning(-pid) };
+    };
+    const outcome = spawnCapture({
       bin: "/bin/sh",
-      // The background sleep inherits stdout and outlives its killed parent.
-      args: ["-c", `echo $$ > "${pidFile}"; sleep 3 & sleep 30`],
-      cwd: dir,
-      env: {},
-      timeoutMs: 300,
-      captureCapBytes: 1024,
-      label: "test",
-    }).then(
-      () => ({ message: "resolved", stillRunning: true }),
-      (err: Error) => ({ message: err.message, stillRunning: isRunning(Number(readFileSync(pidFile, "utf8"))) }),
-    );
-
-    expect(outcome).toEqual({ message: "test: '/bin/sh' did not return within 300ms", stillRunning: false });
-    expect(Date.now() - started).toBeLessThan(2500);
-  });
-
-  // Each command below leaves a background job that would touch `marker` 1s later; none may get there.
-  async function leavesNoBackgroundWork(script: string, timeoutMs: number): Promise<{ settled: string; marker: boolean }> {
-    const dir = await mkdtemp(join(tmpdir(), "spawn-capture-group-"));
-    const marker = join(dir, "marker");
-    const settled = await spawnCapture({
-      bin: "/bin/sh",
-      args: ["-c", script.replaceAll("MARKER", `"${marker}"`)],
-      cwd: dir,
+      args: ["-c", script],
+      cwd: tmpdir(),
       env: {},
       timeoutMs,
       captureCapBytes: 1024,
       label: "test",
+      onStdoutLine: (line) => {
+        if (!line.startsWith("ready:")) return;
+        pid = Number(line.slice("ready:".length));
+        ready.resolve(pid);
+      },
     }).then(
-      (result) => `resolved ${result.responseText.trim()}`,
-      (err: Error) => err.message,
+      (result) => inspect(`resolved ${result.responseText.replace(/^ready:\d+\n/, "").trim()}`),
+      (err: Error) => inspect(err.message),
     );
-    await new Promise((done) => setTimeout(done, 1500));
-    return { settled, marker: existsSync(marker) };
+    // Propagate spawn/startup failures to the readiness wait as well.
+    void outcome.catch((err: unknown) => ready.reject(err));
+    try {
+      await ready.promise;
+      if (triggerTimeout) vi.advanceTimersByTime(timeoutMs);
+    } finally {
+      // Group cleanup's polling runs on real time after triggering the deadline.
+      if (triggerTimeout) vi.useRealTimers();
+    }
+    return outcome;
   }
 
-  it("kills the commands a timed-out CLI started, not just the CLI", async () => {
-    expect(await leavesNoBackgroundWork("(sleep 1; touch MARKER) & sleep 30", 300)).toEqual({
+  it("reaps a timed-out CLI before rejecting", async () => {
+    // This is an exit-ordering assertion, not a latency bound: scheduling and
+    // waiting for the killed group can legitimately exceed the old 2.5s limit.
+    expect(await captureGroup("echo ready:$$; exec sleep 30", 300, true)).toEqual({
       settled: "test: '/bin/sh' did not return within 300ms",
-      marker: false,
+      cliRunning: false,
+      groupRunning: false,
+    });
+  }, 15_000);
+
+  // Check the group at settlement instead of a delayed marker: SIGKILL may
+  // reach a background sleep before its shell, letting that shell briefly run
+  // its next command during termination. The contract is no work AFTER settling.
+  it("kills the commands a timed-out CLI started, not just the CLI", async () => {
+    expect(await captureGroup("sleep 30 & echo ready:$$; wait", 300, true)).toEqual({
+      settled: "test: '/bin/sh' did not return within 300ms",
+      cliRunning: false,
+      groupRunning: false,
     });
   }, 15_000);
 
   it("kills a job the CLI orphaned that still holds its pipes", async () => {
-    expect(await leavesNoBackgroundWork("(sleep 1; touch MARKER) & exit 0", 300)).toEqual({
+    expect(await captureGroup("sleep 30 & echo ready:$$; exit 0", 300, true)).toEqual({
       settled: "test: '/bin/sh' did not return within 300ms",
-      marker: false,
+      cliRunning: false,
+      groupRunning: false,
     });
   }, 15_000);
 
   it("kills a background job a successful CLI left behind", async () => {
-    expect(await leavesNoBackgroundWork("(sleep 1; touch MARKER) >/dev/null 2>&1 & echo done", 10_000)).toEqual({
+    expect(await captureGroup("sleep 30 >/dev/null 2>&1 & echo ready:$$; echo done", 10_000, false)).toEqual({
       settled: "resolved done",
-      marker: false,
+      cliRunning: false,
+      groupRunning: false,
     });
   }, 15_000);
 });
@@ -170,8 +180,11 @@ function isRunning(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    // Like killGroup: macOS reports EPERM for a group containing only zombies.
+    if (code === "ESRCH" || (pid < 0 && code === "EPERM")) return false;
+    throw err;
   }
 }
 

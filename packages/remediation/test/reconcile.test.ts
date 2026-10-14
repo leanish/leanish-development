@@ -24,6 +24,10 @@ async function repo(): Promise<{ workingCopy: WorkingCopy; git: (...args: string
     const result = spawnSync("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", ...args], { cwd: workingCopy.path, encoding: "utf8" });
     return { status: result.status, stdout: result.stdout.trim() };
   };
+  // A commit can detach maintenance: spawnSync waits for git, not that writer,
+  // which could recreate files while afterEach removes this disposable repo.
+  git("config", "maintenance.auto", "false");
+  git("config", "gc.auto", "0");
   return { workingCopy, git };
 }
 
