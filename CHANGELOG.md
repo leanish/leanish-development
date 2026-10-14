@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Verification's check that no edit changes a Gradle `strictly(...)` pin reads triple-quoted
+  strings (Kotlin raw strings, Groovy's `"""` and `'''`, TOML multiline strings) as strings.
+  Before, a quote inside one could hide a change to a later pin in an inactive branch.
+
 ## 0.5.0 - 2026-10-14
 
 ### Added

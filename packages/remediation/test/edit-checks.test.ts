@@ -24,6 +24,69 @@ describe("strict pins", () => {
     expect(await check(before.replace(/      strictly\([\s\S]*?      \)\n/, ""))).toHaveLength(1);
   });
 
+  it("protects an inactive Kotlin pin after a raw string containing a quote", async () => {
+    const path = "build.gradle.kts";
+    const before = 'val pattern = """[^"]+""".toRegex()\nif (hasProperty("legacy")) {\n  dependencies { implementation("g:pinned") { version { strictly("1.0") } } }\n}\n';
+    expect(await strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: before.replace('strictly("1.0")', 'strictly("2.0")') })))
+      .toEqual([expect.stringContaining("strictly(...) pin")]);
+  });
+
+  describe.each([
+    ["build.gradle.kts", '"""'],
+    ["build.gradle", '"""'],
+    ["build.gradle", "'''"],
+  ])("triple-quoted strings in %s with %s", (path, quote) => {
+    const declaration = path.endsWith(".kts") ? "val" : "def";
+    it.each(["; ", "\n"])("protects a real pin after the string with separator %j", async (separator) => {
+      const before = `${declaration} pattern = ${quote}[^${quote[0]}]+${quote}${separator}strictly("1.0")\n`;
+      expect(await strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: before.replace('strictly("1.0")', 'strictly("2.0")') })))
+        .toEqual([expect.stringContaining("strictly(...) pin")]);
+    });
+
+    it("ignores strictly and delimiters inside a multiline string", async () => {
+      const before = `${declaration} text = ${quote}\n  strictly(\n  ${quote[0]} // /* #\n  1.0\n${quote}\n`;
+      expect(await strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: before.replace("1.0", "2.0") }))).toEqual([]);
+    });
+
+    it.each(["; ", "\n"])("resumes scanning after a multiline string with separator %j", async (separator) => {
+      const before = `${declaration} text = ${quote}\n  strictly(\n  ${quote[0]} // /* #\n${quote}${separator}strictly("1.0")\n`;
+      expect(await strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: before.replace('strictly("1.0")', 'strictly("2.0")') })))
+        .toEqual([expect.stringContaining("strictly(...) pin")]);
+    });
+  });
+
+  it("does not escape the closing quotes of a Kotlin raw string", async () => {
+    const path = "build.gradle.kts";
+    const before = String.raw`val text = """ends in a backslash\"""; strictly("1.0")`;
+    expect(await strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: before.replace('strictly("1.0")', 'strictly("2.0")') })))
+      .toEqual([expect.stringContaining("strictly(...) pin")]);
+  });
+
+  it.each([4, 5])("resumes scanning after a Kotlin raw string ending with %i quotes", async (count) => {
+    const path = "build.gradle.kts";
+    const before = `val text = """ends in quotes${'"'.repeat(count)}; strictly("1.0")\n`;
+    expect(await strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: before.replace('strictly("1.0")', 'strictly("2.0")') })))
+      .toEqual([expect.stringContaining("strictly(...) pin")]);
+  });
+
+  it.each(['"""', "'''"])("honors escaped quotes in a Groovy %s string", async (quote) => {
+    const path = "build.gradle";
+    const before = `def text = ${quote}escaped \\${quote}\nstrictly(1.0\n${quote}; strictly("1.0")\n`;
+    expect(await strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: before.replace("strictly(1.0", "strictly(2.0") }))).toEqual([]);
+    expect(await strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: before.replace('strictly("1.0")', 'strictly("2.0")') })))
+      .toEqual([expect.stringContaining("strictly(...) pin")]);
+  });
+
+  it.each(['"""', "'''"])("skips TOML multiline %s values before a strict key", async (quote) => {
+    const path = "gradle/libs.versions.toml";
+    for (const count of [3, 4, 5]) {
+      const before = `text = ${quote}\nstrictly(1.0\n${quote === "'''" ? "\\" : ""}${quote[0]!.repeat(count)}\npinned = { strictly = "1.0" }\n`;
+      expect(await strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: before.replace("strictly(1.0", "strictly(2.0") }))).toEqual([]);
+      expect(await strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: before.replace('strictly = "1.0"', 'strictly = "2.0"') })))
+        .toEqual([expect.stringContaining("strictly(...) pin")]);
+    }
+  });
+
   it("captures nested call and brace continuations, ignoring delimiters inside strings", async () => {
     const path = "build.gradle";
     const before = 'strictly(\n  providers.provider {\n    "1.0) }"\n  }.get()\n)\n';
