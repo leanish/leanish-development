@@ -36,12 +36,21 @@ describe("strict pins", () => {
     expect(await strictPinsChanged(["build.gradle.kts"], tree({ "build.gradle.kts": KTS }), tree({ "build.gradle.kts": KTS.replace("}\n", `}\n${floor}`) }))).toEqual([]);
   });
 
-  it("covers Groovy's parenthesis-free variable form, changed or removed", async () => {
-    const groovy = "dependencies {\n  implementation('g:pinned') { version { strictly pinVersion } }\n  implementation('g:other') { version { strictly libs.versions.other.get() } }\n}\n";
+  it("counts strictly wherever it's code, in any argument form, and only there", async () => {
+    const groovy = [
+      "dependencies {",
+      "  implementation('g:a') { version { strictly pinVersion } } // the owner's",
+      "  implementation('g:b') { version { strictly getPinnedVersion() } }",
+      "  implementation('g:c') { version { strictly versions[\"pinned\"] } }",
+      "  // strictly pinned above; see the owner",
+      "}",
+    ].join("\n");
     const changed = (after: string) => strictPinsChanged(["build.gradle"], tree({ "build.gradle": groovy }), tree({ "build.gradle": after }));
     expect(await changed(groovy.replace("strictly pinVersion", "strictly otherVersion"))).toHaveLength(1);
-    expect(await changed(groovy.replace("strictly libs.versions.other.get()", "strictly libs.versions.newer.get()"))).toHaveLength(1);
-    expect(await changed(groovy.replace(" { version { strictly pinVersion } }", ""))).toHaveLength(1);
+    expect(await changed(groovy.replace("getPinnedVersion()", "getNewerVersion()"))).toHaveLength(1);
+    expect(await changed(groovy.replace('versions["pinned"]', 'versions["newer"]'))).toHaveLength(1);
+    expect(await changed(groovy.replace("  implementation('g:a')", "  // implementation('g:a')"))).toHaveLength(1);
+    expect(await changed(groovy.replace("see the owner", "ask the owner"))).toEqual([]);
   });
 
   it("counts duplicate strictly lines, so dropping one of two identical pins is refused", async () => {

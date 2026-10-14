@@ -88,21 +88,44 @@ export async function actionsOutsidePlan(pins: ReadonlyArray<PlannedPin>, base: 
   return changed.map((label) => `the action use ${label} changed outside the plan`);
 }
 
-// `strictly(` / `strictly "` / `strictly =`, or Groovy's `strictly pinVersion` (a variable or dotted chain ending the
-// statement), so prose such as "strictly pinned to 4.9.3" doesn't count.
-const STRICT_VERSION = /\bstrictly\s*(?:[(="']|[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*(?:\(\))?)*\s*(?:$|[;})\]]))/;
+/**
+ * Whether `strictly` appears in the line's code, not inside a string or a comment: `strictly("1.0")`, Groovy's
+ * `strictly pinVersion`, a catalog's `strictly = "1.0"` count; a `because("… strictly pinned …")` or a comment doesn't.
+ * Commenting a pin out therefore removes it from the file's strict lines.
+ */
+function usesStrictly(line: string): boolean {
+  let code = "";
+  let quote: string | undefined;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i]!;
+    if (quote !== undefined) {
+      if (char === "\\") i++;
+      else if (char === quote) {
+        quote = undefined;
+        code += char;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      code += char;
+      continue;
+    }
+    if (char === "#" || (char === "/" && (line[i + 1] === "/" || line[i + 1] === "*"))) break;
+    code += char;
+  }
+  return /\bstrictly\b/.test(code);
+}
 
 /**
  * The Gradle build, settings and catalog files where the edit changed a strict-version line: a strict version is its
- * owner's deliberate pin, which no plan moves. A line counts when it uses `strictly` as Gradle does
- * (`strictly("1.0")`, Groovy's `strictly "1.0"` or `strictly pinVersion`, a catalog's `strictly = "1.0"`), not when
- * it only says the word (a `because(...)` explaining that something is strictly pinned). Each changed file's strict
- * lines must stay the same, in order and byte for byte. A textual guard, so it has limits: a pin written across
- * lines, or a strict line reading a variable the edit changed, escapes it, and moving an unchanged pin within its
- * file passes.
+ * owner's deliberate pin, which no plan moves. A line counts when `strictly` is in its code (see `usesStrictly`).
+ * Each changed file's strict lines must stay the same, in order and byte for byte. A textual guard, so it has
+ * limits: a pin written across lines, or a strict line reading a variable the edit changed, escapes it, and moving
+ * an unchanged pin within its file passes.
  */
 export async function strictPinsChanged(changedFiles: ReadonlyArray<string>, base: Tree, head: Tree): Promise<string[]> {
-  const strictLines = (text: string | undefined) => (text ?? "").split("\n").filter((line) => STRICT_VERSION.test(line));
+  const strictLines = (text: string | undefined) => (text ?? "").split("\n").filter(usesStrictly);
   const problems: string[] = [];
   for (const path of changedFiles.filter(isGradleVersionFile)) {
     if (!isDeepStrictEqual(strictLines(await base.read(path)), strictLines(await head.read(path)))) {
