@@ -1,7 +1,7 @@
 // Copied from leanish/leanish-development agents/bump-it/test/local-guard.test.ts at c6282df; see PROVENANCE.md.
 // Local changes: the guards' directory, and their messages say "agent guard"; hooks-off settings, and pushes checked against real git.
 import { spawnSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { accessSync, constants, mkdtempSync, readFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -150,8 +150,20 @@ describe("git guard pushes, with the real git", () => {
   const root = mkdtempSync(join(tmpdir(), "agent-guard-push-"));
   const bare = join(root, "origin.git");
   const work = join(root, "work");
-  const realPath = `${GUARD_DIR}:${process.env["PATH"] ?? "/usr/bin:/bin"}`;
-  const env = { PATH: realPath, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", HOME: "/nonexistent" };
+  // The real git, skipping any guard already on the PATH (a coding agent running these tests has one first).
+  const realGit = (process.env["PATH"] ?? "/usr/bin:/bin")
+    .split(":")
+    .map((dir) => join(dir, "git"))
+    .find((path) => {
+      try {
+        accessSync(path, constants.X_OK);
+        return !readFileSync(path).subarray(0, 4096).toString("latin1").includes("agent guard");
+      } catch {
+        return false;
+      }
+    });
+  if (realGit === undefined) throw new Error("no real git on PATH");
+  const env = { PATH: `${GUARD_DIR}:${dirname(realGit)}:/usr/bin:/bin`, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", HOME: "/nonexistent" };
 
   function git(args: ReadonlyArray<string>, cwd = work): { readonly status: number | null; readonly stderr: string } {
     const result = spawnSync("/bin/bash", [join(GUARD_DIR, "git"), ...args], { cwd, env, encoding: "utf8" });
@@ -160,7 +172,7 @@ describe("git guard pushes, with the real git", () => {
 
   /** Runs the real git directly (setup), failing on any error. */
   function setup(args: ReadonlyArray<string>, cwd = work): void {
-    const result = spawnSync("git", args, { cwd, env: { ...env, PATH: process.env["PATH"] ?? "/usr/bin:/bin" }, encoding: "utf8" });
+    const result = spawnSync(realGit!, args, { cwd, env, encoding: "utf8" });
     if (result.status !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`);
   }
 
@@ -196,7 +208,7 @@ describe("git guard pushes, with the real git", () => {
   it("keeps the global options for the remote lookup and the push", () => {
     const outcome = git(["--git-dir", join(work, ".git"), "push", "-q", "origin", "main:refs/heads/from-git-dir"], root);
     expect(outcome.status).toBe(0);
-    expect(spawnSync("git", ["--git-dir", bare, "rev-parse", "--verify", "refs/heads/from-git-dir"]).status).toBe(0);
+    expect(spawnSync(realGit!, ["--git-dir", bare, "rev-parse", "--verify", "refs/heads/from-git-dir"]).status).toBe(0);
   });
 
   it.each([
@@ -217,5 +229,26 @@ describe("git guard pushes, with the real git", () => {
     const outcome = git(args);
     expect(outcome.status).toBe(126);
     expect(outcome.stderr).toContain("agent guard: refused: git push");
+  });
+
+  it("limits a permitted push to the local transport, submodules pushed along included", async () => {
+    // A submodule whose remote is a network one, with a commit only it has: the push to the local origin pushes it too.
+    const sub = join(root, "sub");
+    await mkdir(sub);
+    setup(["init", "-q", "-b", "main"], sub);
+    setup(["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "sub"], sub);
+    setup(["-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "sub"]);
+    setup(["-C", "sub", "remote", "set-url", "origin", "https://example.invalid/sub.git"]);
+    setup(["-C", "sub", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "only here"]);
+    setup(["add", "sub"]);
+    setup(["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "with sub"]);
+    // An inherited, more permissive setting doesn't widen it.
+    const result = spawnSync("/bin/bash", [join(GUARD_DIR, "git"), "-c", "push.recurseSubmodules=on-demand", "push", "-q", "origin", "HEAD:refs/heads/with-sub"], {
+      cwd: work,
+      env: { ...env, GIT_ALLOW_PROTOCOL: "file:https" },
+      encoding: "utf8",
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("transport 'https' not allowed");
   });
 });
