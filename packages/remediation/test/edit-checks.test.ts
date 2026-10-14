@@ -36,6 +36,14 @@ describe("strict pins", () => {
     expect(await strictPinsChanged(["build.gradle.kts"], tree({ "build.gradle.kts": KTS }), tree({ "build.gradle.kts": KTS.replace("}\n", `}\n${floor}`) }))).toEqual([]);
   });
 
+  it("covers Groovy's parenthesis-free variable form, changed or removed", async () => {
+    const groovy = "dependencies {\n  implementation('g:pinned') { version { strictly pinVersion } }\n  implementation('g:other') { version { strictly libs.versions.other.get() } }\n}\n";
+    const changed = (after: string) => strictPinsChanged(["build.gradle"], tree({ "build.gradle": groovy }), tree({ "build.gradle": after }));
+    expect(await changed(groovy.replace("strictly pinVersion", "strictly otherVersion"))).toHaveLength(1);
+    expect(await changed(groovy.replace("strictly libs.versions.other.get()", "strictly libs.versions.newer.get()"))).toHaveLength(1);
+    expect(await changed(groovy.replace(" { version { strictly pinVersion } }", ""))).toHaveLength(1);
+  });
+
   it("counts duplicate strictly lines, so dropping one of two identical pins is refused", async () => {
     const twice = `${KTS}${KTS}`;
     expect(await strictPinsChanged(["build.gradle.kts"], tree({ "build.gradle.kts": twice }), tree({ "build.gradle.kts": KTS }))).toHaveLength(1);
