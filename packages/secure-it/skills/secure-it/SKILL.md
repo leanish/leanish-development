@@ -181,7 +181,7 @@ that rewrites a lockfile. Never lower/unset the window or add exclusions of your
   dependency at `from`: a strict version is the repository owner's deliberate pin. If the plan can't be applied
   without changing one, answer `cannot-apply` naming the file and the declaration. Never write one either: your
   declarations use a plain version, even when what brings the vulnerable version pins it strictly. The tool refuses
-  an edit that adds, changes or removes a `strictly(...)` line.
+  an edit that adds, changes or removes a `strictly(...)` statement, its continuation lines included.
 - Direct dependencies outside the supplied moves keep their declarations and locked versions. Never edit another
   dependency's version by hand or add an unplanned override or floor.
 - Preserve existing floor records and declarations, except the exact `floorRemovals` described above. Never alter a compatibility floor. A Gradle security floor may move

@@ -92,7 +92,7 @@ packages/remediation/run.sh bump-it review leanish/widget   # every few hours
   - PR text that gives `from → to`, each major's adaptation verdict and the checks run. The published text keeps local
     paths out (see [remediation](../remediation)).
 - Verification fences off policy changes first, then requires exact planned lockfiles and dependency fields, exact
-  planned Gradle declarations, unchanged unplanned declarations and floors, unchanged `strictly` lines, correct action
+  planned Gradle declarations, unchanged unplanned declarations and floors, unchanged `strictly` statements and their continuation lines, correct action
   pins, and all generated wrapper bytes/modes plus official checksums. Only after every local check passes does it run
   `compare`, which must also pass. A report of local problems means `compare` has not run.
 - Open PRs count only when the head matches their body state or the exact tool journal entry. Same plan: leave it to
@@ -128,6 +128,9 @@ A routine with only npm and wrapper moves needs no agent.
   rather than guessed.
 
 ## Review
+
+A verified CI adaptation replaces the PR title and description with the agent's new verdict and check results,
+keeping the verified plan and publication state markers.
 
 The [shared tick](../remediation) leaves human pushes alone, recomputes on any base movement before reading CI, then
 handles pending/green checks without a model. A routine recomputes the whole routine; a major recomputes its package.

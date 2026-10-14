@@ -276,7 +276,7 @@ async function review(context: ToolRunContext, deps: BumpItDeps): Promise<Readon
       const failingChecks = failingCheckNames(checks);
       const content = await edit(execution, computed, "adapt", { failingChecks });
       await verify(execution, computed);
-      const { pushed } = await publishUpdate(execution.publication, prepared, pr.number, { title: pr.title, body: withPlanSection(pr.body, plan), commitMessage: content.commitMessage }, attempt);
+      const { pushed } = await publishUpdate(execution.publication, prepared, pr.number, content, attempt);
       return pushed;
     },
   };

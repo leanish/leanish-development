@@ -143,6 +143,7 @@ describe("CodexRunner sandbox", () => {
       `{":root"="read", ":workspace_roots"={"."="write"}, ":tmpdir"="write", ":slash_tmp"="write", ` +
         `${JSON.stringify(extraRoot)}="write", ${JSON.stringify(cacheRoot)}="write", ` +
         `${JSON.stringify(first.gitDir)}="read", ${JSON.stringify(second.gitDir)}="read", ` +
+        `${JSON.stringify(join(first.path, ".git"))}="read", ${JSON.stringify(join(second.path, ".git"))}="read", ` +
         `${JSON.stringify(join(home, "auth.json"))}="deny"}`,
     );
     expect(config.get("permissions.agent-runtime.network.enabled")).toBe("true");

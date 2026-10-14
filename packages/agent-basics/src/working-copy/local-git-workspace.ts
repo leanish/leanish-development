@@ -2,7 +2,7 @@
 // Local changes: `RepoSource` instead of catalog-it's `Project`, its id checked before the workspace touches any directory;
 // the `remote-merging` start (a conflicting merge left in progress) and publishing that merge once resolved;
 // `beforePush`, called with the commit before it's pushed; stale remote-tracking refs that would block storing a
-// fetched or pushed branch are dropped first; a failed call's error quotes git's stderr, credentials masked.
+// fetched or pushed branch are dropped first; replace refs disabled; a failed call's error quotes git's stderr, credentials masked.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm } from "node:fs/promises";
@@ -470,7 +470,7 @@ function pathsConflict(ref: string, other: string): boolean {
 }
 
 /** Never run hooks or an fsmonitor command, whatever the repo's own config says. */
-const TRUSTED_CONFIG_ARGS = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"];
+const TRUSTED_CONFIG_ARGS = ["--no-replace-objects", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"];
 
 function repoArgs(repo: Repo): string[] {
   return [`--git-dir=${repo.gitDir}`, `--work-tree=${repo.workTree}`];

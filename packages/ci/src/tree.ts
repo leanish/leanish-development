@@ -6,6 +6,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
 
 import type { RunProcess } from "./process.ts";
+import { gitArgs, gitEnvironment } from "./git.ts";
 
 export interface Tree {
   /** `worktree` or the full commit SHA. */
@@ -55,24 +56,25 @@ function isMissing(err: unknown): boolean {
   return code === "ENOENT" || code === "ENOTDIR";
 }
 
-/** The tree of `revision` in the repository at `root`, resolved to its full SHA once. */
-export async function gitTree(root: string, revision: string, run: RunProcess): Promise<Tree> {
-  const resolved = await run("git", ["rev-parse", "--verify", `${revision}^{commit}`], { cwd: root });
+/** The tree of `revision`, resolved once through the recorded metadata; its real objects never follow replace refs. */
+export async function gitTree(root: string, revision: string, run: RunProcess, gitDir: string | undefined): Promise<Tree> {
+  const git = (args: ReadonlyArray<string>) => run("git", gitArgs(root, gitDir, args), { cwd: root, env: gitEnvironment() });
+  const resolved = await git(["rev-parse", "--verify", `${revision}^{commit}`]);
   if (resolved.code !== 0) throw new Error(`git can't resolve ${revision} to a commit: ${resolved.stderr.trim()}`);
   const sha = resolved.stdout.trim();
   return {
     id: sha,
     async read(path) {
-      const listed = await run("git", ["ls-tree", "-z", "--name-only", sha, "--", path], { cwd: root });
+      const listed = await git(["ls-tree", "-z", "--name-only", sha, "--", path]);
       if (listed.code !== 0) throw new Error(`git ls-tree ${sha} ${path} failed: ${listed.stderr.trim()}`);
       if (listed.stdout.trim() === "") return undefined;
-      const shown = await run("git", ["show", `${sha}:${path}`], { cwd: root });
+      const shown = await git(["show", `${sha}:${path}`]);
       if (shown.code !== 0) throw new Error(`git show ${sha}:${path} failed: ${shown.stderr.trim()}`);
       return shown.stdout;
     },
     async list(dir) {
       // -z: names come back raw, NUL-separated, instead of quoted when they have unusual characters.
-      const listed = await run("git", ["ls-tree", "-r", "-z", "--name-only", sha, "--", dir], { cwd: root });
+      const listed = await git(["ls-tree", "-r", "-z", "--name-only", sha, "--", dir]);
       if (listed.code !== 0) throw new Error(`git ls-tree ${sha} ${dir} failed: ${listed.stderr.trim()}`);
       return listed.stdout.split("\0").filter((line) => line !== "").sort();
     },

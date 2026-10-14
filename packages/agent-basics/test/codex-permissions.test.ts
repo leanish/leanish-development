@@ -14,6 +14,7 @@ describe("codexPermissionArgs", () => {
     const args = codexPermissionArgs({
       access: "read-only",
       gitDirs: [],
+      gitEntries: [],
       stagedHome: "/tmp/staged",
       writableRoots: [],
       readDenied: ['/home/dev/odd "dir"\\x'],
@@ -28,7 +29,8 @@ describe("codexPermissionArgs", () => {
   it("ignores write-only inputs on a read-only run", () => {
     const args = codexPermissionArgs({
       access: "read-only",
-      gitDirs: ["/wc/.git"],
+      gitDirs: ["/metadata"],
+      gitEntries: ["/wc/.git"],
       stagedHome: "/tmp/staged",
       writableRoots: ["/cache"],
       readDenied: [],

@@ -34,6 +34,7 @@ import { parseArgs } from "node:util";
 
 import { bumpCandidates, securityCandidates } from "./candidates.ts";
 import { cooldownOf, heldLines, heldUntil } from "./cooldown.ts";
+import { gitArgs, gitDirectory, gitEnvironment } from "./git.ts";
 import { baseSources, type CompareOutcome, type GateEnvironment, type GateOutcome, lenientSources, runCompare, runScan, treeSources } from "./gate.ts";
 import { type GradleInventory, parseGradleInventory, runGradleInventory } from "./gradle.ts";
 import { runProcess, withoutCredentials } from "./process.ts";
@@ -109,9 +110,10 @@ export async function main(argv: ReadonlyArray<string>, env: NodeJS.ProcessEnv =
   let outcome: GateOutcome | CompareOutcome | undefined;
   let error: string | undefined;
   try {
-    head = values.head === "worktree" ? workingTree(repo) : await gitTree(repo, values.head ?? "HEAD", runProcess);
+    const gitDir = command === "compare" || values.head !== "worktree" ? await gitDirectory(repo, runProcess) : undefined;
+    head = values.head === "worktree" ? workingTree(repo) : await gitTree(repo, values.head ?? "HEAD", runProcess, gitDir);
     if (command === "compare") {
-      base = await gitTree(repo, values.base!, runProcess);
+      base = await gitTree(repo, values.base!, runProcess, gitDir);
       outcome = await compareTrees(base, head, gate, { base: values["base-gradle"], head: values["head-gradle"] }, repo);
     } else {
       const headGradle = await gradleInput(values["head-gradle"], head, (await treeSources(head)).gradleBuilds, "head", repo);
@@ -192,7 +194,7 @@ async function candidatesCommand(values: Options, env: NodeJS.ProcessEnv, repo: 
       osvScanner: env["OSV_SCANNER"] ?? "osv-scanner",
       githubToken: env["GITHUB_TOKEN"] ?? env["GH_TOKEN"],
     };
-    const head = values.head === "worktree" ? workingTree(repo) : await gitTree(repo, values.head ?? "HEAD", runProcess);
+    const head = values.head === "worktree" ? workingTree(repo) : await gitTree(repo, values.head ?? "HEAD", runProcess, await gitDirectory(repo, runProcess));
     const headGradle = await gradleInput(values["head-gradle"], head, (await treeSources(head)).gradleBuilds, "head", repo);
     const found = values.rule === "security" ? await securityCandidates(head, gate, { head: headGradle }) : await bumpCandidates(head, gate, { head: headGradle });
     // The in-process peer planner is for remediation tools, not the JSON report.
@@ -255,9 +257,10 @@ async function gradleInventoryCommand(repo: string, out: string, which: string |
     const [key, ...value] = define?.split("=") ?? [];
     const options = initScript === undefined ? {} : { additionalInitScripts: [resolve(initScript)], systemProperties: { [key!]: value.join("=") } };
     // The working tree as it is (an edit not committed yet, for secure-it and bump-it), or the checkout's clean HEAD.
-    const head = which === "worktree" ? workingTree(repo) : await gitTree(repo, "HEAD", runProcess);
+    const gitDir = which === "worktree" ? undefined : await gitDirectory(repo, runProcess);
+    const head = which === "worktree" ? workingTree(repo) : await gitTree(repo, "HEAD", runProcess, gitDir);
     if (which === undefined) {
-      const dirty = await runProcess("git", ["status", "--porcelain", "--untracked-files=no"], { cwd: repo });
+      const dirty = await runProcess("git", gitArgs(repo, gitDir, ["status", "--porcelain", "--untracked-files=no"]), { cwd: repo, env: gitEnvironment() });
       if (dirty.code !== 0 || dirty.stdout.trim() !== "") {
         throw new Error("the checkout has changes to tracked files: the inventory wouldn't describe its commit");
       }

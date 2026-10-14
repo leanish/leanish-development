@@ -96,7 +96,7 @@ export function defaultDeps(): SecureItDeps {
       return { run: verifyingRun(runProcess, osv), fetch: namingFailures(context.fetch), now: () => new Date(), osvScanner: osv.path, githubToken: context.readToken, bundles: new BundleReader(), repositoryAdvisoryCache: new FileRepositoryAdvisoryCache(context.config.dirs.state, writable, context.readToken) };
     },
     gradle: (context) => sandboxedGradleInventories(context.isolation, context.workingCopy),
-    trees: { commit: (workingCopy, sha) => gitTree(workingCopy.path, sha, runProcess), working: (workingCopy) => workingTree(workingCopy.path) },
+    trees: { commit: (workingCopy, sha) => gitTree(workingCopy.path, sha, runProcess, workingCopy.gitDir), working: (workingCopy) => workingTree(workingCopy.path) },
     candidates: securityCandidates,
     npm: (context, args) => runSandboxed(context.isolation, { workingCopy: context.workingCopy, command: ["npm", ...args] }),
     verify: verifyPlan,
@@ -705,7 +705,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
         input: await agentInput(execution, plan, base, "adapt", { failingChecks }),
       });
       if (answer.outcome !== "applied" || answer.publication == null) return false;
-      const verified = await verifyWithRetry(execution, { tree: base, gradle: await inventories.ofCommit(base) }, plan, { title: pr.title, body: pr.body, commitMessage: answer.publication.commitMessage });
+      const verified = await verifyWithRetry(execution, { tree: base, gradle: await inventories.ofCommit(base) }, plan, answer.publication);
       if (verified.leftOut.length > 0) notes.push({ number: pr.number, leftOut: verified.leftOut, named: verified.named });
       if (verified.problems.length > 0) throw new Error(`the adaptation doesn't verify: ${verified.problems.join("; ")}`);
       const { pushed } = await publishUpdate(publication, prepared, pr.number, { ...verified.content, body: withPlanSection(verified.content.body, verified.plan) }, attempt);

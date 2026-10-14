@@ -267,6 +267,7 @@ export class CodexRunner implements CodingAgentRunner {
         ...codexPermissionArgs({
           access,
           gitDirs,
+          gitEntries: invocation.workingCopies.map((wc) => join(wc.path, ".git")),
           stagedHome: staged.dir,
           writableRoots: access === "write" ? this.#writableRoots : [],
           readDenied: this.#readDenied,

@@ -90,7 +90,7 @@ describe("gate", () => {
     const head = await commit({ "package-lock.json": lock({ lib: "1.1.0", stable: "1.0.0", added: "2.0.0" }) });
     const scans: string[][] = [];
     const affected = { "lib@1.0.0": ["GHSA-fixed"], "stable@1.0.0": ["GHSA-shared"], "added@2.0.0": ["GHSA-new"] };
-    const outcome = await runCompare(await gitTree(repo, base, runProcess), await gitTree(repo, head, runProcess), environment(affected, scans));
+    const outcome = await runCompare(await gitTree(repo, base, runProcess, join(repo, ".git")), await gitTree(repo, head, runProcess, join(repo, ".git")), environment(affected, scans));
     expect(scans).toEqual([["added@2.0.0", "lib@1.0.0", "lib@1.1.0", "stable@1.0.0"]]);
     expect(outcome.failures).toEqual(["new: added@2.0.0: GHSA-new has no exception"]);
     expect(outcome.warnings).toEqual(["inherited: stable@1.0.0: GHSA-shared GHSA-shared summary"]);
@@ -111,8 +111,8 @@ describe("gate", () => {
       ".github/supply-chain-exceptions.json": JSON.stringify(exceptions),
     });
     const outcome = await runCompare(
-      await gitTree(repo, base, runProcess),
-      await gitTree(repo, head, runProcess),
+      await gitTree(repo, base, runProcess, join(repo, ".git")),
+      await gitTree(repo, head, runProcess, join(repo, ".git")),
       environment({ "added@2.0.0": ["GHSA-new"] }, []),
     );
     expect(outcome.failures).toEqual([]);
@@ -120,7 +120,7 @@ describe("gate", () => {
 
   it("scans every finding of one tree, and fails a configured lockfile that's missing or unknown config", async () => {
     const head = await commit({ "package-lock.json": lock({ stable: "1.0.0" }) });
-    const outcome = await runScan(await gitTree(repo, head, runProcess), environment({ "stable@1.0.0": ["GHSA-shared"] }, []));
+    const outcome = await runScan(await gitTree(repo, head, runProcess, join(repo, ".git")), environment({ "stable@1.0.0": ["GHSA-shared"] }, []));
     expect(outcome.failures).toEqual(["stable@1.0.0: GHSA-shared has no exception"]);
 
     await commit({ ".github/supply-chain.json": JSON.stringify({ npm: { lockfiles: ["package-lock.json", "tools/package-lock.json"] } }) });
@@ -138,8 +138,8 @@ describe("gate", () => {
       ".github/supply-chain.json": JSON.stringify({ npm: { lockfiles: ["package-lock.json", "tools/package-lock.json"] } }),
     });
     const outcome = await runCompare(
-      await gitTree(repo, base, runProcess),
-      await gitTree(repo, head, runProcess),
+      await gitTree(repo, base, runProcess, join(repo, ".git")),
+      await gitTree(repo, head, runProcess, join(repo, ".git")),
       environment({ "lib@1.1.0": ["GHSA-tool"] }, []),
     );
     expect(outcome.failures).toEqual(["new: lib@1.1.0: GHSA-tool has no exception"]);
@@ -168,8 +168,8 @@ describe("gate", () => {
       ],
     });
     const affected = { "org.xerial.snappy:snappy-java@1.1.10.8": ["GHSA-wmgv-28fv-894x"] };
-    const baseTree = await gitTree(repo, base, runProcess);
-    const headTree = await gitTree(repo, head, runProcess);
+    const baseTree = await gitTree(repo, base, runProcess, join(repo, ".git"));
+    const headTree = await gitTree(repo, head, runProcess, join(repo, ".git"));
     const outcome = await runCompare(baseTree, headTree, environment(affected, []), {
       base: gradle(base, "1.1.10.8"),
       head: gradle(head, "1.1.10.10"),
@@ -209,8 +209,8 @@ describe("gate", () => {
       ],
     });
     const affected = { "org.xerial.snappy:snappy-java@1.1.10.8": ["GHSA-wmgv-28fv-894x"] };
-    const npmTree = await gitTree(repo, npmOnly, runProcess);
-    const gradleTree = await gitTree(repo, withGradle, runProcess);
+    const npmTree = await gitTree(repo, npmOnly, runProcess, join(repo, ".git"));
+    const gradleTree = await gitTree(repo, withGradle, runProcess, join(repo, ".git"));
     // Adding the first build: no base inventory exists, nor is one needed; its findings are new.
     const added = await runCompare(npmTree, gradleTree, environment(affected, []), { head: inventory(withGradle) });
     expect(added.failures).toEqual(["new: org.xerial.snappy:snappy-java@1.1.10.8: GHSA-wmgv-28fv-894x has no exception"]);
@@ -249,7 +249,7 @@ describe("gate", () => {
       [affects("v7.0.1", "malware")]: { body: [] },
       [`${api}/repos/actions/checkout/security-advisories?state=published&per_page=100`]: { body: [] },
     };
-    const outcome = await runCompare(await gitTree(repo, base, runProcess), await gitTree(repo, head, runProcess), environment({}, [], routes));
+    const outcome = await runCompare(await gitTree(repo, base, runProcess, join(repo, ".git")), await gitTree(repo, head, runProcess, join(repo, ".git")), environment({}, [], routes));
     expect(outcome.failures).toEqual([
       "new: actions/checkout@v7.0.1: GHSA-new-in-v7 has no exception",
       "actions/setup-node@v7 (.github/workflows/ci.yml) is new or changed, so it must be pinned to a full commit SHA with a `# vX.Y.Z` comment",
@@ -258,13 +258,13 @@ describe("gate", () => {
 
   it("reads workflows from git objects whatever their names, and takes a shell-only workflow as something to check", async () => {
     const head = await commit({ ".github/workflows/déploiement ✓.yml": "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n" });
-    const tree = await gitTree(repo, head, runProcess);
+    const tree = await gitTree(repo, head, runProcess, join(repo, ".git"));
     expect(await tree.list(".github/workflows")).toEqual([".github/workflows/déploiement ✓.yml"]);
     const outcome = await runScan(tree, environment({}, []));
     expect(outcome.failures).toEqual([]);
   });
 
   it("names a revision git can't resolve", async () => {
-    await expect(gitTree(repo, "nope", runProcess)).rejects.toThrow("git can't resolve nope to a commit");
+    await expect(gitTree(repo, "nope", runProcess, join(repo, ".git"))).rejects.toThrow("git can't resolve nope to a commit");
   });
 });
