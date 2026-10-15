@@ -97,6 +97,11 @@ export function parseUses(text: string, file: string): { uses: ActionUse[]; loca
  * with no uses) only makes head's uses count as changes.
  */
 export async function readActionsInventory(tree: Tree, options: { readonly baseline?: boolean } = {}): Promise<ActionsInventory> {
+  if (options.baseline !== true) {
+    // A linked root lists as the link itself in a commit, which the filters below drop: refused like a linked file. The
+    // read checks the root and its parents (the file under it needn't exist).
+    for (const root of [".github/workflows", ".github/actions"]) await tree.read(`${root}/action.yml`, { regularFile: true });
+  }
   // `missing`: the gap to report when none of `files` exists (only for files a `uses:` points at).
   const queue: Array<{ files: string[]; missing: string | undefined }> = [
     ...(await tree.list(".github/workflows")).filter((path) => LOCAL_WORKFLOW.test(path)).map((file) => ({ files: [file], missing: undefined })),

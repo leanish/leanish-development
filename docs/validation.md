@@ -307,3 +307,13 @@ report these skips separately from passed tests:
 - **macOS only:** the launchd plist checks and `run.sh`'s contract tests.
 
 The reusable workflow also inventories base/head and runs the gate on the exact PR candidate.
+
+## Release-candidate review of 0.5.2-rc.7 — 2026-10-15
+
+The candidate pass for `v0.5.2-rc.7` (`39f8965`) recorded 52 commands, 0 failed. Sol's unprimed review found one
+regression, again from reading commits instead of the working tree: a linked `.github/actions` (or `.github/workflows`,
+or `.github`) lists as the link itself in a commit, which the inventory's filename filters dropped, so the tools'
+snapshot verification stopped reading the actions behind it where 0.5.1 had. The inventory now checks each root and its
+parents for links before listing, outside a baseline. Removing that check failed the linked-root test; the source was
+restored byte for byte. Two pre-existing gaps are documented in [coverage gaps](coverage-gaps.md): linked folders inside
+`.github/actions`, and custom conflict-marker sizes.

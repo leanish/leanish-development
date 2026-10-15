@@ -72,6 +72,36 @@ describe("symlinked action metadata", () => {
     }
   });
 
+  it("is refused when a root it's listed from, or a parent of one, is the link", async () => {
+    const fixture = await mkdtemp(join(tmpdir(), "supply-chain-linked-root-"));
+    try {
+      const git = (...args: string[]) => execFileSync("git", args, { cwd: fixture, encoding: "utf8" }).trim();
+      const commitAll = () => {
+        git("add", "-A");
+        git("-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "fixture");
+        return gitTree(fixture, "HEAD", runProcess, join(fixture, ".git"));
+      };
+      git("init", "--quiet");
+      await mkdir(join(fixture, ".github/workflows"), { recursive: true });
+      await mkdir(join(fixture, "shared-actions/tool"), { recursive: true });
+      await writeFile(join(fixture, ".github/workflows/ci.yml"), "on: push\n");
+      await writeFile(join(fixture, "shared-actions/tool/action.yml"), metadata);
+      await symlink("../shared-actions", join(fixture, ".github/actions"));
+      const linkedActions = await commitAll();
+      await expect(readActionsInventory(linkedActions)).rejects.toThrow(".github/actions in " + linkedActions.id + " is a symbolic link");
+      await expect(readActionsInventory(workingTree(fixture))).rejects.toThrow(".github/actions in worktree is a symbolic link");
+      expect((await readActionsInventory(linkedActions, { baseline: true })).files).toEqual([".github/workflows/ci.yml"]);
+      await rm(join(fixture, ".github"), { recursive: true });
+      await mkdir(join(fixture, "real-github/workflows"), { recursive: true });
+      await writeFile(join(fixture, "real-github/workflows/ci.yml"), workflow);
+      await symlink("real-github", join(fixture, ".github"));
+      const linkedGithub = await commitAll();
+      await expect(readActionsInventory(linkedGithub)).rejects.toThrow(".github in " + linkedGithub.id + " is a symbolic link");
+    } finally {
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
+
   it("is read when only an unrelated sibling of it or of a parent is a link", async () => {
     const fixture = await mkdtemp(join(tmpdir(), "supply-chain-sibling-link-"));
     try {
