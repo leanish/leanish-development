@@ -115,8 +115,10 @@ it (checked by removing the fix):
   one configuration resolvable from another's resolution; the inventory left it out before, and now fails.
 - **Same-version npm artifacts.** A lockfile entry that keeps its version but changes `resolved`, `integrity` or
   bundling fails the gate.
-- **`strictly` in string interpolation.** A Kotlin or Groovy `${…}` containing `strictly`, or one that doesn't close
-  on its line, fails the strict-pin check.
+- **`strictly` in string interpolation.** A line with a Kotlin or Groovy `${…}` that mentions `strictly`, or an
+  interpolation that doesn't close on its line or holds comments, escapes or triple-quoted strings, fails the
+  strict-pin check. The final review's bypasses (a comment, an escaped quote and a nested Groovy triple-quoted string
+  hiding where the interpolation ends) are regression tests.
 
 ## Fixture coverage
 

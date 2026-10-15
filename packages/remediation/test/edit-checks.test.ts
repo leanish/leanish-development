@@ -32,13 +32,20 @@ describe("strict pins", () => {
     const before = `val note = ${quote}\${run { constraints { implementation("g:a") { version { strictly("1.0") } } } }}${quote}\n`;
     it("fails the check, changed or not", async () => {
       expect(await strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: before.replace('"1.0"', '"2.0"') })))
-        .toEqual([`${path}: a strictly(...) inside a string interpolation can't be verified`]);
+        .toEqual([`${path}: a strictly(...) on a line with a string interpolation can't be verified`]);
     });
+  });
+
+  it("fails a line with an interpolation that mentions strictly anywhere, even outside the interpolation", async () => {
+    const path = "build.gradle.kts";
+    const before = 'because("${reason} keeps it strictly pinned")\n';
+    expect(await strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: `${before}// changed\n` })))
+      .toEqual([`${path}: a strictly(...) on a line with a string interpolation can't be verified`]);
   });
 
   it("lets ordinary interpolations and escaped dollars through, and still sees pins after them", async () => {
     const path = "build.gradle.kts";
-    const before = 'val v = "${project.version} ${mapOf("a" to "}").size} \\${strictly(1)}"\nstrictly("1.0")\n';
+    const before = 'val v = "${project.version} ${mapOf("a" to "}").size} \\${literal}"\nstrictly("1.0")\n';
     expect(await strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: before.replace("project.version", "rootProject.version") }))).toEqual([]);
     expect(await strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: before.replace('strictly("1.0")', 'strictly("2.0")') })))
       .toEqual([expect.stringContaining("strictly(...) pin")]);
@@ -51,10 +58,14 @@ describe("strict pins", () => {
       .toEqual([`${path}: a string interpolation spanning lines can't be verified`]);
   });
 
-  it.each(['val note = """${run { /* }} */ strictly("1.0"); "" }}"""\n', 'val note = "${run { f("\\"}}") ; strictly("1.0") }}"\n'])("fails an interpolation whose comments or escapes could hide a pin: %s", async (before) => {
-    const path = "build.gradle.kts";
-    expect(await strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: before.replace('"1.0"', '"2.0"') })))
-      .toEqual([expect.stringMatching(/^build\.gradle\.kts: a (strictly|string interpolation)/)]);
+  it.each([
+    ["build.gradle.kts", 'val note = """${run { /* }} */ strictly("1.0"); "" }}"""\n'],
+    ["build.gradle.kts", 'val note = "${run { f("\\"}}") ; strictly("1.0") }}"\n'],
+    // An inner triple-quoted string whose braces end the interpolation early, as the scanner would read it.
+    ["build.gradle", `def note = """\${{ -> def text = ''' '}} '''; strictly('1.0'); '' }()}"""\n`],
+  ])("fails an interpolation whose comments, escapes or inner strings could hide a pin: %s %s", async (path, before) => {
+    expect(await strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: before.replace("1.0", "2.0") })))
+      .toEqual([expect.stringMatching(/^build\.gradle(\.kts)?: a (strictly|string interpolation)/)]);
   });
 
   it("reads Groovy's single-quoted strings and TOML strings as plain text", async () => {

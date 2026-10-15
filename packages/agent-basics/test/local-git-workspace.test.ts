@@ -381,12 +381,32 @@ describe.skipIf(!hasGit)("LocalGitWorkspace branch publication (real git)", () =
     expect(readFileSync(join(wc.path, "README.md"), "utf8")).toContain("<<<<<<<");
 
     await expect(ws.publishBranch(wc, merging.prepared, { message: "merging main" })).rejects.toThrow("README.md still has conflict markers");
+    // A refused attempt leaves the conflict in place: another one checks it again.
+    await expect(ws.publishBranch(wc, merging.prepared, { message: "merging main" })).rejects.toThrow("README.md still has conflict markers");
 
     writeFileSync(join(wc.path, "README.md"), "both sides\n");
     const published = await ws.publishBranch(wc, merging.prepared, { message: "merging main" });
     if (published.kind !== "pushed") throw new Error("expected a push");
     expect(gitOut(origin, ["log", "-1", "--format=%P|%s", BRANCH])).toBe(`${prHead} ${mainHead}|merging main`);
     expect(gitOut(origin, ["show", `${BRANCH}:README.md`])).toBe("both sides");
+  });
+
+  it("checks the markers of a conflicted path whose name looks like an index stage", async () => {
+    const { origin, scratch } = makeOrigin();
+    const tricky = "0:package.json";
+    commitIn(scratch, "package.json", "clean\n", "a clean file the stage syntax would read instead");
+    git(scratch, ["push", "-q", "origin", "main"]);
+    git(scratch, ["checkout", "-q", "-b", BRANCH]);
+    commitIn(scratch, tricky, "branch side\n", "branch edit");
+    git(scratch, ["push", "-q", "origin", BRANCH]);
+    git(scratch, ["checkout", "-q", "main"]);
+    commitIn(scratch, tricky, "main side\n", "main edit");
+    git(scratch, ["push", "-q", "origin", "main"]);
+
+    const { ws, wc } = await synced(origin);
+    const merging = await ws.prepareBranch(wc, { branch: BRANCH, start: "remote-merging" });
+    if (merging.kind !== "conflicted") throw new Error(`expected a conflict, got ${merging.kind}`);
+    await expect(ws.publishBranch(wc, merging.prepared, { message: "merging main" })).rejects.toThrow(`${tricky} still has conflict markers`);
   });
 
   it("calls beforePush with the commit before pushing it, and pushes nothing when it throws", async () => {

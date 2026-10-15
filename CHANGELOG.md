@@ -18,8 +18,8 @@ The 0.5.1 release review's six findings, each refusing the case visibly:
 - An edit that leaves a symbolic link fails verification.
 - A same-version npm lockfile entry whose source, integrity or bundling changed fails the gate.
 - The Gradle inventory fails when a configuration becomes resolvable while others resolve, instead of leaving it out.
-- A `strictly` inside a Kotlin or Groovy string interpolation, or an interpolation spanning lines, fails the
-  strict-pin check.
+- A line with a Kotlin or Groovy string interpolation that mentions `strictly`, or an interpolation that spans lines
+  or holds comments, escapes or triple-quoted strings, fails the strict-pin check.
 
 ## 0.5.1 - 2026-10-14
 

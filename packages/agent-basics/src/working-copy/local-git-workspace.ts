@@ -363,10 +363,14 @@ export class LocalGitWorkspace implements Workspace {
     const unresolved: string[] = [];
     for (const path of conflicted) {
       // A path resolved by removing it has nothing staged.
-      const staged = await this.#capture(repo, ["show", `:${path}`]).then((result) => result.stdout, () => "");
+      // `:0:` names the staged entry: in `:<path>`, a path like `0:package.json` would read as a stage and another path.
+      const staged = await this.#capture(repo, ["show", `:0:${path}`]).then((result) => result.stdout, () => "");
       if (markers.test(staged)) unresolved.push(path);
     }
-    if (unresolved.length > 0) throw new Error(`publishBranch: ${unresolved.join(", ")} still has conflict markers`);
+    if (unresolved.length === 0) return;
+    // Staging marked them resolved: put them back in conflict, so a later attempt checks them again.
+    await this.#run(repo, "update-index", ["update-index", "--unresolve", "--", ...conflicted]);
+    throw new Error(`publishBranch: ${unresolved.join(", ")} still has conflict markers`);
   }
 
   /** The branch's head on origin, or `null` when it has none. */

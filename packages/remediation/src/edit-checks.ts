@@ -113,15 +113,15 @@ function lineCode(line: string, state: CodeState, path: string): string {
       const escapes = state.quote.length === 1 || path.endsWith(".gradle") || (state.quote === '"""' && !path.endsWith(".gradle.kts"));
       if (char === "\\" && escapes) i++;
       else if (char === "$" && line[i + 1] === "{" && state.quote.startsWith('"') && !path.endsWith(".toml")) {
-        // `${…}` in a Kotlin or Groovy string is code. The scanner doesn't read it as such, so a strict pin written
-        // there fails instead of passing unseen.
+        // `${…}` in a Kotlin or Groovy string is code the scanner doesn't read, and where it ends is easy to misjudge: a
+        // line with one and the word `strictly` anywhere fails, instead of trusting where the interpolation seems to end.
+        if (/\bstrictly\b/.test(line)) throw new Error("a strictly(...) on a line with a string interpolation can't be verified");
         const end = interpolationEnd(line, i + 2);
         // One that doesn't close on its line could hide a pin on the next ones.
         if (end === undefined) throw new Error("a string interpolation spanning lines can't be verified");
-        // Comments and escapes inside one could move where it seems to close: not read, so refused.
-        if (/\/\*|\/\/|\\/.test(line.slice(i + 2, end))) throw new Error("a string interpolation with comments or escapes can't be verified");
-        if (/\bstrictly\b/.test(line.slice(i + 2, end))) {
-          throw new Error("a strictly(...) inside a string interpolation can't be verified");
+        // Comments, escapes and triple-quoted strings inside one could move where it seems to close: not read, so refused.
+        if (/\/\*|\/\/|\\|'''|"""/.test(line.slice(i + 2, end))) {
+          throw new Error("a string interpolation with comments, escapes or triple-quoted strings can't be verified");
         }
         i = end;
       } else if (line.startsWith(state.quote, i)) {
