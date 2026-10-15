@@ -15,6 +15,8 @@
   end.
 - Link targets are read in one `git cat-file --batch`: 2,000 links take about half a second instead of 50.
 - A submodule moved to another commit is reported as moved, not as added.
+- A key named `uses` outside a job or step (`env: { uses: production }`, an action input) no longer fails the Actions
+  inventory: it counts when it reads as an action and is otherwise left alone; a job's or step's `uses:` stays strict.
 
 ## 0.5.2 - 2026-10-15
 
