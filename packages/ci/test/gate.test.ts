@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, symlink, unlink, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -158,20 +158,6 @@ describe("gate", { timeout: 20_000 }, () => {
     const selectedTree = await gitTree(repo, selected, runProcess, join(repo, ".git"));
     expect((await runCompare(baseTree, selectedTree, environment({}, []))).failures).toEqual([]);
     expect((await runScan(selectedTree, environment({}, []))).failures).toEqual([]);
-  });
-
-  it("lets head repair linked action metadata it inherits, and refuses a head that links it", async () => {
-    const workflow = "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./local\n";
-    const metadata = "runs:\n  using: composite\n  steps:\n    - run: echo hi\n      shell: bash\n";
-    const tree = async (sha: string) => gitTree(repo, sha, runProcess, join(repo, ".git"));
-    const linked = await commit({ ".github/workflows/ci.yml": workflow, "metadata.yml": metadata });
-    await mkdir(join(repo, "local"), { recursive: true });
-    await symlink("../metadata.yml", join(repo, "local/action.yml"));
-    const base = await commit({});
-    await unlink(join(repo, "local/action.yml"));
-    const repaired = await commit({ "local/action.yml": metadata });
-    await expect(runCompare(await tree(base), await tree(repaired), environment({}, []))).resolves.toMatchObject({ failures: [] });
-    await expect(runCompare(await tree(linked), await tree(base), environment({}, []))).rejects.toThrow("local/action.yml in " + base + " is a symbolic link");
   });
 
   it("treats a lockfile base doesn't have yet as empty", async () => {

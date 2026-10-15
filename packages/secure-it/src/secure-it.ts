@@ -25,7 +25,7 @@ import type { ToolHandlers, ToolRunContext } from "../../remediation/src/command
 import { FLOORS_FILE, isMechanical } from "../../remediation/src/edit-checks.ts";
 import { writeLocalFile } from "../../remediation/src/local-files.ts";
 import { gradleSourceIndex } from "../../ci/src/gradle-sources.ts";
-import { candidateTree, changedBetween, snapshotCandidate, symlinkedChanges, symlinkProblems } from "../../remediation/src/git-copies.ts";
+import { candidateTree, changedBetween, linkProblems, snapshotCandidate } from "../../remediation/src/git-copies.ts";
 import { referenceTransform } from "../../remediation/src/gradle-reference.ts";
 import { type GradleInventories, lockfilesOf, sandboxedGradleInventories } from "../../remediation/src/inventories.ts";
 import { FileJournal, type PublicationJournal } from "../../remediation/src/journal.ts";
@@ -81,8 +81,8 @@ export interface SecureItDeps {
   readonly candidateTree: (workingCopy: WorkingCopy) => Promise<string | undefined>;
   /** Every path `sha` changed relative to `base` (`changedBetween`). */
   readonly changedBetween: (workingCopy: WorkingCopy, base: string, sha: string) => Promise<string[]>;
-  /** The paths `sha` made symbolic links relative to `base` (`symlinkedChanges`). */
-  readonly symlinkedChanges: (workingCopy: WorkingCopy, base: string, sha: string) => Promise<string[]>;
+  /** What the edit from `base` to `sha` did with links and submodules, as verification problems (`linkProblems`). */
+  readonly linkProblems: (workingCopy: WorkingCopy, base: string, sha: string) => Promise<string[]>;
   readonly journal: (context: ToolRunContext) => PublicationJournal;
   /** Writes `content` at `path` (relative to the working copy): taking the base's side of a conflicted dependency file. */
   readonly writeFile: (workingCopy: WorkingCopy, path: string, content: string) => Promise<void>;
@@ -111,7 +111,7 @@ export function defaultDeps(): SecureItDeps {
     snapshot: (workingCopy) => snapshotCandidate(workingCopy),
     candidateTree: (workingCopy) => candidateTree(workingCopy),
     changedBetween: (workingCopy, base, sha) => changedBetween(workingCopy, base, sha),
-    symlinkedChanges: (workingCopy, base, sha) => symlinkedChanges(workingCopy, base, sha),
+    linkProblems: (workingCopy, base, sha) => linkProblems(workingCopy, base, sha),
     journal: (context) => new FileJournal(context.config.dirs.state),
     writeFile: (workingCopy, path, content) => writeLocalFile(workingCopy.path, path, content),
     revert: (workingCopy, baseSha) => revertToBase(workingCopy, baseSha),
@@ -597,7 +597,7 @@ async function verifyEdit(
     return [`the plan's Gradle reference can't be built: ${(err as Error).message}`];
   }
   const changedFiles = await deps.changedBetween(context.workingCopy, base.id, candidate);
-  const links = symlinkProblems(await deps.symlinkedChanges(context.workingCopy, base.id, candidate));
+  const links = await deps.linkProblems(context.workingCopy, base.id, candidate);
   return [...links, ...await deps.verify({
     plan, base, head, env, npmFiles, gradle: { base: baseGradle, head: headGradle }, reference, changedFiles,
     ...(cooldown === undefined ? {} : { cooldown }),

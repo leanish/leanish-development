@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { WorkingCopy } from "../../agent-basics/src/types/working-copy.ts";
-import { candidateTree, changedBetween, changedSince, exportCommit, sameTreeAs, snapshotCandidate, symlinkedChanges, symlinkProblems } from "../src/git-copies.ts";
+import { candidateTree, changedBetween, changedSince, exportCommit, linkProblems, sameTreeAs, snapshotCandidate } from "../src/git-copies.ts";
 
 let root: string;
 let workingCopy: WorkingCopy;
@@ -165,17 +165,52 @@ describe("the verification snapshot", () => {
     expect(await candidateTree(copy)).toBeUndefined();
   });
 
-  it("finds the paths the snapshot made symbolic links, a directory replaced by one included", async () => {
+  it("refuses links and submodules the edit adds, a directory replaced by a link included", async () => {
     const { copy, base } = await repository();
     await mkdir(join(copy.path, "real"), { recursive: true });
     await writeFile(join(copy.path, "real", "lock.json"), '{"v":2}\n');
     await rm(join(copy.path, "package-lock.json"));
-    await symlink(join(copy.path, "real", "lock.json"), join(copy.path, "package-lock.json"));
-    await symlink(join(copy.path, "real"), join(copy.path, "gradle"));
-    await writeFile(join(copy.path, "plain.txt"), "plain\n");
-    expect(await symlinkedChanges(copy, base, await snapshotCandidate(copy))).toEqual(["gradle", "package-lock.json"]);
-    expect(symlinkProblems(["package-lock.json"])).toEqual([
-      "the edit made package-lock.json a symbolic link: the tools publish no links, which can point verification's reads elsewhere",
+    await symlink("real/lock.json", join(copy.path, "package-lock.json"));
+    await symlink("real", join(copy.path, "gradle"));
+    const sub = join(copy.path, "vendor");
+    await mkdir(sub);
+    spawnSync("git", ["init", "-q", "-b", "main", sub]);
+    await writeFile(join(sub, "action.yml"), "runs: {}\n");
+    spawnSync("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "sub"], { cwd: sub });
+    expect(await linkProblems(copy, base, await snapshotCandidate(copy))).toEqual([
+      "the edit added or moved the submodule vendor: verification can't read a submodule's files",
+      "the edit made gradle a symbolic link: verification can't check what's behind one",
+      "the edit made package-lock.json a symbolic link: verification can't check what's behind one",
+      // The new links lead to a file the edit also wrote.
+      "the edit changed real/lock.json, behind the link gradle: verification can't check what's behind one",
+      "the edit changed real/lock.json, behind the link package-lock.json: verification can't check what's behind one",
+    ].sort());
+  });
+
+  it("refuses an edit behind a link the repository already has, through linked directories and chains of links", async () => {
+    const { copy, run } = await repository();
+    for (const dir of ["actual", "d", ".github/workflows"]) await mkdir(join(copy.path, dir), { recursive: true });
+    await writeFile(join(copy.path, "recipe.txt"), "runs: {}\n");
+    await writeFile(join(copy.path, "actual", "action.yml"), "runs: {}\n");
+    await writeFile(join(copy.path, "d", "c.yml"), "runs: {}\n");
+    await writeFile(join(copy.path, "unrelated.txt"), "one\n");
+    await mkdir(join(copy.path, "local"));
+    await symlink("../recipe.txt", join(copy.path, "local", "action.yml"));
+    await symlink("actual", join(copy.path, "linked"));
+    await symlink("d", join(copy.path, "b"));
+    await symlink("b/c.yml", join(copy.path, "chained.yml"));
+    await symlink("../../outside.yml", join(copy.path, ".github", "workflows", "outside.yml"));
+    run(["add", "--all"]);
+    run(["commit", "-q", "-m", "links the repository has"]);
+    const inherited = run(["rev-parse", "HEAD"]);
+    await writeFile(join(copy.path, "unrelated.txt"), "two\n");
+    expect(await linkProblems(copy, inherited, await snapshotCandidate(copy))).toEqual([]);
+    for (const path of ["recipe.txt", "actual/action.yml", "d/c.yml"]) await writeFile(join(copy.path, path), "runs: { using: node }\n");
+    expect(await linkProblems(copy, inherited, await snapshotCandidate(copy))).toEqual([
+      "the edit changed actual/action.yml, behind the link linked: verification can't check what's behind one",
+      "the edit changed d/c.yml, behind the link b: verification can't check what's behind one",
+      "the edit changed d/c.yml, behind the link chained.yml: verification can't check what's behind one",
+      "the edit changed recipe.txt, behind the link local/action.yml: verification can't check what's behind one",
     ]);
   });
 });

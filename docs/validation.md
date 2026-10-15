@@ -317,3 +317,21 @@ snapshot verification stopped reading the actions behind it where 0.5.1 had. The
 parents for links before listing, outside a baseline. Removing that check failed the linked-root test; the source was
 restored byte for byte. Two pre-existing gaps are documented in [coverage gaps](coverage-gaps.md): linked folders inside
 `.github/actions`, and custom conflict-marker sizes.
+
+## Release-candidate review of 0.5.2-rc.8 — 2026-10-15
+
+The candidate pass for `v0.5.2-rc.8` (`c1022f8`) recorded 52 commands, 0 failed. Sol's unprimed review found two more
+regressions from verifying a commit instead of the working tree: a submodule's files aren't in the snapshot, and the
+linked-root probe of rc.7 failed a working-tree scan where `.github/actions/action.yml` is a folder. Since rc.3, each
+round had found another way a link changed what verification reads (the file, a parent folder, the base, a root).
+
+The owner changed the rule instead of adding another check: what this PR does with links is the tools' concern; links
+already in the repository that the PR leaves alone are not. The tools now refuse an edit that adds or changes a link or
+a submodule, or that changes anything an existing link, in the base or the edit, leads to (links in parent folders and
+chains followed, a link leading outside the repository ignored, since nothing there is published). The gate reads links
+as 0.5.1 did, a pre-existing gap now documented in [coverage gaps](coverage-gaps.md), and the per-file, parent, root
+and baseline link checks of rc.3 to rc.7 are gone. A pre-existing lookalike-host finding (`notgithub.com` read as
+GitHub) is carried to the next release.
+
+Dropping the behind-a-link check failed both link tests; dropping the submodule check failed the added-links test;
+following only the first link of a chain failed the chained case. Each source was restored byte for byte.

@@ -10,7 +10,7 @@ import { FileRepositoryAdvisoryCache } from "../../remediation/src/repository-ad
 import { runProcess } from "../../ci/src/process.ts";
 import { gitTree, type Tree, workingTree } from "../../ci/src/tree.ts";
 import type { ToolRunContext } from "../../remediation/src/command.ts";
-import { candidateTree, changedBetween, exportCommit, git, snapshotCandidate, symlinkedChanges } from "../../remediation/src/git-copies.ts";
+import { candidateTree, changedBetween, exportCommit, git, linkProblems, snapshotCandidate } from "../../remediation/src/git-copies.ts";
 import { type GradleInventories, sandboxedGradleInventories } from "../../remediation/src/inventories.ts";
 import { FileJournal, type PublicationJournal } from "../../remediation/src/journal.ts";
 import { ensureOsvScanner, verifyingRun } from "../../remediation/src/osv-scanner.ts";
@@ -44,8 +44,8 @@ export interface BumpItDeps {
   readonly candidateTree: (workingCopy: WorkingCopy) => Promise<string | undefined>;
   /** Every path `sha` changed relative to `base` (`changedBetween`). */
   readonly changedBetween: (workingCopy: WorkingCopy, base: string, sha: string) => Promise<string[]>;
-  /** The paths `sha` made symbolic links relative to `base` (`symlinkedChanges`). */
-  readonly symlinkedChanges: (workingCopy: WorkingCopy, base: string, sha: string) => Promise<string[]>;
+  /** What the edit from `base` to `sha` did with links and submodules, as verification problems (`linkProblems`). */
+  readonly linkProblems: (workingCopy: WorkingCopy, base: string, sha: string) => Promise<string[]>;
   /** The wrapper files and jar hash as committed in `sha`, the verification snapshot. */
   readonly wrapperAt: (workingCopy: WorkingCopy, sha: string) => Promise<{ readonly files: ReadonlyArray<WrapperArtifact>; readonly jarSha256: string | undefined }>;
   readonly journal: (context: ToolRunContext) => PublicationJournal;
@@ -79,7 +79,7 @@ export function defaultDeps(): BumpItDeps {
     snapshot: (workingCopy) => snapshotCandidate(workingCopy),
     candidateTree: (workingCopy) => candidateTree(workingCopy),
     changedBetween: (workingCopy, base, sha) => changedBetween(workingCopy, base, sha),
-    symlinkedChanges: (workingCopy, base, sha) => symlinkedChanges(workingCopy, base, sha),
+    linkProblems: (workingCopy, base, sha) => linkProblems(workingCopy, base, sha),
     async wrapperAt(workingCopy, sha) {
       const copy = await exportCommit(workingCopy, sha);
       try {

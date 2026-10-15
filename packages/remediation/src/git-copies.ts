@@ -189,24 +189,80 @@ export async function changedBetween(workingCopy: WorkingCopy, base: string, sha
 }
 
 /**
- * The paths `sha` made symbolic links (mode 120000) relative to `base`; a directory replaced by a link shows as the
- * link's own path. No dependency update needs a link, and one can point verification's reads elsewhere.
+ * What the edit (`base` → `sha`) did with links, as verification problems. Verification reads a commit, where a link is
+ * only the path it points to, so it can't check what's behind one: the edit may not add or change a symbolic link or a
+ * submodule (modes 120000 and 160000), nor change anything an existing link, in `base` or `sha`, leads to. Links the
+ * edit leaves alone, with nothing changed behind them, are the repository's own.
  */
-export async function symlinkedChanges(workingCopy: WorkingCopy, base: string, sha: string, run: RunProcess = runProcess): Promise<string[]> {
+export async function linkProblems(workingCopy: WorkingCopy, base: string, sha: string, run: RunProcess = runProcess): Promise<string[]> {
   const diff = await git(workingCopy, ["diff", "--raw", "-z", "--no-renames", base, sha, "--"], run);
   if (diff.code !== 0) throw new Error(`git diff ${base} ${sha} failed: ${diff.stderr.trim()}`);
   // `:<old mode> <new mode> <old> <new> <status>` NUL `<path>` NUL, per changed path.
   const fields = diff.stdout.split("\0");
-  const links: string[] = [];
+  const changed: string[] = [];
+  const problems: string[] = [];
   for (let i = 0; i + 1 < fields.length; i += 2) {
-    if (fields[i]!.split(" ")[1] === "120000") links.push(fields[i + 1]!);
+    const path = fields[i + 1]!;
+    const mode = fields[i]!.split(" ")[1];
+    changed.push(path);
+    if (mode === "120000") problems.push(`the edit made ${path} a symbolic link: verification can't check what's behind one`);
+    if (mode === "160000") problems.push(`the edit added or moved the submodule ${path}: verification can't read a submodule's files`);
   }
-  return links.sort();
+  for (const revision of [base, sha]) {
+    const links = await linksOf(workingCopy, revision, run);
+    for (const link of [...links.keys()].sort()) {
+      const target = resolved(link, links);
+      if (target === undefined) continue;
+      for (const path of changed) {
+        if (target === "" || path === target || path.startsWith(`${target}/`)) {
+          problems.push(`the edit changed ${path}, behind the link ${link}: verification can't check what's behind one`);
+        }
+      }
+    }
+  }
+  return [...new Set(problems)].sort();
 }
 
-/** The verification problem for each changed path `symlinkedChanges` found. */
-export function symlinkProblems(links: ReadonlyArray<string>): string[] {
-  return links.map((link) => `the edit made ${link} a symbolic link: the tools publish no links, which can point verification's reads elsewhere`);
+/** Every symbolic link in `revision`'s tree, with the path it points to. */
+async function linksOf(workingCopy: WorkingCopy, revision: string, run: RunProcess): Promise<Map<string, string>> {
+  const listed = await git(workingCopy, ["ls-tree", "-r", "-z", revision], run);
+  if (listed.code !== 0) throw new Error(`git ls-tree ${revision} failed: ${listed.stderr.trim()}`);
+  const links = new Map<string, string>();
+  for (const entry of listed.stdout.split("\0")) {
+    if (!entry.startsWith("120000 ")) continue;
+    const object = entry.split(" ")[2]!.split("\t")[0]!;
+    const target = await git(workingCopy, ["cat-file", "blob", object], run);
+    if (target.code !== 0) throw new Error(`git cat-file ${object} failed: ${target.stderr.trim()}`);
+    links.set(entry.slice(entry.indexOf("\t") + 1), target.stdout);
+  }
+  return links;
+}
+
+/**
+ * The repository path `link` leads to, walked component by component as a checkout would (following links in it, a
+ * `..` after one going up from where it leads); undefined when it leaves the repository, whose outside isn't published.
+ * `""` is the repository's root.
+ */
+function resolved(link: string, links: ReadonlyMap<string, string>): string | undefined {
+  const at: string[] = [];
+  const pending = link.split("/");
+  for (let hops = 0; pending.length > 0;) {
+    const part = pending.shift()!;
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      if (at.length === 0) return undefined;
+      at.pop();
+      continue;
+    }
+    at.push(part);
+    const target = links.get(at.join("/"));
+    if (target === undefined) continue;
+    if (++hops > 40) throw new Error(`${link}: too many links to follow`);
+    if (target.startsWith("/")) return undefined;
+    at.pop();
+    pending.unshift(...target.split("/"));
+  }
+  return at.join("/");
 }
 
 /** Whether the working tree has exactly `sha`'s files. */

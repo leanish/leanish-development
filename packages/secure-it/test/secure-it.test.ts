@@ -120,7 +120,7 @@ function harness(options: { prs?: GitHubPullRequest[]; fixes?: SecurityFix[]; an
     snapshot: async () => SNAPSHOT,
     candidateTree: async () => SNAPSHOT_TREE,
     changedBetween: async () => ["package.json", "package-lock.json"],
-    symlinkedChanges: async () => options.links ?? [],
+    linkProblems: async () => (options.links ?? []).map((path) => `the edit made ${path} a symbolic link: verification can't check what's behind one`),
     journal: () => journal,
     writeFile: async (_wc, path, content) => {
       written.push(`${path}=${content}`);

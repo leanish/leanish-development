@@ -5,7 +5,6 @@ import { execFileSync } from "node:child_process";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { readActionsInventory } from "../src/actions-inventory.ts";
 import { namingFailures } from "../src/http.ts";
 import { gitTree, workingTree } from "../src/tree.ts";
 import { runProcess } from "../src/process.ts";
@@ -41,111 +40,6 @@ describe("the working tree", () => {
     expect(await tree.list("gradle")).toEqual([]);
     expect(await tree.list("gradle", { symlinks: true })).toEqual(["gradle/tools.toml"]);
     expect(await tree.read("gradle/tools.toml")).toBe("[libraries]\n");
-  });
-});
-
-describe("symlinked action metadata", () => {
-  // The runner reads `./local/action.yml` through the link; the gate must not read the link's target path instead.
-  const workflow = "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./local\n";
-  const metadata = "runs:\n  using: composite\n  steps:\n    - uses: attacker/unsafe@main\n";
-
-  it("is refused in a commit and in a working tree, while a plain read keeps its old meaning", async () => {
-    const fixture = await mkdtemp(join(tmpdir(), "supply-chain-linked-action-"));
-    try {
-      const git = (...args: string[]) => execFileSync("git", args, { cwd: fixture, encoding: "utf8" }).trim();
-      git("init", "--quiet");
-      await mkdir(join(fixture, ".github/workflows"), { recursive: true });
-      await mkdir(join(fixture, "local"));
-      await writeFile(join(fixture, ".github/workflows/ci.yml"), workflow);
-      await writeFile(join(fixture, "metadata.yml"), metadata);
-      await symlink("../metadata.yml", join(fixture, "local/action.yml"));
-      git("add", ".");
-      git("-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "fixture");
-      const commit = await gitTree(fixture, "HEAD", runProcess, join(fixture, ".git"));
-      expect(await commit.read("local/action.yml")).toBe("../metadata.yml");
-      await expect(commit.read("local/action.yml", { regularFile: true })).rejects.toThrow("local/action.yml in");
-      await expect(readActionsInventory(commit)).rejects.toThrow("local/action.yml in " + commit.id + " is a symbolic link");
-      await expect(readActionsInventory(workingTree(fixture))).rejects.toThrow("local/action.yml in worktree is a symbolic link");
-      expect(await commit.read(".github/workflows/ci.yml", { regularFile: true })).toBe(workflow);
-    } finally {
-      await rm(fixture, { recursive: true, force: true });
-    }
-  });
-
-  it("is refused when a root it's listed from, or a parent of one, is the link", async () => {
-    const fixture = await mkdtemp(join(tmpdir(), "supply-chain-linked-root-"));
-    try {
-      const git = (...args: string[]) => execFileSync("git", args, { cwd: fixture, encoding: "utf8" }).trim();
-      const commitAll = () => {
-        git("add", "-A");
-        git("-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "fixture");
-        return gitTree(fixture, "HEAD", runProcess, join(fixture, ".git"));
-      };
-      git("init", "--quiet");
-      await mkdir(join(fixture, ".github/workflows"), { recursive: true });
-      await mkdir(join(fixture, "shared-actions/tool"), { recursive: true });
-      await writeFile(join(fixture, ".github/workflows/ci.yml"), "on: push\n");
-      await writeFile(join(fixture, "shared-actions/tool/action.yml"), metadata);
-      await symlink("../shared-actions", join(fixture, ".github/actions"));
-      const linkedActions = await commitAll();
-      await expect(readActionsInventory(linkedActions)).rejects.toThrow(".github/actions in " + linkedActions.id + " is a symbolic link");
-      await expect(readActionsInventory(workingTree(fixture))).rejects.toThrow(".github/actions in worktree is a symbolic link");
-      expect((await readActionsInventory(linkedActions, { baseline: true })).files).toEqual([".github/workflows/ci.yml"]);
-      await rm(join(fixture, ".github"), { recursive: true });
-      await mkdir(join(fixture, "real-github/workflows"), { recursive: true });
-      await writeFile(join(fixture, "real-github/workflows/ci.yml"), workflow);
-      await symlink("real-github", join(fixture, ".github"));
-      const linkedGithub = await commitAll();
-      await expect(readActionsInventory(linkedGithub)).rejects.toThrow(".github in " + linkedGithub.id + " is a symbolic link");
-    } finally {
-      await rm(fixture, { recursive: true, force: true });
-    }
-  });
-
-  it("is read when only an unrelated sibling of it or of a parent is a link", async () => {
-    const fixture = await mkdtemp(join(tmpdir(), "supply-chain-sibling-link-"));
-    try {
-      const git = (...args: string[]) => execFileSync("git", args, { cwd: fixture, encoding: "utf8" }).trim();
-      git("init", "--quiet");
-      await mkdir(join(fixture, ".github/workflows"), { recursive: true });
-      await writeFile(join(fixture, ".github/workflows/ci.yml"), "on: push\n");
-      await symlink("../NOTES.md", join(fixture, ".github/notes-link"));
-      await symlink("ci.yml", join(fixture, ".github/workflows/alias-notes"));
-      git("add", ".");
-      git("-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "fixture");
-      const commit = await gitTree(fixture, "HEAD", runProcess, join(fixture, ".git"));
-      expect(await commit.read(".github/workflows/ci.yml", { regularFile: true })).toBe("on: push\n");
-      expect((await readActionsInventory(commit)).files).toEqual([".github/workflows/ci.yml"]);
-      expect((await readActionsInventory(workingTree(fixture))).files).toEqual([".github/workflows/ci.yml"]);
-    } finally {
-      await rm(fixture, { recursive: true, force: true });
-    }
-  });
-
-  it("is refused when a parent directory is the link", async () => {
-    const fixture = await mkdtemp(join(tmpdir(), "supply-chain-linked-dir-"));
-    try {
-      const git = (...args: string[]) => execFileSync("git", args, { cwd: fixture, encoding: "utf8" }).trim();
-      git("init", "--quiet");
-      await mkdir(join(fixture, ".github/workflows"), { recursive: true });
-      await mkdir(join(fixture, "actual"));
-      await writeFile(join(fixture, ".github/workflows/ci.yml"), workflow.replace("./local", "./linked"));
-      await writeFile(join(fixture, "actual/action.yml"), metadata);
-      await symlink("actual", join(fixture, "linked"));
-      git("add", ".");
-      git("-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "fixture");
-      const commit = await gitTree(fixture, "HEAD", runProcess, join(fixture, ".git"));
-      expect(await commit.read("linked/action.yml")).toBeUndefined();
-      await expect(readActionsInventory(commit)).rejects.toThrow("linked in " + commit.id + " is a symbolic link");
-      await expect(readActionsInventory(workingTree(fixture))).rejects.toThrow("linked in worktree is a symbolic link");
-      expect(await commit.read("actual/action.yml", { regularFile: true })).toBe(metadata);
-      for (const tree of [commit, workingTree(fixture)]) {
-        await expect(tree.read("././/linked/action.yml", { regularFile: true })).rejects.toThrow("linked in " + tree.id + " is a symbolic link");
-        await expect(tree.read("actual/../linked/action.yml", { regularFile: true })).rejects.toThrow("has a '..' segment");
-      }
-    } finally {
-      await rm(fixture, { recursive: true, force: true });
-    }
   });
 });
 
