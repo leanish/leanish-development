@@ -11,6 +11,12 @@
 
 ### Fixed
 
+The 0.5.2-rc.5 review's finding:
+
+- Checking a workflow or action metadata file's parents for links no longer trips on an unrelated linked sibling
+  (`.github/notes-link`), which made the whole inventory fail; the paths are compared after dropping `.` and empty
+  segments, and a `..` segment is refused.
+
 The 0.5.2-rc.4 review's findings:
 
 - Workflow and action metadata under a linked directory fail the gate and the tools' verification too. A commit has

@@ -72,6 +72,26 @@ describe("symlinked action metadata", () => {
     }
   });
 
+  it("is read when only an unrelated sibling of it or of a parent is a link", async () => {
+    const fixture = await mkdtemp(join(tmpdir(), "supply-chain-sibling-link-"));
+    try {
+      const git = (...args: string[]) => execFileSync("git", args, { cwd: fixture, encoding: "utf8" }).trim();
+      git("init", "--quiet");
+      await mkdir(join(fixture, ".github/workflows"), { recursive: true });
+      await writeFile(join(fixture, ".github/workflows/ci.yml"), "on: push\n");
+      await symlink("../NOTES.md", join(fixture, ".github/notes-link"));
+      await symlink("ci.yml", join(fixture, ".github/workflows/alias-notes"));
+      git("add", ".");
+      git("-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "fixture");
+      const commit = await gitTree(fixture, "HEAD", runProcess, join(fixture, ".git"));
+      expect(await commit.read(".github/workflows/ci.yml", { regularFile: true })).toBe("on: push\n");
+      expect((await readActionsInventory(commit)).files).toEqual([".github/workflows/ci.yml"]);
+      expect((await readActionsInventory(workingTree(fixture))).files).toEqual([".github/workflows/ci.yml"]);
+    } finally {
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
+
   it("is refused when a parent directory is the link", async () => {
     const fixture = await mkdtemp(join(tmpdir(), "supply-chain-linked-dir-"));
     try {
@@ -89,6 +109,10 @@ describe("symlinked action metadata", () => {
       await expect(readActionsInventory(commit)).rejects.toThrow("linked in " + commit.id + " is a symbolic link");
       await expect(readActionsInventory(workingTree(fixture))).rejects.toThrow("linked in worktree is a symbolic link");
       expect(await commit.read("actual/action.yml", { regularFile: true })).toBe(metadata);
+      for (const tree of [commit, workingTree(fixture)]) {
+        await expect(tree.read("././/linked/action.yml", { regularFile: true })).rejects.toThrow("linked in " + tree.id + " is a symbolic link");
+        await expect(tree.read("actual/../linked/action.yml", { regularFile: true })).rejects.toThrow("has a '..' segment");
+      }
     } finally {
       await rm(fixture, { recursive: true, force: true });
     }
