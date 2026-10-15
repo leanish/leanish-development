@@ -131,6 +131,7 @@ export function githubRepository(value: unknown): string | undefined {
   const raw = isObject(value) ? dig(value, ["url"]) : value;
   if (typeof raw !== "string") return undefined;
   const match =
-    /github\.com[/:]([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:[/#?]|$)/i.exec(raw) ?? /^(?:github:)?([\w.-]+)\/([\w.-]+?)(?:\.git)?$/i.exec(raw);
+    // `github.com` as the whole host: after `//`, `@` or the start, never the end of another name (`notgithub.com`).
+    /(?:^|[/@])(?:www\.)?github\.com[/:]([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:[/#?]|$)/i.exec(raw) ?? /^(?:github:)?([\w.-]+)\/([\w.-]+?)(?:\.git)?$/i.exec(raw);
   return match === null ? undefined : `${match[1]}/${match[2]}`.toLowerCase();
 }
