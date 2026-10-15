@@ -17,6 +17,8 @@
 - A submodule moved to another commit is reported as moved, not as added.
 - bump-it never moves the Gradle wrapper to a release a malware advisory (CWE-506) covers, even one the installed
   wrapper shares, and reports an installed wrapper such an advisory covers.
+- A bump-it major fails visibly when it brings a new transitive version that is deprecated, or whose registry catalog
+  can't be read to rule that out.
 - A key named `uses` outside a job or step (`env: { uses: production }`, an action input) no longer fails the Actions
   inventory: it counts when it reads as an action and is otherwise left alone; a job's or step's `uses:` stays strict.
 
