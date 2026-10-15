@@ -187,6 +187,32 @@ describe("the verification snapshot", () => {
     ].sort());
   });
 
+  it("matches a differently cased link, and refuses any link leading out of the repository", async () => {
+    const { copy, run } = await repository();
+    await mkdir(join(copy.path, "tools"));
+    await writeFile(join(copy.path, "tools", "recipe.txt"), "runs: {}\n");
+    await mkdir(join(copy.path, "local"));
+    await symlink("../TOOLS/recipe.txt", join(copy.path, "local", "action.yml"));
+    run(["add", "--all"]);
+    run(["commit", "-q", "-m", "a differently cased link"]);
+    const cased = run(["rev-parse", "HEAD"]);
+    await writeFile(join(copy.path, "tools", "recipe.txt"), "runs: { using: node }\n");
+    expect(await linkProblems(copy, cased, await snapshotCandidate(copy))).toEqual([
+      "the edit changed tools/recipe.txt, behind the link local/action.yml: verification can't check what's behind one",
+    ]);
+    run(["checkout", "-q", "--", "."]);
+    await symlink("../wc/tools/recipe.txt", join(copy.path, "reentering"));
+    await symlink("/etc/hosts", join(copy.path, "absolute"));
+    run(["add", "--all"]);
+    run(["commit", "-q", "-m", "links out"]);
+    const out = run(["rev-parse", "HEAD"]);
+    await writeFile(join(copy.path, "package-lock.json"), '{"v":3}\n');
+    expect(await linkProblems(copy, out, await snapshotCandidate(copy))).toEqual([
+      "the link absolute leads outside the repository: verification can't tell whether it comes back to what the edit changed",
+      "the link reentering leads outside the repository: verification can't tell whether it comes back to what the edit changed",
+    ]);
+  });
+
   it("refuses an edit behind a link the repository already has, through linked directories and chains of links", async () => {
     const { copy, run } = await repository();
     for (const dir of ["actual", "d", ".github/workflows"]) await mkdir(join(copy.path, dir), { recursive: true });
@@ -199,7 +225,10 @@ describe("the verification snapshot", () => {
     await symlink("actual", join(copy.path, "linked"));
     await symlink("d", join(copy.path, "b"));
     await symlink("b/c.yml", join(copy.path, "chained.yml"));
+    // Back to the root, so still inside; and a loop, which leads nowhere a checkout can read.
     await symlink("../../outside.yml", join(copy.path, ".github", "workflows", "outside.yml"));
+    await symlink("loop-b", join(copy.path, "loop-a"));
+    await symlink("loop-a", join(copy.path, "loop-b"));
     run(["add", "--all"]);
     run(["commit", "-q", "-m", "links the repository has"]);
     const inherited = run(["rev-parse", "HEAD"]);

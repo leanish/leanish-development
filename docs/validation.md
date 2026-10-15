@@ -335,3 +335,14 @@ GitHub) is carried to the next release.
 
 Dropping the behind-a-link check failed both link tests; dropping the submodule check failed the added-links test;
 following only the first link of a chain failed the chained case. Each source was restored byte for byte.
+
+## Release-candidate review of 0.5.2-rc.9 — 2026-10-15
+
+The candidate pass for `v0.5.2-rc.9` (`99f6f7b`) recorded 52 commands, 0 failed. Sol's unprimed review found that rc.9's
+link resolution could be slipped past: it compared paths case-sensitively (`../TOOLS/recipe.txt` reaches
+`tools/recipe.txt` on macOS), and it ignored links leading out of the repository, which can come back in through an
+absolute path or `../<repository>/…`; v0.5.1 had caught the modeled edit. Paths are now matched regardless of case and
+Unicode normalization, and a link leading out of the repository fails any edit. Sol's non-blocking finding, untouched
+links in a loop failing every unit, is fixed too: a loop, or more links than a checkout follows, leads nowhere it can
+read, so it's ignored. Removing the folding, ignoring outside links again, or failing on a loop each failed its test;
+each source was restored byte for byte.
