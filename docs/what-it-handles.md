@@ -255,7 +255,8 @@ comment, so that update fails visibly and a person makes it.
 A workflow, local reusable workflow or action metadata file (`action.yml`) that is a
 symbolic link, or sits under a linked directory, fails the gate and the tools'
 verification, inherited or new: the runner reads through the link, while a commit
-only records where it points.
+only records where it points. A PR that replaces such a link with the file passes:
+the base's link is read as before, so what the file uses counts as a change.
 
 ## Pull requests over time
 
