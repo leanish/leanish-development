@@ -125,7 +125,7 @@ A version younger than the wait passes without an exception when it's the fix th
 - **Targets:** the advisories that affect R and not V. An upgrade that fixes A and leaves B fixes A; malware isn't a target. No target, no fix.
 - **Candidates:** the registry's versions above R, up to the end of V's line. Prereleases count only if R is one; a Maven version keeps R's flavor (`-jre`). A candidate fixes when no target affects it, and it brings no advisory R doesn't have, malware included.
 - **The rule:**
-  1. Take the first compatible line with a fixing candidate, starting from R's own (npm's caret range; Maven's first numeric segment, or `compatibleLines` in config). A backport 1.9.5 beats a mature 2.0.0.
+  1. Take the first compatible line with a fixing candidate, starting from R's own (npm's caret range; Maven's first numeric segment, or `0.N` when the first is 0; adjustable through `compatibleLines` in config). A backport 1.9.5 beats a mature 2.0.0.
   2. In that line, take the lowest fixing candidate at least `releaseAgeDays` old.
   3. If none is that old, take the lowest fixing candidate, however young.
 - V passes only if it's that version. If an older fix in the line turns 7 days old before CI runs, the check fails on purpose: that one is safer, and secure-it picks it up.
@@ -250,7 +250,7 @@ Optional; read from head. Unknown fields fail, so a typo can't turn a check off.
 - Every listed lockfile must exist in head; one base doesn't have yet reads as empty there.
 - Own packages skip only the release-age wait. Own Maven packages: exact `groups`, and `pluginIdPrefixes` that only match Gradle plugin markers (`<id>:<id>.gradle.plugin`), so `com.acme.` doesn't exempt every `com.acme.*` group.
 - `repositories`: a package's GitHub source repository, for its repository advisories; it takes precedence over what the manifest or POM names.
-- `compatibleLines`: how many leading numeric segments make a compatible line for a package (a trailing `*` matches a prefix), where the default (npm's caret range, Maven's first segment) doesn't fit.
+- `compatibleLines`: how many leading numeric segments make a compatible line for a package (a trailing `*` matches a prefix), where the default (npm's caret range; Maven's first numeric segment, or `0.N` when the first is 0) doesn't fit.
 
 ## Exceptions: `.github/supply-chain-exceptions.json`
 

@@ -9,7 +9,7 @@ import { NpmCatalog } from "../src/catalogs.ts";
 import { npmChanges } from "../src/npm-changes.ts";
 import { isYoung, releaseAgeProblems } from "../src/release-age.ts";
 import { gatherCandidates } from "../src/young-fixes.ts";
-import { bundleProblems, changedPackages, lockedPackages, sourceProblems } from "../src/npm-lock.ts";
+import { bundleProblems, changedPackages, lockedPackages, replacedArtifacts, sourceProblems } from "../src/npm-lock.ts";
 import { NpmRegistry } from "../src/npm-registry.ts";
 import { type Advisory, Snapshot } from "../src/snapshot.ts";
 
@@ -167,6 +167,27 @@ describe("lockfile reading", () => {
   it("reports new packages and changed versions, including transitive ones", () => {
     const changed = changedPackages(pkgs({ a: "1.0.0", b: "1.0.0" }), pkgs({ a: "1.0.0", b: "1.1.0", c: "3.0.0" }));
     expect(changed.map((pkg) => `${pkg.name}@${pkg.version}`)).toEqual(["b@1.1.0", "c@3.0.0"]);
+  });
+
+  it("tells a same-version artifact that changed source, bytes or bundling from an unchanged one", () => {
+    const base = pkgs({ a: "1.0.0", b: "1.0.0", c: "1.0.0", d: "1.0.0" });
+    const head = lockedPackages(lock({ a: "1.0.0", d: "1.1.0" }, {
+      "node_modules/b": { version: "1.0.0", resolved: "https://npm.internal.example/b/-/b-1.0.0.tgz", integrity: `sha512-${sha512("b@1.0.0").toString("base64")}` },
+      "node_modules/c": { version: "1.0.0", resolved: "https://registry.npmjs.org/c/-/c-1.0.0.tgz", integrity: `sha512-${sha512("other bytes").toString("base64")}` },
+    }));
+    expect(replacedArtifacts(base, head).map((pkg) => `${pkg.name}@${pkg.version}`)).toEqual(["b@1.0.0", "c@1.0.0"]);
+    expect(changedPackages(base, head).map((pkg) => `${pkg.name}@${pkg.version}`)).toEqual(["d@1.1.0"]);
+  });
+
+  it("fails a same-version artifact replaced from another allowed registry, which no other check sees", async () => {
+    const config = { ...DEFAULT_CONFIG, npm: { ...DEFAULT_CONFIG.npm, registries: [...DEFAULT_CONFIG.npm.registries, "https://npm.internal.example"] } };
+    const head = lockedPackages(lock({}, {
+      "node_modules/lib": { version: "1.0.0", resolved: "https://npm.internal.example/lib/-/lib-1.0.0.tgz", integrity: `sha512-${sha512("other bytes").toString("base64")}` },
+    }));
+    expect(await changes(pkgs({ lib: "1.0.0" }), head, registry({}), { config })).toEqual([
+      "lib@1.0.0 at node_modules/lib changed its source or bytes without changing version: the gate can't tell the new artifact is the same package",
+    ]);
+    expect(await changes(pkgs({ lib: "1.0.0" }), pkgs({ lib: "1.0.0" }), registry({}), { config })).toEqual([]);
   });
 
   it("checks bundled packages' source through the parent that ships them", () => {

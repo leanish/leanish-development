@@ -108,6 +108,14 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     expect(text).toContain(JSON.stringify(askSkill.outputSchema, null, 2));
   });
 
+  it("loads no MCP servers, using strict MCP configuration without a supplied config", async () => {
+    const { bin, record } = await makeStub([result(ANSWER)]);
+    await new ClaudeCodeRunner({ bin }).run(call());
+    const argv = args(await readFile(record, "utf8"));
+    expect(argv).toContain("--strict-mcp-config");
+    expect(argv.some((arg) => arg === "--mcp-config" || arg.startsWith("--mcp-config="))).toBe(false);
+  });
+
   it("mounts the first working copy as cwd and the rest via --add-dir", async () => {
     const wc1 = await mkdtemp(join(tmpdir(), "claude-runner-wc1-"));
     const wc2 = await mkdtemp(join(tmpdir(), "claude-runner-wc2-"));
@@ -170,7 +178,11 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     expect(settings.permissions.deny).toEqual([
       `Read(/${deniedDir}-other)`, `Read(/${deniedDir}-other/**)`, `Read(/${deniedFile})`, `Edit(/${workingCopy.gitDir}/**)`, `Edit(/${join(workingCopy.path, ".git")})`, ...DENIED_TOOLS,
     ]);
-    expect(settings.permissions.deny).toEqual(expect.arrayContaining(["Artifact", "SendMessage", "WebFetch"]));
+    expect(settings.permissions.deny).toEqual(expect.arrayContaining([
+      "Artifact", "ArtifactComments", "ArtifactData", "ShareOnboardingGuide", "DesignSync", "PushNotification", "SendMessage",
+      "RemoteTrigger", "CronCreate", "CronDelete", "ScheduleWakeup", "Workflow", "WebFetch", "WebSearch",
+      "EnterWorktree", "ExitWorktree", "ListAgents", "Monitor", "Task", "Agent",
+    ]));
     expect(settings.disableAllHooks).toBe(true);
     expect(settings.claudeMdExcludes).toContain("**/CLAUDE.md");
     expect(settings).toMatchObject({ includeCoAuthoredBy: false, attribution: { commit: "", pr: "" } });

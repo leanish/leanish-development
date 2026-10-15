@@ -431,6 +431,7 @@ export async function bumpCandidates(head: Tree, env: GateEnvironment, gradle: G
       ? await nodeVersionsFor(head, pkg, listed, problems.get(versionKey(pkg))!) : listed;
     const newer = movesFrom(pkg, pkg.version, allowed);
     newerOf.set(versionKey(pkg), newer);
+    problems.get(versionKey(pkg))!.push(...(await untrustedActionReleases(pkg, newer, catalogs[pkg.ecosystem], config)));
     const line = (version: string) => compatibleLine(config, pkg, version);
     const own = line(pkg.version);
     higherLines.set(versionKey(pkg), [...new Set(newer.map(line).filter((candidate) => candidate !== own))].reverse());
@@ -495,6 +496,20 @@ export async function bumpCandidates(head: Tree, env: GateEnvironment, gradle: G
     osvScannerVersion: state.osvScannerVersion,
     notes,
   };
+}
+
+/**
+ * A note naming an action's newer releases that have no trusted age (only immutable releases have one), which the
+ * bump skips: without it they'd just never be picked, with nothing saying why.
+ */
+export async function untrustedActionReleases(pkg: Direct, newer: ReadonlyArray<string>, catalog: VersionCatalog, config: Config): Promise<string[]> {
+  if (pkg.ecosystem !== "GitHub Actions" || isOwnPackage(config.ownPackages, pkg)) return [];
+  const undated: string[] = [];
+  for (const version of newer) {
+    if (await catalog.published({ ...pkg, version }) === undefined) undated.push(version);
+  }
+  if (undated.length === 0) return [];
+  return [`${pkg.name} ${undated.join(", ")}: no immutable GitHub release, so the age can't be trusted and the tools don't pick it; update it by hand, or wait for immutable releases`];
 }
 
 async function nodeVersionsFor(head: Tree, pkg: Direct, listed: ReadonlyArray<string>, problems: string[]): Promise<ReadonlyArray<string>> {

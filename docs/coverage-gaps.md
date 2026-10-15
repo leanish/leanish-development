@@ -27,6 +27,10 @@ These apply to versions a PR adds or changes, in `compare`; unchanged versions a
 - **Packages from another npm registry**: age and identity are checked against the npm registry only, so they fail, or (own packages) need a reviewed `identity` exception.
 - **Maven versions outside Maven Central and the Gradle Plugin Portal**: their release age can't be checked, so they fail unless their repository is listed in `maven.repositories`. Own Maven packages skip the age check.
 
+## Automated test coverage
+
+- **Reusable workflow required-check guards**: the guards that keep a failed Gradle inventory from skipping the required comparison, and keep cooldown red when comparison fails, have no automated test (see [Adopting the gate](../packages/ci/README.md#adopting-the-gate) and the `supply-chain` and `cooldown` job conditions in [supply-chain.yml](../.github/workflows/supply-chain.yml)).
+
 ## Gradle wrapper updates
 
 bump-it selects and verifies the root Gradle wrapper outside the gate's dependency inventory:

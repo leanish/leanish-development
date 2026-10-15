@@ -37,6 +37,19 @@ export interface PublicationContext {
   readonly journal: PublicationJournal;
   /** Directories outside the working copy whose paths never reach a PR (see publication-text.ts). */
   readonly localRoots: ReadonlyArray<string>;
+  /**
+   * The tree the last verification read (`snapshotCandidate` in git-copies.ts): publication commits nothing else. Absent,
+   * nothing is enforced; present but without a snapshot, nothing was verified, so nothing is published.
+   */
+  readonly verifiedTree?: () => Promise<string | undefined>;
+}
+
+/** What `publishBranch` must find staged: the verified tree. */
+async function expectedTree(context: PublicationContext): Promise<{ readonly expectedTree?: string }> {
+  if (context.verifiedTree === undefined) return {};
+  const tree = await context.verifiedTree();
+  if (tree === undefined) throw new Error(`${context.rules.tool}: nothing was verified, so nothing is published`);
+  return { expectedTree: tree };
 }
 
 /** Published text keeps the machine out: see publication-text.ts. */
@@ -87,7 +100,7 @@ export async function publishNew(
 ): Promise<GitHubPullRequest | undefined> {
   const content = cleanContent(agentContent, rootsOf(context));
   if (prepared.remoteHeadSha !== null) throw new Error(`${context.rules.tool}: ${prepared.branch} exists already; update its PR instead`);
-  const pushed = await context.workspace.publishBranch(context.workingCopy, prepared, { message: content.commitMessage });
+  const pushed = await context.workspace.publishBranch(context.workingCopy, prepared, { message: content.commitMessage, ...(await expectedTree(context)) });
   if (pushed.kind === "unchanged") return undefined;
   const created = await createDraftPullRequest(context, prepared.branch, content, { head: pushed.sha, base: prepared.baseSha, adaptations: 0 });
   await ensureLabel(context, created);
@@ -117,6 +130,7 @@ export async function publishUpdate(
   if (!current.isDraft) await github.convertToDraft({ nodeId: current.nodeId });
   const pushed = await context.workspace.publishBranch(context.workingCopy, prepared, {
     message: content.commitMessage,
+    ...(await expectedTree(context)),
     // Recorded before the push: whatever fails after it lands, the next tick still knows this exact head as the tool's.
     beforePush: (sha) => context.journal.pushed(repo, current.number, {
       head: sha,

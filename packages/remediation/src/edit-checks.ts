@@ -112,7 +112,19 @@ function lineCode(line: string, state: CodeState, path: string): string {
       // Kotlin raw strings (and TOML multiline literal strings) do not escape their closing quotes; Groovy does.
       const escapes = state.quote.length === 1 || path.endsWith(".gradle") || (state.quote === '"""' && !path.endsWith(".gradle.kts"));
       if (char === "\\" && escapes) i++;
-      else if (line.startsWith(state.quote, i)) {
+      else if (char === "$" && line[i + 1] === "{" && state.quote.startsWith('"') && !path.endsWith(".toml")) {
+        // `${…}` in a Kotlin or Groovy string is code the scanner doesn't read, and where it ends is easy to misjudge: a
+        // line with one and the word `strictly` anywhere fails, instead of trusting where the interpolation seems to end.
+        if (/\bstrictly\b/.test(line)) throw new Error("a strictly(...) on a line with a string interpolation can't be verified");
+        const end = interpolationEnd(line, i + 2);
+        // One that doesn't close on its line could hide a pin on the next ones.
+        if (end === undefined) throw new Error("a string interpolation spanning lines can't be verified");
+        // Comments, escapes and triple-quoted strings inside one could move where it seems to close: not read, so refused.
+        if (/\/\*|\/\/|\\|'''|"""/.test(line.slice(i + 2, end))) {
+          throw new Error("a string interpolation with comments, escapes or triple-quoted strings can't be verified");
+        }
+        i = end;
+      } else if (line.startsWith(state.quote, i)) {
         const quote = state.quote;
         i += quote.length - 1;
         // Kotlin and TOML allow content quotes immediately before the closing triple delimiter.
@@ -145,6 +157,21 @@ function lineCode(line: string, state: CodeState, path: string): string {
     code += char;
   }
   return code;
+}
+
+/** Where a `${` interpolation that starts at `from` closes (its `}`), skipping nested strings; undefined past the line's end. */
+function interpolationEnd(line: string, from: number): number | undefined {
+  let depth = 1;
+  for (let i = from; i < line.length; i++) {
+    const char = line[i]!;
+    if (char === '"' || char === "'") {
+      const close = line.indexOf(char, i + 1);
+      if (close < 0) return undefined;
+      i = close;
+    } else if (char === "{") depth++;
+    else if (char === "}" && --depth === 0) return i;
+  }
+  return undefined;
 }
 
 const MAX_STRICT_LINES = 128;

@@ -108,6 +108,14 @@ def resolveProject = { String projectPath, buildscriptConfigurations, configurat
 }
 def declareProject = { resolved -> resolved.collect { configuration, entry -> declare(configuration, entry) } }
 
+// At export, once every project has resolved: a resolvable configuration that wasn't resolved appeared while resolving
+// (a plugin's callback, in this project or another) and fails the inventory rather than being left out.
+def assertResolvedAll = { String projectPath, resolved, buildscriptConfigurations, configurations ->
+    def seen = resolved.collect { it[0] } as Set
+    def missing = (buildscriptConfigurations.findAll { it.canBeResolved } + configurations.findAll { it.canBeResolved }).findAll { !seen.contains(it) }
+    if (!missing.isEmpty()) throw new GradleException("supply-chain inventory: resolvable configurations of ${projectPath} appeared while resolving (${missing*.name.join(', ')})")
+}
+
 // One file per (build, project), named so no two can collide.
 def write = { String build, String project, Map content ->
     def name = URLEncoder.encode(build + "|" + project, "UTF-8") + ".json"
@@ -133,6 +141,9 @@ gradle.projectsEvaluated { evaluated ->
         evaluated.rootProject.allprojects { project ->
             resolved[project.path] = resolveProject(project.path, project.buildscript.configurations, project.configurations)
         }
+        evaluated.rootProject.allprojects { project ->
+            assertResolvedAll(project.path, resolved[project.path], project.buildscript.configurations, project.configurations)
+        }
         resolved.each { path, configurations -> write(label, path, [configurations: declareProject(configurations)]) }
     }
 }
@@ -155,7 +166,10 @@ if (gradle.parent == null) {
             description = "Exports the resolved dependencies of every resolvable configuration for the supply-chain gate."
             dependsOn resolve
             mustRunAfter everyResolve
-            doLast { write(".", projectPath, [configurations: declareProject(resolvedByProject[projectPath])]) }
+            doLast {
+                assertResolvedAll(projectPath, resolvedByProject[projectPath], buildscriptConfigurations, configurations)
+                write(".", projectPath, [configurations: declareProject(resolvedByProject[projectPath])])
+            }
         }
     }
 }

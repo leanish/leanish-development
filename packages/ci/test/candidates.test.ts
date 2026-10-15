@@ -4,7 +4,8 @@ import { dirname, join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { bumpCandidates, type SecurityFix, securityCandidates } from "../src/candidates.ts";
+import { bumpCandidates, type SecurityFix, securityCandidates, untrustedActionReleases } from "../src/candidates.ts";
+import { parseConfig } from "../src/config.ts";
 import type { GateEnvironment } from "../src/gate.ts";
 import { runProcess, type RunProcess } from "../src/process.ts";
 import { workingTree } from "../src/tree.ts";
@@ -538,5 +539,27 @@ describe("securityCandidates, bundled copies", () => {
     } };
     const found = await securityCandidates(await head(true), failing);
     expect(moves(found.fixes)).toEqual([["brace@5.0.9", "5.0.12", undefined], ["carrier@1.0.0", undefined, expect.stringContaining("carrier move can't be decided")]]);
+  });
+});
+
+describe("actions without a trusted age", () => {
+  const checkout = { ecosystem: "GitHub Actions" as const, name: "actions/checkout", version: "v7.0.1", locations: [], declarations: [] };
+  // Only immutable releases are dated; v7.0.2 and v7.1.0 here aren't.
+  const catalog = {
+    versions: async () => ["v7.0.1", "v7.0.2", "v7.1.0", "v7.2.0"],
+    published: async (pkg: { version: string }) => (pkg.version === "v7.2.0" ? new Date("2026-01-01T00:00:00Z") : undefined),
+  };
+
+  it("names the newer releases a bump skips because they have no immutable release", async () => {
+    expect(await untrustedActionReleases(checkout, ["v7.0.2", "v7.1.0", "v7.2.0"], catalog, parseConfig({}))).toEqual([
+      "actions/checkout v7.0.2, v7.1.0: no immutable GitHub release, so the age can't be trusted and the tools don't pick it; update it by hand, or wait for immutable releases",
+    ]);
+  });
+
+  it("says nothing for npm, own actions, or when every newer release is dated", async () => {
+    expect(await untrustedActionReleases({ ...checkout, ecosystem: "npm" }, ["v7.0.2"], catalog, parseConfig({}))).toEqual([]);
+    const own = parseConfig({ ownPackages: { "GitHub Actions": { owners: ["actions"] } } });
+    expect(await untrustedActionReleases(checkout, ["v7.0.2"], catalog, own)).toEqual([]);
+    expect(await untrustedActionReleases(checkout, ["v7.2.0"], catalog, parseConfig({}))).toEqual([]);
   });
 });

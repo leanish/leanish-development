@@ -241,6 +241,20 @@ dependencies { runtimeOnly "fixture:missing:9.9" }
     ]);
     expect(gradleResolutionProblems(broken, [":sub:runtimeClasspath", ":sub:testRuntimeClasspath"])).toEqual([]);
   }, 600_000);
+
+  it("fails when resolving a configuration makes another resolvable, rather than leaving it out", async () => {
+    const late = join(root, "late");
+    await cp(WRAPPER, late, { recursive: true });
+    await write(late, "settings.gradle", `rootProject.name = "late"\n`);
+    // A plugin's callback can do this; the inventory resolved the set it found first, so zLate would be missing.
+    await write(late, "build.gradle", `configurations {
+  aEarly
+  zLate { canBeResolved = false }
+}
+configurations.aEarly.incoming.afterResolve { configurations.zLate.canBeResolved = true }
+`);
+    await expect(runGradleInventory(late, ["."], "worktree", runProcess)).rejects.toThrow(/resolvable configurations of : appeared while resolving \(zLate\)/);
+  }, 600_000);
 });
 
 // The reference suite is in this file, not its own, on purpose: vitest runs files in parallel, and two real Gradle

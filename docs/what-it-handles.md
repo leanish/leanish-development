@@ -136,6 +136,9 @@ Maven modules in runtime, compile and test dependencies, annotation processors,
 build tools, plugins, and buildscript and settings classpaths.
 It also covers `buildSrc` and included builds configured by the root build.
 Missing output or unresolved configurations fail. Explicitly ignored ones are not covered.
+A configuration that a plugin adds or makes resolvable while others resolve fails the inventory instead of being left
+out. A possible extension, if a build ever needs it, is resolving such configurations too (until none new appears);
+none of the builds checked so far does (the owner's convention plugins and projects using them).
 
 The tools change declared versions; Gradle decides what resolves. A declared
 version can resolve higher when another dependency asks for more, and updating one
@@ -151,8 +154,8 @@ the packages Gradle resolves, not a separate Maven build inventory.
 
 ### What secure-it fixes
 
-It uses the same lowest-fix rule as npm. A compatible line normally shares the
-first version number, such as OkHttp 4.x; configuration can narrow it.
+It uses the same lowest-fix rule as npm. A compatible line uses the first numeric
+segment, such as OkHttp 4.x, or `0.N` when the first is 0; `compatibleLines` can adjust it.
 It changes versions it can identify in repository declarations. For a transitive,
 it first tries a declared parent bringing it into every affected configuration.
 Candidates are tried lowest first within that parent's line, past the wait.
@@ -203,7 +206,13 @@ The gate reads workflow `uses:` entries, composite actions and local reusable
 workflows. Every new or changed remote use needs a full commit SHA and a comment
 naming the full release tag that points to it. Duplicate steps and YAML aliases
 count too. Advisory and release-age checks use the GitHub release, not the tag's
-date. Own Actions can skip the age wait, but still need valid pins.
+date, and trust its age only when the release is immutable: a mutable release's
+tag can be moved to newer code, which would inherit the old release's age. So a
+change to an action without an immutable release fails the gate, and the tools
+don't pick such a version on their own (they leave a note saying why); a person
+updates it, or waits until the action publishes immutable releases. In October
+2026, `actions/checkout`, `actions/upload-artifact` and `actions/download-artifact`
+were among them. Own Actions can skip the age wait, but still need valid pins.
 
 secure-it selects the lowest eligible security fix and pins its tag's commit.
 bump-it selects the highest eligible aged release, with routine updates together

@@ -76,6 +76,17 @@ describe("publication", () => {
     await expect(publishNew(context(github), existing, CONTENT)).rejects.toThrow("exists already");
   });
 
+  it("hands publishBranch the verified tree, and publishes nothing when nothing was verified", async () => {
+    const workspace = new InMemoryWorkspace();
+    await publishNew({ ...context(new FakeGitHub(), workspace), verifiedTree: async () => "7".repeat(40) }, fresh, CONTENT);
+    expect(workspace.publications.map(({ args }) => args.expectedTree)).toEqual(["7".repeat(40)]);
+
+    const unverified = new InMemoryWorkspace();
+    await expect(publishNew({ ...context(new FakeGitHub(), unverified), verifiedTree: async () => undefined }, fresh, CONTENT))
+      .rejects.toThrow("nothing was verified, so nothing is published");
+    expect(unverified.publications).toEqual([]);
+  });
+
   it("updates an existing PR as a draft, then puts a ready PR back to ready when nothing new was pushed", async () => {
     const github = new FakeGitHub(ownPr({ isDraft: false }));
     const { pr, pushed } = await publishUpdate(context(github), existing, 7, CONTENT);

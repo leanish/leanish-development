@@ -50,6 +50,7 @@ async function createExecution(context: ToolRunContext, deps: BumpItDeps): Promi
       workingCopy: context.workingCopy,
       journal: deps.journal(context),
       localRoots: machineRoots(context.config.dirs),
+      verifiedTree: () => deps.candidateTree(context.workingCopy),
     },
   };
 }

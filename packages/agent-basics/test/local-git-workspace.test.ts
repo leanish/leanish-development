@@ -290,6 +290,36 @@ describe.skipIf(!hasGit)("LocalGitWorkspace branch publication (real git)", () =
     expect(gitOut(origin, ["ls-tree", "-r", "--name-only", BRANCH])).not.toContain("build/out.txt");
   });
 
+  it("publishes only the verified tree: a working tree changed after verification is refused, nothing pushed", async () => {
+    const { origin } = makeOrigin();
+    const { ws, wc } = await synced(origin);
+    const prep = await ws.prepareBranch(wc, { branch: BRANCH, start: "default" });
+    if (prep.kind !== "prepared") throw new Error("expected a prepared branch");
+    writeFileSync(join(wc.path, "README.md"), "verified\n");
+    // The tree verification read, staged as publication stages it, in a throwaway index.
+    const index = join(mkdtempSync(join(tmpdir(), "verified-index-")), "index");
+    const indexed = (args: string[]) => {
+      const result = spawnSync("git", args, { cwd: wc.path, encoding: "utf8", env: { ...process.env, GIT_INDEX_FILE: index } });
+      if (result.status !== 0) throw new Error(result.stderr);
+      return result.stdout.trim();
+    };
+    indexed(["read-tree", "HEAD"]);
+    indexed(["add", "--all"]);
+    const verified = indexed(["write-tree"]);
+
+    // Something left running writes after verification.
+    writeFileSync(join(wc.path, "README.md"), "unverified\n");
+    await expect(ws.publishBranch(wc, prep.prepared, { message: "upgrading things", expectedTree: verified })).rejects.toThrow(
+      "the working tree changed after verification",
+    );
+    expect(spawnSync("git", ["rev-parse", "--verify", "--quiet", `refs/heads/${BRANCH}`], { cwd: origin }).status).not.toBe(0);
+
+    writeFileSync(join(wc.path, "README.md"), "verified\n");
+    const published = await ws.publishBranch(wc, prep.prepared, { message: "upgrading things", expectedTree: verified });
+    if (published.kind !== "pushed") throw new Error("expected a push");
+    expect(gitOut(origin, ["show", `${BRANCH}:README.md`])).toBe("verified");
+  });
+
   it("updates an existing branch on top of its head with main merged in, keeping a review fix", async () => {
     const { origin, scratch } = makeOrigin();
     git(scratch, ["checkout", "-q", "-b", BRANCH]);
@@ -351,12 +381,76 @@ describe.skipIf(!hasGit)("LocalGitWorkspace branch publication (real git)", () =
     expect(readFileSync(join(wc.path, "README.md"), "utf8")).toContain("<<<<<<<");
 
     await expect(ws.publishBranch(wc, merging.prepared, { message: "merging main" })).rejects.toThrow("README.md still has conflict markers");
+    // A refused attempt leaves the conflict in place: another one checks it again.
+    await expect(ws.publishBranch(wc, merging.prepared, { message: "merging main" })).rejects.toThrow("README.md still has conflict markers");
 
     writeFileSync(join(wc.path, "README.md"), "both sides\n");
     const published = await ws.publishBranch(wc, merging.prepared, { message: "merging main" });
     if (published.kind !== "pushed") throw new Error("expected a push");
     expect(gitOut(origin, ["log", "-1", "--format=%P|%s", BRANCH])).toBe(`${prHead} ${mainHead}|merging main`);
     expect(gitOut(origin, ["show", `${BRANCH}:README.md`])).toBe("both sides");
+  });
+
+  it("rechecks conflict markers after refusing a changed verification tree, without pushing", async () => {
+    const { origin, scratch } = makeOrigin();
+    git(scratch, ["checkout", "-q", "-b", BRANCH]);
+    commitIn(scratch, "README.md", "branch side\n", "branch edit");
+    git(scratch, ["push", "-q", "origin", BRANCH]);
+    git(scratch, ["checkout", "-q", "main"]);
+    commitIn(scratch, "README.md", "main side\n", "main edit");
+    git(scratch, ["push", "-q", "origin", "main"]);
+    const prHead = gitOut(origin, ["rev-parse", `refs/heads/${BRANCH}`]);
+
+    const { ws, wc } = await synced(origin);
+    const merging = await ws.prepareBranch(wc, { branch: BRANCH, start: "remote-merging" });
+    if (merging.kind !== "conflicted") throw new Error(`expected a conflict, got ${merging.kind}`);
+    const markers = readFileSync(join(wc.path, "README.md"), "utf8");
+    expect(markers).toContain("<<<<<<<");
+
+    // Capture the marker-bearing candidate without resolving the real index's conflict.
+    const index = join(tempDir("verified-index-"), "index");
+    const indexed = (args: string[]) => {
+      const result = spawnSync("git", args, { cwd: wc.path, encoding: "utf8", env: { ...process.env, GIT_INDEX_FILE: index } });
+      if (result.status !== 0) throw new Error(result.stderr);
+      return result.stdout.trim();
+    };
+    indexed(["read-tree", "HEAD"]);
+    indexed(["add", "--all"]);
+    const expectedTree = indexed(["write-tree"]);
+
+    // Clean live bytes pass the marker check, but differ from the captured tree.
+    writeFileSync(join(wc.path, "README.md"), "temporarily resolved\n");
+    await expect(ws.publishBranch(wc, merging.prepared, { message: "merging main", expectedTree })).rejects.toThrow(
+      "the working tree changed after verification",
+    );
+    expect(gitOut(wc.path, ["rev-parse", "HEAD"])).toBe(prHead);
+    expect(gitOut(origin, ["rev-parse", `refs/heads/${BRANCH}`])).toBe(prHead);
+
+    // Restoring the candidate bytes must not bypass the marker check on retry.
+    writeFileSync(join(wc.path, "README.md"), markers);
+    await expect(ws.publishBranch(wc, merging.prepared, { message: "merging main", expectedTree })).rejects.toThrow(
+      "README.md still has conflict markers",
+    );
+    expect(gitOut(wc.path, ["rev-parse", "HEAD"])).toBe(prHead);
+    expect(gitOut(origin, ["rev-parse", `refs/heads/${BRANCH}`])).toBe(prHead);
+  });
+
+  it("checks the markers of a conflicted path whose name looks like an index stage", async () => {
+    const { origin, scratch } = makeOrigin();
+    const tricky = "0:package.json";
+    commitIn(scratch, "package.json", "clean\n", "a clean file the stage syntax would read instead");
+    git(scratch, ["push", "-q", "origin", "main"]);
+    git(scratch, ["checkout", "-q", "-b", BRANCH]);
+    commitIn(scratch, tricky, "branch side\n", "branch edit");
+    git(scratch, ["push", "-q", "origin", BRANCH]);
+    git(scratch, ["checkout", "-q", "main"]);
+    commitIn(scratch, tricky, "main side\n", "main edit");
+    git(scratch, ["push", "-q", "origin", "main"]);
+
+    const { ws, wc } = await synced(origin);
+    const merging = await ws.prepareBranch(wc, { branch: BRANCH, start: "remote-merging" });
+    if (merging.kind !== "conflicted") throw new Error(`expected a conflict, got ${merging.kind}`);
+    await expect(ws.publishBranch(wc, merging.prepared, { message: "merging main" })).rejects.toThrow(`${tricky} still has conflict markers`);
   });
 
   it("calls beforePush with the commit before pushing it, and pushes nothing when it throws", async () => {

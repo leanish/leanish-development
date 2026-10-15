@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { actionChanges, actionGaps, actionsLocated, resolveUses } from "../src/actions-changes.ts";
+import { ActionsCatalog, actionChanges, actionGaps, actionsLocated, resolveUses } from "../src/actions-changes.ts";
 import { ActionsGitHub } from "../src/actions-github.ts";
 import { type ActionsInventory, parseUses, readActionsInventory } from "../src/actions-inventory.ts";
 import { parseConfig } from "../src/config.ts";
@@ -20,7 +20,7 @@ function tree(files: Record<string, string>): Tree {
   };
 }
 
-/** GitHub: actions/checkout's v7.0.1 is a lightweight tag, v4.2.2 an annotated one; releases for both. */
+/** GitHub: actions/checkout's v7.0.1 is a lightweight tag, v4.2.2 an annotated one; immutable releases for both. */
 function github(extra: Record<string, FakeResponse> = {}): ActionsGitHub {
   return new ActionsGitHub(
     fakeFetch({
@@ -29,8 +29,8 @@ function github(extra: Record<string, FakeResponse> = {}): ActionsGitHub {
       [`${API}/repos/actions/checkout/git/tags/${TAG_OBJECT}`]: { body: { object: { type: "commit", sha: OLD_CHECKOUT_SHA } } },
       [`${API}/repos/actions/checkout/releases?per_page=100&page=1`]: {
         body: [
-          { tag_name: "v7.0.1", published_at: "2026-04-10T17:31:14Z", draft: false },
-          { tag_name: "v4.2.2", published_at: "2024-10-23T14:46:00Z", draft: false },
+          { tag_name: "v7.0.1", published_at: "2026-04-10T17:31:14Z", draft: false, immutable: true },
+          { tag_name: "v4.2.2", published_at: "2024-10-23T14:46:00Z", draft: false, immutable: true },
         ],
       },
       ...extra,
@@ -150,10 +150,45 @@ describe("resolving uses", () => {
     const none: ActionsInventory = { uses: [], docker: [], files: [], gaps: [] };
     const resolutions = await resolveUses([head], gh);
     expect((await actionChanges(none, head, resolutions, gh, parseConfig({}))).problems).toEqual([
-      "acme/tools@3d3c42e5aac5ba805825da76410c181273ba90b1 (ci.yml): acme/tools has no published GitHub release for v1.0.0, so the gate can't check its age",
+      "acme/tools@3d3c42e5aac5ba805825da76410c181273ba90b1 (ci.yml): acme/tools has no immutable GitHub release for v1.0.0, so the gate can't trust its age",
     ]);
     const config = parseConfig({ ownPackages: { "GitHub Actions": { owners: ["acme"] } } });
     expect(await actionChanges(none, head, resolutions, gh, config)).toEqual({ problems: [], gaps: [], changes: [] });
+  });
+});
+
+describe("mutable releases", () => {
+  // A mutable release's tag can be moved to newer code, which would then inherit the release's age.
+  const use = { name: "acme/tools", path: undefined, ref: CHECKOUT_SHA, comment: "v2.0.0", file: "ci.yml" };
+  const tags = {
+    [`${API}/repos/acme/tools/git/ref/tags/v2.0.0`]: { body: { object: { type: "commit", sha: CHECKOUT_SHA } } },
+  };
+
+  it("fails a changed action whose release is mutable, and gives the catalog its tag without a date", async () => {
+    const gh = github({
+      ...tags,
+      [`${API}/repos/acme/tools/releases?per_page=100&page=1`]: {
+        body: [{ tag_name: "v2.0.0", published_at: "2024-01-01T00:00:00Z", draft: false, immutable: false }],
+      },
+    });
+    const head: ActionsInventory = { uses: [use], docker: [], files: ["ci.yml"], gaps: [] };
+    const none: ActionsInventory = { uses: [], docker: [], files: [], gaps: [] };
+    expect((await actionChanges(none, head, await resolveUses([head], gh), gh, parseConfig({}))).problems).toEqual([
+      "acme/tools@3d3c42e5aac5ba805825da76410c181273ba90b1 (ci.yml): acme/tools has no immutable GitHub release for v2.0.0, so the gate can't trust its age",
+    ]);
+    const catalog = new ActionsCatalog(gh);
+    expect(await catalog.versions({ ecosystem: "GitHub Actions", name: "acme/tools" })).toEqual(["v2.0.0"]);
+    expect(await catalog.published({ ecosystem: "GitHub Actions", name: "acme/tools", version: "v2.0.0" })).toBeUndefined();
+  });
+
+  it("dates a release found by its tag alone only when it's immutable", async () => {
+    const release = (immutable: boolean | undefined) => github({
+      [`${API}/repos/acme/tools/releases?per_page=100&page=1`]: { body: [] },
+      [`${API}/repos/acme/tools/releases/tags/v2.0.0`]: { body: { tag_name: "v2.0.0", published_at: "2024-01-01T00:00:00Z", draft: false, ...(immutable === undefined ? {} : { immutable }) } },
+    });
+    expect(await release(true).releasePublished("acme/tools", "v2.0.0")).toEqual(new Date("2024-01-01T00:00:00Z"));
+    expect(await release(false).releasePublished("acme/tools", "v2.0.0")).toBeUndefined();
+    expect(await release(undefined).releasePublished("acme/tools", "v2.0.0")).toBeUndefined();
   });
 });
 

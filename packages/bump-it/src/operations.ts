@@ -8,6 +8,7 @@ import type { GateEnvironment, GradleInputs } from "../../ci/src/gate.ts";
 import type { NpmPeerPlanner } from "../../ci/src/npm-peers.ts";
 import type { Tree } from "../../ci/src/tree.ts";
 import type { ToolRunContext } from "../../remediation/src/command.ts";
+import { symlinkProblems } from "../../remediation/src/git-copies.ts";
 import { referenceTransform } from "../../remediation/src/gradle-reference.ts";
 import { type GradleInventories, lockfilesOf } from "../../remediation/src/inventories.ts";
 import { branchFor, ownPullRequests, topicOf } from "../../remediation/src/own-pr.ts";
@@ -117,10 +118,12 @@ export async function writeWrapper(execution: Execution, computed: Computed): Pr
 
 export async function verify(execution: Execution, computed: Computed): Promise<void> {
   const { context, deps, env, inventories } = execution;
-  const head = deps.trees.working(context.workingCopy);
-  // Inventory executes repository code: capture all wrapper hashes after that build has finished.
-  const gradle = { base: computed.gradle, head: await inventories.ofWorkingTree(head) };
-  const changedFiles = await deps.changedSince(context.workingCopy, computed.base.id);
+  // Everything below reads this snapshot, never the live working tree, and publication commits exactly its tree.
+  const candidate = await deps.snapshot(context.workingCopy);
+  const head = await deps.trees.commit(context.workingCopy, candidate);
+  const gradle = { base: computed.gradle, head: await inventories.ofCommit(head) };
+  const changedFiles = await deps.changedBetween(context.workingCopy, computed.base.id, candidate);
+  const wrapperAt = computed.plan.moves.some((move) => move.mechanism === "gradle-wrapper") ? await deps.wrapperAt(context.workingCopy, candidate) : undefined;
   // The base with the plan applied by Gradle (and its generated wrapper): the base itself when the plan moves nothing there.
   const moves = referenceMoves(computed.plan);
   const wrapper = computed.wrapperFiles ?? [];
@@ -133,14 +136,15 @@ export async function verify(execution: Execution, computed: Computed): Promise<
     head,
     env,
     wrapper: execution.wrapper,
-    wrapperFiles: computed.plan.moves.some((move) => move.mechanism === "gradle-wrapper") ? await deps.readWrapperFiles(context.workingCopy) : undefined,
-    wrapperJarSha256: computed.plan.moves.some((move) => move.mechanism === "gradle-wrapper") ? await deps.wrapperJarSha256(context.workingCopy) : undefined,
+    wrapperFiles: wrapperAt?.files,
+    wrapperJarSha256: wrapperAt?.jarSha256,
     gradle,
     reference,
     changedFiles,
   });
-  if (problems.length > 0) {
-    throw new Error(`verification failed: ${problems.join("; ")}`);
+  const links = symlinkProblems(await deps.symlinkedChanges(context.workingCopy, computed.base.id, candidate));
+  if (problems.length > 0 || links.length > 0) {
+    throw new Error(`verification failed: ${[...links, ...problems].join("; ")}`);
   }
 }
 

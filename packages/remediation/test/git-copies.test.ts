@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { WorkingCopy } from "../../agent-basics/src/types/working-copy.ts";
-import { changedSince, exportCommit, sameTreeAs } from "../src/git-copies.ts";
+import { candidateTree, changedBetween, changedSince, exportCommit, sameTreeAs, snapshotCandidate, symlinkedChanges, symlinkProblems } from "../src/git-copies.ts";
 
 let root: string;
 let workingCopy: WorkingCopy;
@@ -123,5 +123,59 @@ describe("git copies", () => {
     const twins = input(["mktree"], `100644 blob ${file}\tREADME\n100644 blob ${file}\treadme\n`);
     const twinCommit = input(["-c", "user.email=t@example.com", "-c", "user.name=t", "commit-tree", twins, "-m", "twins"], "");
     await expect(exportCommit(workingCopy, twinCommit)).rejects.toThrow("has paths that collide: README and readme");
+  });
+});
+
+describe("the verification snapshot", () => {
+  /** A repository of its own: these tests commit, stage and write freely. */
+  async function repository(): Promise<{ readonly copy: WorkingCopy; readonly run: (args: ReadonlyArray<string>) => string; readonly base: string }> {
+    const dir = await mkdtemp(join(tmpdir(), "candidate-"));
+    const copy: WorkingCopy = { projectId: "leanish/widget", path: join(dir, "wc"), branch: "main", headSha: "", gitDir: join(dir, "git") };
+    spawnSync("git", ["init", "-q", "-b", "main", "--separate-git-dir", copy.gitDir!, copy.path]);
+    const run = (args: ReadonlyArray<string>) => {
+      const result = spawnSync("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", ...args], { cwd: copy.path, encoding: "utf8" });
+      if (result.status !== 0) throw new Error(result.stderr);
+      return result.stdout.trim();
+    };
+    await writeFile(join(copy.path, "package-lock.json"), '{"v":1}\n');
+    await writeFile(join(copy.path, ".gitignore"), "build/\n");
+    run(["add", "--all"]);
+    run(["commit", "-q", "-m", "base"]);
+    return { copy, run, base: run(["rev-parse", "HEAD"]) };
+  }
+
+  it("records the working tree as publication stages it, without touching the index, and keeps it whatever comes later", async () => {
+    const { copy, run, base } = await repository();
+    await writeFile(join(copy.path, "package-lock.json"), '{"v":2}\n');
+    await writeFile(join(copy.path, "added.txt"), "new\n");
+    await mkdir(join(copy.path, "build"), { recursive: true });
+    await writeFile(join(copy.path, "build", "out.txt"), "ignored\n");
+    const candidate = await snapshotCandidate(copy);
+    expect(run(["diff", "--cached", "--name-only"])).toBe("");
+    expect(await changedBetween(copy, base, candidate)).toEqual(["added.txt", "package-lock.json"]);
+    expect(await candidateTree(copy)).toBe(run(["rev-parse", `${candidate}^{tree}`]));
+    // A write after the snapshot changes neither the snapshot nor what publication must find staged.
+    await writeFile(join(copy.path, "package-lock.json"), '{"v":"unverified"}\n');
+    expect(run(["show", `${candidate}:package-lock.json`])).toBe('{"v":2}');
+    expect(await candidateTree(copy)).toBe(run(["rev-parse", `${candidate}^{tree}`]));
+  });
+
+  it("has no candidate before a snapshot", async () => {
+    const { copy } = await repository();
+    expect(await candidateTree(copy)).toBeUndefined();
+  });
+
+  it("finds the paths the snapshot made symbolic links, a directory replaced by one included", async () => {
+    const { copy, base } = await repository();
+    await mkdir(join(copy.path, "real"), { recursive: true });
+    await writeFile(join(copy.path, "real", "lock.json"), '{"v":2}\n');
+    await rm(join(copy.path, "package-lock.json"));
+    await symlink(join(copy.path, "real", "lock.json"), join(copy.path, "package-lock.json"));
+    await symlink(join(copy.path, "real"), join(copy.path, "gradle"));
+    await writeFile(join(copy.path, "plain.txt"), "plain\n");
+    expect(await symlinkedChanges(copy, base, await snapshotCandidate(copy))).toEqual(["gradle", "package-lock.json"]);
+    expect(symlinkProblems(["package-lock.json"])).toEqual([
+      "the edit made package-lock.json a symbolic link: the tools publish no links, which can point verification's reads elsewhere",
+    ]);
   });
 });

@@ -4,8 +4,10 @@
  *   - a `uses:` that's new or points elsewhere must be pinned to a full
  *     commit SHA whose `# vX.Y.Z` comment names a tag pointing at it;
  *   - its age is its GitHub release's publish time (a tag's own date is
- *     whatever its author wrote); no published release fails, own actions
- *     aside (they skip only the wait);
+ *     whatever its author wrote), trusted only from an immutable release (a
+ *     mutable one's tag can be moved to newer code, which would inherit the
+ *     release's age); no immutable release fails, own actions aside (they
+ *     skip only the wait);
  *   - unchanged uses that aren't pinned or verified, `docker://` uses and
  *     local actions without metadata are coverage gaps: the PR didn't make
  *     them worse.
@@ -100,7 +102,7 @@ export async function actionChanges(
     if (isOwnPackage(config.ownPackages, pkg) || changes.has(`${pkg.name}@${pkg.version}`)) continue;
     const published = await github.releasePublished(use.name, resolution.version);
     if (published === undefined) {
-      problems.push(`${label}: ${use.name} has no published GitHub release for ${resolution.version}, so the gate can't check its age`);
+      problems.push(`${label}: ${use.name} has no immutable GitHub release for ${resolution.version}, so the gate can't trust its age`);
       continue;
     }
     // Versions of this action that base used and head no longer does.
@@ -133,7 +135,7 @@ export function actionGaps(inventory: ActionsInventory, resolutions: ReadonlyMap
   return gaps;
 }
 
-/** An action's versions are its releases' tags; their dates, the releases' publish times. */
+/** An action's versions are its releases' tags; their dates, the publish times of the immutable ones (see `releasePublished`). */
 export class ActionsCatalog implements VersionCatalog {
   private readonly github: ActionsGitHub;
 

@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- An action's release age is trusted only from an immutable GitHub release: a mutable one's tag can be moved to
+  newer code that would inherit its age. A changed action without an immutable release fails the gate, and the tools
+  don't pick such a version (bump-it says so in a note). Updates to actions whose releases are mutable, among them
+  `actions/checkout`, `actions/upload-artifact` and `actions/download-artifact` in October 2026, are a person's.
+
+### Fixed
+
+The 0.5.1 release review's six findings, each refusing the case visibly:
+
+- Both tools verify a snapshot commit of the agent's edit and publish exactly its tree, so nothing written to the
+  working tree after verification (by a process left running) is published.
+- An edit that leaves a symbolic link fails verification.
+- A same-version npm lockfile entry whose source, integrity or bundling changed fails the gate.
+- The Gradle inventory fails when a configuration becomes resolvable while others resolve, instead of leaving it out.
+- A line with a Kotlin or Groovy string interpolation that mentions `strictly`, or an interpolation that spans lines
+  or holds comments, escapes or triple-quoted strings, fails the strict-pin check.
+- A merge's conflicted paths are checked for markers in what is staged, not in the working file, and a refused
+  publication leaves their conflicts in place, so a retry checks them again.
+
 ## 0.5.1 - 2026-10-14
 
 ### Changed

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { parseConfig } from "../src/config.ts";
 import { NpmRegistry } from "../src/npm-registry.ts";
-import { requiredClosure, type RequiredInputs, requiredPath, REQUIRED_LIMITS } from "../src/npm-required.ts";
+import { requiredClosure, type RequiredInputs, requiredPath } from "../src/npm-required.ts";
 import { verifiedRequiredProofs } from "../src/npm-required-gate.ts";
 import { releaseAgeProblems } from "../src/release-age.ts";
 import { NpmCatalog } from "../src/catalogs.ts";
@@ -125,8 +125,8 @@ describe("npm security-required release age", () => {
     }
     docs.vite = { ...baseDoc, versions: { ...baseDoc.versions, "8.3.3": { dependencies: { child0: "1.0.0" } } } };
     const proof = await requiredClosure(root, inputs(registry(docs)));
-    expect(proof.problems.length).toBe(depth > REQUIRED_LIMITS.depth ? 1 : 0);
-    if (depth > REQUIRED_LIMITS.depth) expect(proof.problems.join()).toContain("bound reached");
+    expect(proof.problems.length).toBe(depth > 8 ? 1 : 0);
+    if (depth > 8) expect(proof.problems.join()).toContain("bound reached");
     else expect(proof.targets).toHaveLength(depth);
   });
 
@@ -139,8 +139,8 @@ describe("npm security-required release age", () => {
     }
     docs.vite = { ...baseDoc, versions: { ...baseDoc.versions, "8.3.3": { dependencies } } };
     const proof = await requiredClosure(root, inputs(registry(docs)));
-    expect(proof.problems.length).toBe(count > REQUIRED_LIMITS.nodes ? 1 : 0);
-    if (count > REQUIRED_LIMITS.nodes) expect(proof.problems.join()).toContain("bound reached");
+    expect(proof.problems.length).toBe(count > 128 ? 1 : 0);
+    if (count > 128) expect(proof.problems.join()).toContain("bound reached");
     else expect(proof.targets).toHaveLength(count - 1);
   });
 
@@ -148,8 +148,8 @@ describe("npm security-required release age", () => {
     const versions = Object.fromEntries(Array.from({ length: count }, (_, index) => [`8.5.${29 + index}`, {}]));
     const time = Object.fromEntries(Object.keys(versions).map((version) => [version, young]));
     const proof = await requiredClosure(root, inputs(registry({ postcss: { versions, time } })));
-    expect(proof.problems.length).toBe(count > REQUIRED_LIMITS.versions ? 1 : 0);
-    if (count > REQUIRED_LIMITS.versions) expect(proof.problems.join()).toContain("version bound reached");
+    expect(proof.problems.length).toBe(count > 2048 ? 1 : 0);
+    if (count > 2048) expect(proof.problems.join()).toContain("version bound reached");
     else expect(proof.targets[0]?.version).toBe("8.5.29");
   });
 

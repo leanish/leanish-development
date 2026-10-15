@@ -25,7 +25,7 @@ import type { ToolHandlers, ToolRunContext } from "../../remediation/src/command
 import { FLOORS_FILE, isMechanical } from "../../remediation/src/edit-checks.ts";
 import { writeLocalFile } from "../../remediation/src/local-files.ts";
 import { gradleSourceIndex } from "../../ci/src/gradle-sources.ts";
-import { changedSince } from "../../remediation/src/git-copies.ts";
+import { candidateTree, changedBetween, snapshotCandidate, symlinkedChanges, symlinkProblems } from "../../remediation/src/git-copies.ts";
 import { referenceTransform } from "../../remediation/src/gradle-reference.ts";
 import { type GradleInventories, lockfilesOf, sandboxedGradleInventories } from "../../remediation/src/inventories.ts";
 import { FileJournal, type PublicationJournal } from "../../remediation/src/journal.ts";
@@ -75,7 +75,14 @@ export interface SecureItDeps {
   readonly trees: { readonly commit: (workingCopy: WorkingCopy, sha: string) => Promise<Tree>; readonly working: (workingCopy: WorkingCopy) => Tree };
   readonly candidates: (tree: Tree, env: GateEnvironment, gradle: GradleInputs) => Promise<SecurityCandidates>;
   readonly verify: (inputs: VerifyInputs) => Promise<string[]>;
-  readonly changedSince: (workingCopy: WorkingCopy, sha: string) => Promise<string[]>;
+  /** Records the working tree as the verification snapshot (`snapshotCandidate`), returning its commit. */
+  readonly snapshot: (workingCopy: WorkingCopy) => Promise<string>;
+  /** The tree of the last snapshot, which publication must stage (`candidateTree`). */
+  readonly candidateTree: (workingCopy: WorkingCopy) => Promise<string | undefined>;
+  /** Every path `sha` changed relative to `base` (`changedBetween`). */
+  readonly changedBetween: (workingCopy: WorkingCopy, base: string, sha: string) => Promise<string[]>;
+  /** The paths `sha` made symbolic links relative to `base` (`symlinkedChanges`). */
+  readonly symlinkedChanges: (workingCopy: WorkingCopy, base: string, sha: string) => Promise<string[]>;
   readonly journal: (context: ToolRunContext) => PublicationJournal;
   /** Writes `content` at `path` (relative to the working copy): taking the base's side of a conflicted dependency file. */
   readonly writeFile: (workingCopy: WorkingCopy, path: string, content: string) => Promise<void>;
@@ -101,7 +108,10 @@ export function defaultDeps(): SecureItDeps {
     candidates: securityCandidates,
     npm: (context, args) => runSandboxed(context.isolation, { workingCopy: context.workingCopy, command: ["npm", ...args] }),
     verify: verifyPlan,
-    changedSince: (workingCopy, sha) => changedSince(workingCopy, sha),
+    snapshot: (workingCopy) => snapshotCandidate(workingCopy),
+    candidateTree: (workingCopy) => candidateTree(workingCopy),
+    changedBetween: (workingCopy, base, sha) => changedBetween(workingCopy, base, sha),
+    symlinkedChanges: (workingCopy, base, sha) => symlinkedChanges(workingCopy, base, sha),
     journal: (context) => new FileJournal(context.config.dirs.state),
     writeFile: (workingCopy, path, content) => writeLocalFile(workingCopy.path, path, content),
     revert: (workingCopy, baseSha) => revertToBase(workingCopy, baseSha),
@@ -128,6 +138,7 @@ function publicationOf(context: ToolRunContext, deps: SecureItDeps): Publication
     workingCopy: context.workingCopy,
     journal: deps.journal(context),
     localRoots: machineRoots(context.config.dirs),
+    verifiedTree: () => deps.candidateTree(context.workingCopy),
   };
 }
 
@@ -564,7 +575,10 @@ async function reconcileBranch(context: ToolRunContext, deps: SecureItDeps, pr: 
   return merged.prepared;
 }
 
-/** Item 23 on the working copy as the agent left it, against `base`. */
+/**
+ * Item 23 on the working copy as the agent left it, against `base`: on a snapshot of it, never the live working tree,
+ * whose tree is then the only one publication commits.
+ */
 async function verifyEdit(
   context: ToolRunContext,
   deps: SecureItDeps,
@@ -576,18 +590,21 @@ async function verifyEdit(
   npmFiles?: ReadonlyMap<string, string>,
   cooldown?: (evaluation: CooldownEvaluation) => void,
 ): Promise<string[]> {
-  const head = deps.trees.working(context.workingCopy);
-  const headGradle = await inventories.ofWorkingTree(head);
+  const candidate = await deps.snapshot(context.workingCopy);
+  const head = await deps.trees.commit(context.workingCopy, candidate);
+  const headGradle = await inventories.ofCommit(head);
   let reference: GradleInventory | undefined;
   try {
     reference = await referenceOf(plan, base, baseGradle, inventories);
   } catch (err) {
     return [`the plan's Gradle reference can't be built: ${(err as Error).message}`];
   }
-  return deps.verify({
-    plan, base, head, env, npmFiles, gradle: { base: baseGradle, head: headGradle }, reference, changedFiles: await deps.changedSince(context.workingCopy, base.id),
+  const changedFiles = await deps.changedBetween(context.workingCopy, base.id, candidate);
+  const links = symlinkProblems(await deps.symlinkedChanges(context.workingCopy, base.id, candidate));
+  return [...links, ...await deps.verify({
+    plan, base, head, env, npmFiles, gradle: { base: baseGradle, head: headGradle }, reference, changedFiles,
     ...(cooldown === undefined ? {} : { cooldown }),
-  });
+  })];
 }
 
 /**

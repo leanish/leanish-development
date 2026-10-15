@@ -241,8 +241,8 @@ describe("gate", { timeout: 20_000 }, () => {
       [`${api}/repos/actions/checkout/git/ref/tags/v7.0.1`]: { body: { object: { type: "commit", sha: current } } },
       [`${api}/repos/actions/checkout/releases?per_page=100&page=1`]: {
         body: [
-          { tag_name: "v7.0.1", published_at: "2026-04-10T17:31:14Z" },
-          { tag_name: "v4.2.2", published_at: "2024-10-23T14:46:00Z" },
+          { tag_name: "v7.0.1", published_at: "2026-04-10T17:31:14Z", immutable: true },
+          { tag_name: "v4.2.2", published_at: "2024-10-23T14:46:00Z", immutable: true },
         ],
       },
       [affects("v4.2.2", "reviewed")]: { body: [] },

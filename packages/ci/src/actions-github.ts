@@ -51,7 +51,7 @@ export class ActionsGitHub {
     throw new Error(`GitHub tag ${tag} of ${repo} nests too many tag objects`);
   }
 
-  /** Published (non-draft) releases of `repo`, tag → publish time, every page; `complete` false past the page cap. */
+  /** Published (non-draft) releases of `repo`, tag → publish time, every page; `complete` false past the page cap. Which of them are immutable. */
   releasesOf(repo: string): Promise<Releases> {
     let cached = this.releases.get(repo);
     if (cached === undefined) {
@@ -63,27 +63,34 @@ export class ActionsGitHub {
 
   private async listReleases(repo: string): Promise<Releases> {
     const found = new Map<string, Date>();
+    const immutable = new Set<string>();
     for (let page = 1; page <= RELEASE_PAGES; page++) {
       const body = await this.get(`/repos/${repo}/releases?per_page=100&page=${page}`);
-      if (body === undefined) return { byTag: found, complete: true };
+      if (body === undefined) return { byTag: found, immutable, complete: true };
       if (!Array.isArray(body)) throw new Error(`GitHub releases of ${repo} aren't a list`);
       for (const release of body) {
         if (!isObject(release) || release["draft"] === true) continue;
         const tag = release["tag_name"];
         const published = typeof release["published_at"] === "string" ? new Date(release["published_at"]) : undefined;
-        if (typeof tag === "string" && published !== undefined && !Number.isNaN(published.getTime())) found.set(tag, published);
+        if (typeof tag === "string" && published !== undefined && !Number.isNaN(published.getTime())) {
+          found.set(tag, published);
+          if (release["immutable"] === true) immutable.add(tag);
+        }
       }
-      if (body.length < 100) return { byTag: found, complete: true };
+      if (body.length < 100) return { byTag: found, immutable, complete: true };
     }
-    return { byTag: found, complete: false };
+    return { byTag: found, immutable, complete: false };
   }
 
-  /** When the release of `tag` was published; undefined when `repo` has no published release for it. */
+  /**
+   * When the release of `tag` was published; undefined when `repo` has no published release for it, or only a mutable
+   * one: its tag can be moved to newer code, which would then inherit the release's age.
+   */
   async releasePublished(repo: string, tag: string): Promise<Date | undefined> {
-    const listed = (await this.releasesOf(repo)).byTag.get(tag);
-    if (listed !== undefined) return listed;
+    const releases = await this.releasesOf(repo);
+    if (releases.byTag.has(tag)) return releases.immutable.has(tag) ? releases.byTag.get(tag) : undefined;
     const release = await this.get(`/repos/${repo}/releases/tags/${encodeURIComponent(tag)}`);
-    if (!isObject(release) || release["draft"] === true || typeof release["published_at"] !== "string") return undefined;
+    if (!isObject(release) || release["draft"] === true || release["immutable"] !== true || typeof release["published_at"] !== "string") return undefined;
     const published = new Date(release["published_at"]);
     return Number.isNaN(published.getTime()) ? undefined : published;
   }
@@ -146,6 +153,8 @@ export class ActionsGitHub {
 
 export interface Releases {
   readonly byTag: ReadonlyMap<string, Date>;
+  /** The tags whose release is immutable: GitHub keeps their tag on the released commit. */
+  readonly immutable: ReadonlySet<string>;
   /** False when the repository has more releases than the gate reads. */
   readonly complete: boolean;
 }
