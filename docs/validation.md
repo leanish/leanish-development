@@ -230,6 +230,20 @@ worse than the deployed 0.5.1 and to document the rest as known deficiencies, fi
 Removing the parent-directory check failed the linked-directory test; restoring branch-topic recognition failed both
 recognition tests. Each source was restored byte for byte.
 
+## Release-candidate review of 0.5.2-rc.5 — 2026-10-15
+
+The candidate pass for `v0.5.2-rc.5` (`287637b`) recorded 52 commands, 0 failed, running both tools on the real
+adopting repositories and all six fixture repositories. The review blocked only on what is new or worse than 0.5.1.
+
+Sol's unprimed review found one regression, from rc.4's parent-link check: asking git about a file's parents also
+lists their other entries, so an unrelated linked sibling (`.github/notes-link`) failed the whole inventory, where
+0.5.1 read it. Astra's critical pass confirmed it, found no other regression, and warned that comparing the paths as
+written would miss `uses: ././linked`: per the [release review rule](releasing.md), it improved the fix rather than
+adding a finding. Only entries that are the file or one of its parents now count, compared after dropping `.` and
+empty segments; a `..` segment is refused, since a link before it decides where it leads.
+
+Removing the exact-path filter failed the sibling test; keeping `.` segments failed the `././linked` case. Each source
+was restored byte for byte.
 ## Fixture coverage
 
 What the fixture repositories exercise, by evidence state. Case numbers refer to each fixture's `EXPECTED.md`.
