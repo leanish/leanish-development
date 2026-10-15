@@ -32,9 +32,13 @@ function linkRefused(path: string, id: string): Error {
   return new Error(`${path} in ${id} is a symbolic link: it's refused rather than read through`);
 }
 
-/** `a`, `a/b`, `a/b/c` for `a/b/c`: a link on any of them leads the read elsewhere. */
-function selfAndParents(path: string): string[] {
-  const parts = path.split("/");
+/**
+ * `a`, `a/b`, `a/b/c` for `a/b/c`, `./a//b/c` too (git lists them so): a link on any of them leads the read elsewhere.
+ * A `..` fails instead, since a link before it decides where it leads.
+ */
+function selfAndParents(path: string, id: string): string[] {
+  const parts = path.split("/").filter((part) => part !== "" && part !== ".");
+  if (parts.includes("..")) throw new Error(`${path} in ${id} has a '..' segment: it's refused rather than resolved`);
   return parts.map((_, i) => parts.slice(0, i + 1).join("/"));
 }
 
@@ -44,7 +48,7 @@ export function workingTree(root: string): Tree {
     async read(path, options) {
       try {
         if (options?.regularFile === true) {
-          for (const entry of selfAndParents(path)) {
+          for (const entry of selfAndParents(path, "worktree")) {
             if ((await lstat(join(root, entry))).isSymbolicLink()) throw linkRefused(entry, "worktree");
           }
         }
@@ -90,10 +94,14 @@ export async function gitTree(root: string, revision: string, run: RunProcess, g
       if (options?.regularFile === true) {
         // `<mode> <type> <object>\t<path>` for the path and each parent: mode 120000 is a symbolic link, and one on a
         // parent hides the file from the commit while a checkout reads through it.
-        const entries = await git(["ls-tree", "-z", sha, "--", ...selfAndParents(path)]);
+        // Naming a directory also lists what's in it, so only the entries that are exactly these paths count.
+        const wanted = new Set(selfAndParents(path, sha));
+        const entries = await git(["ls-tree", "-z", sha, "--", ...wanted]);
         if (entries.code !== 0) throw new Error(`git ls-tree ${sha} ${path} failed: ${entries.stderr.trim()}`);
-        const link = entries.stdout.split("\0").find((entry) => entry.startsWith("120000 "));
-        if (link !== undefined) throw linkRefused(link.slice(link.indexOf("\t") + 1), sha);
+        for (const entry of entries.stdout.split("\0")) {
+          const entryPath = entry.slice(entry.indexOf("\t") + 1);
+          if (entry.startsWith("120000 ") && wanted.has(entryPath)) throw linkRefused(entryPath, sha);
+        }
       }
       const listed = await git(["ls-tree", "-z", "--name-only", sha, "--", path]);
       if (listed.code !== 0) throw new Error(`git ls-tree ${sha} ${path} failed: ${listed.stderr.trim()}`);
