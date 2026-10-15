@@ -27,8 +27,8 @@
 - An action's versions are its full release tags only: a partial tag (`v1.1`), which a pin's comment can't name, is
   no longer picked over a full one (`v1.0.1`) and then refused at verification.
 - Publication recognizes conflict markers at the size the staged `.gitattributes` give a file (shorter or longer than
-  seven) as well as seven or more whatever it says, while a longer run of `=`, a Markdown heading's underline, isn't a
-  separator.
+  seven) as well as seven or more whatever it says; a separator counts only alone on its line at that size, so a
+  Markdown heading's underline (a longer run of `=`, or one followed by text) isn't one.
 - A key named `uses` outside a job or step (`env: { uses: production }`, an action input) no longer fails the Actions
   inventory: it counts when it reads as an action and is otherwise left alone; a job's or step's `uses:` stays strict.
 

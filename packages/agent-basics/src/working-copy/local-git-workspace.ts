@@ -557,10 +557,10 @@ function sanitizeProjectId(id: string): string {
 /**
  * Conflict markers of the size git wrote for this path, and of the default size or longer whatever the attribute says,
  * so a `.gitattributes` the merge changed can't hide the markers git wrote before it: `<<<<<<<`/`>>>>>>>` lines (with a
- * label or none), and a `=======` or `|||||||` separator of exactly that size, since a longer run of `=` is a Markdown
- * heading underline.
+ * label or none), a `|||||||` base marker, and a `=======` separator alone on its line at exactly that size, as git
+ * writes it: a longer run, or one followed by text, is a Markdown heading's underline.
  */
 function conflictMarkers(size: number): RegExp {
   const sized = `<{${size}}|>{${size}}`;
-  return new RegExp(`^(<{7,}|>{7,}|${sized})( |$)|^(={7}|={${size}}|\\|{7}|\\|{${size}})( |$)`, "m");
+  return new RegExp(`^(<{7,}|>{7,}|${sized}|\\|{7}|\\|{${size}})( |$)|^(={7}|={${size}})$`, "m");
 }

@@ -392,12 +392,12 @@ describe.skipIf(!hasGit)("LocalGitWorkspace branch publication (real git)", () =
     await expect(ws.publishBranch(wc, merging.prepared, { message: "merging main" })).rejects.toThrow("README.md still has conflict markers");
     rmSync(join(wc.path, ".gitattributes"));
 
-    // A Markdown heading's underline isn't a separator.
-    writeFileSync(join(wc.path, "README.md"), "Both sides\n==========\n");
+    // A Markdown heading's underline isn't a separator, nor is a run of seven followed by text.
+    writeFileSync(join(wc.path, "README.md"), "Both sides\n==========\n======= kept\n");
     const published = await ws.publishBranch(wc, merging.prepared, { message: "merging main" });
     if (published.kind !== "pushed") throw new Error("expected a push");
     expect(gitOut(origin, ["log", "-1", "--format=%P|%s", BRANCH])).toBe(`${prHead} ${mainHead}|merging main`);
-    expect(gitOut(origin, ["show", `${BRANCH}:README.md`])).toBe("Both sides\n==========");
+    expect(gitOut(origin, ["show", `${BRANCH}:README.md`])).toBe("Both sides\n==========\n======= kept");
   });
 
   it("rechecks conflict markers after refusing a changed verification tree, without pushing", async () => {
