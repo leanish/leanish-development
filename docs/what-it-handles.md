@@ -49,6 +49,10 @@ The gate reads configured `package-lock.json` files, including workspace
 dependencies and transitive dependencies. A transitive dependency is one another
 package brings in. Recorded bundles are included. Configure lockfiles outside the root too.
 
+If a selected `package-lock.json` has an `npm-shrinkwrap.json` beside it in head,
+the gate refuses: npm would install from the shrinkwrap. List the effective
+`npm-shrinkwrap.json` in `npm.lockfiles`; selection never switches automatically.
+
 It checks advisories, release age, allowed registry sources and recorded version
 restrictions. CI also checks npm signatures and provenance attestations.
 When a version replaces another, it checks publisher continuity. Lost provenance,
@@ -186,6 +190,8 @@ dependency gets a floor instead. Gradle's own strict constraints on its embedded
 Kotlin (buildscript and settings classpaths) don't block fixes elsewhere.
 Neither tool changes a strict pin: verification refuses an edit that changes a
 line with `strictly` in its code (not in a string or a comment) in a build, settings or catalog file.
+Nested block comments in a changed file also fail verification: their boundaries
+could hide a strict pin, so the owner must simplify those comments first.
 
 ### What bump-it updates
 
@@ -218,6 +224,11 @@ secure-it selects the lowest eligible security fix and pins its tag's commit.
 bump-it selects the highest eligible aged release, with routine updates together
 and majors separate. Neither rewrites unrelated workflow policy.
 There are no dependency floors or npm publisher checks for Actions.
+
+An explicit `compatibleLines` override counts numeric segments after one optional
+leading `v` or `V`: with one segment, `v1.2.0` and `v2.2.0` stay in different lines.
+When secure-it targets different version lines of the same action in one workflow,
+verification rejects the conflicting planned pins visibly. A person must update those uses.
 
 ## Pull requests over time
 

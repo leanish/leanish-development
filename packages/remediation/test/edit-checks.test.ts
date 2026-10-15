@@ -9,6 +9,14 @@ const GROOVY = 'dependencies {\n  implementation "g:plain:1.0"\n  implementation
 const CATALOG = '[libraries]\nplain = "g:plain:1.0"\npinned = { module = "g:pinned", version = { strictly = "1.0" } }\n';
 
 describe("strict pins", () => {
+  it.each(["build.gradle.kts", "build.gradle", "gradle/libs.versions.toml"])("refuses nested block comments that could hide a pin in %s", async (path) => {
+    const before = '/* outer /* nested */ " */\nstrictly("1.0")\n';
+    const base = tree({ [path]: before });
+    expect(await strictPinsChanged([path], base, tree({ [path]: before.replace('strictly("1.0")', 'strictly("2.0")') })))
+      .toEqual([`${path}: a nested block comment can't be verified`]);
+    expect(await strictPinsChanged([path], base, base)).toEqual([`${path}: a nested block comment can't be verified`]);
+  });
+
   it("passes an edit that moves other declarations and leaves every strictly line as it was", async () => {
     const base = tree({ "build.gradle.kts": KTS, "build.gradle": GROOVY, "gradle/libs.versions.toml": CATALOG });
     const head = tree({ "build.gradle.kts": KTS.replace("plain:1.0", "plain:2.0"), "build.gradle": GROOVY.replace("plain:1.0", "plain:2.0"),

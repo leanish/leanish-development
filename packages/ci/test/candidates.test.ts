@@ -563,3 +563,24 @@ describe("actions without a trusted age", () => {
     expect(await untrustedActionReleases(checkout, ["v7.2.0"], catalog, parseConfig({}))).toEqual([]);
   });
 });
+
+describe("action compatible lines", () => {
+  it("selects a v-prefixed next major separately from the current line's minor", async () => {
+    const sha = "1".repeat(40);
+    const head = await tree({}, {
+      ".github/workflows/ci.yml": `jobs:\n  test:\n    steps:\n      - uses: acme/tool@${sha} # v1.2.0\n`,
+      ".github/supply-chain.json": JSON.stringify({ compatibleLines: { "GitHub Actions:acme/tool": 1 } }),
+    });
+    const env = environment({}, {});
+    const found = await bumpCandidates(head, { ...env, fetch: fakeFetch({
+      "https://api.github.com/repos/acme/tool/git/ref/tags/v1.2.0": { body: { object: { type: "commit", sha } } },
+      "https://api.github.com/repos/acme/tool/releases?per_page=100&page=1": {
+        body: ["v1.2.0", "v1.3.0", "v2.2.0"].map((tag_name) => ({ tag_name, published_at: OLD, draft: false, immutable: true })),
+      },
+    }) });
+    expect(found.incomplete).toEqual([]);
+    expect(found.bumps).toEqual([expect.objectContaining({
+      name: "acme/tool", from: "v1.2.0", minor: expect.objectContaining({ version: "v1.3.0" }), major: expect.objectContaining({ version: "v2.2.0" }),
+    })]);
+  });
+});

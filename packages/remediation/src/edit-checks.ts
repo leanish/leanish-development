@@ -105,6 +105,7 @@ function lineCode(line: string, state: CodeState, path: string): string {
   for (let i = 0; i < line.length; i++) {
     const char = line[i]!;
     if (state.blockComment) {
+      if (char === "/" && line[i + 1] === "*") throw new Error("a nested block comment can't be verified");
       if (char === "*" && line[i + 1] === "/") { state.blockComment = false; i++; }
       continue;
     }

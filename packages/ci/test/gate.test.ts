@@ -133,6 +133,16 @@ describe("gate", { timeout: 20_000 }, () => {
     await expect(runScan(workingTree(repo), environment({}, []))).rejects.toThrow("unknown field(s): lockfile");
   });
 
+  it("refuses a shrinkwrap introduced in head instead of reading the shadowed package lock", async () => {
+    const base = await commit({ "package-lock.json": lock({}) });
+    const head = await commit({ "npm-shrinkwrap.json": lock({}) });
+    await expect(runCompare(
+      await gitTree(repo, base, runProcess, join(repo, ".git")),
+      await gitTree(repo, head, runProcess, join(repo, ".git")),
+      environment({}, []),
+    )).rejects.toThrow("npm installs from the shrinkwrap; list npm-shrinkwrap.json in supply-chain.json npm.lockfiles instead");
+  });
+
   it("treats a lockfile base doesn't have yet as empty", async () => {
     const base = await commit({ "package-lock.json": lock({ stable: "1.0.0" }) });
     const head = await commit({
