@@ -59,6 +59,8 @@ describe("reading workflows", () => {
     const parsed = parseUses(workflow, "ci.yml");
     expect(parsed.uses.map((use) => use.name)).toEqual(["acme/shadow", "acme/tool"]);
     expect(parsed.local).toEqual(["./.github/workflows/reusable.yml"]);
+    // A `uses` key written as an alias still counts.
+    expect(parseUses("x: &k uses\njobs:\n  a:\n    steps:\n      - { *k : acme/aliased@0123456789abcdef0123456789abcdef01234567, run: echo }\n", "ci.yml").uses.map((use) => use.name)).toEqual(["acme/aliased"]);
     expect(() => parseUses("jobs:\n  a:\n    steps:\n      - uses: production\n", "ci.yml")).toThrow("can't read `uses: production`");
     expect(() => parseUses("jobs:\n  a:\n    uses: 3\n", "ci.yml")).toThrow("isn't a string");
     expect(() => parseUses("runs:\n  using: composite\n  steps:\n    - uses: [x]\n", "action.yml")).toThrow("isn't a string");

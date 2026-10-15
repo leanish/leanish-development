@@ -89,6 +89,8 @@ describe("source repositories", () => {
     // A host that only ends in `github.com` isn't GitHub.
     expect(githubRepository("https://notgithub.com/acme/lib")).toBeUndefined();
     expect(githubRepository("git+https://evilgithub.com/acme/lib.git")).toBeUndefined();
+    expect(githubRepository("https://evil.example/github.com/victim/repo")).toBeUndefined();
+    expect(githubRepository("git://github.com/Acme/Lib.git")).toBe("acme/lib");
     expect(githubRepository("github:acme/lib")).toBe("acme/lib");
     expect(githubRepository("acme/lib")).toBe("acme/lib");
     expect(githubRepository("https://gitlab.com/acme/lib")).toBeUndefined();

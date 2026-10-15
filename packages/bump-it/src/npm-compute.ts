@@ -12,6 +12,7 @@ import semver from "semver";
 
 import type { NpmDeclaration } from "../../ci/src/candidates.ts";
 import { type NodeRuntime, nodeRuntime, nodeTypeProblem, nodeTypeVersions } from "../../ci/src/node-runtime.ts";
+import { NPM_REGISTRY } from "../../ci/src/npm-lock.ts";
 import { resolveExact } from "../../remediation/src/npm-exact.ts";
 import { workingTree } from "../../ci/src/tree.ts";
 
@@ -333,12 +334,15 @@ function rememberAccepted(graph: NpmGraph, retained: ReadonlyMap<string, Copy>, 
 /**
  * A major keeps the graph npm induces, but none of its new versions may be deprecated: each version a transitive copy
  * takes that base didn't have must be in the registry's non-deprecated catalog, which unreadable data can't show.
- * Direct copies are the unit's own, chosen with their checks; bundled copies follow their carrier.
+ * Direct copies are the unit's own, chosen with their checks; bundled copies follow their carrier; a copy from git, a
+ * tarball or another registry has no npm catalog to ask, and the gate's source rules judge it.
  */
 async function assertNoNewDeprecated(graph: NpmGraph, baseVersions: ReadonlyMap<string, ReadonlyArray<string>>, lockfile: string, sources: TargetSources): Promise<void> {
   const declared = new Set(graph.declaredEdges().flatMap((edge) => (edge.to === undefined ? [] : [edge.to])));
   for (const copy of graph.copies()) {
     if (copy.bundled || declared.has(copy.path) || baseVersions.get(copy.name)?.includes(copy.version)) continue;
+    const resolved = (graph.packages[copy.path] as { resolved?: unknown } | undefined)?.resolved;
+    if (typeof resolved !== "string" || !resolved.startsWith(`${NPM_REGISTRY}/`)) continue;
     const listed = await sources.versions(copy.name).catch(() => undefined);
     if (listed === undefined) throw new Error(`${lockfile}: the major brings ${copy.name}@${copy.version}, whose registry catalog can't be read to rule out deprecation`);
     if (!listed.includes(copy.version)) throw new Error(`${lockfile}: the major brings ${copy.name}@${copy.version}, which is deprecated`);
