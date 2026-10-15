@@ -106,7 +106,8 @@ function lineCode(line: string, state: CodeState, path: string): string {
   for (let i = 0; i < line.length; i++) {
     const char = line[i]!;
     if (state.blockComment) {
-      if (char === "/" && line[i + 1] === "*") throw new Error("a nested block comment can't be verified");
+      // Kotlin nests block comments, so a `/*` inside one moves where it ends; Groovy's don't nest (`/* src/**/*.java */`).
+      if (char === "/" && line[i + 1] === "*" && path.endsWith(".kts")) throw new Error("a nested block comment can't be verified");
       if (char === "*" && line[i + 1] === "/") { state.blockComment = false; i++; }
       continue;
     }

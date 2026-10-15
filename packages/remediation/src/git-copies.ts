@@ -226,8 +226,11 @@ export async function linkProblems(workingCopy: WorkingCopy, base: string, sha: 
         }
         continue;
       }
+      // Changed paths are matched loosely too: on a case-insensitive checkout an added `FOO/x` lands in `foo/`.
+      const behind = loosely(target);
       for (const path of changed) {
-        if (target === "" || path === target || path.startsWith(`${target}/`)) {
+        const changedPath = loosely(path);
+        if (target === "" || changedPath === behind || changedPath.startsWith(`${behind}/`)) {
           problems.push(`the edit changed ${path}, behind the link ${link}: verification can't check what's behind one`);
         }
       }

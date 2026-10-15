@@ -179,6 +179,15 @@ describe("lockfile reading", () => {
     expect(changedPackages(base, head).map((pkg) => `${pkg.name}@${pkg.version}`)).toEqual(["d@1.1.0"]);
   });
 
+  it("lets an integrity be filled in where base had none, but not removed", () => {
+    const resolved = "https://registry.npmjs.org/a/-/a-1.0.0.tgz";
+    const integrity = `sha512-${sha512("a@1.0.0").toString("base64")}`;
+    const without = lockedPackages(lock({}, { "node_modules/a": { version: "1.0.0", resolved } }));
+    const withIt = lockedPackages(lock({}, { "node_modules/a": { version: "1.0.0", resolved, integrity } }));
+    expect(replacedArtifacts(without, withIt)).toEqual([]);
+    expect(replacedArtifacts(withIt, without).map((pkg) => pkg.name)).toEqual(["a"]);
+  });
+
   it("fails a same-version artifact replaced from another allowed registry, which no other check sees", async () => {
     const config = { ...DEFAULT_CONFIG, npm: { ...DEFAULT_CONFIG.npm, registries: [...DEFAULT_CONFIG.npm.registries, "https://npm.internal.example"] } };
     const head = lockedPackages(lock({}, {

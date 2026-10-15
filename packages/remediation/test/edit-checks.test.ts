@@ -68,12 +68,22 @@ describe("parsed catalog strict pins", () => {
 });
 
 describe("strict pins", () => {
-  it.each(["build.gradle.kts", "build.gradle"])("refuses nested block comments that could hide a pin in %s", async (path) => {
+  it("refuses nested block comments that could hide a pin in Kotlin, where they nest", async () => {
+    const path = "build.gradle.kts";
     const before = '/* outer /* nested */ " */\nstrictly("1.0")\n';
     const base = tree({ [path]: before });
     expect(await strictPinsChanged([path], base, tree({ [path]: before.replace('strictly("1.0")', 'strictly("2.0")') })))
       .toEqual([`${path}: a nested block comment can't be verified`]);
     expect(await strictPinsChanged([path], base, base)).toEqual([`${path}: a nested block comment can't be verified`]);
+  });
+
+  it("reads a Groovy block comment holding `/*` as one comment, since Groovy's don't nest", async () => {
+    const path = "build.gradle";
+    const before = '/* exclude src/**/*.java from the scan */\nimplementation "g:a:1.0"\nstrictly "1.0"\n';
+    const base = tree({ [path]: before });
+    expect(await strictPinsChanged([path], base, tree({ [path]: before.replace('"g:a:1.0"', '"g:a:1.1"') }))).toEqual([]);
+    expect(await strictPinsChanged([path], base, tree({ [path]: before.replace('strictly "1.0"', 'strictly "2.0"') })))
+      .toEqual([`the edit changed a Gradle strictly(...) pin in ${path}: strict versions are the owner's, which no plan moves`]);
   });
 
   it("passes an edit that moves other declarations and leaves every strictly line as it was", async () => {

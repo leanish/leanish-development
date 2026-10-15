@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- A `/*` inside a Groovy block comment (`/* src/**/*.java */`) no longer refuses edits to that build file: Groovy's
+  block comments don't nest; Kotlin's still do, and stay refused.
+- A path the edit adds behind an existing link is matched regardless of case, as a case-insensitive checkout places
+  `FOO/x` in a linked `foo/`.
+- An npm `integrity` filled in for a same-version entry that had none no longer fails the gate: it only pins the bytes
+  the same URL serves. Removing or changing one still fails.
+
 ## 0.5.2 - 2026-10-15
 
 ### Changed

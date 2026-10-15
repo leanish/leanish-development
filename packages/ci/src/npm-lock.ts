@@ -188,6 +188,7 @@ export function changedPackages(
 /**
  * Packages in `head` still at their `base` name and version whose artifact changed: another tarball URL, other bytes,
  * or bundled where they weren't (or the reverse). Nothing about a version tells a replaced artifact from the original.
+ * An integrity added where base had none only pins the bytes the same URL serves, as npm does when it fills one in.
  */
 export function replacedArtifacts(
   base: ReadonlyArray<LockedPackage>,
@@ -197,7 +198,7 @@ export function replacedArtifacts(
   return head.filter((pkg) => {
     const old = before.get(pkg.path);
     return old !== undefined && old.name === pkg.name && old.version === pkg.version
-      && (old.resolved !== pkg.resolved || old.integrity !== pkg.integrity || old.bundled !== pkg.bundled);
+      && (old.resolved !== pkg.resolved || (old.integrity !== undefined && old.integrity !== pkg.integrity) || old.bundled !== pkg.bundled);
   });
 }
 

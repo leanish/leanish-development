@@ -201,7 +201,7 @@ deficiency: string or comment forms it doesn't understand, including Groovy slas
 (`/…/`) and dollar-slashy (`$/…/$`) strings, can hide a changed `strictly(...)`
 in a branch the Gradle inventory doesn't see. Active pins are still caught by
 the inventory and reference checks. Recognized strict statements remain protected,
-and nested block comments fail visibly. Version 0.6.0 plans to replace this lexer
+and nested Kotlin block comments (Groovy's don't nest) fail visibly. Version 0.6.0 plans to replace this lexer
 with the official parsers Gradle ships: its Groovy and Kotlin compilers.
 
 ### What bump-it updates
