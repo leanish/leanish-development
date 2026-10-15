@@ -13,6 +13,14 @@ describe("parsed catalog strict pins", () => {
   const check = (before: string, after: string) => strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: after }));
   const changed = `the edit changed a Gradle strictly(...) pin in ${path}: strict versions are the owner's, which no plan moves`;
 
+  it("refuses moving a strict version to another dependency, directly or through version.ref", async () => {
+    const direct = '[libraries]\noptional = { module = "org.example:original", version = { strictly = "1.0" } }\n';
+    expect(await check(direct, direct.replace("original", "replacement"))).toEqual([changed]);
+    const referenced = '[versions]\npinned = { strictly = "1.0" }\n[libraries]\nlib = { module = "org.example:original", version.ref = "pinned" }\nother = { module = "org.example:other", version = "2.0" }\n';
+    expect(await check(referenced, referenced.replace("org.example:original", "org.example:replacement"))).toEqual([changed]);
+    expect(await check(referenced, referenced.replace('version = "2.0"', 'version = "2.1"'))).toEqual([]);
+  });
+
   it("refuses a changed multiline TOML strict value", async () => {
     const before = 'lib.strictly = """\n1.0"""\n';
     expect(await check(before, before.replace("1.0", "9.0"))).toEqual([changed]);

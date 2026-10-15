@@ -215,23 +215,36 @@ function balanceStrict(code: string, opened: string[]): void {
   }
 }
 
-/** Every parsed catalog value named `strictly`, in traversal order, paired with its complete key path. */
-function catalogStrictValues(text: string | undefined): Array<readonly [ReadonlyArray<string>, unknown]> {
-  const pins: Array<readonly [ReadonlyArray<string>, unknown]> = [];
-  const visit = (value: unknown, path: ReadonlyArray<string>): void => {
-    if (value === null || typeof value !== "object") return;
-    for (const [key, child] of Object.entries(value)) {
-      const keyPath = [...path, key];
-      if (key === "strictly") pins.push([keyPath, child]);
-      visit(child, keyPath);
+/**
+ * Every catalog entry a strict version belongs to, whole (`[libraries] x`, with its module, group, name and version),
+ * paired with its key path, in traversal order: the entries holding a `strictly`, and the entries whose `version.ref`
+ * names a strict `[versions]` one. Comparing only the values would let an edit move a pin to another dependency.
+ */
+function catalogStrictEntries(text: string | undefined): Array<readonly [ReadonlyArray<string>, unknown]> {
+  const catalog = parseToml(text ?? "") as Record<string, unknown>;
+  const holds = (value: unknown): boolean =>
+    value !== null && typeof value === "object" && Object.entries(value).some(([key, child]) => key === "strictly" || holds(child));
+  const strictVersions = new Set(Object.entries(asTable(catalog["versions"])).filter(([, value]) => holds(value)).map(([name]) => name));
+  const entries: Array<readonly [ReadonlyArray<string>, unknown]> = [];
+  for (const [section, table] of Object.entries(catalog)) {
+    if (table === null || typeof table !== "object" || Array.isArray(table)) {
+      if (section === "strictly" || holds(table)) entries.push([[section], table]);
+      continue;
     }
-  };
-  visit(parseToml(text ?? ""), []);
-  return pins;
+    for (const [name, entry] of Object.entries(table)) {
+      const ref = asTable(asTable(entry)["version"])["ref"];
+      if (name === "strictly" || holds(entry) || (typeof ref === "string" && strictVersions.has(ref))) entries.push([[section, name], entry]);
+    }
+  }
+  return entries;
+}
+
+function asTable(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
 /**
- * Catalogs compare parsed `strictly` key paths and values, in order; malformed TOML fails.
+ * Catalogs compare the whole entries strict versions belong to, parsed, in order; malformed TOML fails.
  * Build and settings files compare strict statements, including balanced continuations, in order and byte for byte.
  * Their hand lexer can miss unfamiliar string/comment forms or a changed variable outside a statement; the Gradle
  * inventory checks active pins, but this textual guard cannot guarantee protection of inactive branches.
@@ -240,7 +253,7 @@ export async function strictPinsChanged(changedFiles: ReadonlyArray<string>, bas
   const problems: string[] = [];
   for (const path of changedFiles.filter(isGradleVersionFile)) {
     try {
-      const pins = (text: string | undefined) => path.endsWith(".versions.toml") ? catalogStrictValues(text) : strictStatements(text, path);
+      const pins = (text: string | undefined) => path.endsWith(".versions.toml") ? catalogStrictEntries(text) : strictStatements(text, path);
       if (!isDeepStrictEqual(pins(await base.read(path)), pins(await head.read(path)))) {
         problems.push(`the edit changed a Gradle strictly(...) pin in ${path}: strict versions are the owner's, which no plan moves`);
       }
