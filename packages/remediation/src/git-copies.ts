@@ -213,8 +213,13 @@ export async function linkProblems(workingCopy: WorkingCopy, base: string, sha: 
     for (const link of [...links.keys()].sort()) {
       const target = resolved(link, links);
       if (target === undefined) continue;
+      if (target === OUTSIDE) {
+        problems.push(`the link ${link} leads outside the repository: verification can't tell whether it comes back to what the edit changed`);
+        continue;
+      }
       for (const path of changed) {
-        if (target === "" || path === target || path.startsWith(`${target}/`)) {
+        const changedPath = folded(path);
+        if (target === "" || changedPath === target || changedPath.startsWith(`${target}/`)) {
           problems.push(`the edit changed ${path}, behind the link ${link}: verification can't check what's behind one`);
         }
       }
@@ -238,29 +243,38 @@ async function linksOf(workingCopy: WorkingCopy, revision: string, run: RunProce
   return links;
 }
 
+/** A link leading out of the repository: it may come back in anywhere (an absolute path, `../<repository>/…`). */
+const OUTSIDE = Symbol("outside");
+
+/** A path as a case- and normalization-insensitive checkout (macOS's) matches it, so a differently cased link can't slip by. */
+function folded(path: string): string {
+  return path.normalize("NFC").toLowerCase();
+}
+
 /**
- * The repository path `link` leads to, walked component by component as a checkout would (following links in it, a
- * `..` after one going up from where it leads); undefined when it leaves the repository, whose outside isn't published.
- * `""` is the repository's root.
+ * The repository path `link` leads to, folded (`folded`), walked component by component as a checkout would: links in
+ * it followed, a `..` after one going up from where it leads. `""` is the repository's root; `OUTSIDE` when it leaves
+ * the repository; undefined for a loop, or more links than a checkout follows, which lead nowhere it can read.
  */
-function resolved(link: string, links: ReadonlyMap<string, string>): string | undefined {
+function resolved(link: string, links: ReadonlyMap<string, string>): string | typeof OUTSIDE | undefined {
+  const byPath = new Map([...links].map(([path, target]) => [folded(path), target]));
   const at: string[] = [];
-  const pending = link.split("/");
+  const pending = folded(link).split("/");
   for (let hops = 0; pending.length > 0;) {
     const part = pending.shift()!;
     if (part === "" || part === ".") continue;
     if (part === "..") {
-      if (at.length === 0) return undefined;
+      if (at.length === 0) return OUTSIDE;
       at.pop();
       continue;
     }
     at.push(part);
-    const target = links.get(at.join("/"));
+    const target = byPath.get(at.join("/"));
     if (target === undefined) continue;
-    if (++hops > 40) throw new Error(`${link}: too many links to follow`);
-    if (target.startsWith("/")) return undefined;
+    if (++hops > 40) return undefined;
+    if (target.startsWith("/")) return OUTSIDE;
     at.pop();
-    pending.unshift(...target.split("/"));
+    pending.unshift(...folded(target).split("/"));
   }
   return at.join("/");
 }

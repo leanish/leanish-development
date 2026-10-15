@@ -255,8 +255,9 @@ comment, so that update fails visibly and a person makes it.
 The gate reads a workflow, local reusable workflow or action metadata file (`action.yml`) that is a symbolic link as
 the path it points to, so the actions behind it aren't read; this is a documented gap, see
 [coverage gaps](coverage-gaps.md). The tools refuse an edit that adds or changes a symbolic link or a submodule, or
-changes anything an existing link leads to, since a commit records only where a link points. Links the edit leaves
-alone are the repository's own and are tolerated.
+changes anything an existing link leads to, since a commit records only where a link points. A repository with a
+link leading out of it can't be updated by the tools, since that link could lead back to anything. Other links the
+edit leaves alone are the repository's own and are tolerated.
 
 ## Pull requests over time
 
