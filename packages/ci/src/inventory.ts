@@ -10,7 +10,7 @@
  * configuration. Base and head each have their own: head may add the first
  * Gradle build, or remove the last one.
  */
-import { dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { type ActionsInventory, readActionsInventory } from "./actions-inventory.ts";
 import type { Config } from "./config.ts";
@@ -42,9 +42,17 @@ export interface Sources {
 
 const GRADLE_ROOT_FILES = ["settings.gradle.kts", "settings.gradle", "build.gradle.kts", "build.gradle"];
 
-/** The lockfiles and Gradle builds `tree` has under `config` (workflows are always read). */
-export async function sourcesOf(tree: Tree, config: Config): Promise<Sources> {
+/** The lockfiles and Gradle builds `tree` has under `config`; baseline and Gradle-only discovery may allow shadowed locks. */
+export async function sourcesOf(tree: Tree, config: Config, options: { readonly allowShadowedLockfiles?: boolean } = {}): Promise<Sources> {
   const lockfiles = config.npm.lockfiles ?? ((await tree.read("package-lock.json")) === undefined ? [] : ["package-lock.json"]);
+  if (options.allowShadowedLockfiles !== true) {
+    for (const path of lockfiles.filter((file) => basename(file) === "package-lock.json")) {
+      const shrinkwrap = join(dirname(path), "npm-shrinkwrap.json");
+      if (await tree.read(shrinkwrap) !== undefined) {
+        throw new Error(`${path} in ${tree.id} is shadowed by ${shrinkwrap}: npm installs from the shrinkwrap; list ${shrinkwrap} in supply-chain.json npm.lockfiles instead`);
+      }
+    }
+  }
   let gradleBuilds = config.gradle.builds;
   if (gradleBuilds === undefined) {
     const found = await Promise.all(GRADLE_ROOT_FILES.map(async (file) => (await tree.read(file)) !== undefined));

@@ -52,10 +52,23 @@ describe("isolated npm signatures", () => {
     expect(await absent(marker)).toBe(true);
   });
 
+  it("refuses a shadowed package lock before running signature commands", async () => {
+    await project();
+    await file("npm-shrinkwrap.json", "hostile alternative lockfile");
+    const commands: string[][] = [];
+    const run: RunProcess = async (_command, args) => {
+      commands.push([...args]);
+      return success;
+    };
+    await expect(npmSignatures(workingTree(repo), { run })).rejects.toThrow(
+      "npm installs from the shrinkwrap; list npm-shrinkwrap.json in supply-chain.json npm.lockfiles instead",
+    );
+    expect(commands).toEqual([]);
+  });
+
   it("uses clean files and fixed configuration for both install and audit, and cleans up", async () => {
     await project("", {}, { name: "app", version: "1.0.0", scripts: { prepare: "touch executed" } });
     await file(".npmrc", "git=./hostile\nregistry=https://evil.invalid\nproxy=https://evil.invalid\n");
-    await file("npm-shrinkwrap.json", "hostile alternative lockfile");
     const commands: string[][] = [];
     let staging = "";
     const run: RunProcess = async (command, args, options) => {

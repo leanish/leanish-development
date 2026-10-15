@@ -39,11 +39,11 @@ export interface YoungVersion {
   readonly replaced: ReadonlyArray<string>;
 }
 
-/** The compatible line of `version`: config's override (leading numeric segments), else the ecosystem's rule. */
+/** The compatible line of `version`: config's override (numeric segments after an optional v/V), else the ecosystem's rule. */
 export function compatibleLine(config: Config, pkg: PackageName, version: string): string {
   const segments = lineOverride(config, pkg);
   if (segments === undefined) return versionScheme(pkg.ecosystem).line(version);
-  const numbers = version.split(/[.\-+]/).filter((part) => /^\d+$/.test(part));
+  const numbers = version.replace(/^[vV]/, "").split(/[.\-+]/).filter((part) => /^\d+$/.test(part));
   return numbers.slice(0, segments).join(".");
 }
 
