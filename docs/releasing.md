@@ -19,26 +19,42 @@ unreleased changes collect under its "Unreleased" heading.
      repositories (kept out of regular passes; a candidate pass opts them in).
      A candidate's tool code doesn't change those repositories' gate pins: when
      the candidate changes the gate, get its CI evidence from runs pinned to it.
-   - Have whoever didn't implement the release's changes review the candidate's
-     whole state, unprimed: say what to review, not where to look. Real runs only
-     reach the cases the adopting repositories have today; this review looks for
-     the ones they didn't exercise.
-   - Then have a different reviewer take a second, critical pass on that review,
-     seeing its findings: it challenges them and looks for what the first pass
-     missed. Whoever implemented judges each finding against the rule below
-     rather than taking every one as required, and records whether the second
-     pass added anything (a finding the first missed, or one it rightly
-     overturned) or only cost time and tokens, so its worth can be judged across
-     releases.
+   - Review the candidate in three steps, each only if the one before found no
+     blocker; a blocker is fixed in a new candidate, which starts again at the
+     first step:
+     1. Two cheap reviewers compare the candidate with the deployed release
+        (`git diff v<deployed> v<version>-rc.<n>`): one goes through a fixed
+        checklist of risky cases (links, case and Unicode variants, base versus
+        head, a folder where a file is expected, unusual paths, submodules,
+        very large or looping inputs), the other looks freely for what the
+        change breaks or lets through.
+     2. Whoever didn't implement the release's changes reviews the candidate's
+        whole state, unprimed: say what to review, not where to look, and not
+        what the first step found. Real runs only reach the cases the adopting
+        repositories have today; this review looks for the ones they didn't
+        exercise.
+     3. On a candidate the second step finds clean, a different reviewer takes a
+        final, critical pass on that review: it challenges it and looks for what
+        it missed.
+
+     Whoever implemented judges each finding against the rule below rather than
+     taking every one as required, and records in [validation](validation.md)
+     what each step added (a finding the others missed, or one rightly
+     overturned) or whether it only cost time and tokens, so their worth can be
+     judged across releases.
 
    A fix found here lands on main through its own PR and gets a new candidate,
-   `rc.<n+1>`, which is run and reviewed again. Release only a candidate with
-   no unresolved review findings:
+   `rc.<n+1>`, which is run and reviewed again. A candidate blocks only on what
+   is new in the release or worse than the deployed release:
+   - Findings that weaken verification or the gate, produce wrong data, or abort
+     whole runs, compared with the deployed release, block.
    - A finding whose only effect is that a tool doesn't update something
      automatically (it skips it with a note, or the attempt fails visibly)
      doesn't block: document it as a known limitation and fix it later.
-   - Findings that weaken verification or the gate, produce wrong data, or abort
-     whole runs always block.
+   - A problem the deployed release already has doesn't block either: document
+     it as a known limitation in [coverage gaps](coverage-gaps.md) and fix it in
+     the next release. Holding a release for every older problem a fresh review
+     finds would keep the deployed release, which has them all, running longer.
 3. Open `release/<version>` from the reviewed candidate's commit; if main moved
    past it, those commits need a candidate of their own first. Set the root
    version in `package.json` and both root version fields in `package-lock.json`;
