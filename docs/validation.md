@@ -230,7 +230,6 @@ worse than the deployed 0.5.1 and to document the rest as known deficiencies, fi
 Removing the parent-directory check failed the linked-directory test; restoring branch-topic recognition failed both
 recognition tests. Each source was restored byte for byte.
 
-
 ## Release-candidate review of 0.5.2-rc.5 — 2026-10-15
 
 The candidate pass for `v0.5.2-rc.5` (`287637b`) recorded 52 commands, 0 failed, running both tools on the real
