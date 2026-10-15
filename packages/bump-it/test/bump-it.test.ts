@@ -92,7 +92,7 @@ function harness(options: { bumps?: BumpCandidate[]; prs?: GitHubPullRequest[]; 
     snapshot: async () => SNAPSHOT,
     candidateTree: async () => SNAPSHOT_TREE,
     changedBetween: async () => ["package.json", "package-lock.json"],
-    symlinkedChanges: async () => options.links ?? [],
+    linkProblems: async () => (options.links ?? []).map((path) => `the edit made ${path} a symbolic link: verification can't check what's behind one`),
     wrapperAt: async () => ({ files: wrapperArtifacts(), jarSha256: undefined }),
     journal: () => journal,
     priority: () => ({ read: async () => deferred, write: async (packages) => { deferred = [...packages]; } }),

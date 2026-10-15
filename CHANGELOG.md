@@ -11,29 +11,19 @@
 
 ### Fixed
 
+- The tools refuse an edit that adds or changes a symbolic link or a submodule, or changes anything an existing link
+  leads to (links in parent folders and chains followed): verification reads a commit, where a link is only the path
+  it points to. Links the edit leaves alone are the repository's own. The gate reads links as 0.5.1 did (a documented
+  gap).
+- Documented as pre-existing: a lookalike host (`notgithub.com/acme/lib`) is read as a GitHub repository when looking
+  up a package's repository advisories.
+
 The 0.5.2-rc.7 review's finding:
 
-- A linked `.github`, `.github/workflows` or `.github/actions` fails the gate and the tools' verification: a commit
-  lists such a root as the link itself, so the tools' snapshot verification stopped reading what was behind it, where
-  0.5.1's working-tree read had. Documented as pre-existing: linked folders inside `.github/actions`, and custom
-  conflict-marker sizes.
-
-The 0.5.2-rc.6 review's finding:
-
-- A PR that replaces inherited linked action metadata with the file passes the gate again: the base is read as
-  before, while head stays strict.
-
-The 0.5.2-rc.5 review's finding:
-
-- Checking a workflow or action metadata file's parents for links no longer trips on an unrelated linked sibling
-  (`.github/notes-link`), which made the whole inventory fail; the paths are compared after dropping `.` and empty
-  segments, and a `..` segment is refused.
+- Documented as pre-existing: custom conflict-marker sizes.
 
 The 0.5.2-rc.4 review's findings:
 
-- Workflow and action metadata under a linked directory fail the gate and the tools' verification too. A commit has
-  no file there, so the gate reported a missing local action while the runner read through the link; since rc.1,
-  the tools' snapshot verification missed what changed behind it.
 - secure-it recognizes its PRs by the unit their recorded plan names, not by the branch topic: two packages whose
   names make the same branch-safe topic (`@scope/foo`, `scope-foo`) no longer share a PR, and a numbered branch cut
   to fit a long topic is recognized instead of opening another.
@@ -43,9 +33,6 @@ The 0.5.2-rc.4 review's findings:
 
 The 0.5.2-rc.3 review's findings:
 
-- A workflow or action metadata file that is a symbolic link fails the gate and the tools' verification, inherited
-  or new. The gate read such a link as its target path and missed the actions behind it; since rc.1, the tools'
-  snapshot verification did too, where 0.5.1 had read through the link.
 - secure-it numbers an occupied branch after cutting its topic to length, as bump-it does, so a long topic whose
   branch is taken no longer loops forever.
 - Documented: the gate scans a bundled package as the lockfile records it (the archive is compared only for bundle
@@ -80,7 +67,7 @@ The 0.5.1 release review's six findings, each refusing the case visibly:
 
 - Both tools verify a snapshot commit of the agent's edit and publish exactly its tree, so nothing written to the
   working tree after verification (by a process left running) is published.
-- An edit that leaves a symbolic link fails verification.
+- An edit that adds a symbolic link fails verification (the final rule for links is the first entry above).
 - A same-version npm lockfile entry whose source, integrity or bundling changed fails the gate.
 - The Gradle inventory fails when a configuration becomes resolvable while others resolve, instead of leaving it out.
 - A line with a Kotlin or Groovy string interpolation that mentions `strictly`, or an interpolation that spans lines
