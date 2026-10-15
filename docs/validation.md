@@ -358,3 +358,15 @@ a link whose target is missing under every name leads nowhere and is ignored. Re
 lowercasing failed the sigma case, and disabling the variant refusal failed the case test; each source was restored
 byte for byte. Sol also found a pre-existing Maven comparison gap (`1.0-0.1` equal to `1.0`), documented in
 [coverage gaps](coverage-gaps.md).
+
+## Release-candidate review of 0.5.2-rc.11 — 2026-10-15
+
+The candidate pass for `v0.5.2-rc.11` (`ee0b3f9`) recorded 52 commands, 0 failed. Sol's unprimed review was clean, so
+Astra ran the final validation, and found one regression: the TOML strict-pin check of rc.2 compared only each
+`strictly` value and its key path, so changing the `module` beside it moved the owner's pin to another dependency,
+which 0.5.1's line comparison had caught. Catalogs now compare every entry a strict version belongs to, whole, and the
+entries whose `version.ref` names one. Dropping the `version.ref` part, or comparing only the values again, each failed
+its test; the source was restored byte for byte. Astra also found that the link rule checks case variants only at the
+final target, not through an intermediate link: new protection that is incomplete rather than a regression, planned
+for 0.6.0 and listed in [coverage gaps](coverage-gaps.md). Per the [release review rule](releasing.md), the final
+validation earned its cost this time.

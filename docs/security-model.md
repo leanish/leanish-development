@@ -116,8 +116,9 @@ Both tools are in this tree: [`secure-it`](../packages/secure-it) and [`bump-it`
 - **Strict pins stay the owner's, with a known inactive-branch deficiency.** The Gradle inventory marks strict
   declarations and records strict dependency constraints. Neither tool plans a change that would move a strict
   version where the change acts; the reference refuses to move one and compares strictness with the edit.
-  - For `*.versions.toml` catalogs, verification parses base and head with `smol-toml` and compares every value under
-    a key named `strictly`, paired with its full key path, as an ordered list. Changed paths or values, added or removed
+  - For `*.versions.toml` catalogs, verification parses base and head with `smol-toml` and compares, as an ordered
+    list, every entry a strict version belongs to, whole (module, group, name and version), with the entries whose
+    `version.ref` names a strict version, so a pin can't be moved to another dependency. Changed paths or values, added or removed
     pins, and a catalog that doesn't parse fail. Formatting changes with the same parsed pins can pass.
   - For `.gradle` and `.gradle.kts`, the backstop is a hand-written lexer. It compares recognized strict statements
     byte for byte, including balanced continuations (128 lines and 64 KiB maximum); unbalanced or over-budget
