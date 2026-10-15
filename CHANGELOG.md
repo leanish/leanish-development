@@ -16,6 +16,9 @@
   it points to. A link leading out of the repository, or to a path the commit has only by another case or Unicode
   form (where a macOS checkout could take it), fails too; other links the edit leaves alone are the repository's own.
   The gate reads links as 0.5.1 did (a documented gap).
+- A catalog's strict version is compared with the whole entry it belongs to (module, group, name), and with the entries
+  whose `version.ref` names it, so an edit can't move a pin to another dependency.
+- Documented: a case variant reached through an intermediate link isn't refused yet (planned for 0.6.0).
 - Documented as pre-existing: Maven versions that differ only in a trailing `-0.…` part (`1.0-0.1`) compare as equal
   when matching repository advisories.
 - Documented as pre-existing: a lookalike host (`notgithub.com/acme/lib`) is read as a GitHub repository when looking
