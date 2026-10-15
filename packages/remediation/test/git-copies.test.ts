@@ -187,18 +187,23 @@ describe("the verification snapshot", () => {
     ].sort());
   });
 
-  it("matches a differently cased link, and refuses any link leading out of the repository", async () => {
+  it("refuses a link whose target the commit has only by another case or form, and any link leading out", async () => {
     const { copy, run } = await repository();
     await mkdir(join(copy.path, "tools"));
     await writeFile(join(copy.path, "tools", "recipe.txt"), "runs: {}\n");
     await mkdir(join(copy.path, "local"));
     await symlink("../TOOLS/recipe.txt", join(copy.path, "local", "action.yml"));
+    // A final sigma lowercases differently from a medial one: only folding further than any filesystem matches it.
+    await mkdir(join(copy.path, "recipes", "aσ"), { recursive: true });
+    await writeFile(join(copy.path, "recipes", "aσ", "ci.yml"), "runs: {}\n");
+    await symlink("recipes/AΣ/ci.yml", join(copy.path, "sigma.yml"));
     run(["add", "--all"]);
     run(["commit", "-q", "-m", "a differently cased link"]);
     const cased = run(["rev-parse", "HEAD"]);
     await writeFile(join(copy.path, "tools", "recipe.txt"), "runs: { using: node }\n");
     expect(await linkProblems(copy, cased, await snapshotCandidate(copy))).toEqual([
-      "the edit changed tools/recipe.txt, behind the link local/action.yml: verification can't check what's behind one",
+      "the link local/action.yml leads to TOOLS/recipe.txt, which this commit has only by another case or form: verification can't tell where a checkout takes it",
+      "the link sigma.yml leads to recipes/AΣ/ci.yml, which this commit has only by another case or form: verification can't tell where a checkout takes it",
     ]);
     run(["checkout", "-q", "--", "."]);
     await symlink("../wc/tools/recipe.txt", join(copy.path, "reentering"));
@@ -209,7 +214,9 @@ describe("the verification snapshot", () => {
     await writeFile(join(copy.path, "package-lock.json"), '{"v":3}\n');
     expect(await linkProblems(copy, out, await snapshotCandidate(copy))).toEqual([
       "the link absolute leads outside the repository: verification can't tell whether it comes back to what the edit changed",
+      "the link local/action.yml leads to TOOLS/recipe.txt, which this commit has only by another case or form: verification can't tell where a checkout takes it",
       "the link reentering leads outside the repository: verification can't tell whether it comes back to what the edit changed",
+      "the link sigma.yml leads to recipes/AΣ/ci.yml, which this commit has only by another case or form: verification can't tell where a checkout takes it",
     ]);
   });
 

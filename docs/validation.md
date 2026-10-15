@@ -346,3 +346,15 @@ Unicode normalization, and a link leading out of the repository fails any edit. 
 links in a loop failing every unit, is fixed too: a loop, or more links than a checkout follows, leads nowhere it can
 read, so it's ignored. Removing the folding, ignoring outside links again, or failing on a loop each failed its test;
 each source was restored byte for byte.
+
+## Release-candidate review of 0.5.2-rc.10 — 2026-10-15
+
+The candidate pass for `v0.5.2-rc.10` (`8cd14d4`) recorded 52 commands, 0 failed. Sol's unprimed review found that
+rc.10's case folding still let a link through: lowercasing gives a final sigma (`AΣ` → `aς`) where the repository has
+a medial one (`aσ`), which a case-insensitive checkout matches. Rather than fold names the way some filesystem might,
+the rule now resolves links by exact name, and a link leading to a path the commit has only by another case or
+Unicode form (compared with a folding looser than any filesystem's, so that no variant is missed) fails any edit;
+a link whose target is missing under every name leads nowhere and is ignored. Replacing the loose folding with plain
+lowercasing failed the sigma case, and disabling the variant refusal failed the case test; each source was restored
+byte for byte. Sol also found a pre-existing Maven comparison gap (`1.0-0.1` equal to `1.0`), documented in
+[coverage gaps](coverage-gaps.md).
