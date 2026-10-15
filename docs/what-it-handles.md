@@ -154,8 +154,8 @@ the packages Gradle resolves, not a separate Maven build inventory.
 
 ### What secure-it fixes
 
-It uses the same lowest-fix rule as npm. A compatible line normally shares the
-first version number, such as OkHttp 4.x; configuration can narrow it.
+It uses the same lowest-fix rule as npm. A compatible line uses the first numeric
+segment, such as OkHttp 4.x, or `0.N` when the first is 0; `compatibleLines` can adjust it.
 It changes versions it can identify in repository declarations. For a transitive,
 it first tries a declared parent bringing it into every affected configuration.
 Candidates are tried lowest first within that parent's line, past the wait.

@@ -42,7 +42,7 @@ import { type FixWork, gradleMechanism } from "./plan.ts";
 
 const DAY_MS = 86_400_000;
 /** Reference resolutions one vulnerable module may cost, across all its roots. */
-export const PARENT_PROBES = 6;
+const PARENT_PROBES = 6;
 
 export interface GradleParentInputs {
   readonly base: Tree;

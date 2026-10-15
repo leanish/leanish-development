@@ -58,6 +58,20 @@ describe("comparison policy", () => {
     expect(result.failures).toEqual(["new: lib@2.0.0: GHSA-c has no exception", "new: added@1.0.0: GHSA-d has no exception"]);
   });
 
+  it.each([
+    { difference: "package", ecosystem: "npm", name: "added" },
+    { difference: "ecosystem", ecosystem: "Maven", name: "lib" },
+  ] as const)("blocks the same advisory on an added finding with a different $difference", ({ ecosystem, name }) => {
+    const existing = npm("lib", "1.0.0");
+    const added: Located = { ecosystem, name, version: "1.0.0", locations: ["added"] };
+    const snap = new Snapshot(new Map([existing, added].map((pkg) => [
+      `${pkg.ecosystem}|${pkg.name}|${pkg.version}`, [advisory("GHSA-shared")],
+    ])), [], new Date(`${TODAY}T12:00:00Z`));
+    const result = verdict([existing], [existing, added], snap);
+    expect(result.failures).toEqual([`new: ${name}@1.0.0: GHSA-shared has no exception`]);
+    expect(result.warnings).toEqual(["inherited: lib@1.0.0: GHSA-shared"]);
+  });
+
   it("counts a finding as the same across versions and copies of a package", () => {
     const snap = snapshot({ "lib@1.0.0": [advisory("GHSA-b")], "lib@1.0.1": [advisory("GHSA-b")] });
     const result = verdict([npm("lib", "1.0.0")], [npm("lib", "1.0.0"), npm("lib", "1.0.1", ["node_modules/x/node_modules/lib"])], snap);

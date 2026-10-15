@@ -10,7 +10,7 @@ import { runProcess, type RunProcess } from "../../ci/src/process.ts";
 import type { Tree } from "../../ci/src/tree.ts";
 import { fakeFetch } from "../../ci/test/fake-fetch.ts";
 import type { GradleTransform } from "../../remediation/src/inventories.ts";
-import { PARENT_PROBES, withGradleParents } from "../src/gradle-parents.ts";
+import { withGradleParents } from "../src/gradle-parents.ts";
 import { planFor } from "../src/plan.ts";
 
 const NOW = new Date("2026-10-10T12:00:00Z");
@@ -169,13 +169,14 @@ describe("moving a Gradle parent instead of flooring what it brings", () => {
   });
 
   it("stops at its probe budget, shared by the module's roots, and keeps the floor", async () => {
+    // Eight failing candidates precede the fix, so even a seventh probe exceeds the contract.
     const brings: Record<string, string> = { "4.9.3": "2.8.0", ...Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`4.9.${4 + i}`, "2.8.0"])), "4.12.0": "3.6.0" };
     const probes: string[] = [];
     const fixes = await withGradleParents([okio()], {
       base: BASE, gradle: inventory("4.9.3", false, true, brings), named: (group) => group === "com.squareup.okhttp3", inventories: references(probes, false, brings),
       env: environment([], AFFECTED, brings), config: parseConfig({}),
     });
-    expect(probes).toHaveLength(PARENT_PROBES);
+    expect(probes).toHaveLength(6);
     expect(fixes).toEqual([{ ...okio(), notes: [expect.stringContaining("the probe budget is spent")] }]);
   });
 });
@@ -289,7 +290,7 @@ describe("Gradle parents, regressions", () => {
     const own = { ...fixOf(E, "1.0", "GHSA-e"), to: { version: "1.1", line: "1", aged: true, major: false, blockers: [] } };
     const fixes = await withGradleParents([fixOf(X, "1.0", "GHSA-x"), own], { base: BASE, gradle, named: (group) => group === "g", inventories, env: both, config: parseConfig({}) });
     expect(probes[0]).toMatch(/^g:e:/);
-    expect(probes).toHaveLength(PARENT_PROBES);
+    expect(probes).toHaveLength(6);
     expect(fixes.find((fix) => fix.name === X)?.notes).toEqual([expect.stringContaining("the probe budget is spent")]);
   });
 

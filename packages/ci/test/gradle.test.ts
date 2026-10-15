@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { isOwnPackage, parseConfig } from "../src/config.ts";
 import { gradleLocated, gradleResolutionProblems, parseGradleInventory, runGradleInventory, strictPins } from "../src/gradle.ts";
@@ -134,6 +134,28 @@ describe("running the Gradle inventory", () => {
       return { code: 0, stdout: "", stderr: "" };
     };
   }
+
+  it("keeps GitHub and Actions credentials out of the Gradle child environment", async () => {
+    const credentials = [
+      "GITHUB_TOKEN", "GH_TOKEN", "GIT_FETCH_TOKEN", "ACTIONS_RUNTIME_TOKEN",
+      "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL",
+    ];
+    const calls: string[][] = [];
+    const inventory = gradlew(["."], calls, []);
+    const run: RunProcess = async (command, args, options) => {
+      expect(options?.env?.SUPPLY_CHAIN_TEST_ENV).toBe("kept");
+      for (const credential of credentials) expect(options?.env).not.toHaveProperty(credential);
+      return inventory(command, args, options);
+    };
+    try {
+      for (const credential of credentials) vi.stubEnv(credential, "test-credential");
+      vi.stubEnv("SUPPLY_CHAIN_TEST_ENV", "kept");
+      await runGradleInventory(repo, ["."], "worktree", run);
+      expect(calls).toHaveLength(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 
   it("collects nested builds the run configured, and fails on one Gradle's model lists that's missing", async () => {
     const calls: string[][] = [];
