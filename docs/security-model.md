@@ -113,7 +113,20 @@ Both tools are in this tree: [`secure-it`](../packages/secure-it) and [`bump-it`
 - **The tool decides versions, verifies the result with this gate, and publishes.** Every write to a PR re-reads it first and stops unless it's still the tool's, at the expected head. Nothing merges by itself.
 - **Published text keeps the machine out.** In a PR's title, description and commit message, absolute paths inside the working copy become repository-relative, and paths under the home, temp, state and cache directories become `<local path>` ([`publication-text.ts`](../packages/remediation/src/publication-text.ts)). The tool's own `<!-- leanish:… -->` markers (its state and encoded plan) pass through: this cleans what readers see, not every byte.
 - **Floor history stays intact.** secure-it compares recorded floors and their declarations before `compare`: compatibility floors never change, and security floors change only at exact planned targets with their scope and history preserved. New floors must be planned security additions, and only a dedicated floor-removal plan may remove security floors. Remaining target advisories are checked against compare's head findings from the same snapshot.
-- **Strict pins stay the owner's.** The Gradle inventory marks strict declarations and records strict dependency constraints. Neither tool plans a change that would move a strict version where the change acts; the reference refuses to move one and compares strictness with the edit; and verification refuses, before compare, an edit that changes a `strictly` statement in a Gradle build, settings or catalog file, including balanced continuation lines (128 lines and 64 KiB maximum). Strings and comments do not affect balancing; an unbalanced or over-budget statement fails verification. A Kotlin or Groovy string interpolation (`${…}`) is code the check doesn't read, so a line with one that mentions `strictly` anywhere, or one that doesn't close on its line or holds comments, escapes or nested triple-quoted strings, fails verification too. Nested block comments in a changed build, settings or catalog file also fail verification: their boundaries could hide a pin. This textual backstop covers inactive branches too. A changed variable outside the statement remains a limit: the reference sees it only when that pin is active in the inventoried build.
+- **Strict pins stay the owner's, with a known inactive-branch deficiency.** The Gradle inventory marks strict
+  declarations and records strict dependency constraints. Neither tool plans a change that would move a strict
+  version where the change acts; the reference refuses to move one and compares strictness with the edit.
+  - For `*.versions.toml` catalogs, verification parses base and head with `smol-toml` and compares every value under
+    a key named `strictly`, paired with its full key path, as an ordered list. Changed paths or values, added or removed
+    pins, and a catalog that doesn't parse fail. Formatting changes with the same parsed pins can pass.
+  - For `.gradle` and `.gradle.kts`, the backstop is a hand-written lexer. It compares recognized strict statements
+    byte for byte, including balanced continuations (128 lines and 64 KiB maximum); unbalanced or over-budget
+    statements, nested block comments, and unsupported interpolations fail visibly.
+  - **Known deficiency:** string or comment forms the lexer doesn't understand, including Groovy slashy (`/…/`)
+    and dollar-slashy (`$/…/$`) strings, can hide a changed `strictly(...)` in a branch the Gradle inventory doesn't
+    see. Active pins are still caught by the inventory and reference checks. A changed variable outside a recognized
+    statement is also seen only when the pin is active. Version 0.6.0 plans to replace this lexer with the official
+    parsers Gradle ships: its Groovy and Kotlin compilers.
 - **Floor removal requires a joint unlocked proof**, computed in sandboxed scratch copies of base
   ([how](../packages/secure-it/README.md#removing-redundant-security-floors)). npm resolves without lifecycle scripts;
   Gradle runs with a trusted init script, `--no-daemon` and no configuration cache. Incomplete data keeps the floors.

@@ -17,7 +17,15 @@ describe("npm lockfile selection", () => {
     const head = tree({ [path]: LOCK, [shrinkwrap]: LOCK });
     const config = parseConfig(lockfiles === undefined ? {} : { npm: { lockfiles } });
     await expect(sourcesOf(head, config)).rejects.toThrow(
-      `${path} in head is shadowed by ${shrinkwrap}: npm installs from the shrinkwrap; list ${shrinkwrap} in supply-chain.json npm.lockfiles instead`,
+      lockfiles === undefined
+        ? "head has npm-shrinkwrap.json: npm installs from the shrinkwrap; list npm-shrinkwrap.json in supply-chain.json npm.lockfiles instead"
+        : `${path} in head is shadowed by ${shrinkwrap}: npm installs from the shrinkwrap; list ${shrinkwrap} in supply-chain.json npm.lockfiles instead`,
+    );
+  });
+
+  it("refuses implicit discovery of a root shrinkwrap without a package lock", async () => {
+    await expect(sourcesOf(tree({ "npm-shrinkwrap.json": LOCK }), parseConfig({}))).rejects.toThrow(
+      "list npm-shrinkwrap.json in supply-chain.json npm.lockfiles instead",
     );
   });
 

@@ -66,6 +66,28 @@ describe("isolated npm signatures", () => {
     expect(commands).toEqual([]);
   });
 
+  it("refuses implicit shrinkwrap replacement before running npm, but audits explicit selection", async () => {
+    await project("", { "node_modules/lib": { version: "1.0.0", resolved: "https://registry.npmjs.org/lib/-/lib-1.0.0.tgz" } });
+    const shrinkwrap = await readFile(join(repo, "package-lock.json"), "utf8");
+    await rm(join(repo, "package-lock.json"));
+    await file("npm-shrinkwrap.json", shrinkwrap);
+    const commands: string[][] = [];
+    const run: RunProcess = async (_command, args, options) => {
+      expect(await readFile(join(options!.cwd!, "npm-shrinkwrap.json"), "utf8")).toBe(shrinkwrap);
+      expect(await absent(join(options!.cwd!, "package-lock.json"))).toBe(true);
+      commands.push([...args]);
+      return success;
+    };
+    await expect(npmSignatures(workingTree(repo), { run })).rejects.toThrow(
+      "list npm-shrinkwrap.json in supply-chain.json npm.lockfiles instead",
+    );
+    expect(commands).toEqual([]);
+
+    await file(".github/supply-chain.json", { npm: { lockfiles: ["npm-shrinkwrap.json"] } });
+    expect(await npmSignatures(workingTree(repo), { run })).toEqual([]);
+    expect(commands.map((args) => args.slice(0, args[0] === "ci" ? 1 : 2))).toEqual([["ci"], ["audit", "signatures"]]);
+  });
+
   it("uses clean files and fixed configuration for both install and audit, and cleans up", async () => {
     await project("", {}, { name: "app", version: "1.0.0", scripts: { prepare: "touch executed" } });
     await file(".npmrc", "git=./hostile\nregistry=https://evil.invalid\nproxy=https://evil.invalid\n");

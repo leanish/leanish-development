@@ -143,6 +143,23 @@ describe("gate", { timeout: 20_000 }, () => {
     )).rejects.toThrow("npm installs from the shrinkwrap; list npm-shrinkwrap.json in supply-chain.json npm.lockfiles instead");
   });
 
+  it("refuses implicit shrinkwrap replacement in compare and scan, but accepts explicit selection", async () => {
+    // A workflow keeps the old discovery path from rejecting an otherwise empty inventory.
+    const base = await commit({ "package-lock.json": lock({}), ".github/workflows/ci.yml": "jobs: {}\n" });
+    await rm(join(repo, "package-lock.json"));
+    const head = await commit({ "npm-shrinkwrap.json": lock({ lib: "1.1.0" }) });
+    const baseTree = await gitTree(repo, base, runProcess, join(repo, ".git"));
+    const headTree = await gitTree(repo, head, runProcess, join(repo, ".git"));
+    const message = "list npm-shrinkwrap.json in supply-chain.json npm.lockfiles instead";
+    await expect(runCompare(baseTree, headTree, environment({}, []))).rejects.toThrow(message);
+    await expect(runScan(headTree, environment({}, []))).rejects.toThrow(message);
+
+    const selected = await commit({ ".github/supply-chain.json": JSON.stringify({ npm: { lockfiles: ["npm-shrinkwrap.json"] } }) });
+    const selectedTree = await gitTree(repo, selected, runProcess, join(repo, ".git"));
+    expect((await runCompare(baseTree, selectedTree, environment({}, []))).failures).toEqual([]);
+    expect((await runScan(selectedTree, environment({}, []))).failures).toEqual([]);
+  });
+
   it("treats a lockfile base doesn't have yet as empty", async () => {
     const base = await commit({ "package-lock.json": lock({ stable: "1.0.0" }) });
     const head = await commit({
