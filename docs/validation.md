@@ -112,8 +112,7 @@ it (checked by removing the fix):
 - **Mutable GitHub Actions releases.** Only an immutable release dates an action; a mutable one fails the gate and
   bump-it notes why it skips it.
 - **Gradle configurations appearing during resolution.** A real-Gradle fixture (`SUPPLY_CHAIN_GRADLE_TESTS=1`) makes
-  one configuration resolvable from another's resolution; the inventory now includes it (it was missing before), and
-  configurations that keep appearing fail it.
+  one configuration resolvable from another's resolution; the inventory left it out before, and now fails.
 - **Same-version npm artifacts.** A lockfile entry that keeps its version but changes `resolved`, `integrity` or
   bundling fails the gate.
 - **`strictly` in string interpolation.** A Kotlin or Groovy `${…}` containing `strictly`, or one that doesn't close

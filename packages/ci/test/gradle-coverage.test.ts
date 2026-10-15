@@ -43,7 +43,6 @@ const MODULES: Record<string, string[]> = {
   "fixture:ab-underscore:1.0": [],
   "fixture:defaulted:1.0": [],
   "fixture:sub-defaulted:1.0": [],
-  "fixture:late-lib:1.0": [],
 };
 
 function pom(coordinates: string, dependencies: string[]): string {
@@ -114,18 +113,13 @@ ${repository}
 configurations {
   tool
   defaulted { defaultDependencies { it.add(project.dependencies.create("fixture:defaulted:1.0")) } }
-  aEarly
-  zLate { canBeResolved = false }
 }
-// Resolving one configuration makes another resolvable, as a plugin's callback can.
-configurations.aEarly.incoming.afterResolve { configurations.zLate.canBeResolved = true }
 dependencies {
   implementation "fixture:runtime-lib:1.0"
   implementation("fixture:floored:2.0") { because "GHSA-test-floor: lowest fixed version" }
   testImplementation "fixture:test-lib:1.0"
   annotationProcessor "fixture:processor:1.0"
   tool "fixture:tool:1.0"
-  zLate "fixture:late-lib:1.0"
   constraints { implementation("fixture:constrained") { version { strictly "1.5" } } }
 }
 `);
@@ -191,11 +185,6 @@ dependencies { implementation "fixture:included-dep:1.0" }
     expect(locations("fixture:included-dep:1.0")).toEqual(expect.arrayContaining(["included/:runtimeClasspath"]));
   });
 
-  it("inventories a configuration that another one's resolution made resolvable", () => {
-    const late = inventory.builds.find((build) => build.build === ".")!.configurations.find((configuration) => configuration.id === ":zLate");
-    expect(late?.resolved).toEqual([expect.objectContaining({ group: "fixture", name: "late-lib", version: "1.0" })]);
-  });
-
   it("exports declared dependencies, inherited ones included, with their because(...) reason", () => {
     const declared = inventory.builds
       .find((build) => build.build === ".")!
@@ -251,6 +240,20 @@ dependencies { runtimeOnly "fixture:missing:9.9" }
       expect.stringMatching(/^Gradle :sub:testRuntimeClasspath couldn't resolve fixture:missing:9.9: /),
     ]);
     expect(gradleResolutionProblems(broken, [":sub:runtimeClasspath", ":sub:testRuntimeClasspath"])).toEqual([]);
+  }, 600_000);
+
+  it("fails when resolving a configuration makes another resolvable, rather than leaving it out", async () => {
+    const late = join(root, "late");
+    await cp(WRAPPER, late, { recursive: true });
+    await write(late, "settings.gradle", `rootProject.name = "late"\n`);
+    // A plugin's callback can do this; the inventory resolved the set it found first, so zLate would be missing.
+    await write(late, "build.gradle", `configurations {
+  aEarly
+  zLate { canBeResolved = false }
+}
+configurations.aEarly.incoming.afterResolve { configurations.zLate.canBeResolved = true }
+`);
+    await expect(runGradleInventory(late, ["."], "worktree", runProcess)).rejects.toThrow(/resolvable configurations of : appeared while resolving \(zLate\)/);
   }, 600_000);
 });
 
