@@ -391,6 +391,50 @@ describe.skipIf(!hasGit)("LocalGitWorkspace branch publication (real git)", () =
     expect(gitOut(origin, ["show", `${BRANCH}:README.md`])).toBe("both sides");
   });
 
+  it("rechecks conflict markers after refusing a changed verification tree, without pushing", async () => {
+    const { origin, scratch } = makeOrigin();
+    git(scratch, ["checkout", "-q", "-b", BRANCH]);
+    commitIn(scratch, "README.md", "branch side\n", "branch edit");
+    git(scratch, ["push", "-q", "origin", BRANCH]);
+    git(scratch, ["checkout", "-q", "main"]);
+    commitIn(scratch, "README.md", "main side\n", "main edit");
+    git(scratch, ["push", "-q", "origin", "main"]);
+    const prHead = gitOut(origin, ["rev-parse", `refs/heads/${BRANCH}`]);
+
+    const { ws, wc } = await synced(origin);
+    const merging = await ws.prepareBranch(wc, { branch: BRANCH, start: "remote-merging" });
+    if (merging.kind !== "conflicted") throw new Error(`expected a conflict, got ${merging.kind}`);
+    const markers = readFileSync(join(wc.path, "README.md"), "utf8");
+    expect(markers).toContain("<<<<<<<");
+
+    // Capture the marker-bearing candidate without resolving the real index's conflict.
+    const index = join(tempDir("verified-index-"), "index");
+    const indexed = (args: string[]) => {
+      const result = spawnSync("git", args, { cwd: wc.path, encoding: "utf8", env: { ...process.env, GIT_INDEX_FILE: index } });
+      if (result.status !== 0) throw new Error(result.stderr);
+      return result.stdout.trim();
+    };
+    indexed(["read-tree", "HEAD"]);
+    indexed(["add", "--all"]);
+    const expectedTree = indexed(["write-tree"]);
+
+    // Clean live bytes pass the marker check, but differ from the captured tree.
+    writeFileSync(join(wc.path, "README.md"), "temporarily resolved\n");
+    await expect(ws.publishBranch(wc, merging.prepared, { message: "merging main", expectedTree })).rejects.toThrow(
+      "the working tree changed after verification",
+    );
+    expect(gitOut(wc.path, ["rev-parse", "HEAD"])).toBe(prHead);
+    expect(gitOut(origin, ["rev-parse", `refs/heads/${BRANCH}`])).toBe(prHead);
+
+    // Restoring the candidate bytes must not bypass the marker check on retry.
+    writeFileSync(join(wc.path, "README.md"), markers);
+    await expect(ws.publishBranch(wc, merging.prepared, { message: "merging main", expectedTree })).rejects.toThrow(
+      "README.md still has conflict markers",
+    );
+    expect(gitOut(wc.path, ["rev-parse", "HEAD"])).toBe(prHead);
+    expect(gitOut(origin, ["rev-parse", `refs/heads/${BRANCH}`])).toBe(prHead);
+  });
+
   it("checks the markers of a conflicted path whose name looks like an index stage", async () => {
     const { origin, scratch } = makeOrigin();
     const tricky = "0:package.json";

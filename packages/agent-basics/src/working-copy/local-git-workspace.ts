@@ -195,13 +195,20 @@ export class LocalGitWorkspace implements Workspace {
     // Which paths conflicted is known only before staging resolves them; their markers are checked once staged.
     const conflicted = merging ? await this.#conflictedPaths(repo) : [];
     await this.#run(repo, "add", ["add", "--all"]);
-    await this.#assertResolved(repo, conflicted);
-    if (args.expectedTree !== undefined) {
-      // The commit is made from this index, whose blobs don't change after staging: checking it closes the race.
-      const tree = await this.#writeTree(repo);
-      if (tree !== args.expectedTree) {
-        throw new Error(`publishBranch: the working tree changed after verification (staged ${tree}, verified ${args.expectedTree}); nothing was published`);
+    try {
+      await this.#assertResolved(repo, conflicted);
+      if (args.expectedTree !== undefined) {
+        // The commit is made from this index, whose blobs don't change after staging: checking it closes the race.
+        const tree = await this.#writeTree(repo);
+        if (tree !== args.expectedTree) {
+          throw new Error(`publishBranch: the working tree changed after verification (staged ${tree}, verified ${args.expectedTree}); nothing was published`);
+        }
       }
+    } catch (err) {
+      // Staging marked the conflicted paths resolved: whatever refused, put them back in conflict, so a later attempt
+      // checks their markers again.
+      if (conflicted.length > 0) await this.#run(repo, "update-index", ["update-index", "--unresolve", "--", ...conflicted]);
+      throw err;
     }
     const staged = (await this.#runStatus(repo, ["diff", "--cached", "--quiet"])) === 1;
     // A merge in progress is committed even when its result has the branch's own tree: the merge itself is the change.
@@ -367,10 +374,7 @@ export class LocalGitWorkspace implements Workspace {
       const staged = await this.#capture(repo, ["show", `:0:${path}`]).then((result) => result.stdout, () => "");
       if (markers.test(staged)) unresolved.push(path);
     }
-    if (unresolved.length === 0) return;
-    // Staging marked them resolved: put them back in conflict, so a later attempt checks them again.
-    await this.#run(repo, "update-index", ["update-index", "--unresolve", "--", ...conflicted]);
-    throw new Error(`publishBranch: ${unresolved.join(", ")} still has conflict markers`);
+    if (unresolved.length > 0) throw new Error(`publishBranch: ${unresolved.join(", ")} still has conflict markers`);
   }
 
   /** The branch's head on origin, or `null` when it has none. */
