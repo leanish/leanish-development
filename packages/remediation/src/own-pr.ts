@@ -44,6 +44,21 @@ export function branchFor(rules: OwnPullRequests, now: Date, topic: string): str
   return `${rules.tool}/${now.toISOString().slice(0, 10)}-${slug}`;
 }
 
+/**
+ * The first of `branchFor(topic)`, `…-2`, `…-3`, … that isn't `taken`. The suffix goes after the topic is cut to its
+ * length: appended before, a long topic would give the same name forever.
+ */
+export function freeBranch(rules: OwnPullRequests, now: Date, topic: string, taken: ReadonlySet<string>): string {
+  const first = branchFor(rules, now, topic);
+  const slug = topicOf(rules, first)!;
+  let branch = first;
+  for (let n = 2; taken.has(branch); n++) {
+    const suffix = `-${n}`;
+    branch = branchFor(rules, now, `${slug.slice(0, 60 - suffix.length)}${suffix}`);
+  }
+  return branch;
+}
+
 /** The topic of one of the tool's branches (`secure-it/2026-10-07-vite` → `vite`), whatever its date; undefined for another branch. */
 export function topicOf(rules: OwnPullRequests, branch: string): string | undefined {
   return new RegExp(`^${rules.tool}/\\d{4}-\\d{2}-\\d{2}-([a-z0-9._-]+)$`).exec(branch)?.[1];

@@ -11,6 +11,16 @@
 
 ### Fixed
 
+The 0.5.2-rc.3 review's findings:
+
+- A workflow or action metadata file that is a symbolic link fails the gate and the tools' verification, inherited
+  or new. The gate read such a link as its target path and missed the actions behind it; since rc.1, the tools'
+  snapshot verification did too, where 0.5.1 had read through the link.
+- secure-it numbers an occupied branch after cutting its topic to length, as bump-it does, so a long topic whose
+  branch is taken no longer loops forever.
+- Documented: the gate scans a bundled package as the lockfile records it (the archive is compared only for bundle
+  proofs and secure-it's bundled moves), and bump-it's choice of a partial tag (`v1.1`) fails verification visibly.
+
 The 0.5.2-rc.2 review's findings:
 
 - Implicit npm lockfile discovery refuses a root `npm-shrinkwrap.json`, even after `package-lock.json` is removed.

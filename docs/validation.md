@@ -179,6 +179,32 @@ source was restored byte for byte; explicit shrinkwrap selection and lenient bas
 Removing the TOML strict-value comparison failed the multiline-value regression: the changed pin was accepted.
 The source was restored byte for byte before the full automated check.
 
+## Release-candidate review of 0.5.2-rc.3 — 2026-10-15
+
+The candidate pass for `v0.5.2-rc.3` (`33cc96f`) recorded 52 commands, 0 failed, running both tools on the real
+adopting repositories and all six fixture repositories.
+
+Sol's unprimed review found three blockers and one non-blocking issue. Astra's critical pass overturned the bundle
+finding as already-documented scope (only the CI README's wording overpromised), kept the other two, and found that
+one of them was also a regression in this release: per the [release review rule](releasing.md), it added the most
+important finding of the round.
+
+- **Symlinked workflow or action metadata — blocking, fixed by refusal.** A commit records a link as its target
+  path, which the gate parsed as YAML with no `uses:`, while the runner reads through the link: actions behind it
+  were never checked (pre-existing in the gate). The 0.5.2 snapshot made the tools' verification read commits too,
+  so an inherited link also hid an unplanned action edit there, which 0.5.1's working-tree read had caught. Reading
+  that metadata now refuses symbolic links in commits and working trees alike, inherited or new.
+- **secure-it's branch numbering — blocking, fixed.** The `-2`, `-3` suffix was added before the topic was cut to
+  60 characters, so a long topic whose branch was taken looped forever. Both tools now share one helper that cuts
+  first, as bump-it already did.
+- **Bundled lock metadata — overturned; wording fixed.** The CI README now says a bundled package is scanned as the
+  lockfile records it, with the archive compared only where documented.
+- **Partial release tags — non-blocking limitation.** bump-it can pick `v1.1`, which verification refuses for want
+  of a full tag; documented.
+
+Removing the metadata refusal made the symlink regression test fail; restoring the old branch numbering made the
+long-topic test hang until stopped. Each source was restored byte for byte.
+
 ## Fixture coverage
 
 What the fixture repositories exercise, by evidence state. Case numbers refer to each fixture's `EXPECTED.md`.

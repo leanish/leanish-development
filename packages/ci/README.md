@@ -33,7 +33,7 @@ A finding is an advisory affecting a package version: **ecosystem + package + ad
 - an upgrade that fixes A while B still affects the new version **passes**, B shows up as inherited and A as fixed;
 - an advisory published today on a dependency both sides share is **inherited**: a warning on the PR, a failure on `main`;
 - a new package, or a new version, that brings an advisory base didn't have **fails**, unless an exception covers it;
-- **malware** (an OSV `MAL-*` id or alias, or a GitHub advisory tagged CWE-506) in head always fails, inherited or bundled, and no exception covers it.
+- **malware** (an OSV `MAL-*` id or alias, or a GitHub advisory tagged CWE-506) in head always fails, inherited or bundled, and no exception covers it. A bundled package is the one the lockfile records: the carrier's archive is compared with it only for bundle proofs and secure-it's bundled moves ([what it handles](../../docs/what-it-handles.md)).
 
 ## Where advisories come from
 
