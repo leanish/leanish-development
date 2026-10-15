@@ -12,10 +12,12 @@
 ### Fixed
 
 - The tools refuse an edit that adds or changes a symbolic link or a submodule, or changes anything an existing link
-  leads to (links in parent folders and chains followed, paths matched regardless of case): verification reads a
-  commit, where a link is only the path it points to. A link leading out of the repository, which could come back in
-  anywhere, fails too; other links the edit leaves alone are the repository's own. The gate reads links as 0.5.1 did
-  (a documented gap).
+  leads to (links in parent folders and chains followed): verification reads a commit, where a link is only the path
+  it points to. A link leading out of the repository, or to a path the commit has only by another case or Unicode
+  form (where a macOS checkout could take it), fails too; other links the edit leaves alone are the repository's own.
+  The gate reads links as 0.5.1 did (a documented gap).
+- Documented as pre-existing: Maven versions that differ only in a trailing `-0.…` part (`1.0-0.1`) compare as equal
+  when matching repository advisories.
 - Documented as pre-existing: a lookalike host (`notgithub.com/acme/lib`) is read as a GitHub repository when looking
   up a package's repository advisories.
 

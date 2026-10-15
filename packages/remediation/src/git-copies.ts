@@ -209,17 +209,25 @@ export async function linkProblems(workingCopy: WorkingCopy, base: string, sha: 
     if (mode === "160000") problems.push(`the edit added or moved the submodule ${path}: verification can't read a submodule's files`);
   }
   for (const revision of [base, sha]) {
-    const links = await linksOf(workingCopy, revision, run);
-    for (const link of [...links.keys()].sort()) {
-      const target = resolved(link, links);
+    const tree = await treeOf(workingCopy, revision, run);
+    for (const link of [...tree.links.keys()].sort()) {
+      const target = resolved(link, tree.links);
       if (target === undefined) continue;
       if (target === OUTSIDE) {
         problems.push(`the link ${link} leads outside the repository: verification can't tell whether it comes back to what the edit changed`);
         continue;
       }
+      if (target !== "" && !tree.entries.has(target)) {
+        // Missing under every name, it leads nowhere (an edit creating it is caught in the edit's own tree). Missing
+        // only by its exact name, a case-insensitive checkout (macOS's) may take it to a variant: no folding agrees
+        // with every filesystem, so such a link is refused rather than matched.
+        if (tree.folded.has(loosely(target))) {
+          problems.push(`the link ${link} leads to ${target}, which this commit has only by another case or form: verification can't tell where a checkout takes it`);
+        }
+        continue;
+      }
       for (const path of changed) {
-        const changedPath = folded(path);
-        if (target === "" || changedPath === target || changedPath.startsWith(`${target}/`)) {
+        if (target === "" || path === target || path.startsWith(`${target}/`)) {
           problems.push(`the edit changed ${path}, behind the link ${link}: verification can't check what's behind one`);
         }
       }
@@ -228,38 +236,41 @@ export async function linkProblems(workingCopy: WorkingCopy, base: string, sha: 
   return [...new Set(problems)].sort();
 }
 
-/** Every symbolic link in `revision`'s tree, with the path it points to. */
-async function linksOf(workingCopy: WorkingCopy, revision: string, run: RunProcess): Promise<Map<string, string>> {
-  const listed = await git(workingCopy, ["ls-tree", "-r", "-z", revision], run);
+/** `revision`'s symbolic links, with the path each points to, and every path it has (files, links and folders). */
+async function treeOf(workingCopy: WorkingCopy, revision: string, run: RunProcess): Promise<{ links: Map<string, string>; entries: Set<string>; folded: Set<string> }> {
+  const listed = await git(workingCopy, ["ls-tree", "-r", "-t", "-z", revision], run);
   if (listed.code !== 0) throw new Error(`git ls-tree ${revision} failed: ${listed.stderr.trim()}`);
   const links = new Map<string, string>();
+  const entries = new Set<string>();
   for (const entry of listed.stdout.split("\0")) {
+    if (entry === "") continue;
+    const path = entry.slice(entry.indexOf("\t") + 1);
+    entries.add(path);
     if (!entry.startsWith("120000 ")) continue;
     const object = entry.split(" ")[2]!.split("\t")[0]!;
     const target = await git(workingCopy, ["cat-file", "blob", object], run);
     if (target.code !== 0) throw new Error(`git cat-file ${object} failed: ${target.stderr.trim()}`);
-    links.set(entry.slice(entry.indexOf("\t") + 1), target.stdout);
+    links.set(path, target.stdout);
   }
-  return links;
+  return { links, entries, folded: new Set([...entries].map(loosely)) };
+}
+
+/** A name folded more than any filesystem folds it (case, Unicode forms, accents), so a variant is never missed. */
+function loosely(path: string): string {
+  return path.normalize("NFKD").replace(/\p{M}/gu, "").toUpperCase().toLowerCase();
 }
 
 /** A link leading out of the repository: it may come back in anywhere (an absolute path, `../<repository>/…`). */
 const OUTSIDE = Symbol("outside");
 
-/** A path as a case- and normalization-insensitive checkout (macOS's) matches it, so a differently cased link can't slip by. */
-function folded(path: string): string {
-  return path.normalize("NFC").toLowerCase();
-}
-
 /**
- * The repository path `link` leads to, folded (`folded`), walked component by component as a checkout would: links in
- * it followed, a `..` after one going up from where it leads. `""` is the repository's root; `OUTSIDE` when it leaves
- * the repository; undefined for a loop, or more links than a checkout follows, which lead nowhere it can read.
+ * The repository path `link` leads to, walked component by component as a checkout would: links in it followed, a `..`
+ * after one going up from where it leads. `""` is the repository's root; `OUTSIDE` when it leaves the repository;
+ * undefined for a loop, or more links than a checkout follows, which lead nowhere it can read.
  */
 function resolved(link: string, links: ReadonlyMap<string, string>): string | typeof OUTSIDE | undefined {
-  const byPath = new Map([...links].map(([path, target]) => [folded(path), target]));
   const at: string[] = [];
-  const pending = folded(link).split("/");
+  const pending = link.split("/");
   for (let hops = 0; pending.length > 0;) {
     const part = pending.shift()!;
     if (part === "" || part === ".") continue;
@@ -269,12 +280,12 @@ function resolved(link: string, links: ReadonlyMap<string, string>): string | ty
       continue;
     }
     at.push(part);
-    const target = byPath.get(at.join("/"));
+    const target = links.get(at.join("/"));
     if (target === undefined) continue;
     if (++hops > 40) return undefined;
     if (target.startsWith("/")) return OUTSIDE;
     at.pop();
-    pending.unshift(...folded(target).split("/"));
+    pending.unshift(...target.split("/"));
   }
   return at.join("/");
 }
