@@ -113,21 +113,25 @@ Both tools are in this tree: [`secure-it`](../packages/secure-it) and [`bump-it`
 - **The tool decides versions, verifies the result with this gate, and publishes.** Every write to a PR re-reads it first and stops unless it's still the tool's, at the expected head. Nothing merges by itself.
 - **Published text keeps the machine out.** In a PR's title, description and commit message, absolute paths inside the working copy become repository-relative, and paths under the home, temp, state and cache directories become `<local path>` ([`publication-text.ts`](../packages/remediation/src/publication-text.ts)). The tool's own `<!-- leanish:… -->` markers (its state and encoded plan) pass through: this cleans what readers see, not every byte.
 - **Floor history stays intact.** secure-it compares recorded floors and their declarations before `compare`: compatibility floors never change, and security floors change only at exact planned targets with their scope and history preserved. New floors must be planned security additions, and only a dedicated floor-removal plan may remove security floors. Remaining target advisories are checked against compare's head findings from the same snapshot.
-- **Strict pins stay the owner's, with a known inactive-branch deficiency.** The Gradle inventory marks strict
+- **Strict pins stay the owner's.** The Gradle inventory marks strict
   declarations and records strict dependency constraints. Neither tool plans a change that would move a strict
   version where the change acts; the reference refuses to move one and compares strictness with the edit.
   - For `*.versions.toml` catalogs, verification parses base and head with `smol-toml` and compares, as an ordered
     list, every entry a strict version belongs to, whole (module, group, name and version), with the entries whose
     `version.ref` names a strict version, so a pin can't be moved to another dependency. Changed paths or values, added or removed
     pins, and a catalog that doesn't parse fail. Formatting changes with the same parsed pins can pass.
-  - For `.gradle` and `.gradle.kts`, the backstop is a hand-written lexer. It compares recognized strict statements
-    byte for byte, including balanced continuations (128 lines and 64 KiB maximum); unbalanced or over-budget
-    statements, nested Kotlin block comments (Groovy's don't nest), and unsupported interpolations fail visibly.
-  - **Known deficiency:** string or comment forms the lexer doesn't understand, including Groovy slashy (`/…/`)
-    and dollar-slashy (`$/…/$`) strings, can hide a changed `strictly(...)` in a branch the Gradle inventory doesn't
-    see. Active pins are still caught by the inventory and reference checks. A changed variable outside a recognized
-    statement is also seen only when the pin is active. Version 0.6.0 plans to replace this lexer with the official
-    parsers Gradle ships: its Groovy and Kotlin compilers.
+  - For `.gradle` and `.gradle.kts`, verification parses base and head with the compilers each side's own Gradle
+    distribution ships (Groovy's and Kotlin's, from the tools' Gradle home, where the inventory downloaded them),
+    through [`StrictCalls.java`](../packages/remediation/gradle/StrictCalls.java) run by Java's source launcher. It
+    only parses: Groovy stops at conversion, before any AST transformation, and Kotlin builds a syntax tree, so
+    nothing in the script runs; Java gets a fresh directory holding copies of the files, a minimal environment and a
+    timeout. It compares, in order, each `strictly(...)` call with its receiver and the enclosing calls' arguments
+    (the dependency it pins), in any class or branch, and every other form that names `strictly` (a dynamic method
+    name, a property, a string holding the word with the call it's passed to); a file that takes a reference to
+    `strictly` (`.&strictly`, `::strictly`) differs on any change. A script that doesn't parse, or whose Gradle
+    distribution isn't there, fails visibly.
+  - A version that reaches a strict call through a variable, a helper or a property file is read only where the
+    inventory and the reference see it, that is, when the pin is active.
 - **Floor removal requires a joint unlocked proof**, computed in sandboxed scratch copies of base
   ([how](../packages/secure-it/README.md#removing-redundant-security-floors)). npm resolves without lifecycle scripts;
   Gradle runs with a trusted init script, `--no-daemon` and no configuration cache. Incomplete data keeps the floors.

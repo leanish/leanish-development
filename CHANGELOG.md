@@ -2,10 +2,16 @@
 
 ## Unreleased
 
+### Changed
+
+- Strict pins in `.gradle` and `.gradle.kts` scripts are read with the Groovy and Kotlin compilers the build's own
+  Gradle distribution ships, parsed without running, instead of a hand-written lexer: no string or comment form can
+  hide a `strictly(...)` any more (Groovy slashy strings, nested Kotlin comments, interpolations), each call is
+  compared with the dependency it pins and in classes too, and an interpolation on a pin's line no longer refuses an
+  unrelated edit. Verification needs Java and that distribution, which the Gradle inventory already downloads.
+
 ### Fixed
 
-- A `/*` inside a Groovy block comment (`/* src/**/*.java */`) no longer refuses edits to that build file: Groovy's
-  block comments don't nest; Kotlin's still do, and stay refused.
 - A path the edit adds behind an existing link is matched regardless of case, as a case-insensitive checkout places
   `FOO/x` in a linked `foo/`.
 - An npm `integrity` filled in for a same-version entry that had none no longer fails the gate: it only pins the bytes

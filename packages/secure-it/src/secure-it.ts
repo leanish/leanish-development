@@ -54,6 +54,7 @@ import { planDigest, planOf, planSection, withPlanSection } from "./plan-block.t
 import { type ChangePlan, coupledWork, type FixWork, HELD_TOPIC, packageKey, planFor, type PlannedHold, type SecurityUnit, withUnsupportedCarriers } from "./plan.ts";
 import { namedProblems, retryWithoutNamed, type ProblemMoves } from "./retry.ts";
 import { referencePlan, verifyPlan, type VerifyInputs } from "./verify.ts";
+import { gradleHome, gradleStrictCalls } from "../../remediation/src/strict-calls.ts";
 
 export const RULES = ownPullRequests("secure-it");
 const SKILLS_DIR = fileURLToPath(new URL("../skills", import.meta.url));
@@ -600,6 +601,7 @@ async function verifyEdit(
   const links = await deps.linkProblems(context.workingCopy, base.id, candidate);
   return [...links, ...await deps.verify({
     plan, base, head, env, npmFiles, gradle: { base: baseGradle, head: headGradle }, reference, changedFiles,
+    strictCalls: gradleStrictCalls(gradleHome(context.isolation.buildCacheRoot)),
     ...(cooldown === undefined ? {} : { cooldown }),
   })];
 }

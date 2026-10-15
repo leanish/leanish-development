@@ -23,6 +23,7 @@ import { assertNoPlanMarker } from "../../remediation/src/plan-blocks.ts";
 import { type BumpPlan, DEPENDENCY_FIELDS, planFor, planSection } from "./plan.ts";
 import type { Unit } from "./units.ts";
 import { referenceMoves } from "./verify.ts";
+import { gradleHome, gradleStrictCalls } from "../../remediation/src/strict-calls.ts";
 
 export const RULES = ownPullRequests("bump-it");
 
@@ -140,6 +141,7 @@ export async function verify(execution: Execution, computed: Computed): Promise<
     gradle,
     reference,
     changedFiles,
+    strictCalls: gradleStrictCalls(gradleHome(context.isolation.buildCacheRoot)),
   });
   const links = await deps.linkProblems(context.workingCopy, computed.base.id, candidate);
   if (problems.length > 0 || links.length > 0) {

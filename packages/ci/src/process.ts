@@ -9,6 +9,8 @@ export interface ProcessResult {
 export interface ProcessOptions {
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
+  /** Kills the command (SIGKILL) after this long; its result then has a nonzero code. */
+  readonly timeoutMs?: number;
 }
 
 /** Runs a command without a shell and collects its output; never rejects on a nonzero exit. */
@@ -16,7 +18,10 @@ export type RunProcess = (command: string, args: ReadonlyArray<string>, options?
 
 export const runProcess: RunProcess = (command, args, options = {}) =>
   new Promise((resolve, reject) => {
-    const child = spawn(command, [...args], { cwd: options.cwd, env: options.env ?? process.env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, [...args], {
+      cwd: options.cwd, env: options.env ?? process.env, stdio: ["ignore", "pipe", "pipe"],
+      ...(options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs, killSignal: "SIGKILL" as const }),
+    });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));

@@ -8,6 +8,7 @@ import type { Tree } from "../../ci/src/tree.ts";
 import { withoutFloorRecords, withoutOverrides } from "../src/floor-removal.ts";
 import type { ChangePlan } from "../src/plan.ts";
 import { verifyPlan, type VerifyInputs } from "../src/verify.ts";
+import { textStrictCalls } from "../../remediation/test/strict-calls-fake.ts";
 
 vi.mock("../../ci/src/gate.ts", async (load) => ({ ...await load<typeof import("../../ci/src/gate.ts")>(), runCompare: vi.fn() }));
 beforeEach(() => {
@@ -30,7 +31,7 @@ function fixture() {
   const now = { ...was, [FLOORS_PATH]: withoutFloorRecords(records, [floors[0]!]), "package.json": withoutOverrides(manifest, [floors[0]!]) };
   const plan: ChangePlan = { kind: "floor-removal", topic: "floor-removal", moves: [], packages: ["npm|lib"], malware: false, severity: undefined,
     floorRemoval: { floors: [floors[0]!], files: Object.entries(now).map(([path, text]) => ({ path, sha256: hash(text) })), notes: [] } };
-  const input: VerifyInputs = { reference: undefined, plan, base: tree("base", was), head: tree("head", now), env, gradle: {}, changedFiles: [FLOORS_PATH, "package.json", "package-lock.json"] };
+  const input: VerifyInputs = { reference: undefined, plan, base: tree("base", was), head: tree("head", now), env, gradle: {}, strictCalls: textStrictCalls, changedFiles: [FLOORS_PATH, "package.json", "package-lock.json"] };
   return { input, was, now, floors };
 }
 
@@ -50,7 +51,7 @@ describe("floor-removal verification", () => {
     const { input, was, now } = fixture();
     const build = (version: string) => `dependencies { implementation("g:pinned") { version { strictly("${version}") } } }\n`;
     const pinned = { ...input, base: tree("base", { ...was, "build.gradle.kts": build("1.0") }), head: tree("head", { ...now, "build.gradle.kts": build("2.0") }),
-      changedFiles: [...input.changedFiles, "build.gradle.kts"] };
+      strictCalls: textStrictCalls, changedFiles: [...input.changedFiles, "build.gradle.kts"] };
     const refused = [expect.stringContaining("changed a Gradle strictly(...) pin in build.gradle.kts")];
     expect(await verifyPlan(pinned)).toEqual(refused);
     const security: ChangePlan = { topic: "security", malware: false, packages: ["Maven|g:lib"], severity: "HIGH", moves: [{ ecosystem: "Maven", name: "g:lib", from: "1.0", to: "1.1",
@@ -58,7 +59,7 @@ describe("floor-removal verification", () => {
     for (const major of [false, true]) {
       const plan = { ...security, moves: security.moves.map((move) => ({ ...move, major })) };
       expect(await verifyPlan({ ...pinned, plan, base: tree("base", { "build.gradle.kts": build("1.0") }), head: tree("head", { "build.gradle.kts": build("2.0") }),
-        changedFiles: ["build.gradle.kts"] })).toEqual(refused);
+        strictCalls: textStrictCalls, changedFiles: ["build.gradle.kts"] })).toEqual(refused);
     }
     expect(runCompare).not.toHaveBeenCalled();
   });
@@ -85,8 +86,8 @@ describe("floor-removal verification", () => {
     expect(await verifyPlan({ ...input, head: tree("bad", changed) })).toContainEqual(expect.stringContaining("joint unlocked resolution"));
     const rehashed = { ...input.plan, floorRemoval: { ...input.plan.floorRemoval!, files: Object.entries(changed).map(([path, text]) => ({ path, sha256: hash(text) })) } };
     expect(await verifyPlan({ ...input, plan: rehashed, head: tree("bad", changed) })).toContainEqual(expect.stringContaining("outside the plan"));
-    expect(await verifyPlan({ ...input, changedFiles: [...input.changedFiles, "src/extra.ts"] })).toContain("floor-removal may not change src/extra.ts");
-    expect(await verifyPlan({ ...input, changedFiles: [...input.changedFiles, ".github/supply-chain.json"] })).toContainEqual(expect.stringContaining("gate's own policy"));
+    expect(await verifyPlan({ ...input, strictCalls: textStrictCalls, changedFiles: [...input.changedFiles, "src/extra.ts"] })).toContain("floor-removal may not change src/extra.ts");
+    expect(await verifyPlan({ ...input, strictCalls: textStrictCalls, changedFiles: [...input.changedFiles, ".github/supply-chain.json"] })).toContainEqual(expect.stringContaining("gate's own policy"));
     const extra = { ...now, "package.json": now["package.json"].replace('"^1.0.0"', '"^9.0.0"') };
     expect(await verifyPlan({ ...input, head: tree("bad", extra) })).toContainEqual(expect.stringContaining("more than the planned override"));
     expect(runCompare).not.toHaveBeenCalled();
@@ -105,7 +106,7 @@ describe("floor-removal verification", () => {
     const text = withoutFloorRecords(records, removed);
     const plan: ChangePlan = { kind: "floor-removal", topic: "floor-removal", malware: false, severity: undefined, packages: ["Maven|g:lib", "Maven|g:other"], moves: [], floorRemoval: { floors: removed, files: [{ path: FLOORS_PATH, sha256: hash(text) }], notes: [] } };
     const input: VerifyInputs = { plan, base: tree("base", { [FLOORS_PATH]: records, "build.gradle.kts": "before" }), head: tree("head", { [FLOORS_PATH]: text, "build.gradle.kts": "after" }), env,
-      gradle: { base: gradle(before), head: gradle(after) }, reference: gradle(after), changedFiles: [FLOORS_PATH, "build.gradle.kts"] };
+      gradle: { base: gradle(before), head: gradle(after) }, reference: gradle(after), strictCalls: textStrictCalls, changedFiles: [FLOORS_PATH, "build.gradle.kts"] };
     expect(await verifyPlan(input)).toEqual([]);
     // The reference, the base with the floors removed by Gradle, must have lost them; head must match it.
     expect(await verifyPlan({ ...input, reference: gradle([...after, before[0]!]) })).toContain("the plan's reference still declares g:lib 2.0 at :runtimeClasspath");
