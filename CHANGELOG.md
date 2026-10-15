@@ -20,6 +20,8 @@ The 0.5.1 release review's six findings, each refusing the case visibly:
 - The Gradle inventory fails when a configuration becomes resolvable while others resolve, instead of leaving it out.
 - A line with a Kotlin or Groovy string interpolation that mentions `strictly`, or an interpolation that spans lines
   or holds comments, escapes or triple-quoted strings, fails the strict-pin check.
+- A merge's conflicted paths are checked for markers in what is staged, not in the working file, and a refused
+  publication leaves their conflicts in place, so a retry checks them again.
 
 ## 0.5.1 - 2026-10-14
 
