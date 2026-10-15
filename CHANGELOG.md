@@ -11,6 +11,13 @@
 
 ### Fixed
 
+The 0.5.2-rc.7 review's finding:
+
+- A linked `.github`, `.github/workflows` or `.github/actions` fails the gate and the tools' verification: a commit
+  lists such a root as the link itself, so the tools' snapshot verification stopped reading what was behind it, where
+  0.5.1's working-tree read had. Documented as pre-existing: linked folders inside `.github/actions`, and custom
+  conflict-marker sizes.
+
 The 0.5.2-rc.6 review's finding:
 
 - A PR that replaces inherited linked action metadata with the file passes the gate again: the base is read as
