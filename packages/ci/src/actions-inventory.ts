@@ -112,7 +112,8 @@ export async function readActionsInventory(tree: Tree): Promise<ActionsInventory
         found = true;
         continue;
       }
-      const text = await tree.read(file);
+      // A linked workflow or action would be read as its target path, or through the link, not as what the runner loads.
+      const text = await tree.read(file, { regularFile: true });
       if (text === undefined) continue;
       seen.add(file);
       found = true;

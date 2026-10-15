@@ -248,7 +248,13 @@ When secure-it targets different version lines of the same action in one workflo
 verification rejects the conflicting planned pins visibly. A person must update those uses.
 An action pinned through a scalar YAML anchor, such as `&action owner/repo@sha # vX`
 with `uses: *action`, also cannot be updated automatically: verification refuses
-the edit visibly, and a person must update it.
+the edit visibly, and a person must update it. bump-it can pick a release whose tag
+isn't a full `vX.Y.Z` (`v1.1`); verification requires a full tag in the pin's
+comment, so that update fails visibly and a person makes it.
+
+A workflow, local reusable workflow or action metadata file (`action.yml`) that is a
+symbolic link fails the gate and the tools' verification, inherited or new: the
+runner reads through the link, while a commit only records where it points.
 
 ## Pull requests over time
 
