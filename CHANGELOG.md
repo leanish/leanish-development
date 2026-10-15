@@ -10,6 +10,11 @@
   `FOO/x` in a linked `foo/`.
 - An npm `integrity` filled in for a same-version entry that had none no longer fails the gate: it only pins the bytes
   the same URL serves. Removing or changing one still fails.
+- An edit that removes a link leading out of the repository, or to a case or Unicode variant, is no longer refused for
+  it; only the links the edit's own tree has are. A variant is now found on the way through a link too, not only at its
+  end.
+- Link targets are read in one `git cat-file --batch`: 2,000 links take about half a second instead of 50.
+- A submodule moved to another commit is reported as moved, not as added.
 
 ## 0.5.2 - 2026-10-15
 
