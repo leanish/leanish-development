@@ -205,6 +205,31 @@ important finding of the round.
 Removing the metadata refusal made the symlink regression test fail; restoring the old branch numbering made the
 long-topic test hang until stopped. Each source was restored byte for byte.
 
+## Release-candidate review of 0.5.2-rc.4 — 2026-10-15
+
+The candidate pass for `v0.5.2-rc.4` (`c70fda5`) recorded 52 commands, 0 failed, running both tools on the real
+adopting repositories and all six fixture repositories.
+
+Sol's unprimed review found four blockers and one non-blocking limitation. Astra's critical pass compared each with
+0.5.1 and split them: two were made worse or newly reachable by 0.5.2, three were already in 0.5.1. Every round so far
+had found three or four more pre-existing findings, so the owner chose to block this release only on what is new or
+worse than the deployed 0.5.1 and to document the rest as known deficiencies, fixed next. Astra's comparison against
+0.5.1 is what made that decision possible: per the [release review rule](releasing.md), its worth this time.
+
+- **Linked directory over action metadata — regression, fixed.** rc.3 refused a linked metadata file but not a linked
+  directory above it: a commit has no file there, so the gate reported a missing local action (pre-existing), and the
+  tools' snapshot verification missed an edit behind it that 0.5.1's working-tree read had refused. Every directory
+  above the file is now checked too.
+- **secure-it PR recognition — partly newly reachable, fixed.** Recognition compared branch topics, which are cut and
+  made branch-safe. Two packages could share one (`@scope/foo`, `scope-foo`; pre-existing), and rc.3's numbering made
+  a cut, numbered branch reachable that recognition then missed, opening another PR each run. PRs are now recognized
+  by the unit their recorded plan names.
+- **Carried as known deficiencies** ([coverage gaps](coverage-gaps.md)): a Gradle wrapper release a malware advisory
+  also covers, deprecated transitives a bump-it major brings in, and npm aliases without a version (non-blocking).
+
+Removing the parent-directory check failed the linked-directory test; restoring branch-topic recognition failed both
+recognition tests. Each source was restored byte for byte.
+
 ## Fixture coverage
 
 What the fixture repositories exercise, by evidence state. Case numbers refer to each fixture's `EXPECTED.md`.
