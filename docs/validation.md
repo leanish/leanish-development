@@ -120,6 +120,34 @@ it (checked by removing the fix):
   strict-pin check. The final review's bypasses (a comment, an escaped quote and a nested Groovy triple-quoted string
   hiding where the interpolation ends) are regression tests.
 
+## Release-candidate review of 0.5.2-rc.1 — 2026-10-15
+
+The candidate pass for `v0.5.2-rc.1` (`4f75b1b`) recorded 52 commands, 0 failed, running both tools on the real
+adopting repositories and all six fixture repositories.
+
+Sol reviewed the candidate unprimed; Astra then critically reviewed those findings. The second pass kept the three
+blocking findings below, rightly overturned the bundle finding as already-documented scope, and found nothing new:
+per the [release review rule](releasing.md), its worth this time was the overturn.
+
+- **Shadowed npm lockfiles — blocking, fixed by refusal.** A selected `package-lock.json` with a sibling
+  `npm-shrinkwrap.json` in head fails with instructions to list the effective lockfile. The selection never changes
+  automatically; baseline discovery and missing-lockfile handling stay lenient.
+- **`v`-prefixed compatible lines — blocking, fixed.** Configured numeric segments start after one leading `v` or
+  `V`. Tests keep `v1.2.0` and `v2.2.0` in different lines and select the latter as an Actions major, not a minor.
+- **Nested Kotlin block comments — blocking, fixed by refusal.** A nested `/*` in a changed Gradle build, settings
+  or catalog file fails verification instead of letting comment boundaries hide a changed `strictly(...)` pin.
+- **Aged bundle archive versus lockfile metadata — overturned.** This is already a documented limit in
+  [what it handles](what-it-handles.md) and the [security model](security-model.md); no code change was made.
+- **Two target lines of one action in one workflow — non-blocking limitation.** secure-it rejects the conflicting
+  planned pins visibly. Documented for a person to update them by hand.
+- **Immutable-release wording — documentation corrected.** The CI README and requirements now say that an
+  action's age counts only from an immutable GitHub release, matching the existing policy.
+
+Mutation checks failed as expected: removing shrinkwrap refusal failed five selection, comparison and signature
+tests; removing prefix normalization failed three line/selection tests; removing nested-comment refusal failed
+three tests. Each source was restored byte for byte. These automated checks exercise the edge cases separately
+from the candidate's real-repository pass above.
+
 ## Fixture coverage
 
 What the fixture repositories exercise, by evidence state. Case numbers refer to each fixture's `EXPECTED.md`.

@@ -120,7 +120,7 @@ export async function baseSources(base: Tree, head: Sources): Promise<Sources> {
   return { lockfiles: [...new Set([...head.lockfiles, ...own.lockfiles])], gradleBuilds: own.gradleBuilds };
 }
 
-/** A tree's sources under its own settings, or the defaults when they don't parse; empty is fine. */
+/** Baseline and Gradle-only sources: defaults for unreadable settings, shadowed locks and no sources allowed. */
 export async function lenientSources(tree: Tree): Promise<Sources> {
   let config: Config;
   try {
@@ -128,7 +128,7 @@ export async function lenientSources(tree: Tree): Promise<Sources> {
   } catch {
     config = DEFAULT_CONFIG;
   }
-  return sourcesOf(tree, config);
+  return sourcesOf(tree, config, { allowShadowedLockfiles: true });
 }
 
 function parseJson(text: string, path: string): unknown {

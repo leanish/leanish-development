@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { type Config, parseConfig } from "../src/config.ts";
 import type { PackageName, PackageVersion } from "../src/package-version.ts";
 import { type Advisory, Snapshot } from "../src/snapshot.ts";
-import { candidateVersions, gatherCandidates, type VersionCatalog, youngFixProblem } from "../src/young-fixes.ts";
+import { candidateVersions, compatibleLine, gatherCandidates, type VersionCatalog, youngFixProblem } from "../src/young-fixes.ts";
 
 const NOW = new Date("2026-10-06T12:00:00Z");
 const DAY = 86_400_000;
@@ -35,6 +35,15 @@ async function verdict(registry: Registry, from: string, to: string, config: Con
   }
   return youngFixProblem(young, candidates.byChange.get(`${pkg.ecosystem}|${pkg.name}|${to}`) ?? new Map(), new Snapshot(map, [], NOW), cat, config, NOW);
 }
+
+describe("configured compatible lines", () => {
+  it.each(["v", "V", ""])("keeps the major of %s-prefixed action versions", (prefix) => {
+    const action: PackageName = { ecosystem: "GitHub Actions", name: "acme/tool" };
+    const config = parseConfig({ compatibleLines: { "GitHub Actions:acme/tool": 1 } });
+    expect(compatibleLine(config, action, `${prefix}1.2.0`)).toBe("1");
+    expect(compatibleLine(config, action, `${prefix}2.2.0`)).toBe("2");
+  });
+});
 
 describe("young-fix proof", () => {
   const vulnerable = { days: 400, advisories: ["GHSA-a"] };

@@ -11,6 +11,17 @@
 
 ### Fixed
 
+The 0.5.2-rc.1 review's findings:
+
+- A selected `package-lock.json` with an `npm-shrinkwrap.json` beside it in head fails the gate, since npm installs
+  from the shrinkwrap; the owner lists the effective lockfile.
+- A `compatibleLines` override counts segments after a leading `v`, so an action's `v1` → `v2` is a major, not a
+  routine update.
+- A nested block comment in a changed Gradle build, settings or catalog file fails the strict-pin check, since its
+  boundaries could hide a pin.
+- Documented: secure-it can't move one action to two version lines in one workflow (verification refuses it
+  visibly), and an action's age counts only from an immutable release.
+
 The 0.5.1 release review's six findings, each refusing the case visibly:
 
 - Both tools verify a snapshot commit of the agent's edit and publish exactly its tree, so nothing written to the
