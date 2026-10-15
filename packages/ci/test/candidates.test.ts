@@ -583,4 +583,17 @@ describe("action compatible lines", () => {
       name: "acme/tool", from: "v1.2.0", minor: expect.objectContaining({ version: "v1.3.0" }), major: expect.objectContaining({ version: "v2.2.0" }),
     })]);
   });
+
+  it("selects only full release tags, which a pin's comment can name, over a newer partial one", async () => {
+    const sha = "1".repeat(40);
+    const head = await tree({}, { ".github/workflows/ci.yml": `jobs:\n  test:\n    steps:\n      - uses: acme/tool@${sha} # v1.0.0\n` });
+    const env = environment({}, {});
+    const found = await bumpCandidates(head, { ...env, fetch: fakeFetch({
+      "https://api.github.com/repos/acme/tool/git/ref/tags/v1.0.0": { body: { object: { type: "commit", sha } } },
+      "https://api.github.com/repos/acme/tool/releases?per_page=100&page=1": {
+        body: ["v1.0.0", "v1.0.1", "v1.1"].map((tag_name) => ({ tag_name, published_at: OLD, draft: false, immutable: true })),
+      },
+    }) });
+    expect(found.bumps).toEqual([expect.objectContaining({ name: "acme/tool", from: "v1.0.0", minor: expect.objectContaining({ version: "v1.0.1" }) })]);
+  });
 });

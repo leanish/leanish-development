@@ -383,6 +383,9 @@ describe.skipIf(!hasGit)("LocalGitWorkspace branch publication (real git)", () =
     await expect(ws.publishBranch(wc, merging.prepared, { message: "merging main" })).rejects.toThrow("README.md still has conflict markers");
     // A refused attempt leaves the conflict in place: another one checks it again.
     await expect(ws.publishBranch(wc, merging.prepared, { message: "merging main" })).rejects.toThrow("README.md still has conflict markers");
+    // `conflict-marker-size=9` in `.gitattributes` makes git write longer markers.
+    writeFileSync(join(wc.path, "README.md"), "<<<<<<<<< HEAD\nbranch side\n=========\nmain side\n>>>>>>>>> main\n");
+    await expect(ws.publishBranch(wc, merging.prepared, { message: "merging main" })).rejects.toThrow("README.md still has conflict markers");
 
     writeFileSync(join(wc.path, "README.md"), "both sides\n");
     const published = await ws.publishBranch(wc, merging.prepared, { message: "merging main" });

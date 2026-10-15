@@ -23,6 +23,10 @@
   repository when looking up repository advisories.
 - Maven versions compare a sub-list against a missing component item by item, as Maven does: `1.0-0.1` is above
   `1.0`, so an advisory covering `>1.0` matches it.
+- An action's versions are its full release tags only: a partial tag (`v1.1`), which a pin's comment can't name, is
+  no longer picked over a full one (`v1.0.1`) and then refused at verification.
+- Publication recognizes conflict markers longer than seven characters, as a `.gitattributes` `conflict-marker-size`
+  makes git write.
 - A key named `uses` outside a job or step (`env: { uses: production }`, an action input) no longer fails the Actions
   inventory: it counts when it reads as an action and is otherwise left alone; a job's or step's `uses:` stays strict.
 

@@ -155,6 +155,11 @@ const COMMIT = /^[0-9a-f]{40}$/;
 /** A full release version (`v7.0.1`): a floating major tag (`v7`) can't name what's pinned. */
 const TAG = /^(?:tag=)?(v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$/;
 
+/** Whether `tag` names a full release version (`v7.0.1`), the only kind a pin's comment can name. */
+export function isFullTag(tag: string): boolean {
+  return TAG.test(tag) && !tag.startsWith("tag=");
+}
+
 /** The tag a use's comment names, if any. */
 export function commentTag(use: Pick<ActionUse, "comment">): string | undefined {
   return use.comment?.split(/\s+/).map((word) => TAG.exec(word)?.[1]).find((word) => word !== undefined);

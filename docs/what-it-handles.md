@@ -248,9 +248,9 @@ When secure-it targets different version lines of the same action in one workflo
 verification rejects the conflicting planned pins visibly. A person must update those uses.
 An action pinned through a scalar YAML anchor, such as `&action owner/repo@sha # vX`
 with `uses: *action`, also cannot be updated automatically: verification refuses
-the edit visibly, and a person must update it. bump-it can pick a release whose tag
-isn't a full `vX.Y.Z` (`v1.1`); verification requires a full tag in the pin's
-comment, so that update fails visibly and a person makes it.
+the edit visibly, and a person must update it. Only full release tags (`vX.Y.Z`) are
+versions an action can move to, since a pin's comment can name no other: a
+partial one (`v1.1`) is left for a person.
 
 The gate reads a workflow, local reusable workflow or action metadata file (`action.yml`) that is a symbolic link as
 the path it points to, so the actions behind it aren't read; this is a documented gap, see
