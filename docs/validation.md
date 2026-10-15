@@ -244,6 +244,15 @@ empty segments; a `..` segment is refused, since a link before it decides where 
 
 Removing the exact-path filter failed the sibling test; keeping `.` segments failed the `././linked` case. Each source
 was restored byte for byte.
+
+## Release-candidate review of 0.5.2-rc.6 — 2026-10-15
+
+The candidate pass for `v0.5.2-rc.6` (`e6229ed`) recorded 52 commands, 0 failed. Sol's unprimed review found one
+regression: reading the base with the same link refusal as head made a PR that replaces inherited linked metadata
+with the file fail the comparison, so the repair could never pass, where 0.5.1 compared it. The base is now read as
+before (a commit gives a link's target path, with no uses), so head's uses count as changes; head stays strict. From
+this candidate on, Astra's pass runs only on a candidate Sol finds clean, as the final validation. Making the base
+strict again failed the repair test; the source was restored byte for byte.
 ## Fixture coverage
 
 What the fixture repositories exercise, by evidence state. Case numbers refer to each fixture's `EXPECTED.md`.

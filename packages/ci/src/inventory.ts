@@ -69,6 +69,8 @@ export interface ReadOptions {
   readonly missingLockfilesAreEmpty?: boolean;
   /** The Gradle inventory made from this tree; required when the sources list builds. */
   readonly gradle?: GradleInventory | undefined;
+  /** The comparison's base, read leniently where head is strict (see `readActionsInventory`). */
+  readonly baseline?: boolean;
 }
 
 export async function readInventory(tree: Tree, sources: Sources, options: ReadOptions = {}): Promise<Inventory> {
@@ -91,7 +93,7 @@ export async function readInventory(tree: Tree, sources: Sources, options: ReadO
   if (sources.gradleBuilds.length > 0 && options.gradle === undefined) {
     throw new Error(`${tree.id} has Gradle builds (${sources.gradleBuilds.join(", ")}), but no Gradle inventory was given for it`);
   }
-  return { tree: tree.id, npm, gradle: sources.gradleBuilds.length > 0 ? options.gradle : undefined, actions: await readActionsInventory(tree) };
+  return { tree: tree.id, npm, gradle: sources.gradleBuilds.length > 0 ? options.gradle : undefined, actions: await readActionsInventory(tree, { baseline: options.baseline === true }) };
 }
 
 /** Lockfile paths as locations: `node_modules/x` for the root lockfile, `tools/cli/node_modules/x` for one in `tools/cli`. */

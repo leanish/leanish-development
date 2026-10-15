@@ -11,6 +11,11 @@
 
 ### Fixed
 
+The 0.5.2-rc.6 review's finding:
+
+- A PR that replaces inherited linked action metadata with the file passes the gate again: the base is read as
+  before, while head stays strict.
+
 The 0.5.2-rc.5 review's finding:
 
 - Checking a workflow or action metadata file's parents for links no longer trips on an unrelated linked sibling
