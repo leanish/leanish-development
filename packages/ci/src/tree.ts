@@ -2,7 +2,7 @@
  * Where a side of the comparison reads its files from: a git commit (read
  * with `git show`, so nothing in it runs) or the working tree.
  */
-import { readdir, readFile, stat } from "node:fs/promises";
+import { lstat, readdir, readFile, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
 
 import type { RunProcess } from "./process.ts";
@@ -11,8 +11,11 @@ import { gitArgs, gitEnvironment } from "./git.ts";
 export interface Tree {
   /** `worktree` or the full commit SHA. */
   readonly id: string;
-  /** The file's content, or undefined when the tree has no such file. */
-  read(path: string): Promise<string | undefined>;
+  /**
+   * The file's content, or undefined when the tree has no such file. With `regularFile`, a symbolic link fails instead
+   * of giving its target path (a commit) or being followed (a working tree).
+   */
+  read(path: string, options?: ReadOptions): Promise<string | undefined>;
   /**
    * Every file under `dir`, recursively, as paths from the root; empty when there's no such directory. A commit's
    * tree always lists symlinks (reading one gives its target path); a working tree lists those leading to a file
@@ -21,11 +24,20 @@ export interface Tree {
   list(dir: string, options?: { readonly symlinks?: boolean }): Promise<string[]>;
 }
 
+export interface ReadOptions {
+  readonly regularFile?: boolean;
+}
+
+function linkRefused(path: string, id: string): Error {
+  return new Error(`${path} in ${id} is a symbolic link: it's refused rather than read through`);
+}
+
 export function workingTree(root: string): Tree {
   return {
     id: "worktree",
-    async read(path) {
+    async read(path, options) {
       try {
+        if (options?.regularFile === true && (await lstat(join(root, path))).isSymbolicLink()) throw linkRefused(path, "worktree");
         return await readFile(join(root, path), "utf8");
       } catch (err) {
         // ENOTDIR: a parent is a file (`ci.yml/action.yml`), so there's no such file either.
@@ -64,10 +76,12 @@ export async function gitTree(root: string, revision: string, run: RunProcess, g
   const sha = resolved.stdout.trim();
   return {
     id: sha,
-    async read(path) {
-      const listed = await git(["ls-tree", "-z", "--name-only", sha, "--", path]);
+    async read(path, options) {
+      // `<mode> <type> <object>\t<path>`: the mode tells a symbolic link (120000) from a file.
+      const listed = await git(["ls-tree", "-z", sha, "--", path]);
       if (listed.code !== 0) throw new Error(`git ls-tree ${sha} ${path} failed: ${listed.stderr.trim()}`);
       if (listed.stdout.trim() === "") return undefined;
+      if (options?.regularFile === true && listed.stdout.startsWith("120000 ")) throw linkRefused(path, sha);
       const shown = await git(["show", `${sha}:${path}`]);
       if (shown.code !== 0) throw new Error(`git show ${sha}:${path} failed: ${shown.stderr.trim()}`);
       return shown.stdout;

@@ -11,7 +11,7 @@ import type { ToolRunContext } from "../../remediation/src/command.ts";
 import { symlinkProblems } from "../../remediation/src/git-copies.ts";
 import { referenceTransform } from "../../remediation/src/gradle-reference.ts";
 import { type GradleInventories, lockfilesOf } from "../../remediation/src/inventories.ts";
-import { branchFor, ownPullRequests, topicOf } from "../../remediation/src/own-pr.ts";
+import { freeBranch, ownPullRequests } from "../../remediation/src/own-pr.ts";
 import { clearLeftoverBranch, type PublicationContext, type PullRequestContent } from "../../remediation/src/publication.ts";
 
 import type { WrapperArtifact } from "./wrapper-generation.ts";
@@ -199,12 +199,7 @@ export async function prepare(execution: Execution, unit: Unit, own: ReadonlyArr
     return merged.prepared;
   }
   const taken = new Set(own.map((pr) => pr.headRef));
-  let branch = branchFor(RULES, context.now, unit.topic);
-  for (let n = 2; taken.has(branch); n++) {
-    const suffix = `-${n}`;
-    const slug = topicOf(RULES, branchFor(RULES, context.now, unit.topic))!;
-    branch = branchFor(RULES, context.now, `${slug.slice(0, 60 - suffix.length)}${suffix}`);
-  }
+  const branch = freeBranch(RULES, context.now, unit.topic, taken);
   await clearLeftoverBranch(context.github, RULES, context.repo.repo, branch);
   const fresh = await context.workspace.prepareBranch(context.workingCopy, { branch, start: "default" });
   if (fresh.kind !== "prepared") {

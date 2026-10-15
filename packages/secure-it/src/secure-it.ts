@@ -34,7 +34,7 @@ import { NPM_DEPENDENCY_FIELDS } from "../../remediation/src/npm-file-checks.ts"
 import { requireNpmExcludes } from "../../remediation/src/npm-version.ts";
 import { runSandboxed } from "../../remediation/src/sandboxed.ts";
 import { ensureOsvScanner, verifyingRun } from "../../remediation/src/osv-scanner.ts";
-import { branchFor, ownPullRequests, stateOf, topicOf } from "../../remediation/src/own-pr.ts";
+import { branchFor, freeBranch, ownPullRequests, stateOf, topicOf } from "../../remediation/src/own-pr.ts";
 import { revertToBase } from "../../remediation/src/reconcile.ts";
 import { clearLeftoverBranch, closeAndDelete, ownOpenPullRequests, type PublicationContext, publishNew, publishUpdate, recoverPublication, rewriteText } from "../../remediation/src/publication.ts";
 import { machineRoots } from "../../remediation/src/publication-text.ts";
@@ -464,8 +464,7 @@ async function runUnit(execution: Execution, unit: SecurityUnit, base: PlanBase,
 async function preparePlan(context: ToolRunContext, deps: SecureItDeps, plan: ChangePlan, reusable: GitHubPullRequest | undefined, own: ReadonlyArray<GitHubPullRequest>, baseSha: string): Promise<PreparedBranch> {
   if (reusable !== undefined) return reconcileBranch(context, deps, reusable, baseSha);
   const taken = new Set(own.map((pr) => pr.headRef));
-  let branch = branchFor(RULES, context.now, plan.topic);
-  for (let n = 2; taken.has(branch); n++) branch = branchFor(RULES, context.now, `${plan.topic}-${n}`);
+  const branch = freeBranch(RULES, context.now, plan.topic, taken);
   await clearLeftoverBranch(context.github, RULES, context.repo.repo, branch);
   const fresh = await context.workspace.prepareBranch(context.workingCopy, { branch, start: "default" });
   if (fresh.kind !== "prepared") throw new Error(`${branch} couldn't be prepared`);

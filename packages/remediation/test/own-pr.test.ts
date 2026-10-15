@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { branchFor, isOwnPullRequest, ownPullRequests, stateOf, topicOf, withMarker } from "../src/own-pr.ts";
+import { branchFor, freeBranch, isOwnPullRequest, ownPullRequests, stateOf, topicOf, withMarker } from "../src/own-pr.ts";
 import { BASE_SHA, HEAD_SHA, ownPr, RULES } from "./fake-github.ts";
 
 describe("own PRs", () => {
@@ -26,6 +26,17 @@ describe("own PRs", () => {
     expect(topicOf(RULES, branchFor(RULES, now, "vite"))).toBe("vite");
     expect(topicOf(RULES, "secure-it/2026-01-02-vite")).toBe("vite");
     expect(topicOf(RULES, "bump-it/2026-01-02-vite")).toBeUndefined();
+  });
+
+  it("finds a free branch by numbering after the topic is cut, so a long taken topic still ends", () => {
+    const now = new Date("2026-10-07T23:30:00Z");
+    expect(freeBranch(RULES, now, "vite", new Set())).toBe("secure-it/2026-10-07-vite");
+    expect(freeBranch(RULES, now, "vite", new Set(["secure-it/2026-10-07-vite"]))).toBe("secure-it/2026-10-07-vite-2");
+    const long = "a".repeat(70);
+    const first = branchFor(RULES, now, long);
+    const second = freeBranch(RULES, now, long, new Set([first]));
+    expect(second).toBe(`secure-it/2026-10-07-${"a".repeat(58)}-2`);
+    expect(freeBranch(RULES, now, long, new Set([first, second]))).toBe(`secure-it/2026-10-07-${"a".repeat(58)}-3`);
   });
 
   it("recognises the tool's open PRs from its own branches and repo, by marker or label", () => {
