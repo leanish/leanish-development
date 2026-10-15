@@ -10,7 +10,7 @@ export async function plannedPinsLanded(moves: ReadonlyArray<PlannedMove>, base:
   if (pins.length === 0) {
     return [];
   }
-  const before = (await readActionsInventory(base, { baseline: true })).uses;
+  const before = (await readActionsInventory(base)).uses;
   const after = (await readActionsInventory(head)).uses;
   const problems: string[] = [];
   const simple = pins.flatMap((pin) => pin.locations.flatMap((file) => {

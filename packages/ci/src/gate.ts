@@ -178,7 +178,7 @@ export async function runCompare(base: Tree, head: Tree, env: GateEnvironment, g
   const sources = await sourcesOf(head, headConfig);
   const headInventory = await readInventory(head, sources, { gradle: gradle.head });
   if (isEmpty(headInventory)) throw new Error(`${head.id} has no lockfile, Gradle build or workflow for the gate to check`);
-  const baseInventory = await readInventory(base, await baseSources(base, sources), { missingLockfilesAreEmpty: true, gradle: gradle.base, baseline: true });
+  const baseInventory = await readInventory(base, await baseSources(base, sources), { missingLockfilesAreEmpty: true, gradle: gradle.base });
   const github = new ActionsGitHub(env.fetch, env.githubToken);
   const resolutions = await resolveUses([baseInventory.actions, headInventory.actions], github);
   const baseLocated = [...located(baseInventory), ...actionsLocated(baseInventory.actions, resolutions)];

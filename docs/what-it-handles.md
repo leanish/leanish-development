@@ -252,11 +252,11 @@ the edit visibly, and a person must update it. bump-it can pick a release whose 
 isn't a full `vX.Y.Z` (`v1.1`); verification requires a full tag in the pin's
 comment, so that update fails visibly and a person makes it.
 
-A workflow, local reusable workflow or action metadata file (`action.yml`) that is a
-symbolic link, or sits under a linked directory (`.github`, `.github/workflows` and
-`.github/actions` included), fails the gate and the tools' verification, inherited or new: the runner reads through the link, while a commit
-only records where it points. A PR that replaces such a link with the file passes:
-the base's link is read as before, so what the file uses counts as a change.
+The gate reads a workflow, local reusable workflow or action metadata file (`action.yml`) that is a symbolic link as
+the path it points to, so the actions behind it aren't read; this is a documented gap, see
+[coverage gaps](coverage-gaps.md). The tools refuse an edit that adds or changes a symbolic link or a submodule, or
+changes anything an existing link leads to, since a commit records only where a link points. Links the edit leaves
+alone are the repository's own and are tolerated.
 
 ## Pull requests over time
 

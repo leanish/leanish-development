@@ -2,7 +2,7 @@
  * Where a side of the comparison reads its files from: a git commit (read
  * with `git show`, so nothing in it runs) or the working tree.
  */
-import { lstat, readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
 
 import type { RunProcess } from "./process.ts";
@@ -11,11 +11,8 @@ import { gitArgs, gitEnvironment } from "./git.ts";
 export interface Tree {
   /** `worktree` or the full commit SHA. */
   readonly id: string;
-  /**
-   * The file's content, or undefined when the tree has no such file. With `regularFile`, a symbolic link fails instead
-   * of giving its target path (a commit) or being followed (a working tree).
-   */
-  read(path: string, options?: ReadOptions): Promise<string | undefined>;
+  /** The file's content, or undefined when the tree has no such file. */
+  read(path: string): Promise<string | undefined>;
   /**
    * Every file under `dir`, recursively, as paths from the root; empty when there's no such directory. A commit's
    * tree always lists symlinks (reading one gives its target path); a working tree lists those leading to a file
@@ -24,34 +21,11 @@ export interface Tree {
   list(dir: string, options?: { readonly symlinks?: boolean }): Promise<string[]>;
 }
 
-export interface ReadOptions {
-  readonly regularFile?: boolean;
-}
-
-function linkRefused(path: string, id: string): Error {
-  return new Error(`${path} in ${id} is a symbolic link: it's refused rather than read through`);
-}
-
-/**
- * `a`, `a/b`, `a/b/c` for `a/b/c`, `./a//b/c` too (git lists them so): a link on any of them leads the read elsewhere.
- * A `..` fails instead, since a link before it decides where it leads.
- */
-function selfAndParents(path: string, id: string): string[] {
-  const parts = path.split("/").filter((part) => part !== "" && part !== ".");
-  if (parts.includes("..")) throw new Error(`${path} in ${id} has a '..' segment: it's refused rather than resolved`);
-  return parts.map((_, i) => parts.slice(0, i + 1).join("/"));
-}
-
 export function workingTree(root: string): Tree {
   return {
     id: "worktree",
-    async read(path, options) {
+    async read(path) {
       try {
-        if (options?.regularFile === true) {
-          for (const entry of selfAndParents(path, "worktree")) {
-            if ((await lstat(join(root, entry))).isSymbolicLink()) throw linkRefused(entry, "worktree");
-          }
-        }
         return await readFile(join(root, path), "utf8");
       } catch (err) {
         // ENOTDIR: a parent is a file (`ci.yml/action.yml`), so there's no such file either.
@@ -90,19 +64,7 @@ export async function gitTree(root: string, revision: string, run: RunProcess, g
   const sha = resolved.stdout.trim();
   return {
     id: sha,
-    async read(path, options) {
-      if (options?.regularFile === true) {
-        // `<mode> <type> <object>\t<path>` for the path and each parent: mode 120000 is a symbolic link, and one on a
-        // parent hides the file from the commit while a checkout reads through it.
-        // Naming a directory also lists what's in it, so only the entries that are exactly these paths count.
-        const wanted = new Set(selfAndParents(path, sha));
-        const entries = await git(["ls-tree", "-z", sha, "--", ...wanted]);
-        if (entries.code !== 0) throw new Error(`git ls-tree ${sha} ${path} failed: ${entries.stderr.trim()}`);
-        for (const entry of entries.stdout.split("\0")) {
-          const entryPath = entry.slice(entry.indexOf("\t") + 1);
-          if (entry.startsWith("120000 ") && wanted.has(entryPath)) throw linkRefused(entryPath, sha);
-        }
-      }
+    async read(path) {
       const listed = await git(["ls-tree", "-z", "--name-only", sha, "--", path]);
       if (listed.code !== 0) throw new Error(`git ls-tree ${sha} ${path} failed: ${listed.stderr.trim()}`);
       if (listed.stdout.trim() === "") return undefined;
