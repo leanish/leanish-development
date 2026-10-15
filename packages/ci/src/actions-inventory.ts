@@ -91,8 +91,12 @@ export function parseUses(text: string, file: string): { uses: ActionUse[]; loca
   return { uses, local, docker };
 }
 
-/** Every `uses:` in the tree's workflows and actions, local actions followed. */
-export async function readActionsInventory(tree: Tree): Promise<ActionsInventory> {
+/**
+ * Every `uses:` in the tree's workflows and actions, local actions followed. Linked metadata fails, except in a
+ * `baseline`: a base may hold the link head repairs, and reading it as before (a commit gives the link's target path,
+ * with no uses) only makes head's uses count as changes.
+ */
+export async function readActionsInventory(tree: Tree, options: { readonly baseline?: boolean } = {}): Promise<ActionsInventory> {
   // `missing`: the gap to report when none of `files` exists (only for files a `uses:` points at).
   const queue: Array<{ files: string[]; missing: string | undefined }> = [
     ...(await tree.list(".github/workflows")).filter((path) => LOCAL_WORKFLOW.test(path)).map((file) => ({ files: [file], missing: undefined })),
@@ -113,7 +117,7 @@ export async function readActionsInventory(tree: Tree): Promise<ActionsInventory
         continue;
       }
       // A linked workflow or action would be read as its target path, or through the link, not as what the runner loads.
-      const text = await tree.read(file, { regularFile: true });
+      const text = await tree.read(file, { regularFile: options.baseline !== true });
       if (text === undefined) continue;
       seen.add(file);
       found = true;
