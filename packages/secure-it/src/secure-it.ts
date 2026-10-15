@@ -34,7 +34,7 @@ import { NPM_DEPENDENCY_FIELDS } from "../../remediation/src/npm-file-checks.ts"
 import { requireNpmExcludes } from "../../remediation/src/npm-version.ts";
 import { runSandboxed } from "../../remediation/src/sandboxed.ts";
 import { ensureOsvScanner, verifyingRun } from "../../remediation/src/osv-scanner.ts";
-import { branchFor, freeBranch, ownPullRequests, stateOf, topicOf } from "../../remediation/src/own-pr.ts";
+import { freeBranch, ownPullRequests, stateOf, topicOf } from "../../remediation/src/own-pr.ts";
 import { revertToBase } from "../../remediation/src/reconcile.ts";
 import { clearLeftoverBranch, closeAndDelete, ownOpenPullRequests, type PublicationContext, publishNew, publishUpdate, recoverPublication, rewriteText } from "../../remediation/src/publication.ts";
 import { machineRoots } from "../../remediation/src/publication-text.ts";
@@ -540,15 +540,13 @@ async function recognisedPlans(
   own: ReadonlyArray<GitHubPullRequest>,
   plan: ChangePlan,
 ): Promise<GitHubPullRequest[]> {
-  const topic = topicOf(RULES, branchFor(RULES, context.now, plan.topic));
   const owned: GitHubPullRequest[] = [];
   for (const candidate of own) {
-    // A numeric suffix is the tool's PR opened next to one a human took over.
+    // The recorded plan names the unit, not the branch: branch topics are cut and made branch-safe, so two packages can
+    // share one (`@scope/foo` and `scope-foo`), and a numbered branch (`…-2`, next to one a human took over) is cut shorter.
     const previous = planOf(candidate.body);
-    if (previous === undefined || previous.kind !== plan.kind) continue;
-    const prTopic = topicOf(RULES, candidate.headRef);
-    const suffix = prTopic?.startsWith(`${topic}-`) ? prTopic.slice(`${topic}-`.length) : undefined;
-    if (prTopic !== topic && (suffix === undefined || !/^\d+$/.test(suffix) || previous.topic !== plan.topic)) continue;
+    if (previous === undefined || previous.kind !== plan.kind || previous.topic !== plan.topic) continue;
+    if (topicOf(RULES, candidate.headRef) === undefined) continue;
     const journaled = await publication.journal.last(context.repo.repo, candidate.number);
     // Legacy entries prove only the head: reconcile a freshly computed plan rather than trusting the body.
     const pr = journaled?.head === candidate.headSha && journaled.publication === undefined

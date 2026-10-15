@@ -405,6 +405,24 @@ describe("secure-it run", () => {
     ]);
   });
 
+  it("recognises a major PR by its recorded unit, not a branch topic another package can share", async () => {
+    const majorOf = (name: string) => vite({ name, locations: [`node_modules/${name}`], to: { version: "9.0.1", line: "9", aged: true, major: true, blockers: [] } });
+    const other = await batchPr([majorOf("@scope/foo")], { headRef: "secure-it/2026-10-05-scope-foo-major" });
+    const h = harness({ prs: [other], fixes: [majorOf("scope-foo")] });
+    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ units: [{ topic: "scope-foo-major", outcome: "published" }] });
+    expect(h.github.prs.get(7)?.headSha).toBe(HEAD_SHA);
+    expect(h.workspace.publications.map((entry) => entry.prepared.branch)).toEqual(["secure-it/2026-10-07-scope-foo-major"]);
+  });
+
+  it("recognises its numbered PR for a long topic, whose branch was cut to fit the number", async () => {
+    const name = `pkg-${"x".repeat(70)}`;
+    const major = vite({ name, locations: [`node_modules/${name}`], to: { version: "9.0.1", line: "9", aged: true, major: true, blockers: [] } });
+    const numbered = await batchPr([major], { headRef: `secure-it/2026-10-05-${`${name}-major`.slice(0, 58)}-2` });
+    const h = harness({ prs: [numbered], fixes: [major] });
+    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ units: [{ topic: `${name}-major`, outcome: "already-open" }] });
+    expect(h.workspace.publications).toHaveLength(0);
+  });
+
   it("leaves an identical routine to review while still publishing a needed major", async () => {
     const major = vite({ to: { version: "9.0.1", line: "9", aged: true, major: true, blockers: [] } });
     const h = harness({ prs: [await batchPr([leftPad()])], fixes: [major, leftPad()] });
