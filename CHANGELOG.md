@@ -11,6 +11,18 @@
 
 ### Fixed
 
+The 0.5.2-rc.4 review's findings:
+
+- Workflow and action metadata under a linked directory fail the gate and the tools' verification too. A commit has
+  no file there, so the gate reported a missing local action while the runner read through the link; since rc.1,
+  the tools' snapshot verification missed what changed behind it.
+- secure-it recognizes its PRs by the unit their recorded plan names, not by the branch topic: two packages whose
+  names make the same branch-safe topic (`@scope/foo`, `scope-foo`) no longer share a PR, and a numbered branch cut
+  to fit a long topic is recognized instead of opening another.
+- Documented as known deficiencies, to fix next: bump-it could move the Gradle wrapper to a release a malware
+  advisory also covers, and doesn't check transitives a major brings in for deprecation; npm aliases without a
+  version can't be updated automatically.
+
 The 0.5.2-rc.3 review's findings:
 
 - A workflow or action metadata file that is a symbolic link fails the gate and the tools' verification, inherited
