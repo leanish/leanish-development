@@ -52,6 +52,9 @@ package brings in. Recorded bundles are included. Configure lockfiles outside th
 If a selected `package-lock.json` has an `npm-shrinkwrap.json` beside it in head,
 the gate refuses: npm would install from the shrinkwrap. List the effective
 `npm-shrinkwrap.json` in `npm.lockfiles`; selection never switches automatically.
+Implicit discovery also refuses a root `npm-shrinkwrap.json` when `package-lock.json`
+is absent. Compare, scan and signature verification all require that explicit selection;
+baseline discovery stays lenient.
 
 It checks advisories, release age, allowed registry sources and recorded version
 restrictions. CI also checks npm signatures and provenance attestations.
@@ -188,10 +191,18 @@ holds where the fix would act, and the gate keeps failing until the owner moves
 it. A strictly pinned parent is never moved to carry a fix; the vulnerable
 dependency gets a floor instead. Gradle's own strict constraints on its embedded
 Kotlin (buildscript and settings classpaths) don't block fixes elsewhere.
-Neither tool changes a strict pin: verification refuses an edit that changes a
-line with `strictly` in its code (not in a string or a comment) in a build, settings or catalog file.
-Nested block comments in a changed file also fail verification: their boundaries
-could hide a strict pin, so the owner must simplify those comments first.
+For `*.versions.toml` catalogs, verification uses `smol-toml` to compare every
+parsed value under a key named `strictly`, paired with its full key path, in order.
+Changed values or paths, added or removed pins, and catalogs that don't parse
+fail verification. Equivalent formatting and unrelated catalog edits can pass.
+
+The backstop for `.gradle` and `.gradle.kts` is a hand-written lexer with a known
+deficiency: string or comment forms it doesn't understand, including Groovy slashy
+(`/…/`) and dollar-slashy (`$/…/$`) strings, can hide a changed `strictly(...)`
+in a branch the Gradle inventory doesn't see. Active pins are still caught by
+the inventory and reference checks. Recognized strict statements remain protected,
+and nested block comments fail visibly. Version 0.6.0 plans to replace this lexer
+with the official parsers Gradle ships: its Groovy and Kotlin compilers.
 
 ### What bump-it updates
 
@@ -220,6 +231,12 @@ updates it, or waits until the action publishes immutable releases. In October
 2026, `actions/checkout`, `actions/upload-artifact` and `actions/download-artifact`
 were among them. Own Actions can skip the age wait, but still need valid pins.
 
+A mutable release in a fixing line has no trusted date, so secure-it and the gate's
+young-fix proof cannot select that line even when it also has an immutable fix.
+The tools report the existing unknown-age problem and skip it; the owner must
+update it manually or wait for trusted age evidence. bump-it's aged-release
+selection can still choose an immutable release independently.
+
 secure-it selects the lowest eligible security fix and pins its tag's commit.
 bump-it selects the highest eligible aged release, with routine updates together
 and majors separate. Neither rewrites unrelated workflow policy.
@@ -229,6 +246,9 @@ An explicit `compatibleLines` override counts numeric segments after one optiona
 leading `v` or `V`: with one segment, `v1.2.0` and `v2.2.0` stay in different lines.
 When secure-it targets different version lines of the same action in one workflow,
 verification rejects the conflicting planned pins visibly. A person must update those uses.
+An action pinned through a scalar YAML anchor, such as `&action owner/repo@sha # vX`
+with `uses: *action`, also cannot be updated automatically: verification refuses
+the edit visibly, and a person must update it.
 
 ## Pull requests over time
 
@@ -255,9 +275,11 @@ Which PRs the agent can adapt:
 - **secure-it's non-major fixes:** build and dependency files only, never code.
 - **bump-it's routine PR and floor removals:** never adapted.
 
-In every mode the agent runs the repository's relevant checks and reports any it
-couldn't run. For a major, it links the release notes or changelog it read, or
-says it couldn't read them.
+Whenever the agent is invoked, it runs the repository's relevant checks and reports
+any it couldn't run. Mechanical bump-it routines containing only npm and wrapper
+moves run dependency verification without invoking the agent or running the
+repository's own tests; they rely on the PR's CI. For a major, the agent links the
+release notes or changelog it read, or says it couldn't read them.
 
 Verification failures are different from CI failures. When secure-it's own
 verification of a routine batch fails, it retries once without the package groups

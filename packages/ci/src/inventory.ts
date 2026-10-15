@@ -46,6 +46,9 @@ const GRADLE_ROOT_FILES = ["settings.gradle.kts", "settings.gradle", "build.grad
 export async function sourcesOf(tree: Tree, config: Config, options: { readonly allowShadowedLockfiles?: boolean } = {}): Promise<Sources> {
   const lockfiles = config.npm.lockfiles ?? ((await tree.read("package-lock.json")) === undefined ? [] : ["package-lock.json"]);
   if (options.allowShadowedLockfiles !== true) {
+    if (config.npm.lockfiles === undefined && await tree.read("npm-shrinkwrap.json") !== undefined) {
+      throw new Error(`${tree.id} has npm-shrinkwrap.json: npm installs from the shrinkwrap; list npm-shrinkwrap.json in supply-chain.json npm.lockfiles instead`);
+    }
     for (const path of lockfiles.filter((file) => basename(file) === "package-lock.json")) {
       const shrinkwrap = join(dirname(path), "npm-shrinkwrap.json");
       if (await tree.read(shrinkwrap) !== undefined) {

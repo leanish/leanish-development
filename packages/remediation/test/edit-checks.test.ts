@@ -8,8 +8,59 @@ const KTS = 'dependencies {\n  implementation("g:plain:1.0")\n  implementation("
 const GROOVY = 'dependencies {\n  implementation "g:plain:1.0"\n  implementation("g:pinned") { version { strictly "1.0" } }\n}\n';
 const CATALOG = '[libraries]\nplain = "g:plain:1.0"\npinned = { module = "g:pinned", version = { strictly = "1.0" } }\n';
 
+describe("parsed catalog strict pins", () => {
+  const path = "gradle/libs.versions.toml";
+  const check = (before: string, after: string) => strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: after }));
+  const changed = `the edit changed a Gradle strictly(...) pin in ${path}: strict versions are the owner's, which no plan moves`;
+
+  it("refuses a changed multiline TOML strict value", async () => {
+    const before = 'lib.strictly = """\n1.0"""\n';
+    expect(await check(before, before.replace("1.0", "9.0"))).toEqual([changed]);
+  });
+
+  it.each([
+    'lib.strictly = "1.0"\n',
+    'lib = { version = { strictly = "1.0" } }\n',
+    '[libraries.lib.version]\nstrictly = "1.0"\n',
+    '[[libraries]]\nversion = { strictly = "1.0" }\n',
+    'lib."\\u0073trictly" = "1.0"\n',
+  ])("refuses changed strict values at any depth: %s", async (before) => {
+    expect(await check(before, before.replace("1.0", "9.0"))).toEqual([changed]);
+  });
+
+  it("allows unrelated changes and equivalent formatting around unchanged strict values", async () => {
+    const before = 'lib.strictly = "1.0"\nother = "2.0"\n';
+    expect(await check(before, before.replace("2.0", "3.0"))).toEqual([]);
+    expect(await check(before, 'lib.strictly = """1.0""" # same value\nother = "3.0"\n')).toEqual([]);
+  });
+
+  it("refuses added, removed, moved, reordered or differently typed strict values", async () => {
+    const before = 'first.strictly = "1.0"\nsecond.strictly = "2.0"\n';
+    for (const after of [
+      `${before}third.strictly = "3.0"\n`,
+      'first.strictly = "1.0"\n',
+      before.replace("first.strictly", "third.strictly"),
+      'second.strictly = "2.0"\nfirst.strictly = "1.0"\n',
+      before.replace('"1.0"', "1.0"),
+    ]) expect(await check(before, after)).toEqual([changed]);
+  });
+
+  it.each(["base", "head"])("refuses a non-parsing %s catalog visibly", async (side) => {
+    const valid = 'lib.strictly = "1.0"\n';
+    const invalid = 'lib.strictly = "unterminated\n';
+    expect(await check(side === "base" ? invalid : valid, side === "head" ? invalid : valid))
+      .toEqual([expect.stringContaining(`${path}:`)]);
+  });
+
+  it("protects strict values when a whole catalog is added or removed", async () => {
+    const catalog = tree({ [path]: 'lib.strictly = "1.0"\n' });
+    expect(await strictPinsChanged([path], tree({}), catalog)).toEqual([changed]);
+    expect(await strictPinsChanged([path], catalog, tree({}))).toEqual([changed]);
+  });
+});
+
 describe("strict pins", () => {
-  it.each(["build.gradle.kts", "build.gradle", "gradle/libs.versions.toml"])("refuses nested block comments that could hide a pin in %s", async (path) => {
+  it.each(["build.gradle.kts", "build.gradle"])("refuses nested block comments that could hide a pin in %s", async (path) => {
     const before = '/* outer /* nested */ " */\nstrictly("1.0")\n';
     const base = tree({ [path]: before });
     expect(await strictPinsChanged([path], base, tree({ [path]: before.replace('strictly("1.0")', 'strictly("2.0")') })))
@@ -78,7 +129,8 @@ describe("strict pins", () => {
 
   it("reads Groovy's single-quoted strings and TOML strings as plain text", async () => {
     for (const [path, text] of [["build.gradle", "def s = '${strictly(1)}'\n"], ["gradle/libs.versions.toml", 'note = "${strictly}"\n']] as const) {
-      expect(await strictPinsChanged([path], tree({ [path]: text }), tree({ [path]: `${text}// changed\n` }))).toEqual([]);
+      const comment = path.endsWith(".toml") ? "# changed\n" : "// changed\n";
+      expect(await strictPinsChanged([path], tree({ [path]: text }), tree({ [path]: `${text}${comment}` }))).toEqual([]);
     }
   });
 
