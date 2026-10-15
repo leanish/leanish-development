@@ -11,6 +11,20 @@
 
 ### Fixed
 
+The 0.5.2-rc.2 review's findings:
+
+- Implicit npm lockfile discovery refuses a root `npm-shrinkwrap.json`, even after `package-lock.json` is removed.
+  The owner must list it in `npm.lockfiles`; compare, scan and signatures enforce the same selection rule.
+- TOML catalog strict pins are compared as parsed key paths and values with `smol-toml`, including multiline
+  values, dotted keys and inline tables. Changed pins and non-parsing catalogs fail verification.
+- Documented: the hand-written Kotlin/Groovy lexer can miss changed strict pins in inactive branches when strings
+  or comments are not understood (including Groovy slashy/dollar-slashy strings). Active pins remain checked by the
+  inventory; replacing the lexer with Gradle's official Groovy/Kotlin parsers is planned for 0.6.0.
+- Documented: scalar YAML action aliases cannot be updated automatically and fail verification visibly; a mutable
+  release in a fixing line blocks its selection even if an immutable fix exists.
+- Clarified: agent checks run whenever the agent is invoked. Mechanical npm/wrapper-only bump-it routines verify
+  dependencies and rely on the PR's CI for repository tests.
+
 The 0.5.2-rc.1 review's findings:
 
 - A selected `package-lock.json` with an `npm-shrinkwrap.json` beside it in head fails the gate, since npm installs

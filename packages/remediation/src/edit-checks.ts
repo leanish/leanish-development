@@ -16,6 +16,7 @@
 import { basename } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
+import { parse as parseToml } from "smol-toml";
 import { isMap, isScalar, isSeq, parseDocument } from "yaml";
 
 import { commentTag, readActionsInventory } from "../../ci/src/actions-inventory.ts";
@@ -90,7 +91,7 @@ export async function actionsOutsidePlan(pins: ReadonlyArray<PlannedPin>, base: 
 
 /**
  * Whether `strictly` appears in the line's code, not inside a string or a comment: `strictly("1.0")`, Groovy's
- * `strictly pinVersion`, a catalog's `strictly = "1.0"` count; a `because("… strictly pinned …")` or a comment doesn't.
+ * `strictly pinVersion` count; a `because("… strictly pinned …")` or a comment doesn't.
  * Strings and block comments keep their state across continuation lines.
  */
 interface CodeState {
@@ -110,10 +111,10 @@ function lineCode(line: string, state: CodeState, path: string): string {
       continue;
     }
     if (state.quote !== undefined) {
-      // Kotlin raw strings (and TOML multiline literal strings) do not escape their closing quotes; Groovy does.
-      const escapes = state.quote.length === 1 || path.endsWith(".gradle") || (state.quote === '"""' && !path.endsWith(".gradle.kts"));
+      // Kotlin raw strings do not escape their closing quotes; Groovy strings do.
+      const escapes = state.quote.length === 1 || path.endsWith(".gradle");
       if (char === "\\" && escapes) i++;
-      else if (char === "$" && line[i + 1] === "{" && state.quote.startsWith('"') && !path.endsWith(".toml")) {
+      else if (char === "$" && line[i + 1] === "{" && state.quote.startsWith('"')) {
         // `${…}` in a Kotlin or Groovy string is code the scanner doesn't read, and where it ends is easy to misjudge: a
         // line with one and the word `strictly` anywhere fails, instead of trusting where the interpolation seems to end.
         if (/\bstrictly\b/.test(line)) throw new Error("a strictly(...) on a line with a string interpolation can't be verified");
@@ -128,13 +129,12 @@ function lineCode(line: string, state: CodeState, path: string): string {
       } else if (line.startsWith(state.quote, i)) {
         const quote = state.quote;
         i += quote.length - 1;
-        // Kotlin and TOML allow content quotes immediately before the closing triple delimiter.
+        // Kotlin allows content quotes immediately before the closing triple delimiter.
         if (quote.length === 3 && !path.endsWith(".gradle")) {
           while (line[i + 1] === char) i++;
         }
         state.quote = undefined;
-        // A quoted name is still code: a catalog key (`"strictly" = "1.0"`), or a Groovy member (`delegate."strictly"`,
-        // called with or without parentheses).
+        // A quoted Groovy name (`delegate."strictly"`, called with or without parentheses, or assigned) is still code.
         if (quote.length === 1) code += state.member || /^\s*[=(]/.test(line.slice(i + 1)) ? state.quoted : char;
       } else if (state.quote.length === 1) state.quoted += char;
       continue;
@@ -154,7 +154,7 @@ function lineCode(line: string, state: CodeState, path: string): string {
       code += " ";
       continue;
     }
-    if (char === "#" || (char === "/" && line[i + 1] === "/")) break;
+    if (char === "/" && line[i + 1] === "/") break;
     code += char;
   }
   return code;
@@ -215,17 +215,33 @@ function balanceStrict(code: string, opened: string[]): void {
   }
 }
 
+/** Every parsed catalog value named `strictly`, in traversal order, paired with its complete key path. */
+function catalogStrictValues(text: string | undefined): Array<readonly [ReadonlyArray<string>, unknown]> {
+  const pins: Array<readonly [ReadonlyArray<string>, unknown]> = [];
+  const visit = (value: unknown, path: ReadonlyArray<string>): void => {
+    if (value === null || typeof value !== "object") return;
+    for (const [key, child] of Object.entries(value)) {
+      const keyPath = [...path, key];
+      if (key === "strictly") pins.push([keyPath, child]);
+      visit(child, keyPath);
+    }
+  };
+  visit(parseToml(text ?? ""), []);
+  return pins;
+}
+
 /**
- * The Gradle build, settings and catalog files where the edit changed a line with `strictly` in its code: a strict version is its
- * owner's deliberate pin, which no plan moves. A line counts when `strictly` is in its code, outside strings and comments.
- * Each strict statement, including balanced continuation lines, must stay the same, in order and byte for byte.
- * A changed variable outside the statement or moving an unchanged pin within its file still escapes this textual guard.
+ * Catalogs compare parsed `strictly` key paths and values, in order; malformed TOML fails.
+ * Build and settings files compare strict statements, including balanced continuations, in order and byte for byte.
+ * Their hand lexer can miss unfamiliar string/comment forms or a changed variable outside a statement; the Gradle
+ * inventory checks active pins, but this textual guard cannot guarantee protection of inactive branches.
  */
 export async function strictPinsChanged(changedFiles: ReadonlyArray<string>, base: Tree, head: Tree): Promise<string[]> {
   const problems: string[] = [];
   for (const path of changedFiles.filter(isGradleVersionFile)) {
     try {
-      if (!isDeepStrictEqual(strictStatements(await base.read(path), path), strictStatements(await head.read(path), path))) {
+      const pins = (text: string | undefined) => path.endsWith(".versions.toml") ? catalogStrictValues(text) : strictStatements(text, path);
+      if (!isDeepStrictEqual(pins(await base.read(path)), pins(await head.read(path)))) {
         problems.push(`the edit changed a Gradle strictly(...) pin in ${path}: strict versions are the owner's, which no plan moves`);
       }
     } catch (err) {

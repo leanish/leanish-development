@@ -148,6 +148,37 @@ tests; removing prefix normalization failed three line/selection tests; removing
 three tests. Each source was restored byte for byte. These automated checks exercise the edge cases separately
 from the candidate's real-repository pass above.
 
+## Release-candidate review of 0.5.2-rc.2 — 2026-10-15
+
+The candidate pass for `v0.5.2-rc.2` (`f4cfd8b`) recorded 52 commands, 0 failed, running both tools on the real
+adopting repositories and all six fixture repositories.
+
+Sol's unprimed review found the Groovy slashy-string strict-pin bypass and three non-blocking findings. Astra's
+critical pass kept the bypass, narrowed/downgraded two findings, and added two blockers: a shrinkwrap replacing the
+default lockfile and multiline TOML strict values. Under the [release review rule](releasing.md), this second pass
+added concrete coverage beyond the first review and calibrated the non-blocking findings.
+
+- **Implicit shrinkwrap replacement — blocking, fixed by refusal.** A root `npm-shrinkwrap.json` without explicit
+  `npm.lockfiles` fails compare, scan and signature discovery, with or without a package lock beside it. Explicit
+  shrinkwrap selection works; baseline discovery remains lenient.
+- **Strict-pin approach — real parsers chosen over hand lexing.** Astra's multiline TOML finding is fixed in 0.5.2
+  by parsing `*.versions.toml` with `smol-toml` and comparing the ordered strict key paths and values. Changed pins
+  and non-parsing catalogs fail; unrelated changes beside unchanged pins pass. Sol's Groovy slashy-string finding
+  is documented as a known deficiency for 0.6.0: string/comment forms the hand-written Kotlin/Groovy lexer doesn't
+  understand can hide strict-pin changes in inactive branches. Active pins remain checked by the inventory and
+  reference. Version 0.6.0 plans to use the official parsers Gradle ships (its Groovy and Kotlin compilers).
+- **Scalar YAML aliases — non-blocking limitation.** An action pin supplied through a scalar anchor cannot be
+  updated automatically; verification refuses it visibly. Documented for manual updating.
+- **Mixed mutable/immutable releases — non-blocking limitation.** An undated mutable release in a fixing line
+  prevents selecting that line even if an immutable fix exists; the existing problem explains the skip.
+- **Agent checks — documentation corrected.** Checks run whenever the agent is invoked. Mechanical bump-it
+  routines with npm/wrapper moves only verify dependencies and rely on PR CI for repository tests.
+
+Removing the implicit-shrinkwrap refusal failed three discovery, comparison and signature regression tests. The
+source was restored byte for byte; explicit shrinkwrap selection and lenient baseline handling are also tested.
+Removing the TOML strict-value comparison failed the multiline-value regression: the changed pin was accepted.
+The source was restored byte for byte before the full automated check.
+
 ## Fixture coverage
 
 What the fixture repositories exercise, by evidence state. Case numbers refer to each fixture's `EXPECTED.md`.
