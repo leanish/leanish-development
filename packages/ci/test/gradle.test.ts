@@ -81,6 +81,44 @@ describe("Gradle inventory files", () => {
     expect(() => parseGradleInventory(broken(configuration(":x", [], { strictConstraints: [{ group: "com.acme", name: "c" }] })), "abc123", ["."])).toThrow("malformed version");
   });
 
+  it("reads all rich-version facets of declarations and every constraint, while accepting older inventories", () => {
+    const versionConstraint = { strictVersion: "[1.0,3.0[", requiredVersion: "[1.0,3.0[", preferredVersion: "1.5", rejectedVersions: ["2.0"], branch: "main" };
+    const entry = { group: "com.acme", name: "rich", version: "[1.0,3.0[", versionConstraint };
+    const raw = { ...valid, builds: [{ build: ".", configurations: [configuration(":runtimeClasspath", [], {
+      declared: [{ ...entry, strict: true }], constraints: [entry, { ...entry, name: "preferred", versionConstraint: { ...versionConstraint, strictVersion: "" } }],
+    })] }] };
+    const parsed = parseGradleInventory(raw, "abc123", ["."]).builds[0]!.configurations[0]!;
+    expect(parsed.declared[0]!.versionConstraint).toEqual(versionConstraint);
+    expect(parsed.constraints).toEqual([entry, { ...entry, name: "preferred", versionConstraint: { ...versionConstraint, strictVersion: "" } }]);
+    expect(strictPins(parseGradleInventory(raw, "abc123", ["."]))).toEqual(new Map([["com.acme:rich", [":runtimeClasspath"]]]));
+    expect(parseGradleInventory(valid, "abc123", ["."]).builds[0]!.configurations[0]!.constraints).toBeUndefined();
+  });
+
+  it.each(["declared", "constraints"])("rejects malformed rich versions in %s", (field) => {
+    const rich = { strictVersion: "", requiredVersion: "1.0", preferredVersion: "", rejectedVersions: [], branch: null };
+    const parse = (versionConstraint: unknown) => parseGradleInventory({ ...valid, builds: [{ build: ".", configurations: [configuration(":x", [], {
+      [field]: [{ group: "com.acme", name: "rich", version: "1.0", versionConstraint }],
+    })] }] }, "abc123", ["."]);
+    for (const bad of [null, "1.0", { ...rich, strictVersion: 1 }, { ...rich, requiredVersion: null }, { ...rich, preferredVersion: [] },
+      { ...rich, rejectedVersions: "2.0" }, { ...rich, rejectedVersions: [2] }, { ...rich, branch: 1 }]) {
+      expect(() => parse(bad)).toThrow("malformed versionConstraint");
+    }
+    expect(() => parse(rich)).not.toThrow();
+    expect(() => parse(undefined)).not.toThrow();
+  });
+
+  it.each(["declared", "constraints"])("defaults absent rich-version facets in %s to empty", (field) => {
+    const empty = { strictVersion: "", requiredVersion: "", preferredVersion: "", rejectedVersions: [], branch: null };
+    for (const facets of [{}, { requiredVersion: "1.0" }, { strictVersion: "[1.0,3.0[", requiredVersion: "[1.0,3.0[" },
+      { preferredVersion: "1.5" }, { rejectedVersions: ["2.0"] }, { branch: "main" }]) {
+      const parsed = parseGradleInventory({ ...valid, builds: [{ build: ".", configurations: [configuration(":x", [], {
+        [field]: [{ group: "com.acme", name: "rich", version: "1.0", versionConstraint: facets }],
+      })] }] }, "abc123", ["."]).builds[0]!.configurations[0]!;
+      const entries = field === "declared" ? parsed.declared : parsed.constraints!;
+      expect(entries[0]!.versionConstraint).toEqual({ ...empty, ...facets });
+    }
+  });
+
   it("names configurations of other builds by their directory, and reports resolution failures unless ignored", () => {
     const inventory = parseGradleInventory(
       {

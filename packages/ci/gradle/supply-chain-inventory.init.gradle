@@ -8,8 +8,8 @@
 // plugins DSL and `buildscript {}` put plugins), plus the settings classpath once per build:
 // every module component the resolution selected, every dependency it couldn't resolve, and
 // the external dependencies declared in or inherited by that configuration, with their version,
-// `because(...)` reason (what the floors check reads) and whether the version is strict, plus the
-// strict dependency constraints (`constraints { … strictly(…) }`): a strict version is its owner's pin. The CLI reads the files as data.
+// `because(...)` reason (what the floors check reads) and full rich version, plus every dependency
+// constraint and its full rich version: a strict version is its owner's pin. The CLI reads the files as data.
 // Declarations are read only once every configuration of the build has resolved: resolving adds
 // some (`defaultDependencies`, such as a code-quality plugin's tool, or `withDependencies`).
 //
@@ -52,7 +52,7 @@ def relativeToRequested = { File dir ->
 def componentKey = { id -> id instanceof ModuleComponentIdentifier ? "${id.group}:${id.module}:${id.version}".toString() : id.displayName }
 
 def resolveEntry = { configuration, String id, String kind ->
-    def entry = [id: id, kind: kind, resolved: [], unresolved: [], declared: [], strictConstraints: [], edges: [], error: null]
+    def entry = [id: id, kind: kind, resolved: [], unresolved: [], declared: [], constraints: [], strictConstraints: [], edges: [], error: null]
     try {
         def result = configuration.incoming.resolutionResult
         result.allComponents.each { component ->
@@ -74,6 +74,14 @@ def resolveEntry = { configuration, String id, String kind ->
     entry
 }
 
+// Plain required versions already live in `version`. Otherwise export only set facets; the reader defaults missing ones.
+def richVersion = { constraint ->
+    def facets = [strictVersion: constraint.strictVersion, requiredVersion: constraint.requiredVersion,
+     preferredVersion: constraint.preferredVersion, rejectedVersions: constraint.rejectedVersions, branch: constraint.branch]
+        .findAll { key, value -> value }
+    facets.keySet().every { it == "requiredVersion" } ? [:] : [versionConstraint: facets]
+}
+
 // allDependencies: what this configuration declares and inherits (compileClasspath gets implementation's). Under the
 // reference script, a declaration it moved (the same object) is marked `moved`.
 def declare = { configuration, Map entry ->
@@ -85,10 +93,13 @@ def declare = { configuration, Map entry ->
             name   : dependency.name,
             version: dependency.version ?: constraint.strictVersion ?: constraint.requiredVersion ?: constraint.preferredVersion ?: null,
             reason : dependency.reason,
-        ] + (constraint.strictVersion ? [strict: true] : [:]) + (moved.contains(dependency) ? [moved: true] : [:])
+        ] + richVersion(constraint) + (constraint.strictVersion ? [strict: true] : [:]) + (moved.contains(dependency) ? [moved: true] : [:])
     }
     configuration.allDependencyConstraints.each { constraint ->
-        def strict = constraint.versionConstraint.strictVersion
+        def version = constraint.versionConstraint
+        entry.constraints << [group: constraint.group, name: constraint.name,
+                              version: version.strictVersion ?: version.requiredVersion ?: version.preferredVersion ?: null] + richVersion(version)
+        def strict = version.strictVersion
         if (strict) entry.strictConstraints << [group: constraint.group, name: constraint.name, version: strict]
     }
     entry

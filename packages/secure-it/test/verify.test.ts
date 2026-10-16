@@ -11,6 +11,7 @@ import { fakeFetch } from "../../ci/test/fake-fetch.ts";
 import { archive, manifest, serving } from "../../ci/test/tarballs.ts";
 import type { ChangePlan } from "../src/plan.ts";
 import { STRICT_PIN_SOURCES, strictPinInventory } from "../../remediation/test/strict-pin-inventory.ts";
+import { RICH_VERSION_CHANGES, richVersionInventory } from "../../remediation/test/rich-version-inventory.ts";
 import { referencePlan, verifyPlan } from "../src/verify.ts";
 
 const NOW = new Date("2026-10-07T12:00:00Z");
@@ -293,6 +294,21 @@ describe("verifyPlan", () => {
       ] as const) {
         expect(await verifyPlan({ ...inputs, reference: before, gradle: { base: before, head: after } }))
           .toContainEqual(expect.stringContaining(message));
+      }
+    }
+  });
+
+  it.each(["declaration", "constraint"] as const)("protects every rich-version facet of an active %s in routine and major plans", async (kind) => {
+    for (const major of [false, true]) {
+      const plan: ChangePlan = { ...PLAN, moves: PLAN.moves.map((move) => ({ ...move, major })) };
+      for (const { before, after } of RICH_VERSION_CHANGES) {
+        const reference = richVersionInventory(kind, before);
+        const inputs = { plan, base: BASE, head: tree("head", { "package-lock.json": lock({ lib: "^1.0.0", other: "^1.0.0" }, { lib: "1.0.1", other: "1.0.0" }) }),
+          env: environment(AFFECTED), reference, gradle: { base: reference, head: reference }, changedFiles: ["package-lock.json", "build.gradle.kts"] };
+        // The unrelated planned npm move passes with the rich version intact.
+        expect(await verifyPlan(inputs)).toEqual([]);
+        expect(await verifyPlan({ ...inputs, gradle: { base: reference, head: richVersionInventory(kind, after) } }))
+          .toContainEqual(expect.stringContaining("unlike the plan's reference"));
       }
     }
   });

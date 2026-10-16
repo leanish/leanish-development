@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { gradleLocated, gradleLocation, gradleResolutionProblems, type GradleInventory, parseGradleInventory, runGradleInventory } from "../src/gradle.ts";
+import { referenceDifferences } from "../../remediation/src/gradle-reference.ts";
 import { runProcess } from "../src/process.ts";
 
 const WRAPPER = fileURLToPath(new URL("./fixtures/gradle-wrapper", import.meta.url));
@@ -214,6 +215,49 @@ dependencies { implementation "fixture:included-dep:1.0" }
     expect(declaredAt(":defaulted")).toEqual([{ group: "fixture", name: "defaulted", version: "1.0", reason: undefined }]);
     expect(declaredAt(":sub:defaulted")).toEqual([{ group: "fixture", name: "sub-defaulted", version: "1.0", reason: undefined }]);
   });
+
+  it("exports full rich versions from active dependencies and constraints on project, inherited, buildscript and settings classpaths", async () => {
+    const build = join(root, "rich-versions");
+    const repo = join(root, "rich-repo");
+    await cp(WRAPPER, build, { recursive: true });
+    for (const name of ["rich", "constrained"]) {
+      for (const version of ["1.5", "2.0"]) {
+        await write(repo, `fixture/${name}/${version}/${name}-${version}.pom`, pom(`fixture:${name}:${version}`, []));
+      }
+      await write(repo, `fixture/${name}/maven-metadata.xml`, `<metadata><groupId>fixture</groupId><artifactId>${name}</artifactId><versioning><versions><version>1.5</version><version>2.0</version></versions></versioning></metadata>`);
+    }
+    const dependencies = (reject: boolean) => `
+      add("CLASSPATH", "fixture:rich") { version { strictly "[1.0,3.0["; prefer "1.5"; ${reject ? 'reject "2.0";' : ''} branch = "main" } }
+      add("CLASSPATH", "fixture:constrained")
+      constraints { add("CLASSPATH", "fixture:constrained") { version { require "[1.0,3.0["; prefer "1.5"; reject "2.0"; branch = "release" } } }
+    `;
+    const classpath = `buildscript {
+      repositories { maven { url = uri("${repo}") } }
+      dependencies { ${dependencies(true).replaceAll("CLASSPATH", "classpath")} }
+    }\n`;
+    await write(build, "settings.gradle", `${classpath}rootProject.name = "rich-versions"\n`);
+    const script = (reject: boolean) => `${classpath}
+      repositories { maven { url = uri("${repo}") } }
+      configurations { active; inherited { extendsFrom active } }
+      dependencies { ${dependencies(reject).replaceAll("CLASSPATH", "active")} }
+    `;
+    await write(build, "build.gradle", script(true));
+    const reference = await runGradleInventory(build, ["."], "worktree", runProcess);
+    expect(gradleResolutionProblems(reference, [])).toEqual([]);
+    const expected = { strictVersion: "[1.0,3.0[", requiredVersion: "[1.0,3.0[", preferredVersion: "1.5", rejectedVersions: ["2.0"], branch: "main" };
+    const configurations = reference.builds[0]!.configurations;
+    for (const id of [":active", ":inherited", ":buildscript.classpath", "settings.classpath"]) {
+      const configuration = configurations.find((configuration) => configuration.id === id)!;
+      expect(configuration.declared.find((entry) => entry.name === "rich")!.versionConstraint).toEqual(expected);
+      expect(configuration.constraints!.find((entry) => entry.name === "constrained")!.versionConstraint).toEqual({ ...expected, strictVersion: "", branch: "release" });
+    }
+    // The reviewer's active strictly(range) + reject case: dropping reject must fail even with identical resolution.
+    await write(build, "build.gradle", script(false));
+    const head = await runGradleInventory(build, ["."], "worktree", runProcess);
+    expect(gradleResolutionProblems(head, [])).toEqual([]);
+    expect(gradleLocated(head)).toEqual(gradleLocated(reference));
+    expect(referenceDifferences(reference, head)).toContainEqual(expect.stringContaining("no longer declares fixture:rich"));
+  }, 600_000);
 
   it("keeps projects apart whose paths look alike", () => {
     expect(locations("fixture:ab-colon:1.0")).toEqual(expect.arrayContaining([":a:b:runtimeClasspath"]));
