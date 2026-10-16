@@ -1,0 +1,215 @@
+/** Planning and editing one independent unit; no publication until verification passes. */
+import { isDeepStrictEqual } from "node:util";
+
+import type { GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
+import type { PreparedBranch } from "@leanish/agent-runtime/types/working-copy";
+import { ActionsGitHub } from "@leanish/gate/actions-github";
+import type { GateEnvironment, GradleInputs } from "@leanish/gate/gate";
+import type { NpmPeerPlanner } from "@leanish/gate/npm-peers";
+import type { Tree } from "@leanish/gate/tree";
+import type { ToolRunContext } from "@leanish/tool-runtime/command";
+import { referenceTransform } from "@leanish/tool-runtime/gradle-reference";
+import { type GradleInventories, lockfilesOf } from "@leanish/tool-runtime/inventories";
+import { freeBranch, ownPullRequests } from "@leanish/tool-runtime/own-pr";
+import { clearLeftoverBranch, type PublicationContext, type PullRequestContent } from "@leanish/tool-runtime/publication";
+
+import type { WrapperArtifact } from "./wrapper-generation.ts";
+import type { WrapperCandidates, WrapperPlanner } from "./gradle-wrapper.ts";
+import { constrainedUnit } from "./constraints.ts";
+import type { BumpItDeps } from "./deps.ts";
+import { formatManifest } from "./manifest-format.ts";
+import { coupledUnit, constrainedPeers } from "./peers.ts";
+import { assertNoPlanMarker } from "@leanish/tool-runtime/plan-blocks";
+import { type BumpPlan, DEPENDENCY_FIELDS, planFor, planSection } from "./plan.ts";
+import type { Unit } from "./units.ts";
+import { referenceMoves } from "./verify.ts";
+
+export const RULES = ownPullRequests("bump-it");
+
+export interface Execution {
+  readonly context: ToolRunContext;
+  readonly deps: BumpItDeps;
+  readonly env: GateEnvironment;
+  readonly inventories: GradleInventories;
+  readonly wrapper: WrapperPlanner;
+  readonly publication: PublicationContext;
+}
+
+export interface Computed {
+  readonly plan: BumpPlan;
+  readonly files: ReadonlyMap<string, string>;
+  readonly base: Tree;
+  readonly gradle: GradleInputs["head"];
+  readonly wrapperFiles?: ReadonlyArray<WrapperArtifact>;
+  readonly wrapperOmitted?: boolean;
+  readonly blocked?: string;
+}
+
+interface SkillAnswer {
+  readonly outcome: "applied" | "cannot-apply";
+  readonly summary: string;
+  readonly publication?: PullRequestContent | null;
+}
+
+export async function compute(execution: Execution, unit: Unit, base: Tree, gradle: GradleInputs["head"], peers?: NpmPeerPlanner, wrapper: WrapperCandidates = {}): Promise<Computed> {
+  const coupled = await coupledUnit(unit, peers === undefined ? new Map() : await lockfilesOf(base), peers);
+  const bounded = await constrainedUnit(coupled.unit, base);
+  const ready = constrainedPeers(coupled.unit, bounded.unit, coupled.sets);
+  const generated = await prepareWrapper(execution, ready.unit, base.id);
+  const notes = [...wrapper.notes ?? [], ...coupled.notes, ...bounded.notes, ...ready.notes, ...generated.notes];
+  const blocked = unit.kind === "major" && generated.unit.moves.length === 0 && notes.length > 0 ? notes.join("; ") : undefined;
+  const npm = blocked === undefined
+    ? await execution.deps.npm(execution.context, generated.unit, base, execution.env, gradle)
+    : { files: new Map<string, string>(), changes: [], notes: [] };
+  const actions = new ActionsGitHub(execution.env.fetch, execution.env.githubToken);
+  const planned = await planFor(generated.unit, { ...npm, notes: [...notes, ...npm.notes] }, (name, tag) => actions.tagCommit(name, tag));
+  const wrapperFiles = generated.files;
+  const plan = wrapperFiles.length === 0 ? planned : { ...planned, wrapperFiles: wrapperFiles.map(({ bytes: _bytes, ...file }) => file) };
+  return { plan, files: npm.files, wrapperFiles, wrapperOmitted: wrapper.unavailable === true || generated.notes.length > 0, base, gradle, ...(blocked === undefined ? {} : { blocked }) };
+}
+
+async function prepareWrapper(execution: Execution, unit: Unit, baseSha: string): Promise<{ unit: Unit; files: ReadonlyArray<WrapperArtifact>; notes: string[] }> {
+  const move = unit.moves.find((move) => move.mechanism === "gradle-wrapper");
+  if (move === undefined) {
+    return { unit, files: [], notes: [] };
+  }
+  try {
+    const files = await execution.deps.generateWrapper(execution.context, baseSha, move);
+    return { unit, files, notes: [] };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return {
+      unit: { ...unit, moves: unit.moves.filter((candidate) => candidate !== move) },
+      files: [],
+      notes: [`Gradle wrapper left out: ${reason}`],
+    };
+  }
+}
+
+export async function writeNpm(execution: Execution, files: ReadonlyMap<string, string>, preserveManifestFields = false): Promise<void> {
+  for (const [path, content] of files) {
+    let text = content;
+    if (preserveManifestFields && path.endsWith("package.json")) {
+      const current = await execution.deps.trees.working(execution.context.workingCopy).read(path);
+      if (current !== undefined) {
+        const manifest = JSON.parse(current) as Record<string, unknown>;
+        const original = structuredClone(manifest);
+        const planned = JSON.parse(content) as Record<string, unknown>;
+        for (const field of DEPENDENCY_FIELDS) {
+          if (planned[field] === undefined) {
+            delete manifest[field];
+          } else {
+            manifest[field] = planned[field];
+          }
+        }
+        text = isDeepStrictEqual(original, manifest) ? current : formatManifest(current, manifest);
+      }
+    }
+    await execution.deps.writeFile(execution.context.workingCopy, path, text);
+  }
+}
+
+export async function writeWrapper(execution: Execution, computed: Computed): Promise<void> {
+  if (computed.wrapperFiles !== undefined && computed.wrapperFiles.length > 0) {
+    await execution.deps.writeWrapperFiles(execution.context.workingCopy, computed.wrapperFiles);
+  }
+}
+
+export async function verify(execution: Execution, computed: Computed): Promise<void> {
+  const { context, deps, env, inventories } = execution;
+  // Everything below reads this snapshot, never the live working tree, and publication commits exactly its tree.
+  const candidate = await deps.snapshot(context.workingCopy);
+  const head = await deps.trees.commit(context.workingCopy, candidate);
+  const gradle = { base: computed.gradle, head: await inventories.ofCommit(head) };
+  const changedFiles = await deps.changedBetween(context.workingCopy, computed.base.id, candidate);
+  const wrapperAt = computed.plan.moves.some((move) => move.mechanism === "gradle-wrapper") ? await deps.wrapperAt(context.workingCopy, candidate) : undefined;
+  // The base with the plan applied by Gradle (and its generated wrapper): the base itself when the plan moves nothing there.
+  const moves = referenceMoves(computed.plan);
+  const wrapper = computed.wrapperFiles ?? [];
+  const reference = moves.length === 0 && wrapper.length === 0 ? computed.gradle
+    : await inventories.ofCommit(computed.base, { transform: referenceTransform(moves, []), overlay: wrapper.map(({ path, bytes, executable }) => ({ path, bytes, executable })) });
+  const problems = await deps.verify({
+    plan: computed.plan,
+    npmFiles: computed.files,
+    base: computed.base,
+    head,
+    env,
+    wrapper: execution.wrapper,
+    wrapperFiles: wrapperAt?.files,
+    wrapperJarSha256: wrapperAt?.jarSha256,
+    gradle,
+    reference,
+    changedFiles,
+  });
+  const links = await deps.linkProblems(context.workingCopy, computed.base.id, candidate);
+  if (problems.length > 0 || links.length > 0) {
+    throw new Error(`verification failed: ${[...links, ...problems].join("; ")}`);
+  }
+}
+
+export async function edit(execution: Execution, computed: Computed, mode: "apply" | "adapt" | "resolve", extra: { failingChecks?: string[]; conflicted?: ReadonlyArray<string> } = {}): Promise<PullRequestContent> {
+  await writeNpm(execution, computed.files);
+  await writeWrapper(execution, computed);
+  const { plan } = computed;
+  if (plan.kind === "routine" && plan.moves.every((move) => (move.mechanism === "npm-range" || move.mechanism === "gradle-wrapper"))) {
+    return mechanicalContent(plan);
+  }
+  const { context } = execution;
+  const answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({
+    entrypoint: "bump-it",
+    input: skillInput(context, plan, mode, [...computed.files.keys(), ...(computed.wrapperFiles ?? []).map((file) => file.path)], extra),
+  });
+  if (answer.outcome !== "applied" || answer.publication == null) {
+    throw new Error(`the agent couldn't apply the plan: ${answer.summary}`);
+  }
+  assertNoPlanMarker(answer.publication.body);
+  return { ...answer.publication, body: `${answer.publication.body}\n\n${planSection(plan)}` };
+}
+
+function skillInput(context: ToolRunContext, plan: BumpPlan, mode: "apply" | "adapt" | "resolve", toolWritten: string[], extra: { failingChecks?: string[]; conflicted?: ReadonlyArray<string> }) {
+  return {
+    repo: context.repo.repo,
+    today: context.now.toISOString().slice(0, 10),
+    kind: plan.kind,
+    mode,
+    moves: plan.moves.map(({ declarations: _declarations, ...move }) => move),
+    toolWritten,
+    ...extra,
+  };
+}
+
+export function mechanicalContent(plan: BumpPlan): PullRequestContent {
+  const title = plan.kind === "routine" ? "refreshing dependencies" : `upgrading ${plan.moves[0]?.name ?? "dependency"}`;
+  return { title, body: `Updates selected by the supply-chain version rule and verified before publication.\n\n${planSection(plan)}`, commitMessage: title };
+}
+
+export async function prepare(execution: Execution, unit: Unit, own: ReadonlyArray<GitHubPullRequest>, reusable: GitHubPullRequest | undefined, baseSha: string): Promise<PreparedBranch> {
+  const { context, deps } = execution;
+  if (reusable !== undefined) {
+    const merged = await context.workspace.prepareBranch(context.workingCopy, { branch: reusable.headRef, start: "remote-merging" });
+    if (merged.kind === "conflict") {
+      throw new Error(`${reusable.headRef}: merge didn't leave its conflicts in progress`);
+    }
+    if (merged.prepared.remoteHeadSha !== reusable.headSha) {
+      throw new Error(`${reusable.url}: someone pushed while preparing it`);
+    }
+    assertBase(merged.prepared, baseSha);
+    await deps.revert(context.workingCopy, baseSha);
+    return merged.prepared;
+  }
+  const taken = new Set(own.map((pr) => pr.headRef));
+  const branch = freeBranch(RULES, context.now, unit.topic, taken);
+  await clearLeftoverBranch(context.github, RULES, context.repo.repo, branch);
+  const fresh = await context.workspace.prepareBranch(context.workingCopy, { branch, start: "default" });
+  if (fresh.kind !== "prepared") {
+    throw new Error(`${branch} couldn't be prepared`);
+  }
+  assertBase(fresh.prepared, baseSha);
+  return fresh.prepared;
+}
+
+export function assertBase(prepared: PreparedBranch, baseSha: string): void {
+  if (prepared.baseSha !== baseSha) {
+    throw new Error("the default branch moved while bump-it computed its plan; the next run starts over");
+  }
+}

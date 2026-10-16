@@ -9,7 +9,7 @@ publication or a schedule.
 Tool PRs carry the `leanish:secure-it` or `leanish:bump-it` label and a matching
 body marker (`<!-- leanish:secure-it -->` or `<!-- leanish:bump-it -->`).
 
-Adopt [the CI gate](../packages/ci/README.md#adopting-the-gate) first. The tools
+Adopt [the CI gate](../core/gate/README.md#adopting-the-gate) first. The tools
 compute their own plans from the repository and the registries, and read their
 PRs' CI (the gate's comparison included) during review. Keep the gate's scans of
 the default branch (on every push and daily): they report new advisories on an
@@ -59,7 +59,7 @@ Keep a stable checkout of supply-chain, outside `/tmp`, and install its locked
 dependencies without scripts:
 
 ```bash
-git clone https://github.com/leanish/supply-chain.git "$HOME/dev/supply-chain"
+git clone https://github.com/leanish/leanish-development.git "$HOME/dev/supply-chain"
 cd "$HOME/dev/supply-chain"
 # Check out the reviewed tool release/commit you intend to run.
 npm ci --ignore-scripts
@@ -104,7 +104,7 @@ Leave other permissions and account permissions unset.
   seen.
 
 This set follows [GitHub's fine-grained permission reference](https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens)
-and the [copied client](../packages/agent-basics/src/github/github-client.ts).
+and the [copied client](../core/agent-runtime/src/github/github-client.ts).
 Which process gets which token is in the
 [security model](security-model.md#secure-it-and-bump-it). Never export the write
 PAT into your shell or put either PAT's value in `agent.yaml` or a plist.
@@ -159,12 +159,12 @@ cd "$HOME/dev/supply-chain"
 TARGET="$HOME/dev/widget"
 PREVIEW="$HOME/.local/share/leanish/candidate-preview"
 mkdir -p "$PREVIEW"
-OSV_SCANNER="$(packages/ci/scripts/install-osv-scanner.sh "$PREVIEW/tools")"
+OSV_SCANNER="$(core/gate/scripts/install-osv-scanner.sh "$PREVIEW/tools")"
 GH_TOKEN="$(security find-generic-password -s leanish-secure-it-read -w)" \
-  OSV_SCANNER="$OSV_SCANNER" node packages/ci/src/cli.ts candidates \
+  OSV_SCANNER="$OSV_SCANNER" node core/gate/src/cli.ts candidates \
   --rule security --repo "$TARGET" --head HEAD --out "$PREVIEW/security.json"
 GH_TOKEN="$(security find-generic-password -s leanish-bump-it-read -w)" \
-  OSV_SCANNER="$OSV_SCANNER" node packages/ci/src/cli.ts candidates \
+  OSV_SCANNER="$OSV_SCANNER" node core/gate/src/cli.ts candidates \
   --rule bump --repo "$TARGET" --head HEAD --out "$PREVIEW/bump.json"
 ```
 
@@ -188,24 +188,24 @@ commands may open/update draft PRs; review may also mark them ready or close
 them. Neither merges. A secure-it PR that takes versions younger than the
 release-age wait stays a draft, with a warning on top, until secure-it retires it
 once they've aged; require the gate's `supply-chain / cooldown` check too (see the
-gate's [adoption steps](../packages/ci/README.md#adopting-the-gate)).
+gate's [adoption steps](../core/gate/README.md#adopting-the-gate)).
 
 ```bash
 cd "$HOME/dev/supply-chain"
 mkdir -p "$HOME/Library/Logs/leanish"
-packages/remediation/run.sh secure-it run acme/widget \
+core/tool-runtime/run.sh secure-it run acme/widget \
   >"$HOME/Library/Logs/leanish/secure-it.widget.run.out.log" \
   2>"$HOME/Library/Logs/leanish/secure-it.widget.run.err.log"
-packages/remediation/run.sh bump-it run acme/widget \
+core/tool-runtime/run.sh bump-it run acme/widget \
   >"$HOME/Library/Logs/leanish/bump-it.widget.run.out.log" \
   2>"$HOME/Library/Logs/leanish/bump-it.widget.run.err.log"
-packages/remediation/run.sh secure-it review acme/widget
-packages/remediation/run.sh bump-it review acme/widget
+core/tool-runtime/run.sh secure-it review acme/widget
+core/tool-runtime/run.sh bump-it review acme/widget
 ```
 
 Check the final report, the proposed diff and CI. How each tool splits, verifies
-and reviews its PRs is in [secure-it's README](../packages/secure-it/README.md)
-and [bump-it's README](../packages/bump-it/README.md).
+and reviews its PRs is in [secure-it's README](../secure-it/README.md)
+and [bump-it's README](../bump-it/README.md).
 
 ## launchd: run and review
 

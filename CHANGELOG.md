@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Shared packages now live in `core/agent-runtime` (`@leanish/agent-runtime`), `core/tool-runtime`
+  (`@leanish/tool-runtime`) and `core/gate` (`@leanish/gate`); `bump-it` and `secure-it` live at the root.
+  Cross-package imports use explicit package exports, with workspace and dependency boundaries checked at the root.
+
 ## 0.6.0 - 2026-10-16
 
 ### Changed

@@ -9,9 +9,14 @@
     "node": ">=24"
   },
   "workspaces": [
-    "packages/*"
+    "core/*",
+    "bump-it",
+    "secure-it"
   ],
   "scripts": {
-    "check": "npm run check --workspaces --if-present"
+    "check": "node --test test/workspace-layout.test.mjs && npm run check --workspaces"
+  },
+  "devDependencies": {
+    "rolldown": "^1.2.13"
   }
 }

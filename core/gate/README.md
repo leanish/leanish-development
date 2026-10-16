@@ -1,0 +1,347 @@
+# supply-chain CLI
+
+The CI gate. It reads what a repository installs (npm lockfiles, what Gradle builds really resolve, and the actions its workflows use), looks every package version up against **one advisory snapshot**, and:
+
+- on a **pull request** (`compare`), fails only on what the PR makes worse: a finding head has and base doesn't, malware anywhere in head, or an added or changed version that fails the release-age, source or identity checks;
+- on the **default branch** (`scan`), fails on every finding without a valid exception, so a dependency flagged after it merged turns `main` red.
+
+It runs with Node 24 (type stripping) and four runtime dependencies: `yaml` (keeps the comments where actions name their versions), `semver` (npm ranges), `fast-xml-parser` (POMs and Maven metadata) and `smol-toml` (Gradle version catalogs). It reads files from git objects or the working tree. Only `gradle-inventory` runs code from the checked repository (its Gradle build, to learn what it resolves); in CI that's a job of its own, and the comparison only reads the JSON it wrote.
+
+```bash
+node core/gate/src/cli.ts compare --base HEAD^1 --head HEAD --report report.json
+node core/gate/src/cli.ts scan --head HEAD
+node core/gate/src/cli.ts scan --head worktree --repo ../my-repo        # runs Gradle inline if the repo has a build
+node core/gate/src/cli.ts gradle-inventory --repo checkout --out head-gradle.json
+node core/gate/src/cli.ts compare --base "$BASE" --head "$HEAD" --base-gradle base-gradle.json --head-gradle head-gradle.json
+```
+
+The other commands are `candidates`, `cooldown` and `npm-signatures` (below); run the CLI without arguments for the usage of each.
+
+Exit codes for `compare` and `scan`: `0` pass, `1` fail, `2` the gate couldn't complete (a failure too: an unreachable registry, OSV or GitHub API, or data that doesn't parse, never reads as clean). `candidates` exits `0` or `2`, `cooldown` `0` once it evaluated a report (held or not) or `2`, `npm-signatures` `0` or `1`.
+
+Environment:
+
+- `OSV_SCANNER` (default `osv-scanner` on `PATH`; `scripts/install-osv-scanner.sh <dir>` installs the version pinned in [`tools.json`](tools.json), checking its sha256);
+- `GITHUB_TOKEN` or `GH_TOKEN` for the GitHub API (repository advisories; unauthenticated requests get 60 an hour);
+- in Actions, `GITHUB_STEP_SUMMARY` gets a markdown summary, `GITHUB_ACTIONS=true` turns failures and warnings into annotations, and `cooldown` writes `held=` and `until=` to `GITHUB_OUTPUT`;
+- `SUPPLY_CHAIN_COMMIT` records the gate's own commit in the report.
+
+## What a finding is
+
+A finding is an advisory affecting a package version: **ecosystem + package + advisory**, where the advisory is its whole alias group (`GHSA-…`, `CVE-…`, `MAL-…` that name each other count as one). Version and location don't matter, so:
+
+- an upgrade that fixes A while B still affects the new version **passes**, B shows up as inherited and A as fixed;
+- an advisory published today on a dependency both sides share is **inherited**: a warning on the PR, a failure on `main`;
+- a new package, or a new version, that brings an advisory base didn't have **fails**, unless an exception covers it;
+- **malware** (an OSV `MAL-*` id or alias, or a GitHub advisory tagged CWE-506) in head always fails, inherited or bundled, and no exception covers it. A bundled package is the one the lockfile records: the carrier's archive is compared with it only for bundle proofs and secure-it's bundled moves ([what it handles](../../docs/what-it-handles.md)).
+
+## Where advisories come from
+
+One snapshot per run, shared by base and head:
+
+- **[OSV-Scanner](https://github.com/google/osv-scanner)**, run once over the union of every package version on both sides, from an empty directory with an empty config, so no `osv-scanner.toml` in the checked repository can ignore anything. Every requested package must come back in its output.
+- **Repository security advisories** of each dependency's own GitHub repository (the config's `repositories` first; else npm: the version manifest's `repository`; Maven: the POM's `scm`, walking up to 5 parents). A repository can publish an advisory days before GitHub reviews it and OSV imports it. The gate reads them, and asks OSV for its record of each, before OSV-Scanner runs: when OSV already has the advisory for that package, OSV's verdict on the version stands; the repository's own range only covers what OSV doesn't have yet. A repository advisory marked as malware is always kept. Ranges are read as maintainers write them (`< 1.1.21, >= 2.0.0 < 2.1.7`, `6.x <6.1.2`, `4.0.0 - 5.0.7`); a range without an upper bound stops at its patched version.
+- **GitHub's advisory database** for GitHub Actions: OSV holds their advisories but doesn't match versions against them; GitHub's `affects=` filter does (reviewed advisories and malware, asked once per action version).
+
+A package with no GitHub source repository, an unreadable repository, and a range the gate can't read are **coverage gaps**: listed in the report, never a pass in disguise.
+
+## Gradle builds
+
+`gradle-inventory` runs [`gradle/supply-chain-inventory.init.gradle`](gradle/supply-chain-inventory.init.gradle) on a clean checkout (or, with `--head worktree`, on the working tree as it is, for the tools' own edits) and records, for every project, **every resolvable configuration**: runtime, compile and test classpaths, annotation processors, tool configurations (checkstyle, pitest, jacoco…), the buildscript classpath (where `plugins {}` and `buildscript {}` put plugins) and the settings classpath. Each configuration lists:
+
+- what resolution selected, and what it couldn't resolve;
+- the external dependencies it declares or inherits, with Gradle's `because(...)` reason and whether the version is strict (`strictly(...)`);
+- the strict dependency constraints it declares or inherits (`constraints { … strictly(…) }`).
+
+The tools read strict versions as the owner's pins and never plan a move of a strictly pinned coordinate. With `--init-script <file> --define <key>=<value>`, another init script runs first, given that system property: the tools pass [`gradle/supply-chain-reference.init.gradle`](gradle/supply-chain-reference.init.gradle) and a plan, to inventory the base with the plan applied by Gradle (the reference their edits must match), or secure-it's floor-removal script.
+
+- `buildSrc`, included builds and plugin builds (`pluginManagement { includeBuild(...) }`) that Gradle configures from the root build are covered by the same run, under their own location prefix (`buildSrc/:compileClasspath`). Each build also writes a manifest from Gradle's own model (its projects and nested builds), so a project without output, or a nested build the run didn't export, fails the run; such a build has to be listed in `gradle.builds`.
+- A configuration that doesn't resolve fails the run on either side: a hole in the inventory would read as clean. `gradle.ignoreConfigurations` names locations to leave out, explicitly.
+- The inventory names the commit it was made from, and `compare`/`scan` check it matches and covers the builds the tree lists.
+- Base and head each have their own sources: a PR can add a repository's first Gradle build (base needs no inventory) or remove its last one (base's inventory still counts, and what it had shows as fixed).
+- A plugin's injected dependencies show up in its consumers' builds, which run this gate themselves (for example, java-conventions' checkstyle and errorprone dependencies in sqs-codec).
+- Gradle runs the build's own code, so a malicious build can alter its own inventory: see the [security model](../../docs/security-model.md#the-ci-gate).
+
+## GitHub Actions
+
+Every `uses:` in `.github/workflows/*.yml`, in `.github/actions/**/action.yml`, in a root `action.yml`, and in every local `./` action a workflow uses (a local reusable workflow, `./.github/workflows/x.yml`, is read as the workflow it is), is an action version, located in the file that uses it. Files are parsed as YAML (comments kept, aliases followed, a file that doesn't parse fails), and every `uses:` of a job or a step counts. A key named `uses` anywhere else (`env`, an input) counts when its value reads as an action, and is otherwise left alone.
+
+- A use resolves to a version when it's pinned to a full commit SHA and its comment names a full release tag (`# v7.0.1`, `# tag=v7.0.1`; a floating `# v7` doesn't say what's pinned) that GitHub says points at that commit, annotated tags dereferenced.
+- **A new or changed `uses:`** must resolve: a tag or branch ref, a missing comment, or a comment whose tag points elsewhere fails. Each occurrence is judged on its own: same file, action (subdirectory included), ref and comment as in base, and no more copies of it than base had, or it's a change (so dropping a comment, using another action of the same repository, or copying an unpinned ref into another workflow or step, a YAML alias included, counts). Its age is its immutable GitHub release's publish time (a tag's own date is whatever its author wrote); a missing or mutable release has no trusted age and fails, own actions aside (`ownPackages["GitHub Actions"].owners`).
+- An unchanged `uses:` that doesn't resolve, `docker://` uses, a local action without an `action.yml`, and a local reusable workflow that doesn't exist are coverage gaps: the PR didn't make them worse.
+- A young action version can pass by the young-fix rule like any other, its candidates being the repository's releases (every page; past 2,000 releases the listing is incomplete and the rule can't be checked).
+
+## Floors: `.github/dependency-floors.json`
+
+A floor forces a minimum version on a dependency, usually a transitive one: a security fix (`purpose: "security"`, naming the advisories) or a compatibility need (`purpose: "compatibility"`, naming none). Every floor is recorded, so none outlives its reason unnoticed; secure-it removes security floors that are no longer needed.
+
+```json
+{
+  "floors": [
+    {
+      "ecosystem": "Maven",
+      "package": "com.google.guava:guava",
+      "version": "33.7.2-jre",
+      "declaredIn": "build.gradle.kts",
+      "selector": [":checkstyle", ":errorprone"],
+      "purpose": "security",
+      "advisories": ["CVE-2026-102554"],
+      "reason": "Checkstyle and Error Prone pull an affected Guava",
+      "added": "2026-10-04"
+    }
+  ]
+}
+```
+
+The format is [`dependency-floors.schema.json`](dependency-floors.schema.json) (JSON Schema, draft 2020-12); secure-it's skill gives the agent the same schema. The gate also requires `added` to be a real date.
+
+- **Gradle:** in every configuration the `selector` names, Gradle must declare the package at exactly the floor version, with a `because(...)` that names every advisory (or, for compatibility, any reason), and resolve it at or above the floor by Gradle's own version ordering (which isn't Maven's: `33.7.2-jre` sorts before `33.7.2`). The declarations come from Gradle's inventory, catalog versions included, so no build file is parsed. Floors are explicit dependencies, never `constraints`.
+- **npm:** the `selector` lists `overrides` key paths in `declaredIn` (a key, or a list of keys for a nested override: `[["aws-cdk-lib", "brace-expansion"]]`; keys may carry version ranges). Each must pin the floor's own package, as `x`, `^x`, `~x` or `>=x` with `x` at or above the floor, and every copy in the lockfile next to it must be at or above it. Every override in a checked lockfile's `package.json` needs an entry for its package.
+- One package can have separate floors in one file for disjoint configurations; two floors can't claim the same configuration or override.
+- A Gradle declaration with a `because(...)` that no entry covers (same package and version, in that configuration) is noted, not failed: a plugin can inject it (java-conventions' Guava floor shows up in its consumers' builds).
+
+## Release age, source and identity (npm)
+
+For every version a PR adds or changes:
+
+- **Release age:** published at least `releaseAgeDays` (default 7) ago, unless it is:
+  - an own package;
+  - the security fix the young-fix rule picks, or a carrier version that rule picks for the bundled advisories it drops (below);
+  - an npm dependency such a fix provably requires (below);
+  - named by a `releaseAge` exception whose advisory, in this run's snapshot, affects a version the PR replaces and not this one (malware advisories don't count).
+
+  Passing this way still leaves the version held by the [cooldown](#the-cooldown-young-versions-are-held-however-justified),
+  except for an own package, which the cooldown never holds.
+- **Source:** every locked package comes from an allowed registry (`npm.registries`, default the npm registry) as its own tarball: on the npm registry exactly `<name>/-/<unscoped name>-<version>.tgz`; elsewhere the full name (scope included) as consecutive path segments followed by that same `-/<unscoped name>-<version>.tgz` or by the exact version (GitHub Packages' `download/@scope/name/<version>/…`), so a lockfile can't keep a name and version while fetching another package's archive. The gate checks age and identity only against the npm registry, so a package from another allowed registry fails, unless it's an own package with an unexpired `identity` exception recording that its publish was reviewed (own packages skip only the wait).
+- **Identity:** a version that replaces another fails on a publisher identity break: provenance dropped or from another repository or workflow, provenance from a repository the replaced version doesn't declare, or (without provenance) a publisher who hadn't published the package up to the replaced version. Every provenance statement must name the exact package, version and locked sha512.
+- Bundles the lockfile doesn't fully record fail: every `bundleDependencies` entry, and what it depends on, needs an `inBundle` entry inside the package that ships it.
+
+After a passing comparison, the `supply-chain` job runs `npm-signatures`: scriptless `npm ci` and `npm audit signatures` in fresh temporary projects holding only each lockfile and its root/workspace manifests, with repository npm configuration ignored, only gate-approved registries, and Git disabled. Git, tarball URL and external file dependencies are refused; workspace links are fine. Its execution boundary is in the [security model](../../docs/security-model.md#npm-signature-verification).
+
+## A young security fix (any ecosystem)
+
+A version younger than the wait passes without an exception when it's the fix the version rule picks. For a version V replacing R:
+
+- **Targets:** the advisories that affect R and not V. An upgrade that fixes A and leaves B fixes A; malware isn't a target. No target, no fix.
+- **Candidates:** the registry's versions above R, up to the end of V's line. Prereleases count only if R is one; a Maven version keeps R's flavor (`-jre`). A candidate fixes when no target affects it, and it brings no advisory R doesn't have, malware included.
+- **The rule:**
+  1. Take the first compatible line with a fixing candidate, starting from R's own (npm's caret range; Maven's first numeric segment, or `0.N` when the first is 0; adjustable through `compatibleLines` in config). A backport 1.9.5 beats a mature 2.0.0.
+  2. In that line, take the lowest fixing candidate at least `releaseAgeDays` old.
+  3. If none is that old, take the lowest fixing candidate, however young.
+- V passes only if it's that version. If an older fix in the line turns 7 days old before CI runs, the check fails on purpose: that one is safer, and secure-it picks it up.
+
+Candidates join the same advisory snapshot as base and head, so the rule and the comparison read the same data. In an October 2026 example, sqs-codec's snappy-java 1.1.10.8 → 1.1.10.10, then three days old, passed with no exception: 1.1.10.9 leaves two of the seven advisories, and 1.1.10.10 is the lowest that fixes them all.
+
+## A young carrier with a bundled fix (npm)
+
+A package's tarball can ship its dependencies inside it (`bundleDependencies`; the lockfile marks them `inBundle`).
+A vulnerable bundled copy can't move on its own: only another version of its **carrier** (the nearest locked ancestor
+that isn't bundled itself) replaces it. A young carrier version V replacing R passes as a `bundle-fix` when, for every
+head copy of V:
+
+- **In place:** base had R at the same lockfile path. A copy of V anywhere else has no evidence of its own, so V isn't
+  justified.
+- **Authenticated archives:** the gate reads R's and V's archives from the npm registry (their own tarball URLs, no
+  redirects) and checks each against the sha512 integrity its lockfile records; head's must also be the one the
+  registry publishes. Each lockfile's bundled entries under the copy must be exactly what its archive ships, path by
+  path, name and version included, both ways.
+- **Targets:** the bundled package + advisory groups R's bundle has and V's doesn't (wherever in the bundle a package
+  sits: a package that moved inside the bundle still counts), plus R's own advisories V no longer has. Malware isn't a
+  target.
+- **The rule:** the young-fix rule above, applied to the carrier: a candidate fixes when its bundle has none of the
+  targets anywhere, adds no package + advisory group pair R's bundle lacked, holds no malware, and the carrier version
+  itself fixes R's own targets without a new advisory. Candidates are read lazily, in order; each batch of newly read
+  bundles extends one advisory snapshot over everything read, and the choice is made again on the last one.
+
+Anything that can't be established leaves V unjustified with the reason, and the comparison goes on: an unreadable,
+truncated or unauthenticated archive, an entry type npm doesn't pack (links, devices), a path twice, a bundled package
+whose files have no `package.json` (Node could still run it), an unknown publish time, a failed advisory scan, or a
+budget: 128 MB compressed, 512 MB unpacked and 50,000 entries per archive, 1 MB per manifest, 3 minutes per download,
+1 GB downloaded per run (aws-cdk-lib 2.273.0 is 37 MB compressed and 137 MB unpacked). The archive is read as it
+streams, keeping only package manifests; nothing is extracted or run.
+
+Known limitation: a carrier proved this way doesn't seed the required-dependency proof below, so a young non-bundled
+dependency it needs stays unjustified and the comparison fails (secure-it then reports the fix instead of publishing
+it). Every bundled copy itself follows its archive, never a separate age or requirement check.
+
+## npm dependencies required by a security fix
+
+A rule-picked npm security fix can require a dependency whose satisfying versions are all younger than the wait. That
+dependency can pass by proof:
+
+- **What's exempt:** only the lowest stable, non-deprecated version satisfying the registry requirement and the
+  applicable constraints. If any satisfying version is aged, the ordinary age rule applies. When the requirement
+  reaches another security fix verified in the same comparison, and that fix's version satisfies every applicable
+  range, that version is chosen (exempt if young), not a lower one the fix moved away from.
+- **No shortcuts:** unknown dates or manifests can't prove there's no aged alternative, so they block the proof. An
+  unsafe lowest target isn't replaced by a higher young one: source, publisher identity, advisory and malware checks
+  still apply.
+- **Roots:** the gate identifies every rule-picked security root itself, from the replaced versions and the shared
+  snapshot, then rebuilds their joint closure. Ordinary head upgrades stay at their base versions in the proof, so they
+  can't manufacture a stricter requirement. Baseline overrides constrain the proof; PR annotations, narrowed root
+  declarations and new overrides can't grant exemptions.
+- **Requirements:** dependency and peer requirements come from registry manifests, aliases, new packages and recursive
+  requirements through aged dependencies included. Installed optional dependencies replace same-key ordinary
+  requirements; optional dependencies absent from the lock aren't introduced.
+- **Landing:** the gate resolves actual lockfile locations, and every required target must land in head at exactly
+  the chosen version, judged on the comparison's one advisory snapshot.
+- **Peers:** direct peer companions stay in their existing compatible line and are solved jointly, reciprocal
+  requirements included; an outgoing peer requirement constrains only the copy its root resolves. Complete
+  assignments are ordered by package name (then location), preferring aged and then lower versions; an eligible aged
+  locked version is kept. Each young choice is checked against the rest of its assignment for aged alternatives and
+  the lowest satisfying version.
+- **Limits:** per root, depth 8, 128 visited package/location/version nodes and 2,048 satisfying versions per
+  requirement; per peer component, 128 companions, 2,048 candidate versions each and 4,096 attempted assignments per
+  search. Hitting a limit blocks the proof, never a partial exemption. Cycles stop at already visited nodes.
+
+Ordinary bumps don't qualify, and this applies only to npm: Maven/Gradle and Actions keep their age rules.
+
+## The cooldown: young versions are held, however justified
+
+Passing the release-age rule makes a young version *acceptable*, not *trusted* (why: the
+[security model](../../docs/security-model.md#young-versions-the-cooldown)). So every version a PR adds or changes
+that is younger than `releaseAgeDays` is **held**, whether the rule picked it, a security fix requires it, or a
+`releaseAge` exception names it:
+
+- The `supply-chain` verdict is unchanged: it says whether the change is right.
+- The separate `cooldown` job stays red while anything is held (and whenever it can't tell: a comparison that didn't
+  pass, a missing report, a report for another head). Its log and step summary list each held version and when it
+  turns old enough. Require it next to `supply-chain` (see GitHub settings below).
+- The policy that judges a PR is the stricter of base's and head's: the longer `releaseAgeDays`, and own packages
+  only where both list them. A PR can't loosen the cooldown that judges it; change the policy in a PR of its own
+  first. A base whose settings don't parse leaves the cooldown unevaluated (red).
+- Exceptions don't clear a hold. Taking a held version before its time is a person's decision: every other check
+  green, the reason written on the PR, then an admin merge past the red `cooldown` check. Where nothing enforces
+  the check (no ruleset, e.g. a private repository on the free plan), the same: a merge with the reason written.
+- Open PRs aren't rescanned: the cooldown is judged when the PR is opened, pushed to, reopened or retargeted.
+  secure-it retires its held PRs once everything aged and plans fresh ones (bump-it never publishes held versions).
+  For a person's PR, re-run the **whole** workflow after the time it gives (a re-run of the `cooldown` job alone
+  reads the old report and stays red), or push. A base that raises its wait later doesn't re-hold a PR that was
+  already green.
+
+`compare` writes the held versions into its report (`cooldown`, report schema 2); `supply-chain cooldown --report
+<file> --head <sha>` reads it, refusing anything but a complete, passing comparison of that exact head.
+
+## Release age (Maven)
+
+Every Maven version a change adds needs the same wait, own packages aside. Its publish time is the POM's `Last-Modified` in the first configured repository that has it (`maven.repositories`, default Maven Central and the Gradle Plugin Portal, both immutable, so a file's date is its upload; Renovate reads Maven release dates the same way). A version none of them has fails: the gate can't tell its age. A young security fix passes by the rule above, or by a `releaseAge` exception (with `"ecosystem": "Maven"`) checked against the snapshot like npm's. What a version replaces is read per configuration: upgraded at runtime while tests keep the old version, it still replaces the runtime one.
+
+## Configuration: `.github/supply-chain.json`
+
+Optional; read from head. Unknown fields fail, so a typo can't turn a check off.
+
+```json
+{
+  "npm": { "lockfiles": ["package-lock.json", "docker/cli/package-lock.json"], "registries": ["https://registry.npmjs.org"] },
+  "gradle": { "builds": ["."], "ignoreConfigurations": [] },
+  "maven": { "repositories": ["https://repo1.maven.org/maven2", "https://plugins.gradle.org/m2"] },
+  "releaseAgeDays": 7,
+  "ownPackages": {
+    "npm": { "scopes": ["@acme"] },
+    "Maven": { "groups": ["com.acme"], "pluginIdPrefixes": ["com.acme."] },
+    "GitHub Actions": { "owners": ["acme"] }
+  },
+  "repositories": { "npm:some-package": "owner/repo", "Maven:group:artifact": "owner/repo" },
+  "compatibleLines": { "Maven:org.springframework.boot:*": 2 }
+}
+```
+
+- Without `npm.lockfiles`, the gate reads `package-lock.json` if the tree has one; without `gradle.builds`, the root build if the tree has a `settings.gradle(.kts)` or `build.gradle(.kts)`. So an ecosystem in the repository is never skipped for lack of configuration; `"builds": []` turns Gradle off explicitly. Workflows are always read. A tree with none of these fails.
+- Every listed lockfile must exist in head; one base doesn't have yet reads as empty there.
+- Own packages skip only the release-age wait. Own Maven packages: exact `groups`, and `pluginIdPrefixes` that only match Gradle plugin markers (`<id>:<id>.gradle.plugin`), so `com.acme.` doesn't exempt every `com.acme.*` group.
+- `repositories`: a package's GitHub source repository, for its repository advisories; it takes precedence over what the manifest or POM names.
+- `compatibleLines`: how many leading numeric segments, after one optional `v` or `V`, make a compatible line for a package (a trailing `*` matches a prefix), where the default (npm's caret range; Maven's first numeric segment, or `0.N` when the first is 0) doesn't fit.
+
+## Exceptions: `.github/supply-chain-exceptions.json`
+
+Reviewed exceptions in three lists. Each entry names the exact package and version, a `reason` and an `expires` date (valid through that UTC day).
+
+- `vulnerabilities`: `id` (any alias of the advisory), `package`, `version`, and the `paths` it covers: lockfile paths like `node_modules/aws-cdk-lib/node_modules/brace-expansion` (for a lockfile in a subdirectory, prefixed with it), or Gradle configuration locations like `:checkstyle` or `buildSrc/:runtimeClasspath`. A copy anywhere else still fails. An optional `ecosystem` narrows it.
+- `releaseAge`: `package`, `version` and the `advisory` the young version fixes; an optional `ecosystem` narrows it.
+- `identity`: a reviewed npm publisher identity break.
+
+Malware ids can't be excepted.
+
+## Report
+
+`--report <file>` writes JSON: `schemaVersion`, `mode`, the gate's commit and OSV-Scanner version, a digest of the config, `baseSha`, `headSha`, `startedAt` (the snapshot's time), `completedAt`, `completed`, `verdict`, the failures, warnings, notes and gaps, the `error` that stopped an incomplete run, and, for a comparison, the `cooldown`.
+
+## Adopting the gate
+
+The reusable workflow [`.github/workflows/supply-chain.yml`](../../.github/workflows/supply-chain.yml) runs all of it, every job on GitHub-hosted `ubuntu-26.04`. Call it from a workflow of your own, pinned to a full commit SHA of this repository (the gate is checked out from the same commit, so that's the only pin):
+
+```yaml
+# .github/workflows/supply-chain.yml
+name: supply-chain
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 5 * * *" # an odd minute: GitHub delays or drops scheduled runs on the hour
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  supply-chain:
+    # A full commit SHA of v0.4.0 or later (earlier gates also need `pull-requests: read` and `statuses: write`).
+    uses: leanish/leanish-development/.github/workflows/supply-chain.yml@<full commit SHA> # v0.6.0
+    with:
+      java-version: "25" # for Gradle builds; several lines for several JDKs, the last one runs Gradle
+```
+
+Other inputs: `java-distribution` (default `temurin`) and `node-version` (default `24`). Outputs: `comparison-passed` and `cooldown-held`.
+
+What runs where:
+
+- **On a PR:** two inventory jobs (base and head) run the Gradle builds with a read-only token; the `supply-chain` job compares their output and the lockfiles and workflows read from git, and its result is the verdict. It runs with `if: always()` and fails when an inventory job didn't succeed, so a skipped job never satisfies the required check. The `cooldown` job then reads the verdict's report: red while it holds young versions, and red when the comparison didn't pass (also `if: always()`, so it's never skipped on a PR).
+- **On pushes to the default branch, daily and on `workflow_dispatch`:** the full `scan` of the default branch, with today's advisories. Open PRs aren't rescanned: an advisory published after a PR's last check shows up when it's pushed to again, or in the default branch's scan once it's merged.
+
+**GitHub settings**
+
+- A ruleset (or branch protection) on the default branch requiring the checks `supply-chain / supply-chain` and `supply-chain / cooldown` (`<your job id> / …`, or a bridge job's checks), from GitHub Actions. secure-it and bump-it recognise the cooldown hold by the job's name and steps; they recognise only `cooldown` or a name ending in ` / cooldown`, so a differently named cooldown check makes a held PR look broken to them (adapted, then closed). Required checks on private repositories need a paid plan.
+- Actions enabled, allowing the actions this workflow uses (actions/checkout, setup-node, setup-java, upload-artifact, download-artifact).
+- The dependency graph and Dependabot **alerts** on; Dependabot version and security updates off (secure-it and bump-it make those PRs, with this gate's rules).
+
+**Limits**
+
+- **Fork PRs:** their workflow runs from the fork's own files, with a read-only token and no secrets, so their check is only as trustworthy as the PR: review workflow and build changes, require approval for outside contributors' runs, and check the PR against the default branch yourself before merging: nothing re-runs it from trusted files.
+- **Scheduled runs** are best effort: GitHub may delay or skip them under load, and disables them in a public repository after 60 days without activity.
+- **Gradle builds** can alter their own inventory (see [Gradle builds](#gradle-builds)).
+
+**Updating the pin:** a PR that changes the SHA (and its `# vX.Y.Z` comment); bump-it does it like any other action update.
+
+## Picking a fix: `candidates`
+
+`supply-chain candidates --rule security|bump [--head <rev> | --head worktree] [--head-gradle <file>] [--repo <dir>] [--out <file>]` prints, as JSON, where secure-it and bump-it move versions.
+
+**`--rule security`** picks, for every version a full scan fails on, the version the rule above picks: what secure-it moves to. It reuses the rule's code, so what it picks is what the gate then accepts.
+
+- **Candidates:** every version above it the registry lists, in any line, scanned in a second snapshot together with the version itself.
+- **Targets:** the version's failing advisory groups (an excepted one stays as it is), as that second snapshot groups them (a candidate can link aliases). A target no listed version fixes is reported as `unfixable` and left: fixing A and leaving B is allowed.
+- **The choice:** the rule's first line, lowest aged fix, else lowest fix; a choice outside the version's own line is flagged `major`, for the agent to adapt the code. Own packages skip the wait.
+- **Malware:** the nearest clean version at least `releaseAgeDays` old (own packages: any age): newer in its line first, then older in its line (a downgrade), then a newer line.
+- **Bundled copies:** a failing copy a carrier's tarball ships isn't moved itself: its advisories become targets of a move of its carrier, chosen by the carrier rule above (one entry per carrier version, with `carries` listing each bundled package, its versions before and after, and its advisories; the carrier's own failing advisories join the same move). The carrier's locked archive must match what each lockfile records, or the entry says why there's no choice.
+- **Blockers:** an npm choice whose publisher identity `compare` would reject keeps the rule's version and lists the break: it needs a reviewed `identity` exception.
+- **No choice:** each entry says why (no version fixes, an older fix's publish time is unknown, the registry can't list the versions).
+- **Incomplete inventories:** a Gradle configuration that didn't resolve or an unrecorded bundle is listed under `incomplete`, and the command exits 2: an empty list then doesn't mean nothing fails. Coverage gaps (actions included) are listed too.
+
+In an October 2026 example on sqs-codec, it picked Guava 33.7.2-jre for 33.5.0-jre and 33.7.1-jre, and snappy-java 1.1.10.10 (then young, the lowest that fixed all seven advisories) for 1.1.10.8.
+
+**`--rule bump`** gives, for every directly declared dependency, the highest version at least `releaseAgeDays` old (own packages: any age) that adds no advisory group, no malware and, on npm, no publisher identity break:
+
+- **Lines:** in its own line (`minor`: minors and patches, one PR together) and in the highest newer line that has one (`major`: a PR of its own; lines are tried from the highest down). It weighs a line's ten newest versions old enough, and says so when all of them are out.
+- **Direct dependencies:** the npm dependencies the root and the workspaces of every checked lockfile declare (each with the copy Node resolves for it, walking up from the workspace; `npm:` aliases under their target's name, with the key and range to edit in `declarations`); every `uses:` pinned to a release; and the Gradle dependencies declared with a version where the repository's Gradle sources name them. Recorded floors aren't raised, Gradle transitives are never bumped, and the rest are listed in `notes`, as not moved automatically.
+- **Strict pins:** a Gradle coordinate pinned with `strictly(...)` in a configuration that declares it (by the build or a plugin, declared or as a constraint) is never moved, and `notes` lists the pin.
+- **Gradle source evidence:** Gradle's declarations include what plugins add (the Kotlin DSL plugin's embedded Kotlin, for one), which no build file can move, so a dependency counts only when the sources name its coordinate. That evidence is deliberately coarse, read as raw text from every `*.gradle`, `*.gradle.kts` and `*.toml` file and the code under `buildSrc/` and `build-logic/`, anywhere in the repository: a quoted string starting with `group:name` (`"g:n"`, `"g:n:${v ?: d}"`), `group` and `name` both quoted whole in one file, a version catalog entry (TOML files are also parsed), or, for a plugin (its marker `id:id.gradle.plugin`), its id quoted whole or before a `:`. Comments count, and a name anywhere counts for every build.
+
+Known limitations, each of which only costs an automatic update (skipped and listed in `notes`, or an attempt that fails visibly):
+
+- Shorthands such as `kotlin("stdlib")`, escapes inside Kotlin/Groovy strings, and files outside the repository aren't read; a coordinate named only in a comment, or in another build, is still attempted.
+- The tools verify a Gradle edit against a reference: the base with the plan applied by Gradle itself (so what a planned plugin update adds, moves or removes is expected wherever the plugin comes from). That fails visibly when a planned declaration also reaches a configuration the plan doesn't list, when the base declares several versions of a planned package where it's planned, when a shared catalog version also moves an unplanned package, when the base's build replaces or re-declares a declaration the reference moved (its reach can't be shown then, even if the versions match), or when the base doesn't configure with the new version (a plugin major that dropped DSL the build uses).
+- A dependency a plugin adds through `defaultDependencies` (a code-quality tool's configuration, such as `checkstyle`) is floored in a declarations-only parent configuration that the plugin's configuration extends, as the reference does, since declaring on the plugin's configuration itself would replace its defaults, which verification sees removed. A floor that replaced a plugin's default can't be removed automatically later (the default reappears).
+- A routine update that needs an edit outside the build scripts and the `gradle/libs.versions.toml` catalogs (another TOML file, convention code) fails verification's file check: only a major may change other files.

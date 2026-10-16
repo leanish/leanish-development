@@ -6,7 +6,7 @@
 	<string>leanish.secure-it.widget.run</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/Users/YOUR_USER/dev/supply-chain/packages/remediation/run.sh</string>
+		<string>/Users/YOUR_USER/dev/supply-chain/core/tool-runtime/run.sh</string>
 		<string>secure-it</string>
 		<string>run</string>
 		<string>acme/widget</string>

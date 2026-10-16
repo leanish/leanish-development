@@ -1,0 +1,60 @@
+{
+  "name": "@leanish/tool-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "description": "What secure-it and bump-it share: config, their PRs on GitHub (publication with race checks, review ticks), and the command around a run.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "@types/semver": "^7.8.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  },
+  "dependencies": {
+    "@leanish/agent-runtime": "0.0.0",
+    "@leanish/gate": "0.0.0",
+    "semver": "^7.8.5",
+    "yaml": "^2.9.1"
+  },
+  "exports": {
+    "./ci-state": "./src/ci-state.ts",
+    "./command": "./src/command.ts",
+    "./config": "./src/config.ts",
+    "./edit-checks": "./src/edit-checks.ts",
+    "./git-copies": "./src/git-copies.ts",
+    "./gradle-reference": "./src/gradle-reference.ts",
+    "./inventories": "./src/inventories.ts",
+    "./journal": "./src/journal.ts",
+    "./local-files": "./src/local-files.ts",
+    "./manifest-format": "./src/manifest-format.ts",
+    "./manifest-spec": "./src/manifest-spec.ts",
+    "./npm-exact": "./src/npm-exact.ts",
+    "./npm-file-checks": "./src/npm-file-checks.ts",
+    "./npm-graph": "./src/npm-graph.ts",
+    "./npm-overrides": "./src/npm-overrides.ts",
+    "./npm-pins": "./src/npm-pins.ts",
+    "./npm-version": "./src/npm-version.ts",
+    "./osv-scanner": "./src/osv-scanner.ts",
+    "./own-pr": "./src/own-pr.ts",
+    "./plan-blocks": "./src/plan-blocks.ts",
+    "./publication": "./src/publication.ts",
+    "./publication-text": "./src/publication-text.ts",
+    "./reconcile": "./src/reconcile.ts",
+    "./repository-advisory-cache": "./src/repository-advisory-cache.ts",
+    "./review": "./src/review.ts",
+    "./sandboxed": "./src/sandboxed.ts",
+    "./test/fake-github": "./test/fake-github.ts",
+    "./test/memory-journal": "./test/memory-journal.ts",
+    "./test/rich-version-inventory": "./test/rich-version-inventory.ts",
+    "./test/strict-pin-inventory": "./test/strict-pin-inventory.ts"
+  }
+}

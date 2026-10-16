@@ -1,13 +1,13 @@
 name: supply-chain
 
 # The supply-chain gate, as a reusable workflow. An adopting repository calls it from its own workflow, pinned to a
-# full commit SHA of leanish/supply-chain (see packages/ci/README.md, "Adopting the gate"); the gate itself is checked
+# full commit SHA of leanish/leanish-development (see core/gate/README.md, "Adopting the gate"); the gate itself is checked
 # out from that same commit (`job.workflow_sha`), so there's one pin.
 #
 #   pull_request        `compare`: base and head inventories, one advisory snapshot; the `supply-chain` job's result
 #                       is the verdict (no write access needed, so fork PRs work too). The `cooldown` job stays red
 #                       while the PR adds or changes a version younger than the release-age wait, however justified
-#                       (packages/ci/src/cooldown.ts): require it too.
+#                       (core/gate/src/cooldown.ts): require it too.
 #   push to the default branch, schedule, workflow_dispatch
 #                       `scan` of the default branch: every finding fails unless excepted. Open PRs aren't rescanned:
 #                       a PR is checked when it's opened, pushed to, reopened or retargeted.
@@ -97,14 +97,14 @@ jobs:
       - &tool-install
         name: Install the gate's runtime dependencies, without lifecycle scripts
         working-directory: tool
-        run: npm ci --ignore-scripts --no-audit --no-fund --omit=dev --workspace packages/ci
+        run: npm ci --ignore-scripts --no-audit --no-fund --omit=dev --workspace core/gate
       - if: inputs.java-version != ''
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: ${{ inputs.java-distribution }}
           java-version: ${{ inputs.java-version }}
       - name: Inventory the Gradle builds
-        run: node tool/packages/ci/src/cli.ts gradle-inventory --repo repo --out "$RUNNER_TEMP/gradle-${{ matrix.side }}.json"
+        run: node tool/core/gate/src/cli.ts gradle-inventory --repo repo --out "$RUNNER_TEMP/gradle-${{ matrix.side }}.json"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: gradle-${{ matrix.side }}
@@ -138,7 +138,7 @@ jobs:
       - *node
       - *tool-install
       - name: Install the pinned OSV-Scanner
-        run: echo "OSV_SCANNER=$(tool/packages/ci/scripts/install-osv-scanner.sh "$RUNNER_TEMP/tools")" >> "$GITHUB_ENV"
+        run: echo "OSV_SCANNER=$(tool/core/gate/scripts/install-osv-scanner.sh "$RUNNER_TEMP/tools")" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: gradle-*
@@ -156,12 +156,12 @@ jobs:
             if [ -f "$INVENTORIES/gradle-$side.json" ]; then gradle+=("--$side-gradle" "$INVENTORIES/gradle-$side.json"); fi
           done
           if [ "$MODE" = "compare" ]; then
-            node tool/packages/ci/src/cli.ts compare --repo repo --base HEAD^1 --head HEAD "${gradle[@]}" --report "$RUNNER_TEMP/supply-chain.json"
+            node tool/core/gate/src/cli.ts compare --repo repo --base HEAD^1 --head HEAD "${gradle[@]}" --report "$RUNNER_TEMP/supply-chain.json"
           else
-            node tool/packages/ci/src/cli.ts scan --repo repo --head HEAD "${gradle[@]}" --report "$RUNNER_TEMP/supply-chain.json"
+            node tool/core/gate/src/cli.ts scan --repo repo --head HEAD "${gradle[@]}" --report "$RUNNER_TEMP/supply-chain.json"
           fi
       - name: Verify registry signatures and provenance attestations
-        run: node tool/packages/ci/src/cli.ts npm-signatures --repo repo
+        run: node tool/core/gate/src/cli.ts npm-signatures --repo repo
       - id: passed
         name: Record the pass
         run: echo "passed=true" >> "$GITHUB_OUTPUT"
@@ -203,7 +203,7 @@ jobs:
         name: Evaluate the cooldown
         env:
           HEAD_SHA: ${{ github.sha }}
-        run: node tool/packages/ci/src/cli.ts cooldown --report "$RUNNER_TEMP/report/supply-chain.json" --head "$HEAD_SHA"
+        run: node tool/core/gate/src/cli.ts cooldown --report "$RUNNER_TEMP/report/supply-chain.json" --head "$HEAD_SHA"
       - name: Hold the young versions
         if: steps.evaluate.outputs.held == 'true'
         env:
