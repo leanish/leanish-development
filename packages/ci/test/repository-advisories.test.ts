@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 
+import { runCompare } from "../src/gate.ts";
+import type { Coordinates, GradleInventory } from "../src/gradle.ts";
 import type { PackageVersion } from "../src/package-version.ts";
 import { fetchRepositoryAdvisories, matchRepositoryAdvisories } from "../src/repository-advisories.ts";
 import { githubRepository, MAVEN_CENTRAL, pomParent, pomRepository, sourceRepository } from "../src/source-repos.ts";
 import { fakeFetch } from "./fake-fetch.ts";
+import { githubRepositoryCases } from "./github-repository-fixture.ts";
+import { environment, files, tree } from "./required-fixture.ts";
 
 const SNAPPY: PackageVersion = { ecosystem: "Maven", name: "org.xerial.snappy:snappy-java", version: "1.1.10.8" };
 const API = "https://api.github.com/repos";
@@ -80,28 +84,51 @@ const sourceOptions = (routes: Parameters<typeof fakeFetch>[0]) => ({
 });
 
 describe("source repositories", () => {
-  it("reads GitHub repositories from every spelling npm manifests and POMs use", () => {
-    expect(githubRepository({ type: "git", url: "git+https://github.com/7rulnik/source-map-js.git" })).toBe("7rulnik/source-map-js");
-    expect(githubRepository("git+ssh://git@github.com:22/acme/lib.git")).toBe("acme/lib");
-    expect(githubRepository("ssh://git@github.com:2222/Acme/Lib.git#main")).toBe("acme/lib");
-    expect(githubRepository("https://github.com:443/acme/lib")).toBe("acme/lib");
-    expect(githubRepository("git@github.com:acme/lib.git")).toBe("acme/lib");
-    expect(githubRepository("git@github.com:22/acme.git")).toBe("22/acme");
-    expect(githubRepository("git+ssh://git@github.com/Acme/Lib.git#main")).toBe("acme/lib");
-    expect(githubRepository("scm:git:git@github.com:FasterXML/jackson-databind.git")).toBe("fasterxml/jackson-databind");
-    expect(githubRepository("https://github.com/aws/aws-sdk-js-v3/tree/main/clients/client-s3")).toBe("aws/aws-sdk-js-v3");
-    expect(githubRepository("https://www.github.com/Acme/Lib")).toBe("acme/lib");
-    // A host that only ends in `github.com` isn't GitHub.
-    expect(githubRepository("https://notgithub.com/acme/lib")).toBeUndefined();
-    expect(githubRepository("git+ssh://git@notgithub.com:22/acme/lib.git")).toBeUndefined();
-    expect(githubRepository("https://evil.example/github.com:443/acme/lib")).toBeUndefined();
-    expect(githubRepository("git+https://evilgithub.com/acme/lib.git")).toBeUndefined();
-    expect(githubRepository("https://evil.example/github.com/victim/repo")).toBeUndefined();
-    expect(githubRepository("git://github.com/Acme/Lib.git")).toBe("acme/lib");
-    expect(githubRepository("github:acme/lib")).toBe("acme/lib");
-    expect(githubRepository("acme/lib")).toBe("acme/lib");
-    expect(githubRepository("https://gitlab.com/acme/lib")).toBeUndefined();
-    expect(githubRepository(undefined)).toBeUndefined();
+  it.each(githubRepositoryCases)("reads repository from %j as %s", (input, expected) => {
+    expect(githubRepository(input)).toBe(expected);
+  });
+
+  it.each(["scm:git:github.com:acme/lib.git", "https://user%40corp@github.com/acme/lib"])("fails compare on repository-only advisories found through %s", async (repository) => {
+    const h = environment({ affected: {} });
+    const fetch = fakeFetch({
+      "https://registry.npmjs.org/vite/8.3.2": { body: {} },
+      "https://registry.npmjs.org/vite/8.3.3": { body: { repository } },
+      "https://api.github.com/repos/acme/lib/security-advisories?state=published&per_page=100": { body: [{
+        ghsa_id: "GHSA-repository-only", state: "published", withdrawn_at: null, severity: "high", cwe_ids: [],
+        vulnerabilities: [{ package: { ecosystem: "npm", name: "vite" }, vulnerable_version_range: "=8.3.3", patched_versions: "8.3.4" }],
+      }] },
+    });
+    const outcome = await runCompare(tree(files("8.3.2", undefined)), tree(files("8.3.3", undefined), "head"), {
+      ...h.env,
+      now: () => new Date("2026-12-01T00:00:00Z"),
+      fetch: (url, init) => url.includes("/security-advisories?") || /\/vite\/8\.3\.[23]$/.test(url) ? fetch(url, init) : h.env.fetch(url, init),
+    });
+    expect(outcome.failures).toEqual(["new: vite@8.3.3: GHSA-repository-only has no exception"]);
+    expect(outcome.gaps.some((gap) => gap.includes("vite@8.3.3: no GitHub source repository"))).toBe(false);
+  });
+
+  it("fails compare on an advisory found only through a userless Maven SCM connection", async () => {
+    const inventory = (tree: string, resolved: Coordinates[]): GradleInventory => ({
+      schemaVersion: 3, tree, builds: [{ build: ".", configurations: [{
+        id: ":runtimeClasspath", kind: "project", resolved, declared: [], unresolved: [], edges: [], error: undefined,
+      }] }],
+    });
+    const env = environment({ affected: {} }).env;
+    const fetch = fakeFetch({
+      [`${MAVEN_CENTRAL}/com/acme/lib/1.0/lib-1.0.pom`]: {
+        text: "<project><scm><connection>scm:git:github.com:acme/lib.git</connection></scm></project>",
+        headers: { "last-modified": "Thu, 01 Jan 2026 00:00:00 GMT" },
+      },
+      [`${API}/acme/lib/security-advisories?state=published&per_page=100`]: { body: [{
+        ghsa_id: "GHSA-maven-repository-only", state: "published", withdrawn_at: null, severity: "high", cwe_ids: [],
+        vulnerabilities: [{ package: { ecosystem: "maven", name: "com.acme:lib" }, vulnerable_version_range: "<2.0", patched_versions: "2.0" }],
+      }] },
+    });
+    const outcome = await runCompare(tree({ "build.gradle": "" }), tree({ "build.gradle": "" }, "head"), { ...env, fetch }, {
+      base: inventory("base", []), head: inventory("head", [{ group: "com.acme", name: "lib", version: "1.0" }]),
+    });
+    expect(outcome.failures).toEqual(["new: com.acme:lib@1.0: GHSA-maven-repository-only has no exception"]);
+    expect(outcome.gaps).toEqual([]);
   });
 
   it("takes the POM's scm before its project url, ignoring urls of other sections", () => {

@@ -264,6 +264,75 @@ dependencies { implementation "fixture:included-dep:1.0" }
     expect(locations("fixture:ab-underscore:1.0")).toEqual(expect.arrayContaining([":a_b:runtimeClasspath"]));
   });
 
+  it("excludes project constraints, including an ungrouped root, while comparing external constraints", async () => {
+    const build = join(root, "project-constraints");
+    await cp(WRAPPER, build, { recursive: true });
+    await write(build, "settings.gradle", 'rootProject.name = "ungrouped"\ninclude "sub", "grouped"\n');
+    await write(build, "build.gradle", `plugins { id "java" }
+assert group == ""
+version = "1.0"
+repositories { maven { url = uri("${join(root, "repo")}") } }
+dependencies { implementation "fixture:runtime-lib:1.0" }
+`);
+    await write(build, "grouped/build.gradle", 'plugins { id "java" }\ngroup = "fixture.project"\nversion = "1.0"\n');
+    const subproject = (version: string) => `plugins { id "java" }
+repositories { maven { url = uri("${join(root, "repo")}") } }
+dependencies {
+  implementation project(":")
+  implementation project(":grouped")
+  constraints {
+    implementation(project(":"))
+    implementation(project(":grouped"))
+    implementation("fixture:constrained:${version}")
+    implementation("fixture:pinned") { version { strictly "1.5" } }
+  }
+}
+`;
+    await write(build, "sub/build.gradle", subproject("1.0"));
+    const plan = join(build, "plan.json");
+    await writeFile(plan, JSON.stringify({ repositoryRoot: build, moves: [], floors: [] }));
+    const reference = await runGradleInventory(build, ["."], "worktree", runProcess, {
+      additionalInitScripts: [REFERENCE], systemProperties: { "supplyChain.reference.file": plan },
+    });
+    const reread = parseGradleInventory(JSON.parse(JSON.stringify(reference)), "worktree", ["."]);
+    expect(gradleResolutionProblems(reread, [])).toEqual([]);
+    const runtime = reread.builds[0]!.configurations.find((configuration) => configuration.id === ":sub:runtimeClasspath")!;
+    expect(runtime.constraints).toEqual([
+      { group: "fixture", name: "constrained", version: "1.0" },
+      { group: "fixture", name: "pinned", version: "1.5", versionConstraint: {
+        strictVersion: "1.5", requiredVersion: "1.5", preferredVersion: "", rejectedVersions: [], branch: null,
+      } },
+    ]);
+    expect(runtime.strictConstraints).toEqual([{ group: "fixture", name: "pinned", version: "1.5" }]);
+    expect(runtime.declared).toEqual([]);
+    expect(runtime.resolved).toContainEqual({ group: "fixture", name: "runtime-lib", version: "1.0" });
+    const unchanged = await runGradleInventory(build, ["."], "worktree", runProcess);
+    expect(referenceDifferences(reference, unchanged)).toEqual([]);
+    await write(build, "sub/build.gradle", subproject("2.0"));
+    const changed = await runGradleInventory(build, ["."], "worktree", runProcess);
+    expect(gradleResolutionProblems(changed, [])).toEqual([]);
+    expect(gradleLocated(changed)).toEqual(gradleLocated(reference));
+    expect(referenceDifferences(reference, changed)).toContainEqual(expect.stringContaining("no longer declares fixture:constrained 1.0 (constraint)"));
+  }, 600_000);
+
+  it.each(["dependency", "constraint"])("refuses malformed external %s coordinates before exporting them", async (kind) => {
+    const build = join(root, `malformed-${kind}`);
+    const modelType = kind === "dependency" ? "DefaultExternalModuleDependency" : "DefaultDependencyConstraint";
+    await cp(WRAPPER, build, { recursive: true });
+    await write(build, "settings.gradle", 'rootProject.name = "malformed"\n');
+    for (const [field, value] of [["group", null], ["group", ""], ["name", ""]] as const) {
+      const coordinates = { group: "fixture", name: "invalid", version: "1.0", [field]: value };
+      const notation = Object.entries(coordinates).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join(", ");
+      const declaration = `add("active", [${notation}])`;
+      await write(build, "build.gradle", `configurations { active }\ndependencies { ${kind === "constraint" ? `constraints { ${declaration} }` : declaration} }\n`);
+      // Gradle rejects an empty name during model construction, before the exporter can inspect it.
+      const expected = field === "name"
+        ? `Could not create an instance of type org.gradle.api.internal.artifacts.dependencies.${modelType}.`
+        : `:active external ${kind} has a malformed ${field}`;
+      await expect(runGradleInventory(build, ["."], "worktree", runProcess)).rejects.toThrow(expected);
+    }
+  }, 600_000);
+
   it("inventories included builds Gradle configures from the root build without listing them, in a form compare accepts", async () => {
     // A relative path, as the workflow passes it (`--repo repo`).
     const rootOnly = await runGradleInventory(relative(process.cwd(), join(root, "build")), ["."], "worktree", runProcess);

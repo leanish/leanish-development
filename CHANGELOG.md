@@ -14,10 +14,12 @@
 
 - Both tools compare every rich-version facet of Gradle declarations and dependency constraints with the planned
   reference: strict, required and preferred versions, rejected versions and branch. Removing a reject from an active
-  strict range now fails verification even when resolution stays the same; non-strict constraints are covered too.
+  strict range now fails verification even when resolution stays the same; non-strict external constraints are covered too.
   Plain-version declarations keep their previous output; rich versions emit only set facets, defaulted to empty on read.
+  Project constraints are excluded, so constraining a root project without a group no longer aborts the inventory.
 - GitHub repository URLs with explicit ports, including `git+ssh://git@github.com:22/acme/lib.git`, resolve to the
-  correct owner and repository; scp-style connections still work.
+  correct owner and repository; scp-style SCM connections without a user and URLs with percent-encoded userinfo
+  retain repository advisory coverage.
 
 - A path the edit adds behind an existing link is matched regardless of case, as a case-insensitive checkout places
   `FOO/x` in a linked `foo/`.
