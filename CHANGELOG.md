@@ -36,6 +36,8 @@
 - Publication recognizes conflict markers at the size the staged `.gitattributes` give a file (shorter or longer than
   seven) as well as seven or more whatever it says; a separator counts only alone on its line at that size, so a
   Markdown heading's underline (a longer run of `=`, or one followed by text) isn't one.
+- A damaged or hand-edited entry of a tool's publication journal fails the review that reads it, instead of being
+  trusted to recover a PR's body.
 - A conflicted file only named like a Gradle catalog (`xgradle/libs.versions.toml`) is no longer taken from the base
   side as a dependency file when reviewing a PR: conflicts resolve mechanically for exactly the files a move may touch.
 - A key named `uses` outside a job or step (`env: { uses: production }`, an action input) no longer fails the Actions

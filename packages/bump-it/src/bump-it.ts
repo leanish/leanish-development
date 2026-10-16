@@ -5,6 +5,7 @@ import type { GitHubPullRequest } from "../../agent-basics/src/types/clients.ts"
 import type { BumpCandidate } from "../../ci/src/candidates.ts";
 import { failingCheckNames } from "../../remediation/src/ci-state.ts";
 import type { ToolHandlers, ToolRunContext } from "../../remediation/src/command.ts";
+import { DEFAULT_MAX_NEW_MAJORS_PER_RUN } from "../../remediation/src/config.ts";
 import { isMechanical } from "../../remediation/src/edit-checks.ts";
 import { branchFor, topicOf, stateOf } from "../../remediation/src/own-pr.ts";
 import { closeAndDelete, ownOpenPullRequests, publishNew, publishUpdate, recoverPublication } from "../../remediation/src/publication.ts";
@@ -84,7 +85,7 @@ async function run(context: ToolRunContext, deps: BumpItDeps): Promise<Readonly<
   for (const unit of units) {
     try {
       const owned = await recognised(execution, unit, own);
-      if (unit.kind === "major" && owned.length === 0 && openedMajors >= (context.config.maxNewMajorsPerRun ?? 3)) {
+      if (unit.kind === "major" && owned.length === 0 && openedMajors >= (context.config.maxNewMajorsPerRun ?? DEFAULT_MAX_NEW_MAJORS_PER_RUN)) {
         results.push({ topic: unit.topic, outcome: "deferred" });
         deferred.push(unit.package!);
         continue;
