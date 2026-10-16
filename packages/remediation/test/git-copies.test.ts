@@ -309,4 +309,19 @@ describe("the verification snapshot", () => {
       "the edit changed recipe.txt, behind the link local/action.yml: verification can't check what's behind one",
     ]);
   });
+
+  it("refuses an edit that adds a path behind a link to the repository's root, `.` or `..` alike", async () => {
+    const { copy, run } = await repository();
+    await mkdir(join(copy.path, "sub"));
+    await symlink(".", join(copy.path, "root"));
+    await symlink("..", join(copy.path, "sub", "up"));
+    run(["add", "--all"]);
+    run(["commit", "-q", "-m", "links to the root"]);
+    const inherited = run(["rev-parse", "HEAD"]);
+    await writeFile(join(copy.path, "added.txt"), "new\n");
+    expect(await linkProblems(copy, inherited, await snapshotCandidate(copy))).toEqual([
+      "the edit changed added.txt, behind the link root: verification can't check what's behind one",
+      "the edit changed added.txt, behind the link sub/up: verification can't check what's behind one",
+    ]);
+  });
 });

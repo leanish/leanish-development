@@ -18,6 +18,12 @@ import { codexPermissionArgs } from "../../agent-basics/src/skill/codex-permissi
 import { scrubbedProcessEnv, withoutAmbientCredentials } from "../../agent-basics/src/skill/spawn-capture.ts";
 import type { WorkingCopy } from "../../agent-basics/src/types/working-copy.ts";
 import { runProcess, type RunProcess } from "../../ci/src/process.ts";
+import type { ToolRunContext } from "./command.ts";
+
+/** Every writable root shared by the agent and repository commands; trusted tool state must stay outside these. */
+export function sandboxWritable(context: Pick<ToolRunContext, "config" | "workingCopy" | "isolation">): ReadonlyArray<string> {
+  return [context.config.dirs.cache, context.workingCopy.path, tmpdir(), "/tmp", ...(context.isolation.buildCacheRoot === undefined ? [] : [context.isolation.buildCacheRoot])];
+}
 
 export interface SandboxedCommand {
   readonly workingCopy: WorkingCopy;

@@ -462,6 +462,45 @@ describe.skipIf(!hasGit)("LocalGitWorkspace branch publication (real git)", () =
     await expect(ws.publishBranch(wc, merging.prepared, { message: "merging main" })).rejects.toThrow(`${tricky} still has conflict markers`);
   });
 
+  it("refuses a separator alone on its line at the size .gitattributes gives the path", async () => {
+    const { origin, scratch } = makeOrigin();
+    git(scratch, ["checkout", "-q", "-b", BRANCH]);
+    commitIn(scratch, "README.md", "branch side\n", "branch edit");
+    git(scratch, ["push", "-q", "origin", BRANCH]);
+    git(scratch, ["checkout", "-q", "main"]);
+    commitIn(scratch, "README.md", "main side\n", "main edit");
+    git(scratch, ["push", "-q", "origin", "main"]);
+
+    const { ws, wc } = await synced(origin);
+    const merging = await ws.prepareBranch(wc, { branch: BRANCH, start: "remote-merging" });
+    if (merging.kind !== "conflicted") throw new Error(`expected a conflict, got ${merging.kind}`);
+    writeFileSync(join(wc.path, ".gitattributes"), "README.md conflict-marker-size=9\n");
+    writeFileSync(join(wc.path, "README.md"), "branch side\n=========\nmain side\n");
+    await expect(ws.publishBranch(wc, merging.prepared, { message: "merging main" })).rejects.toThrow("README.md still has conflict markers");
+  });
+
+  it("publishes a conflict resolved by deleting the path, which has nothing staged", async () => {
+    const { origin, scratch } = makeOrigin();
+    commitIn(scratch, "gone.txt", "old\n", "a file the branch will delete");
+    git(scratch, ["push", "-q", "origin", "main"]);
+    git(scratch, ["checkout", "-q", "-b", BRANCH]);
+    git(scratch, ["rm", "-q", "gone.txt"]);
+    git(scratch, ["commit", "-q", "-m", "branch deletes it"]);
+    git(scratch, ["push", "-q", "origin", BRANCH]);
+    git(scratch, ["checkout", "-q", "main"]);
+    commitIn(scratch, "gone.txt", "edited on main\n", "main edits it");
+    git(scratch, ["push", "-q", "origin", "main"]);
+
+    const { ws, wc } = await synced(origin);
+    const merging = await ws.prepareBranch(wc, { branch: BRANCH, start: "remote-merging" });
+    if (merging.kind !== "conflicted") throw new Error(`expected a conflict, got ${merging.kind}`);
+    expect(merging.conflicted).toEqual(["gone.txt"]);
+    rmSync(join(wc.path, "gone.txt"));
+    const published = await ws.publishBranch(wc, merging.prepared, { message: "merging main" });
+    if (published.kind !== "pushed") throw new Error(`expected a push, got ${published.kind}`);
+    expect(gitOut(origin, ["ls-tree", "--name-only", BRANCH]).split("\n")).not.toContain("gone.txt");
+  });
+
   it("calls beforePush with the commit before pushing it, and pushes nothing when it throws", async () => {
     const { origin, scratch } = makeOrigin();
     git(scratch, ["checkout", "-q", "-b", BRANCH]);

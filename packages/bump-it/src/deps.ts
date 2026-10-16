@@ -1,6 +1,5 @@
 /** The external boundaries bump-it reaches; tests replace each without networking or agents. */
 import { createHash } from "node:crypto";
-import { tmpdir } from "node:os";
 
 import type { WorkingCopy } from "../../agent-basics/src/types/working-copy.ts";
 import { bumpCandidates, type BumpCandidates } from "../../ci/src/candidates.ts";
@@ -14,6 +13,7 @@ import { candidateTree, changedBetween, exportCommit, git, linkProblems, snapsho
 import { type GradleInventories, sandboxedGradleInventories } from "../../remediation/src/inventories.ts";
 import { FileJournal, type PublicationJournal } from "../../remediation/src/journal.ts";
 import { ensureOsvScanner, verifyingRun } from "../../remediation/src/osv-scanner.ts";
+import { sandboxWritable } from "../../remediation/src/sandboxed.ts";
 import { revertToBase } from "../../remediation/src/reconcile.ts";
 
 import { generateWrapper, readWrapperFiles, writeWrapperFiles, type WrapperArtifact } from "./wrapper-generation.ts";
@@ -67,7 +67,7 @@ export function defaultDeps(): BumpItDeps {
       if (restored.code !== 0) throw new Error(`restoring ${path} from base failed: ${restored.stderr.trim()}`);
     },
     async gate(context) {
-      const writable = [context.config.dirs.cache, context.workingCopy.path, tmpdir(), "/tmp", ...(context.isolation.buildCacheRoot === undefined ? [] : [context.isolation.buildCacheRoot])];
+      const writable = sandboxWritable(context);
       const osv = await ensureOsvScanner(context.config.dirs.state, writable);
       return { run: verifyingRun(runProcess, osv), fetch: namingFailures(context.fetch), now: () => new Date(), osvScanner: osv.path, githubToken: context.readToken, repositoryAdvisoryCache: new FileRepositoryAdvisoryCache(context.config.dirs.state, writable, context.readToken) };
     },

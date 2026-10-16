@@ -120,27 +120,37 @@ function asTable(value: unknown): Record<string, unknown> {
 
 /**
  * Catalogs compare the whole entries strict versions belong to, parsed with `smol-toml`, in order; malformed TOML fails.
- * Build and settings scripts compare what Gradle's own Groovy and Kotlin compilers parse in them (`parse`): each
+ * Build and settings scripts, and any other changed non-catalog file mentioning `strictly` on either side, compare
+ * what Gradle's own Groovy and Kotlin compilers parse in them (`parse`): each
  * `strictly(...)` call with the dependency it pins, in order, and any other form that names `strictly`. A version that
  * reaches a call through a variable or a helper is still read only where the inventory sees it (an active pin).
  */
 export async function strictPinsChanged(changedFiles: ReadonlyArray<string>, base: Tree, head: Tree, parse: StrictCallParser): Promise<string[]> {
   const problems: string[] = [];
-  const changed = changedFiles.filter(isGradleVersionFile);
-  for (const path of changed.filter((file) => file.endsWith(".versions.toml"))) {
+  for (const path of changedFiles.filter((file) => file.endsWith(".versions.toml"))) {
     try {
       if (!isDeepStrictEqual(catalogStrictEntries(await base.read(path)), catalogStrictEntries(await head.read(path)))) problems.push(changedPin(path));
     } catch (err) {
       problems.push(`${path}: ${(err as Error).message}`);
     }
   }
-  const scripts = changed.filter((file) => !file.endsWith(".versions.toml"));
+  const scripts: Array<{ readonly path: string; readonly before: string; readonly after: string }> = [];
+  for (const path of changedFiles.filter((file) => !file.endsWith(".versions.toml"))) {
+    try {
+      const [before, after] = await Promise.all([base.read(path), head.read(path)]);
+      if (isGradleVersionFile(path) || before?.includes("strictly") || after?.includes("strictly")) {
+        scripts.push({ path, before: before ?? "", after: after ?? "" });
+      }
+    } catch (err) {
+      problems.push(`${path}: ${(err as Error).message}`);
+    }
+  }
   if (scripts.length === 0) return problems;
   try {
     // Each side with its own Gradle's compilers: an edit that moves the wrapper parses with the new one.
-    const parsed = async (tree: Tree) => parse(await Promise.all(scripts.map(async (path) => ({ path, text: await tree.read(path) ?? "" }))), tree);
-    const [before, after] = [await parsed(base), await parsed(head)];
-    for (const path of scripts) {
+    const before = await parse(scripts.map((file) => ({ path: file.path, text: file.before })), base);
+    const after = await parse(scripts.map((file) => ({ path: file.path, text: file.after })), head);
+    for (const { path } of scripts) {
       // Only scripts the edit touched get here, so a side that doesn't parse refuses, naming only that script: equal
       // errors on both sides could still hide a moved pin.
       const unparsed = parseError(after.get(path)) ?? parseError(before.get(path), "the base ");
@@ -148,7 +158,7 @@ export async function strictPinsChanged(changedFiles: ReadonlyArray<string>, bas
       else if (!isDeepStrictEqual(before.get(path), after.get(path))) problems.push(changedPin(path));
     }
   } catch (err) {
-    problems.push(`${scripts.join(", ")}: ${(err as Error).message}`);
+    problems.push(`${scripts.map((file) => file.path).join(", ")}: ${(err as Error).message}`);
   }
   return problems;
 }

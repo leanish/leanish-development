@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { WorkingCopy } from "../../agent-basics/src/types/working-copy.ts";
-import { runSandboxed } from "../src/sandboxed.ts";
+import { parseToolConfig } from "../src/config.ts";
+import { runSandboxed, sandboxWritable } from "../src/sandboxed.ts";
 
 // Codex can apply its seatbelt here (not inside another sandbox, where `sandbox_apply` is refused).
 const hasCodex = spawnSync("codex", ["sandbox", "--", "/usr/bin/true"], { stdio: "ignore" }).status === 0;
@@ -70,5 +71,16 @@ describe("runSandboxed arguments", () => {
     expect(calls[0]?.args.join(" ")).toContain("network.enabled=true");
     expect(calls[0]?.cwd).toBe(workingCopy.path);
     await expect(runSandboxed({}, { workingCopy: { ...workingCopy, gitDir: undefined }, command: ["true"] })).rejects.toThrow("separate directory");
+  });
+});
+
+describe("sandboxWritable", () => {
+  it.each([undefined, "/build-cache"])("includes the same roots with buildCacheRoot=%s for gates and parsers", (buildCacheRoot) => {
+    const config = parseToolConfig("bump-it", `repos: [{ repo: leanish/widget }]
+agent: { codingAgent: codex, model: sol, effort: medium }
+commitIdentity: { name: tool, email: tool@example.com }
+dirs: { state: /state, cache: /cache }`, "test.yaml");
+    expect(sandboxWritable({ config, workingCopy, isolation: { buildCacheRoot } }))
+      .toEqual(["/cache", workingCopy.path, tmpdir(), "/tmp", ...(buildCacheRoot === undefined ? [] : [buildCacheRoot])]);
   });
 });
