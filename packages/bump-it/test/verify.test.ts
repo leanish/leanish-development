@@ -1,3 +1,7 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { runCompare, type GateEnvironment } from "../../ci/src/gate.ts";
 import type { GradleInventory } from "../../ci/src/gradle.ts";
@@ -7,6 +11,7 @@ import { gradleWrapperPlanner, WRAPPER_FILES, WRAPPER_PROPERTIES } from "../src/
 import { routineUnit, majorUnits } from "../src/units.ts";
 import { plannedFiles, verifyPlan, type VerifyInputs } from "../src/verify.ts";
 import { candidate } from "./fixtures.ts";
+import { LOCAL_GRADLE, LOCAL_WRAPPER, localGradleParser } from "../../remediation/test/local-gradle-parser.ts";
 import { textStrictCalls } from "../../remediation/test/strict-calls-fake.ts";
 
 vi.mock("../../ci/src/gate.ts", async (original) => ({ ...await original<object>(), runCompare: vi.fn(async () => ({ failures: [], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, group: (id: string) => id, cooldown: { evaluated: true, releaseAgeDays: 7, held: [] } })) }));
@@ -176,6 +181,22 @@ describe("bump verification", () => {
     expect(await verifyPlan(input)).toContain("floor declaration for g:lib changed at :runtimeClasspath");
     expect(await verifyPlan({ ...input, head: tree("head", {}) })).toContain("bump-it may not change dependency floors");
   });
+  it.skipIf(LOCAL_GRADLE === undefined)("refuses a default-argument strict pin through the real parser", async () => {
+    const state = await mkdtemp(join(tmpdir(), "bump-parser-test-"));
+    try {
+      const { input, baseFiles, headFiles } = await fixture(true);
+      const script = "def pinned(Closure c = { strictly('1.0') }) { c() }\n";
+      const inputs: VerifyInputs = { ...input, strictCalls: localGradleParser(state), changedFiles: [...input.changedFiles, "build.gradle"],
+        base: tree("base", { ...baseFiles, ...LOCAL_WRAPPER, "build.gradle": script }),
+        head: tree("head", { ...headFiles, ...LOCAL_WRAPPER, "build.gradle": script }) };
+      expect(await verifyPlan(inputs)).toEqual([]);
+      expect(await verifyPlan({ ...inputs, head: tree("head", { ...headFiles, ...LOCAL_WRAPPER, "build.gradle": script.replace("1.0", "2.0") }) }))
+        .toEqual(["the edit changed a Gradle strictly(...) pin in build.gradle: strict versions are the owner's, which no plan moves"]);
+    } finally {
+      await rm(state, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   it("pins Actions and refuses any other change in a planned workflow", async () => {
     const path = ".github/workflows/ci.yml";
     const old = `on: push\njobs:\n  build:\n    steps:\n      - uses: actions/checkout@${"0".repeat(40)} # 1.0.0\n`;

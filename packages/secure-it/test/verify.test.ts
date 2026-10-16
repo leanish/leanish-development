@@ -1,7 +1,11 @@
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import type { GradleInventory } from "../../ci/src/gradle.ts";
 import type { GateEnvironment } from "../../ci/src/gate.ts";
 import { runProcess, type RunProcess } from "../../ci/src/process.ts";
 import type { Tree } from "../../ci/src/tree.ts";
@@ -9,6 +13,7 @@ import { fakeFetch } from "../../ci/test/fake-fetch.ts";
 import { archive, manifest, serving } from "../../ci/test/tarballs.ts";
 import type { ChangePlan } from "../src/plan.ts";
 import { referencePlan, verifyPlan } from "../src/verify.ts";
+import { LOCAL_GRADLE, LOCAL_WRAPPER, localGradleParser } from "../../remediation/test/local-gradle-parser.ts";
 import { textStrictCalls } from "../../remediation/test/strict-calls-fake.ts";
 
 const NOW = new Date("2026-10-07T12:00:00Z");
@@ -418,3 +423,21 @@ describe("verifyPlan", () => {
     expect(subpath).toEqual(["the edit changed .github/workflows/ci.yml beyond its planned action pins: the gate's own policy, which no plan may change"]);
   });
 });
+
+// The production parser boundary through verification, without downloading Gradle or running repository code.
+it.skipIf(LOCAL_GRADLE === undefined)("refuses a constructor-default strict pin through the real parser", async () => {
+  const state = await mkdtemp(join(tmpdir(), "secure-parser-test-"));
+  try {
+    const script = "class Pins { Pins(Closure c = { strictly('1.0') }) { c() } }\n";
+    const before = { ...LOCAL_WRAPPER, "build.gradle": script, "package-lock.json": (await BASE.read("package-lock.json"))! };
+    const after = { ...LOCAL_WRAPPER, "build.gradle": script, "package-lock.json": lock({ lib: "^1.0.0", other: "^1.0.0" }, { lib: "1.0.1", other: "1.0.0" }) };
+    const inventory: GradleInventory = { schemaVersion: 3, tree: "fixture", builds: [{ build: ".", configurations: [] }] };
+    const inputs = { reference: inventory, plan: PLAN, base: tree("base", before), head: tree("head", after), env: environment(AFFECTED),
+      gradle: { base: inventory, head: inventory }, strictCalls: localGradleParser(state), changedFiles: ["package-lock.json", "build.gradle"] };
+    expect(await verifyPlan(inputs)).toEqual([]);
+    expect(await verifyPlan({ ...inputs, head: tree("head", { ...after, "build.gradle": script.replace("1.0", "2.0") }) }))
+      .toEqual(["the edit changed a Gradle strictly(...) pin in build.gradle: strict versions are the owner's, which no plan moves"]);
+  } finally {
+    await rm(state, { recursive: true, force: true });
+  }
+}, 120_000);

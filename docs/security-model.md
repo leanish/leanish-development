@@ -121,16 +121,25 @@ Both tools are in this tree: [`secure-it`](../packages/secure-it) and [`bump-it`
     `version.ref` names a strict version, so a pin can't be moved to another dependency. Changed paths or values, added or removed
     pins, and a catalog that doesn't parse fail. Formatting changes with the same parsed pins can pass.
   - For `.gradle` and `.gradle.kts`, verification parses base and head with the compilers each side's own Gradle
-    distribution ships (Groovy's and Kotlin's, from the tools' Gradle home, where the inventory downloaded them),
-    through [`StrictCalls.java`](../packages/remediation/gradle/StrictCalls.java) run by Java's source launcher. It
-    only parses: Groovy stops at conversion, before any AST transformation, and Kotlin builds a syntax tree, so
-    nothing in the script runs; Java gets a fresh directory holding copies of the files, a minimal environment and a
-    timeout. It compares, in order, each `strictly(...)` call with its receiver and the enclosing calls' arguments
-    (the dependency it pins), in any class or branch, and every other form that names `strictly` (a dynamic method
-    name, a property, a string holding the word with the call it's passed to); a file that takes a reference to
-    `strictly` (`.&strictly`, `::strictly`) differs on any change. A changed script that doesn't parse on either side
-    fails visibly, naming only that script and the first line of the reason (a leading byte-order mark is read as
-    nothing); missing Java, a missing Gradle distribution, or a parse past its two-minute limit fails the whole check.
+    distribution ships (Groovy's and Kotlin's), through
+    [`StrictCalls.java`](../packages/remediation/gradle/StrictCalls.java) run by Java's source launcher. It only parses: Groovy stops at conversion, before any AST transformation, and Kotlin builds a syntax tree, so
+    nothing in the script runs. Only the version is read from the wrapper, never its download host: the tool fetches
+    `https://services.gradle.org/distributions/gradle-<version>-bin.zip`, follows only HTTPS redirects, and checks the
+    published `.sha256`. HTTPS and that published checksum are the trust root. Exactly one jar per compiler family
+    is installed atomically into `dirs.state/tools/gradle-parsers/<version>` with a checksum manifest; every jar's
+    canonical path, regular-file status and SHA-256 are re-verified right before each Java run. The jars never come
+    from the sandbox-writable Gradle cache. Java gets a minimal environment, a timeout, and fresh input copies in
+    `dirs.state/tools/strict-calls/run-*`, removed afterward. Both locations are refused if they resolve inside any
+    sandbox-writable root (working copy, cache, build cache or temp directories).
+    It compares, in order, each `strictly(...)` call with its receiver and the enclosing calls' arguments
+    (the dependency it pins), in any class or branch, including method, constructor and closure parameter defaults,
+    and every other form that names `strictly` (a dynamic method name, a property, a string holding the word with the call it's passed to); a file that takes a reference to
+    `strictly` (`.&strictly`, `::strictly`) differs on any change. Each language's own lexer also checks identifier
+    and string occurrences by source position: any mention the visitor hasn't accounted for makes the whole file's
+    SHA-256 a finding, so any change to that file is refused. Comments don't count. A changed script that doesn't
+    parse or lex on either side fails visibly, naming only that script and the first line of the reason (a leading
+    byte-order mark is read as nothing); missing Java, a failed compiler installation or verification, or a parse past
+    its two-minute limit fails the whole check.
   - A version that reaches a strict call through a variable, a helper or a property file is read only where the
     inventory and the reference see it, that is, when the pin is active.
 - **Floor removal requires a joint unlocked proof**, computed in sandboxed scratch copies of base

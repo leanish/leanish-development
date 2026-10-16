@@ -9,10 +9,17 @@
   hide a `strictly(...)` any more (Groovy slashy strings, nested Kotlin comments, interpolations), each call is
   compared with the dependency it pins and in classes too, and an interpolation on a pin's line no longer refuses an
   unrelated edit. A script that doesn't parse is refused by name, without blaming the others. Verification needs
-  Java and that distribution, which the Gradle inventory already downloads.
+  Java and the compiler jars from that distribution.
+- Strict-pin verification installs its compiler jars under protected tool state from Gradle's official HTTPS
+  distribution and published checksum, re-checks them before each run, and keeps its input copies in protected
+  state too, outside the build's writable Gradle cache and temporary directories.
 
 ### Fixed
 
+- Strict pins in Groovy method, constructor and closure parameter defaults are read too. Both language parsers check
+  every `strictly` identifier and string occurrence by source position, refusing any change to a file with an
+  unaccounted mention. Quoted Groovy and backticked Kotlin call names are accounted for, and wrapper properties with
+  leading whitespace, continuation lines or CRLF are read like Gradle's.
 - A path the edit adds behind an existing link is matched regardless of case, as a case-insensitive checkout places
   `FOO/x` in a linked `foo/`.
 - An npm `integrity` filled in for a same-version entry that had none no longer fails the gate: it only pins the bytes

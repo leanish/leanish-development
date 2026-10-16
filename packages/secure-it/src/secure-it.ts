@@ -1,6 +1,5 @@
 /** Security fixes and a separate proved floor-removal unit; malware first, every publication verified. */
 import { createHash } from "node:crypto";
-import { tmpdir } from "node:os";
 import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
 
@@ -32,7 +31,7 @@ import { FileJournal, type PublicationJournal } from "../../remediation/src/jour
 import { formatManifest } from "../../remediation/src/manifest-format.ts";
 import { NPM_DEPENDENCY_FIELDS } from "../../remediation/src/npm-file-checks.ts";
 import { requireNpmExcludes } from "../../remediation/src/npm-version.ts";
-import { runSandboxed } from "../../remediation/src/sandboxed.ts";
+import { runSandboxed, sandboxWritable } from "../../remediation/src/sandboxed.ts";
 import { ensureOsvScanner, verifyingRun } from "../../remediation/src/osv-scanner.ts";
 import { freeBranch, ownPullRequests, stateOf, topicOf } from "../../remediation/src/own-pr.ts";
 import { revertToBase } from "../../remediation/src/reconcile.ts";
@@ -54,7 +53,7 @@ import { planDigest, planOf, planSection, withPlanSection } from "./plan-block.t
 import { type ChangePlan, coupledWork, type FixWork, HELD_TOPIC, packageKey, planFor, type PlannedHold, type SecurityUnit, withUnsupportedCarriers } from "./plan.ts";
 import { namedProblems, retryWithoutNamed, type ProblemMoves } from "./retry.ts";
 import { referencePlan, verifyPlan, type VerifyInputs } from "./verify.ts";
-import { gradleHome, gradleStrictCalls } from "../../remediation/src/strict-calls.ts";
+import { gradleStrictCalls } from "../../remediation/src/strict-calls.ts";
 
 export const RULES = ownPullRequests("secure-it");
 const SKILLS_DIR = fileURLToPath(new URL("../skills", import.meta.url));
@@ -100,7 +99,7 @@ export function defaultDeps(): SecureItDeps {
     floorProbe: probeOnBase,
     gate: async (context) => {
       // Outside everything sandboxed commands can write, and checked right before each run.
-      const writable = [context.config.dirs.cache, context.workingCopy.path, tmpdir(), "/tmp", ...(context.isolation.buildCacheRoot === undefined ? [] : [context.isolation.buildCacheRoot])];
+      const writable = sandboxWritable(context);
       const osv = await ensureOsvScanner(context.config.dirs.state, writable);
       return { run: verifyingRun(runProcess, osv), fetch: namingFailures(context.fetch), now: () => new Date(), osvScanner: osv.path, githubToken: context.readToken, bundles: new BundleReader(), repositoryAdvisoryCache: new FileRepositoryAdvisoryCache(context.config.dirs.state, writable, context.readToken) };
     },
@@ -601,7 +600,7 @@ async function verifyEdit(
   const links = await deps.linkProblems(context.workingCopy, base.id, candidate);
   return [...links, ...await deps.verify({
     plan, base, head, env, npmFiles, gradle: { base: baseGradle, head: headGradle }, reference, changedFiles,
-    strictCalls: gradleStrictCalls(gradleHome(context.isolation.buildCacheRoot)),
+    strictCalls: gradleStrictCalls({ stateDir: context.config.dirs.state, sandboxWritable: sandboxWritable(context), fetch: context.fetch }),
     ...(cooldown === undefined ? {} : { cooldown }),
   })];
 }
