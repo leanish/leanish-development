@@ -8,7 +8,7 @@
 // plugins DSL and `buildscript {}` put plugins), plus the settings classpath once per build:
 // every module component the resolution selected, every dependency it couldn't resolve, and
 // the external dependencies declared in or inherited by that configuration, with their version,
-// `because(...)` reason (what the floors check reads) and full rich version, plus every dependency
+// `because(...)` reason (what the floors check reads) and full rich version, plus every external module
 // constraint and its full rich version: a strict version is its owner's pin. The CLI reads the files as data.
 // Declarations are read only once every configuration of the build has resolved: resolving adds
 // some (`defaultDependencies`, such as a code-quality plugin's tool, or `withDependencies`).
@@ -26,6 +26,7 @@ import org.gradle.api.artifacts.ExternalModuleDependency
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
 import org.gradle.api.artifacts.result.ResolvedDependencyResult
 import org.gradle.api.artifacts.result.UnresolvedDependencyResult
+import org.gradle.api.internal.artifacts.dependencies.DefaultDependencyConstraint
 
 def outPath = System.getProperty("supplyChain.out")
 if (outPath == null || outPath.isEmpty()) {
@@ -51,13 +52,21 @@ def relativeToRequested = { File dir ->
 // A component in the resolved graph: `group:name:version` for a module, Gradle's display name otherwise (`project :app`).
 def componentKey = { id -> id instanceof ModuleComponentIdentifier ? "${id.group}:${id.module}:${id.version}".toString() : id.displayName }
 
+// Match the reader's coordinate contract before emitting external modules; project coordinates never enter these lists.
+def moduleCoordinates = { group, name, String where ->
+    [group: group, name: name].each { field, value ->
+        if (!(value instanceof String) || value.isEmpty()) throw new GradleException("supply-chain inventory: ${where} has a malformed ${field}")
+    }
+    [group: group, name: name]
+}
+
 def resolveEntry = { configuration, String id, String kind ->
     def entry = [id: id, kind: kind, resolved: [], unresolved: [], declared: [], constraints: [], strictConstraints: [], edges: [], error: null]
     try {
         def result = configuration.incoming.resolutionResult
         result.allComponents.each { component ->
             if (component.id instanceof ModuleComponentIdentifier) {
-                entry.resolved << [group: component.id.group, name: component.id.module, version: component.id.version]
+                entry.resolved << moduleCoordinates(component.id.group, component.id.module, "${id} resolved module") + [version: component.id.version]
             }
         }
         result.allDependencies.each { dependency ->
@@ -88,19 +97,18 @@ def declare = { configuration, Map entry ->
     def moved = gradle.ext.has("supplyChainReferenceMoved") ? gradle.ext.supplyChainReferenceMoved : Collections.emptySet()
     configuration.allDependencies.withType(ExternalModuleDependency).each { dependency ->
         def constraint = dependency.versionConstraint
-        entry.declared << [
-            group  : dependency.group,
-            name   : dependency.name,
+        entry.declared << moduleCoordinates(dependency.group, dependency.name, "${entry.id} external dependency") + [
             version: dependency.version ?: constraint.strictVersion ?: constraint.requiredVersion ?: constraint.preferredVersion ?: null,
             reason : dependency.reason,
         ] + richVersion(constraint) + (constraint.strictVersion ? [strict: true] : [:]) + (moved.contains(dependency) ? [moved: true] : [:])
     }
-    configuration.allDependencyConstraints.each { constraint ->
+    // Gradle exposes no public external-module constraint subtype; project constraints have a different implementation.
+    configuration.allDependencyConstraints.withType(DefaultDependencyConstraint).each { constraint ->
+        def coordinates = moduleCoordinates(constraint.group, constraint.name, "${entry.id} external constraint")
         def version = constraint.versionConstraint
-        entry.constraints << [group: constraint.group, name: constraint.name,
-                              version: version.strictVersion ?: version.requiredVersion ?: version.preferredVersion ?: null] + richVersion(version)
+        entry.constraints << coordinates + [version: version.strictVersion ?: version.requiredVersion ?: version.preferredVersion ?: null] + richVersion(version)
         def strict = version.strictVersion
-        if (strict) entry.strictConstraints << [group: constraint.group, name: constraint.name, version: strict]
+        if (strict) entry.strictConstraints << coordinates + [version: strict]
     }
     entry
 }
