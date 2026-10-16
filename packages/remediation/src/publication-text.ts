@@ -1,6 +1,7 @@
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 
+import { escape } from "./manifest-spec.ts";
 import type { PullRequestContent } from "./publication.ts";
 
 /** Where a published text's local paths come from: the working copy, and the rest of the machine. */
@@ -110,8 +111,4 @@ function outsideComments(body: string, clean: (text: string) => string): string 
     .split(/(<!-- leanish:[\s\S]*?-->)/)
     .map((part, i) => (i % 2 === 1 ? part : clean(part)))
     .join("");
-}
-
-function escape(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

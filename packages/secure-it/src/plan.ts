@@ -26,6 +26,7 @@ import type { NpmPeerPlanner } from "../../ci/src/npm-peers.ts";
 import type { HeldVersion } from "../../ci/src/release-age.ts";
 import { gradleLocation, type GradleInventory } from "../../ci/src/gradle.ts";
 import type { Ecosystem } from "../../ci/src/versions.ts";
+import { nearestCopy } from "../../remediation/src/npm-graph.ts";
 
 import type { FloorRemoval } from "./floor-removal.ts";
 
@@ -402,18 +403,6 @@ export function dependentsOf(lockfiles: ReadonlyMap<string, unknown>, location: 
     else dependents.push({ path, spec, name: entry.name ?? path.slice(path.lastIndexOf("node_modules/") + "node_modules/".length), version: entry.version, bundled: entry.inBundle === true });
   }
   return { installedAs, declaredByWorkspace, dependents };
-}
-
-/** The lockfile key of the copy of `name` an entry at `from` resolves to, walking up its `node_modules`. */
-function nearestCopy(packages: Record<string, unknown>, from: string, name: string): string | undefined {
-  let dir = from;
-  for (;;) {
-    const candidate = dir === "" ? `node_modules/${name}` : `${dir}/node_modules/${name}`;
-    if (packages[candidate] !== undefined) return candidate;
-    if (dir === "") return undefined;
-    const cut = dir.lastIndexOf("/node_modules/");
-    dir = cut !== -1 ? dir.slice(0, cut) : dir.includes("/") && !dir.startsWith("node_modules/") ? dir.slice(0, dir.lastIndexOf("/")) : "";
-  }
 }
 
 export function satisfies(version: string, range: string): boolean {
