@@ -27,18 +27,14 @@ permissions and schedules are in the [adoption guide](adopting-tools.md).
 | `secrets.write` | `leanish-<tool>-write` | macOS Keychain service holding the tool's write PAT. |
 | `secrets.read` | `leanish-<tool>-read` | Different service holding a different, read-only PAT for the agent. Both equal names and equal token values are refused. |
 | `commitIdentity.name`, `commitIdentity.email` | Required | Author and committer for the tool's commits; also the identity exposed to agent commands. No developer-global git identity is inherited. |
-| `dirs.state` | `~/.local/share/leanish/<tool>` | Workspaces, separate git metadata, publication journal, protected OSV-Scanner, Gradle parser jars and input copies, and the repository-advisory cache (out of the sandbox's reach). bump-it also stores deferred-major ordering here. Keep this outside temp and cache roots; see the adoption guide. |
+| `dirs.state` | `~/.local/share/leanish/<tool>` | Workspaces, separate git metadata, publication journal, protected OSV-Scanner and the repository-advisory cache (out of the sandbox's reach). bump-it also stores deferred-major ordering here. Keep this outside temp and cache roots; see the adoption guide. |
 | `dirs.cache` | `~/.cache/leanish/<tool>` | Sandbox-writable cache for Gradle and npm. Keep separate from state and between tools. |
 | `readDeny` | `[]` | Extra absolute paths denied to sandboxed commands, in addition to existing sensitive home paths. These paths' names can reach the model; their contents cannot. Other readable files can reach the model provider. With `claude-code`, a path containing a glob character (`* ? [ ] { } ! \`) is refused: Claude Code reads its permission rules as patterns. |
 | `modelPrices` | Built-in dated OpenAI Standard prices | Absolute path to an optional JSON table replacing the built-in rates; see [below](#optional-price-table). Claude models have no built-in rate. |
 | `maxNewMajorsPerRun` | bump-it only, `3` | Nonnegative integer. Caps newly opened major PRs, never updates to existing ones. `0` defers all new majors. Deferred majors have priority next run. |
 
-Strict-pin verification needs Java. The first check for a Gradle version also needs `unzip` on `PATH` and network
-access to `services.gradle.org` and its HTTPS redirect hosts to install the compiler jars under
-`dirs.state/tools/gradle-parsers/<version>`. The streamed distribution download is limited to 512 MiB. Later checks
-reuse that protected install and re-verify its jars before Java runs. The wrapper's `distributionUrl` must end in
-`gradle-<version>-(bin|all).zip`; a different filename, a query suffix or a missing wrapper refuses script edits
-visibly because their strict pins can't be checked.
+Strict-pin verification uses the Gradle inventory and planned reference comparison. It adds no separate Java parser
+run, compiler download, `unzip` requirement or parser state directory; Gradle still uses its normal build toolchain.
 
 Notes on `secrets`:
 
