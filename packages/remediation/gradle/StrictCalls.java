@@ -3,7 +3,9 @@ import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Lists what a Gradle build script says about strict versions, parsed (never run) with the compilers the build's own
@@ -18,8 +20,11 @@ import java.util.List;
  *       word, with the whole call it's an argument of (`invokeMethod('strictly', ['1.0'])`). They aren't followed, so
  *       comparing them only catches a change written in them;</li>
  *   <li>`file`: the whole file's SHA-256, when it takes a reference to `strictly` (`this.&strictly`, `::strictly`):
- *       stored under another name, it could be called anywhere, so any change to such a file differs.</li>
+ *       stored under another name, it could be called anywhere, so any change to such a file differs. Also used when
+ *       the language's lexer finds a `strictly` identifier or string occurrence the visitor hasn't accounted for at
+ *       that source position; counts cannot hide an unvisited occurrence behind a visited one.</li>
  * </ul>
+ * Parameter defaults (methods, constructors and closures too) are visited. Lexer errors fail like parse errors.
  * A file that doesn't parse prints one `error` line with the first line of the reason, and the others are still read.
  */
 public class StrictCalls {
@@ -65,10 +70,13 @@ public class StrictCalls {
       var parsed = new org.jetbrains.kotlin.psi.KtPsiFactory(environment.getProject(), false).createFile(Path.of(file).getFileName().toString(), text);
       if (org.jetbrains.kotlin.com.intellij.psi.util.PsiTreeUtil.hasErrorElements(parsed)) throw new IllegalArgumentException("it doesn't parse as Kotlin");
       List<String[]> found = new ArrayList<>();
+      Set<Integer> accounted = new HashSet<>();
+      List<org.jetbrains.kotlin.com.intellij.openapi.util.TextRange> strings = new ArrayList<>();
       parsed.accept(new org.jetbrains.kotlin.psi.KtTreeVisitorVoid() {
         @Override public void visitCallExpression(org.jetbrains.kotlin.psi.KtCallExpression call) {
           var callee = call.getCalleeExpression();
-          if (callee instanceof org.jetbrains.kotlin.psi.KtSimpleNameExpression simple && simple.getReferencedName().equals("strictly")) {
+          if (callee instanceof org.jetbrains.kotlin.psi.KtSimpleNameExpression simple && kotlinName(simple).equals("strictly")) {
+            accounted.add(simple.getReferencedNameElement().getTextOffset());
             found.add(new String[] {"call", kotlinCall(call)});
           } else if (callee != null && !(callee instanceof org.jetbrains.kotlin.psi.KtSimpleNameExpression) && names(callee.getText())) {
             found.add(new String[] {"indirect", call.getText()});
@@ -76,11 +84,15 @@ public class StrictCalls {
           super.visitCallExpression(call);
         }
         @Override public void visitCallableReferenceExpression(org.jetbrains.kotlin.psi.KtCallableReferenceExpression reference) {
-          if (reference.getCallableReference().getReferencedName().equals("strictly")) found.add(new String[] {"file", sha256(text)});
+          if (kotlinName(reference.getCallableReference()).equals("strictly")) {
+            accounted.add(reference.getCallableReference().getReferencedNameElement().getTextOffset());
+            wholeFile(found, text);
+          }
           super.visitCallableReferenceExpression(reference);
         }
         @Override public void visitStringTemplateExpression(org.jetbrains.kotlin.psi.KtStringTemplateExpression string) {
           if (names(string.getText())) {
+            strings.add(string.getTextRange());
             // As an argument, the call it's passed to: `invoke("strictly", "1.0")` keeps its other arguments.
             var call = org.jetbrains.kotlin.com.intellij.psi.util.PsiTreeUtil.getParentOfType(string, org.jetbrains.kotlin.psi.KtCallExpression.class);
             found.add(new String[] {"indirect", call == null ? string.getText() : call.getText()});
@@ -88,10 +100,37 @@ public class StrictCalls {
           super.visitStringTemplateExpression(string);
         }
       });
+      checkKotlinMentions(parsed, text, found, accounted, strings);
       return found;
     } finally {
       org.jetbrains.kotlin.com.intellij.openapi.util.Disposer.dispose(disposable);
     }
+  }
+
+  static void checkKotlinMentions(org.jetbrains.kotlin.psi.KtFile parsed, String text, List<String[]> found,
+      Set<Integer> accounted, List<org.jetbrains.kotlin.com.intellij.openapi.util.TextRange> strings) {
+    // PSI leaves use Kotlin's lexer, including backticked identifiers and string contents, never comments.
+    parsed.accept(new org.jetbrains.kotlin.com.intellij.psi.PsiRecursiveElementWalkingVisitor() {
+      @Override public void visitElement(org.jetbrains.kotlin.com.intellij.psi.PsiElement element) {
+        if (element.getFirstChild() == null) {
+          var type = element.getNode().getElementType();
+          boolean identifier = type == org.jetbrains.kotlin.lexer.KtTokens.IDENTIFIER && element.getText().replace("`", "").equals("strictly");
+          boolean stringContent = (type == org.jetbrains.kotlin.lexer.KtTokens.REGULAR_STRING_PART || type == org.jetbrains.kotlin.lexer.KtTokens.ESCAPE_SEQUENCE) && names(element.getText());
+          int offset = element.getTextOffset();
+          if ((identifier || stringContent) && !accounted.contains(offset) && strings.stream().noneMatch(range -> range.getStartOffset() <= offset && offset < range.getEndOffset())) wholeFile(found, text);
+        }
+        super.visitElement(element);
+      }
+    });
+  }
+
+  static String kotlinName(org.jetbrains.kotlin.psi.KtSimpleNameExpression name) {
+    return name.getReferencedName().replace("`", "");
+  }
+
+  /** One whole-file finding even when several references or unaccounted occurrences require it. */
+  static void wholeFile(List<String[]> found, String text) {
+    if (found.stream().noneMatch(finding -> finding[0].equals("file"))) found.add(new String[] {"file", sha256(text)});
   }
 
   /** The call with its receiver (`a.strictly(...)`) and each enclosing call's name and non-lambda arguments. */
@@ -124,11 +163,14 @@ public class StrictCalls {
     var module = unit.getAST();
     String[] lines = text.split("\n", -1);
     List<String[]> found = new ArrayList<>();
+    Set<Position> accounted = new HashSet<>();
+    List<org.codehaus.groovy.ast.ASTNode> strings = new ArrayList<>();
     var visitor = new org.codehaus.groovy.ast.CodeVisitorSupport() {
       final Deque<org.codehaus.groovy.ast.expr.MethodCallExpression> enclosing = new ArrayDeque<>();
       @Override public void visitMethodCallExpression(org.codehaus.groovy.ast.expr.MethodCallExpression call) {
         String name = call.getMethodAsString();
         if ("strictly".equals(name)) {
+          accounted.add(position(call.getMethod()));
           StringBuilder out = new StringBuilder(slice(lines, call));
           for (var outer : enclosing) out.append(" | ").append(outer.getMethodAsString()).append(headerArguments(lines, outer));
           found.add(new String[] {"call", out.toString()});
@@ -146,33 +188,91 @@ public class StrictCalls {
         enclosing.pop();
       }
       @Override public void visitMethodPointerExpression(org.codehaus.groovy.ast.expr.MethodPointerExpression pointer) {
-        if (names(pointer.getMethodName().getText())) found.add(new String[] {"file", sha256(text)});
+        if (names(pointer.getMethodName().getText())) {
+          accounted.add(position(pointer.getMethodName()));
+          wholeFile(found, text);
+        }
         super.visitMethodPointerExpression(pointer);
       }
       @Override public void visitPropertyExpression(org.codehaus.groovy.ast.expr.PropertyExpression property) {
-        if ("strictly".equals(property.getPropertyAsString())) found.add(new String[] {"indirect", slice(lines, property)});
+        if ("strictly".equals(property.getPropertyAsString())) {
+          accounted.add(position(property.getProperty()));
+          found.add(new String[] {"indirect", slice(lines, property)});
+        }
         super.visitPropertyExpression(property);
       }
       @Override public void visitConstantExpression(org.codehaus.groovy.ast.expr.ConstantExpression constant) {
-        if (constant.getValue() instanceof String string && names(string)) found.add(new String[] {"indirect", string});
+        if (constant.getValue() instanceof String string && names(string)) {
+          accounted.add(position(constant));
+          found.add(new String[] {"indirect", string});
+        }
         super.visitConstantExpression(constant);
       }
+      @Override public void visitClosureExpression(org.codehaus.groovy.ast.expr.ClosureExpression closure) {
+        visitDefaults(closure.getParameters(), this);
+        super.visitClosureExpression(closure);
+      }
       @Override public void visitGStringExpression(org.codehaus.groovy.ast.expr.GStringExpression string) {
-        if (names(string.getText())) found.add(new String[] {"indirect", slice(lines, string)});
+        if (names(string.getText())) {
+          strings.add(string);
+          found.add(new String[] {"indirect", slice(lines, string)});
+        }
         super.visitGStringExpression(string);
       }
     };
     module.getStatementBlock().visit(visitor);
-    for (var method : module.getMethods()) method.getCode().visit(visitor);
+    for (var method : module.getMethods()) visitMethod(method, visitor);
     // The script's own classes: fields, methods, constructors and initializer blocks.
     for (var type : module.getClasses()) {
       if (type.isScript()) continue;
       for (var field : type.getFields()) if (field.hasInitialExpression()) field.getInitialExpression().visit(visitor);
-      for (var method : type.getMethods()) if (method.getCode() != null) method.getCode().visit(visitor);
-      for (var constructor : type.getDeclaredConstructors()) if (constructor.getCode() != null) constructor.getCode().visit(visitor);
+      for (var method : type.getMethods()) visitMethod(method, visitor);
+      for (var constructor : type.getDeclaredConstructors()) visitMethod(constructor, visitor);
       for (var initializer : type.getObjectInitializerStatements()) initializer.visit(visitor);
     }
+    checkGroovyMentions(text, found, accounted, strings);
     return found;
+  }
+
+  static void checkGroovyMentions(String text, List<String[]> found, Set<Position> accounted, List<org.codehaus.groovy.ast.ASTNode> strings) {
+    var lexer = new org.apache.groovy.parser.antlr4.GroovyLangLexer(groovyjarjarantlr4.v4.runtime.CharStreams.fromString(text));
+    lexer.removeErrorListeners();
+    lexer.addErrorListener(new groovyjarjarantlr4.v4.runtime.ANTLRErrorListener<Integer>() {
+      @Override public <T extends Integer> void syntaxError(groovyjarjarantlr4.v4.runtime.Recognizer<T, ?> recognizer, T offending, int line, int column, String message, groovyjarjarantlr4.v4.runtime.RecognitionException error) {
+        throw new IllegalArgumentException("Groovy lexer at " + line + ":" + (column + 1) + ": " + message);
+      }
+    });
+    for (var token = lexer.nextToken(); token.getType() != groovyjarjarantlr4.v4.runtime.Token.EOF; token = lexer.nextToken()) {
+      String kind = lexer.getVocabulary().getSymbolicName(token.getType());
+      boolean mention = "Identifier".equals(kind) && token.getText().equals("strictly")
+          || ("StringLiteral".equals(kind) || kind != null && kind.startsWith("GString")) && names(token.getText());
+      var at = new Position(token.getLine(), token.getCharPositionInLine() + 1);
+      if (mention && !accounted.contains(at) && strings.stream().noneMatch(node -> contains(node, at))) wholeFile(found, text);
+    }
+  }
+
+  record Position(int line, int column) implements Comparable<Position> {
+    @Override public int compareTo(Position other) {
+      return line == other.line ? Integer.compare(column, other.column) : Integer.compare(line, other.line);
+    }
+  }
+
+  static Position position(org.codehaus.groovy.ast.ASTNode node) {
+    return new Position(node.getLineNumber(), node.getColumnNumber());
+  }
+
+  static boolean contains(org.codehaus.groovy.ast.ASTNode node, Position at) {
+    return position(node).compareTo(at) <= 0 && at.compareTo(new Position(node.getLastLineNumber(), node.getLastColumnNumber())) < 0;
+  }
+
+  static void visitDefaults(org.codehaus.groovy.ast.Parameter[] parameters, org.codehaus.groovy.ast.CodeVisitorSupport visitor) {
+    if (parameters == null) return; // A closure with an implicit `it` has no parameter array.
+    for (var parameter : parameters) if (parameter.hasInitialExpression()) parameter.getInitialExpression().visit(visitor);
+  }
+
+  static void visitMethod(org.codehaus.groovy.ast.MethodNode method, org.codehaus.groovy.ast.CodeVisitorSupport visitor) {
+    visitDefaults(method.getParameters(), visitor);
+    if (method.getCode() != null) method.getCode().visit(visitor);
   }
 
   /** An enclosing call's non-closure arguments: where `implementation('g:a') {…}` names the dependency it pins. */

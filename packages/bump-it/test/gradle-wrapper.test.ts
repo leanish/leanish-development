@@ -4,7 +4,7 @@ import type { GateEnvironment } from "../../ci/src/gate.ts";
 import type { Fetch } from "../../ci/src/http.ts";
 import type { Tree } from "../../ci/src/tree.ts";
 import { gradleWrapperPlanner, WRAPPER_PROPERTIES } from "../src/gradle-wrapper.ts";
-import { wrapperProperties } from "../src/wrapper-properties.ts";
+import { wrapperProperties } from "../../remediation/src/wrapper-properties.ts";
 
 const NOW = new Date("2026-10-07T00:00:00Z");
 const SUM = "a".repeat(64);
