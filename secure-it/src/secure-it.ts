@@ -24,7 +24,7 @@ import type { ToolHandlers, ToolRunContext } from "@leanish/tool-runtime/command
 import { FLOORS_FILE, isMechanical } from "@leanish/tool-runtime/edit-checks";
 import { writeLocalFile } from "@leanish/tool-runtime/local-files";
 import { gradleSourceIndex } from "@leanish/gate/gradle-sources";
-import { candidateTree, changedBetween, linkProblems, snapshotCandidate } from "@leanish/tool-runtime/git-copies";
+import { candidateTree, changedBetween, fileState, type FileState, linkProblems, snapshotCandidate } from "@leanish/tool-runtime/git-copies";
 import { referenceTransform } from "@leanish/tool-runtime/gradle-reference";
 import { type GradleInventories, lockfilesOf, sandboxedGradleInventories } from "@leanish/tool-runtime/inventories";
 import { FileJournal, type PublicationJournal } from "@leanish/tool-runtime/journal";
@@ -34,7 +34,7 @@ import { requireNpmExcludes } from "@leanish/tool-runtime/npm-version";
 import { runSandboxed, sandboxWritable } from "@leanish/tool-runtime/sandboxed";
 import { ensureOsvScanner, verifyingRun } from "@leanish/tool-runtime/osv-scanner";
 import { freeBranch, ownPullRequests, stateOf, topicOf } from "@leanish/tool-runtime/own-pr";
-import { revertToBase } from "@leanish/tool-runtime/reconcile";
+import { publicationParent, revertToBase } from "@leanish/tool-runtime/reconcile";
 import { clearLeftoverBranch, closeAndDelete, ownOpenPullRequests, type PublicationContext, publishNew, publishUpdate, recoverPublication, rewriteText } from "@leanish/tool-runtime/publication";
 import { machineRoots } from "@leanish/tool-runtime/publication-text";
 import { type BaseMerge, type CooldownState, reviewOpenPullRequests, type ReviewSteps } from "@leanish/tool-runtime/review";
@@ -66,6 +66,8 @@ interface SkillAnswer {
 
 /** What secure-it reaches outside its own logic; tests replace them. */
 export interface SecureItDeps {
+  readonly publicationParent: typeof publicationParent;
+  readonly fileState: typeof fileState;
   readonly requiredNpm: typeof requiredNpmPlan;
   readonly materializeNpm: typeof materializeOnBase;
   readonly floorProbe: (context: ToolRunContext, base: Tree, floors: ReadonlyArray<Floor>, env: GateEnvironment) => Promise<RemovalProbe>;
@@ -87,12 +89,14 @@ export interface SecureItDeps {
   readonly writeFile: (workingCopy: WorkingCopy, path: string, content: string) => Promise<void>;
   /** npm under the same sandbox and PATH as the agent, used to check exclusion support. */
   readonly npm: (context: ToolRunContext, args: ReadonlyArray<string>) => Promise<{ code: number; stdout: string; stderr: string }>;
-  /** Puts every path that differs from `baseSha` back to the base's content (reconcile by revert); returns them. */
+  /** Starts a redo detached at `baseSha`, with a clean index/worktree; returns the discarded paths. */
   readonly revert: (workingCopy: WorkingCopy, baseSha: string) => Promise<string[]>;
 }
 
 export function defaultDeps(): SecureItDeps {
   return {
+    publicationParent,
+    fileState,
     requiredNpm: requiredNpmPlan,
     materializeNpm: materializeOnBase,
     floorProbe: probeOnBase,
@@ -138,6 +142,7 @@ function publicationOf(context: ToolRunContext, deps: SecureItDeps): Publication
     journal: deps.journal(context),
     localRoots: machineRoots(context.config.dirs),
     verifiedTree: () => deps.candidateTree(context.workingCopy),
+    publicationParent: (prepared) => deps.publicationParent(context.workingCopy, prepared),
   };
 }
 
@@ -179,13 +184,14 @@ async function agentInput(
   base: Tree,
   mode: "apply" | "adapt" | "resolve",
   extra: { failingChecks?: string[]; conflicted?: ReadonlyArray<string> } = {},
+  restoredFiles?: Map<string, FileState>,
 ) {
-  const window = await prepareNpmFiles(execution, plan, base);
-  return { ...skillInput(execution.context, plan, window.exclude, mode, extra), toolWritten: [...execution.npmFiles.keys()].filter((path) => path !== FLOORS_FILE || !plan.moves.some((move) => move.mechanism === "gradle-floor")) };
+  const window = await prepareNpmFiles(execution, plan, base, false, restoredFiles);
+  return { ...skillInput(execution.context, plan, window.exclude, mode, extra), toolWritten: [...execution.npmFiles.keys()] };
 }
 
 /** Write the recomputed npm files before either agent work or a clean, model-free rebase verification. */
-async function prepareNpmFiles(execution: Execution, plan: ChangePlan, base: Tree, reconcileFloors = false) {
+async function prepareNpmFiles(execution: Execution, plan: ChangePlan, base: Tree, reconcileFloors = false, restoredFiles?: Map<string, FileState>) {
   const { context, deps, env } = execution;
   const window = await npmWindowFor(plan, context.releaseAgeDays, context.releaseAgeExclude, context.now, env.fetch, await lockfilesOf(base));
   for (const detail of window.notes) context.logger.warn("secure-it: npm release-age exclusion", { detail });
@@ -212,6 +218,10 @@ async function prepareNpmFiles(execution: Execution, plan: ChangePlan, base: Tre
       }
     }
     await deps.writeFile(context.workingCopy, path, output);
+    const restored = restoredFiles?.get(path);
+    if (restoredFiles !== undefined && restored !== undefined) {
+      restoredFiles.set(path, { ...await deps.fileState(context.workingCopy, path), index: restored.index });
+    }
   }
   return window;
 }
@@ -558,12 +568,7 @@ async function recognisedPlans(
   return owned;
 }
 
-/**
- * The PR's branch with the default branch (at `baseSha`, what the new plan was
- * computed on) merged in and every file it changed put back to the base's
- * content (design item 28): the new plan then goes on the base as it is, and
- * what the old plan changed and the new one doesn't want goes.
- */
+/** Capture the PR's publication history, then start its new plan from a clean, detached base. */
 async function reconcileBranch(context: ToolRunContext, deps: SecureItDeps, pr: GitHubPullRequest, baseSha: string): Promise<PreparedBranch> {
   const merged = await context.workspace.prepareBranch(context.workingCopy, { branch: pr.headRef, start: "remote-merging" });
   if (merged.kind === "conflict") throw new Error(`${pr.headRef}: remote-merging reported a conflict without leaving it in progress`);
@@ -682,6 +687,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       if (plan.notes !== undefined && plan.notes.length > 0) notes.push({ number: pr.number, notes: plan.notes });
       const changed = planDigest(plan) !== planDigest(previous);
       const code: string[] = [];
+      const restoredFiles = new Map<string, FileState>();
       if (changed) {
         // A different plan: the old one's edits go (conflicts included), the new one is applied on the base as it is.
         await deps.revert(context.workingCopy, baseSha);
@@ -689,7 +695,10 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
         for (const path of merge.conflicted) {
           const theirs = isMechanical(path) ? await base.read(path) : undefined;
           if (theirs === undefined) code.push(path);
-          else await deps.writeFile(context.workingCopy, path, theirs);
+          else {
+            await deps.writeFile(context.workingCopy, path, theirs);
+            restoredFiles.set(path, await deps.fileState(context.workingCopy, path));
+          }
         }
       }
       // The agent applies a changed plan, or re-applies the same one over the base's side of conflicted dependency
@@ -698,7 +707,8 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       if (changed || merge.kind === "conflicted") {
         const answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({
           entrypoint: "secure-it",
-          input: await agentInput(execution, plan, base, code.length > 0 ? "resolve" : "apply", code.length > 0 ? { conflicted: code } : {}),
+          input: await agentInput(execution, plan, base, changed ? "apply" : "resolve", changed ? {} : { conflicted: code }, restoredFiles),
+          restoredFiles: [...restoredFiles.values()],
         });
         if (answer.outcome !== "applied") throw new Error(`the agent couldn't re-apply the plan on the new base: ${answer.summary}`);
         // A different plan is a different change: its own title and description.

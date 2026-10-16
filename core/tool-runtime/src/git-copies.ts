@@ -10,13 +10,15 @@
  *   - `changedSince`: what the working tree changed relative to a commit.
  */
 import { spawn } from "node:child_process";
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, normalize } from "node:path";
 
 import type { WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
 import { runProcess, type RunProcess } from "@leanish/gate/process";
 import { gitArgs as repositoryArgs, gitEnvironment } from "@leanish/gate/git";
+import { safePath } from "./local-files.ts";
 
 function gitArgs(workingCopy: WorkingCopy, args: ReadonlyArray<string>): string[] {
   if (workingCopy.gitDir === undefined) throw new Error(`${workingCopy.path}'s git metadata must be in a separate directory`);
@@ -32,6 +34,29 @@ export async function git(
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   const env = { ...gitEnvironment(), ...extraEnv };
   return run("git", gitArgs(workingCopy, args), { cwd: workingCopy.path, env });
+}
+
+/** A tool-written file's exact bytes/mode (null means absent), and its index entries, including unresolved stages. */
+export interface FileState {
+  readonly path: string;
+  readonly sha256: string | null;
+  readonly executable: boolean;
+  readonly index: string;
+}
+
+/** Capture immediately after a restore or intentional rewrite; never stage it just to check it. */
+export async function fileState(workingCopy: WorkingCopy, path: string): Promise<FileState> {
+  if (!safePath(path)) throw new Error("fileState needs a repository-relative file path");
+  const index = await git(workingCopy, ["ls-files", "--stage", "-z", "--", `:(literal)${path}`], runProcess);
+  if (index.code !== 0) throw new Error(`reading the index for ${path} failed: ${index.stderr.trim()}`);
+  const target = join(workingCopy.path, path);
+  const stat = await lstat(target).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return undefined;
+    throw error;
+  });
+  if (stat === undefined) return { path, sha256: null, executable: false, index: index.stdout };
+  if (!stat.isFile()) throw new Error(`${path} must be a regular restored file`);
+  return { path, sha256: createHash("sha256").update(await readFile(target)).digest("hex"), executable: (stat.mode & 0o111) !== 0, index: index.stdout };
 }
 
 /** Where the commit verification last read is recorded, in the git metadata the agent can't write. */
