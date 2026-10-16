@@ -264,7 +264,7 @@ dependencies { implementation "fixture:included-dep:1.0" }
     expect(locations("fixture:ab-underscore:1.0")).toEqual(expect.arrayContaining([":a_b:runtimeClasspath"]));
   });
 
-  it("excludes project constraints, including an ungrouped root, while comparing external constraints", async () => {
+  it("skips ungrouped project constraints while comparing grouped project and external constraints", async () => {
     const build = join(root, "project-constraints");
     await cp(WRAPPER, build, { recursive: true });
     await write(build, "settings.gradle", 'rootProject.name = "ungrouped"\ninclude "sub", "grouped"\n');
@@ -298,6 +298,7 @@ dependencies {
     expect(gradleResolutionProblems(reread, [])).toEqual([]);
     const runtime = reread.builds[0]!.configurations.find((configuration) => configuration.id === ":sub:runtimeClasspath")!;
     expect(runtime.constraints).toEqual([
+      { group: "fixture.project", name: "grouped", version: "1.0" },
       { group: "fixture", name: "constrained", version: "1.0" },
       { group: "fixture", name: "pinned", version: "1.5", versionConstraint: {
         strictVersion: "1.5", requiredVersion: "1.5", preferredVersion: "", rejectedVersions: [], branch: null,
@@ -315,9 +316,8 @@ dependencies {
     expect(referenceDifferences(reference, changed)).toContainEqual(expect.stringContaining("no longer declares fixture:constrained 1.0 (constraint)"));
   }, 600_000);
 
-  it.each(["dependency", "constraint"])("refuses malformed external %s coordinates before exporting them", async (kind) => {
+  it.each(["dependency", "constraint"])("handles missing external %s coordinates before exporting them", async (kind) => {
     const build = join(root, `malformed-${kind}`);
-    const modelType = kind === "dependency" ? "DefaultExternalModuleDependency" : "DefaultDependencyConstraint";
     await cp(WRAPPER, build, { recursive: true });
     await write(build, "settings.gradle", 'rootProject.name = "malformed"\n');
     for (const [field, value] of [["group", null], ["group", ""], ["name", ""]] as const) {
@@ -325,9 +325,17 @@ dependencies {
       const notation = Object.entries(coordinates).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join(", ");
       const declaration = `add("active", [${notation}])`;
       await write(build, "build.gradle", `configurations { active }\ndependencies { ${kind === "constraint" ? `constraints { ${declaration} }` : declaration} }\n`);
+      if (kind === "constraint" && field === "group") {
+        // Public constraint coordinates cannot distinguish an ungrouped project from a malformed external module.
+        const inventory = await runGradleInventory(build, ["."], "worktree", runProcess);
+        const active = inventory.builds[0]!.configurations.find((configuration) => configuration.id === ":active")!;
+        expect(active.constraints).toEqual([]);
+        expect(active.strictConstraints).toEqual([]);
+        continue;
+      }
       // Gradle rejects an empty name during model construction, before the exporter can inspect it.
       const expected = field === "name"
-        ? `Could not create an instance of type org.gradle.api.internal.artifacts.dependencies.${modelType}.`
+        ? "Could not create an instance of type"
         : `:active external ${kind} has a malformed ${field}`;
       await expect(runGradleInventory(build, ["."], "worktree", runProcess)).rejects.toThrow(expected);
     }
