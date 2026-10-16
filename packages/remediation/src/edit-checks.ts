@@ -295,12 +295,5 @@ export function isDependencyFile(path: string, actions: boolean): boolean {
 
 /** Dependency files (lockfiles, manifests, Gradle build, settings and catalog files, floors) whose conflicts take the base's side, the plan then re-applied on top. */
 export function isMechanical(path: string): boolean {
-  const name = basename(path);
-  return (
-    ["package-lock.json", "npm-shrinkwrap.json", "package.json", "gradle.lockfile", "buildscript-gradle.lockfile"].includes(name) ||
-    name.endsWith(".gradle") ||
-    name.endsWith(".gradle.kts") ||
-    path === FLOORS_FILE ||
-    path.endsWith("gradle/libs.versions.toml")
-  );
+  return isDependencyFile(path, false);
 }
