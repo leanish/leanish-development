@@ -122,7 +122,7 @@ Both tools are in this tree: [`secure-it`](../packages/secure-it) and [`bump-it`
     pins, and a catalog that doesn't parse fail. Formatting changes with the same parsed pins can pass.
   - For `.gradle` and `.gradle.kts`, the backstop is a hand-written lexer. It compares recognized strict statements
     byte for byte, including balanced continuations (128 lines and 64 KiB maximum); unbalanced or over-budget
-    statements, nested block comments, and unsupported interpolations fail visibly.
+    statements, nested Kotlin block comments (Groovy's don't nest), and unsupported interpolations fail visibly.
   - **Known deficiency:** string or comment forms the lexer doesn't understand, including Groovy slashy (`/…/`)
     and dollar-slashy (`$/…/$`) strings, can hide a changed `strictly(...)` in a branch the Gradle inventory doesn't
     see. Active pins are still caught by the inventory and reference checks. A changed variable outside a recognized

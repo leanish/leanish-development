@@ -220,6 +220,27 @@ describe("the verification snapshot", () => {
     ]);
   });
 
+  it("matches an added path behind a link loosely, as a case-insensitive checkout puts `FOO/x` in `foo/`", async () => {
+    const { copy, run } = await repository();
+    await mkdir(join(copy.path, "foo"));
+    await writeFile(join(copy.path, "foo", "y.txt"), "y\n");
+    await symlink("foo", join(copy.path, "L"));
+    run(["add", "--all"]);
+    run(["commit", "-q", "-m", "a link to a folder"]);
+    const base = run(["rev-parse", "HEAD"]);
+    // `FOO/x.txt` beside `foo/` can't be written on a case-insensitive disk: built from git objects instead.
+    const index = join(copy.gitDir!, "variant-index");
+    const env = { ...process.env, GIT_INDEX_FILE: index, GIT_DIR: copy.gitDir! };
+    const plumb = (args: string[], input?: string) => spawnSync("git", args, { cwd: copy.path, env, input, encoding: "utf8" }).stdout.trim();
+    plumb(["read-tree", base]);
+    const blob = plumb(["hash-object", "-w", "--stdin"], "x\n");
+    plumb(["update-index", "--add", "--cacheinfo", `100644,${blob},FOO/x.txt`]);
+    const variant = plumb(["-c", "user.name=t", "-c", "user.email=t@example.com", "commit-tree", plumb(["write-tree"]), "-p", base, "-m", "variant"]);
+    expect(await linkProblems(copy, base, variant)).toEqual([
+      "the edit changed FOO/x.txt, behind the link L: verification can't check what's behind one",
+    ]);
+  });
+
   it("refuses an edit behind a link the repository already has, through linked directories and chains of links", async () => {
     const { copy, run } = await repository();
     for (const dir of ["actual", "d", ".github/workflows"]) await mkdir(join(copy.path, dir), { recursive: true });
