@@ -250,7 +250,7 @@ the same configuration):
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/leanish/supply-chain/core/gate/dependency-floors.schema.json",
+  "$id": "https://github.com/leanish/leanish-development/core/gate/dependency-floors.schema.json",
   "title": ".github/dependency-floors.json",
   "description": "Every floor (a minimum version forced on a dependency) with its reason. Beyond this schema, the gate also requires `added` to be a real calendar date, and no two floors for one package in one file may claim the same configuration or override.",
   "type": "object",

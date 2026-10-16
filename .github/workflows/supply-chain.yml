@@ -1,7 +1,7 @@
 name: supply-chain
 
 # The supply-chain gate, as a reusable workflow. An adopting repository calls it from its own workflow, pinned to a
-# full commit SHA of leanish/supply-chain (see core/gate/README.md, "Adopting the gate"); the gate itself is checked
+# full commit SHA of leanish/leanish-development (see core/gate/README.md, "Adopting the gate"); the gate itself is checked
 # out from that same commit (`job.workflow_sha`), so there's one pin.
 #
 #   pull_request        `compare`: base and head inventories, one advisory snapshot; the `supply-chain` job's result

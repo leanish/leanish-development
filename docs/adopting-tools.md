@@ -59,7 +59,7 @@ Keep a stable checkout of supply-chain, outside `/tmp`, and install its locked
 dependencies without scripts:
 
 ```bash
-git clone https://github.com/leanish/supply-chain.git "$HOME/dev/supply-chain"
+git clone https://github.com/leanish/leanish-development.git "$HOME/dev/supply-chain"
 cd "$HOME/dev/supply-chain"
 # Check out the reviewed tool release/commit you intend to run.
 npm ci --ignore-scripts
