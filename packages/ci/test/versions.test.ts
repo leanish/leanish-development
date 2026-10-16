@@ -123,6 +123,8 @@ describe("Maven (ComparableVersion)", () => {
   });
 
   it("orders the versions this repo meets", () => {
+    // A list against a missing component compares every item, as Maven does (MNG-6964), not just its leading zero.
+    expectAscending(maven, ["1.0", "1.0-0.1", "1.1"]);
     expectAscending(maven, ["1.1.10.8", "1.1.10.9", "1.1.10.10"]);
     expectAscending(maven, ["33.7.1-jre", "33.7.2-jre", "33.8.0-jre"]);
     expectAscending(maven, ["2.0.0-rc1", "2.0.0", "2.0.1"]);
