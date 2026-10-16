@@ -57,6 +57,9 @@ export interface ToolConfig {
   readonly maxNewMajorsPerRun: number | undefined;
 }
 
+/** New major PRs one bump-it run may open when its config doesn't say. */
+export const DEFAULT_MAX_NEW_MAJORS_PER_RUN = 3;
+
 export function defaultConfigPath(tool: ToolName, home = homedir()): string {
   return join(home, ".config", "leanish", tool, "agent.yaml");
 }
@@ -101,9 +104,7 @@ export function parseToolConfig(tool: ToolName, text: string, where: string, hom
 
   const maxNewMajorsPerRun = root["maxNewMajorsPerRun"];
   if (maxNewMajorsPerRun !== undefined && tool !== "bump-it") throw new Error(`${where}: maxNewMajorsPerRun is bump-it's`);
-  if (maxNewMajorsPerRun !== undefined && (typeof maxNewMajorsPerRun !== "number" || !Number.isInteger(maxNewMajorsPerRun) || maxNewMajorsPerRun < 0)) {
-    throw new Error(`${where}: maxNewMajorsPerRun must be a non-negative integer`);
-  }
+  if (maxNewMajorsPerRun !== undefined && !isNonNegativeInteger(maxNewMajorsPerRun)) throw new Error(`${where}: maxNewMajorsPerRun must be a non-negative integer`);
 
   return {
     tool,
@@ -124,7 +125,7 @@ export function parseToolConfig(tool: ToolName, text: string, where: string, hom
     },
     readDeny: root["readDeny"] === undefined ? [] : list(root["readDeny"], `${where}: readDeny`).map((entry, i) => path(entry, `readDeny[${i}]`)),
     modelPrices: root["modelPrices"] === undefined ? undefined : path(root["modelPrices"], "modelPrices"),
-    maxNewMajorsPerRun: tool === "bump-it" ? ((maxNewMajorsPerRun as number | undefined) ?? 3) : undefined,
+    maxNewMajorsPerRun: tool === "bump-it" ? (maxNewMajorsPerRun ?? DEFAULT_MAX_NEW_MAJORS_PER_RUN) : undefined,
   };
 }
 
@@ -150,4 +151,8 @@ function list(value: unknown, where: string): unknown[] {
 function string(value: unknown, where: string): string {
   if (typeof value !== "string" || value.trim() === "") throw new Error(`${where} must be a non-empty string`);
   return value;
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }

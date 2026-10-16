@@ -104,13 +104,21 @@ export interface SecurityCandidates {
   readonly osvScannerVersion: string;
 }
 
+/** A version a full scan fails on, with every advisory that fails it. */
+interface FailingVersion {
+  readonly pkg: Located;
+  malicious: boolean;
+  readonly advisories: string[];
+  readonly severities: Array<string | undefined>;
+}
+
 /** The fix the rule picks for every version a full scan of `head` fails on. */
 export async function securityCandidates(head: Tree, env: GateEnvironment, gradle: GradleInputs = {}): Promise<SecurityCandidates> {
   const state = await readScanState(head, env, gradle);
   const { config, exceptions } = state.settings;
   const now = env.now();
   const today = now.toISOString().slice(0, 10);
-  const failing = new Map<string, { pkg: Located; malicious: boolean; advisories: string[]; severities: Array<string | undefined> }>();
+  const failing = new Map<string, FailingVersion>();
   // Bundled copies can only move with their carrier: their findings become the carrier's targets.
   const { rest, carriers } = splitBundled(unexcused(state.packages, state.snapshot, exceptions, today), state.inventory.npm);
   for (const finding of rest) {
@@ -122,7 +130,7 @@ export async function securityCandidates(head: Tree, env: GateEnvironment, gradl
     failing.set(versionKey(pkg), entry);
   }
   // A carrier failing on its own too is one move with both kinds of targets.
-  const carrierOwn = new Map<string, { pkg: Located; malicious: boolean; advisories: string[]; severities: Array<string | undefined> }>();
+  const carrierOwn = new Map<string, FailingVersion>();
   for (const group of carriers) {
     const key = versionKey({ ecosystem: "npm", name: group.name, version: group.version });
     const own = failing.get(key);
@@ -189,7 +197,7 @@ export async function securityCandidates(head: Tree, env: GateEnvironment, gradl
 }
 
 /** A carrier version's fix; a decision that can't be made (an archive, a scan) is the fix's problem, not the run's. */
-async function carrierFix(group: CarrierGroup, own: { pkg: Located; malicious: boolean; advisories: string[]; severities: Array<string | undefined> } | undefined, context: CarrierContext): Promise<SecurityFix> {
+async function carrierFix(group: CarrierGroup, own: FailingVersion | undefined, context: CarrierContext): Promise<SecurityFix> {
   const malicious = group.malicious || own?.malicious === true;
   const decision = await decideCarrier(group, own?.advisories ?? [], malicious, context).catch((error: unknown) => ({
     from: group.version, locations: [], carries: [], unfixable: [], to: undefined,
@@ -298,26 +306,26 @@ async function isAged(pkg: PackageVersion, catalog: VersionCatalog, config: Conf
  */
 export class IdentityCheck {
   readonly #registry: NpmRegistry;
-  readonly #lockfiles: ReadonlyArray<NpmLockfile>;
+  /** Per `name@version`, the first integrity among the registry copies the lockfiles ship (undefined while none has one). */
+  readonly #shipped = new Map<string, string | undefined>();
   readonly #exceptions: Exceptions;
   readonly #today: string;
 
   constructor(registry: NpmRegistry, lockfiles: ReadonlyArray<NpmLockfile>, exceptions: Exceptions, today: string) {
     this.#registry = registry;
-    this.#lockfiles = lockfiles;
     this.#exceptions = exceptions;
     this.#today = today;
+    for (const copy of lockfiles.flatMap((lockfile) => lockfile.packages)) {
+      if (copy.bundled || !copy.resolved?.startsWith(`${NPM_REGISTRY}/`)) continue;
+      const key = `${copy.name}@${copy.version}`;
+      if (this.#shipped.get(key) === undefined) this.#shipped.set(key, copy.integrity);
+    }
   }
 
   async problems(from: PackageVersion, to: string): Promise<string[]> {
     if (from.ecosystem !== "npm") return [];
-    const shipped = new Map<string, string | undefined>();
-    for (const lockfile of this.#lockfiles) {
-      for (const copy of lockfile.packages) {
-        if (copy.name !== from.name || copy.version !== from.version || copy.bundled || !copy.resolved?.startsWith(`${NPM_REGISTRY}/`)) continue;
-        if (shipped.get(copy.version) === undefined) shipped.set(copy.version, copy.integrity);
-      }
-    }
+    const key = `${from.name}@${from.version}`;
+    const shipped = new Map<string, string | undefined>(this.#shipped.has(key) ? [[from.version, this.#shipped.get(key)]] : []);
     const doc = await this.#registry.packument(from.name);
     const manifest = doc.versions[to] as { dist?: { integrity?: unknown; tarball?: unknown } } | undefined;
     const candidate: LockedPackage = {

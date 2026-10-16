@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import type { Tree } from "../../ci/src/tree.ts";
-import { strictPinsChanged } from "../src/edit-checks.ts";
+import { isDependencyFile, isMechanical, strictPinsChanged } from "../src/edit-checks.ts";
 import { gradleStrictCalls } from "../src/strict-calls.ts";
 import { textStrictCalls } from "./strict-calls-fake.ts";
 
@@ -163,5 +163,17 @@ describe.skipIf(!hasGradle)("strict pins in build scripts, parsed with Gradle's 
 
   it("ignores files that aren't Gradle build, settings or catalog files", async () => {
     expect(await strictPinsChanged(["README.md"], tree({}), tree({ "README.md": 'strictly("2.0")' }), parse)).toEqual([]);
+  });
+});
+
+describe("isMechanical", () => {
+  it("takes the base's side for the dependency files a move touches, workflows aside, matching the catalog by whole folder", () => {
+    for (const path of ["package-lock.json", "web/package.json", "npm-shrinkwrap.json", "gradle.lockfile", "app/buildscript-gradle.lockfile", "build.gradle", "app/build.gradle.kts", "gradle/libs.versions.toml", "app/gradle/libs.versions.toml", ".github/dependency-floors.json"]) {
+      expect(isMechanical(path), path).toBe(true);
+    }
+    for (const path of ["xgradle/libs.versions.toml", "app/xgradle/libs.versions.toml", ".github/workflows/ci.yml", "action.yml", "README.md"]) {
+      expect(isMechanical(path), path).toBe(false);
+    }
+    expect(isDependencyFile(".github/workflows/ci.yml", true)).toBe(true);
   });
 });

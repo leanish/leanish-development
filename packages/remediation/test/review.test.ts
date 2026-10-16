@@ -4,7 +4,7 @@ import { ConsoleLogger } from "../../agent-basics/src/logger/console-logger.ts";
 import type { GitHubPullRequest } from "../../agent-basics/src/types/clients.ts";
 import type { WorkingCopy } from "../../agent-basics/src/types/working-copy.ts";
 import { InMemoryWorkspace } from "../../agent-basics/src/working-copy/in-memory-workspace.ts";
-import { MemoryJournal } from "../src/journal.ts";
+import { MemoryJournal } from "./memory-journal.ts";
 import { stateOf, withMarker } from "../src/own-pr.ts";
 import { closeAndDelete, publishUpdate, type PublicationContext } from "../src/publication.ts";
 import { type BaseMerge, MAX_ADAPTATIONS, type ReviewContext, reviewOpenPullRequests, type ReviewSteps } from "../src/review.ts";

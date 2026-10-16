@@ -7,4 +7,3 @@
  * commit or push; the tool does that with its own token.
  */
 export type Access = "read-only" | "write";
-export const ACCESS_LEVELS: ReadonlyArray<Access> = ["read-only", "write"];

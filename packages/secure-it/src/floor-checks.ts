@@ -2,11 +2,11 @@
 import { dirname } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import { type Floor, FLOORS_PATH, overrideAt, parseFloors } from "../../ci/src/floors.ts";
+import { type Floor, overrideAt } from "../../ci/src/floors.ts";
 import { gradleLocation, type GradleInventory } from "../../ci/src/gradle.ts";
 import type { Tree } from "../../ci/src/tree.ts";
 
-import { floorIdentity } from "./floor-removal.ts";
+import { floorIdentity, floorsOf } from "./floor-removal.ts";
 import type { ChangePlan, PlannedMove } from "./plan.ts";
 
 export async function preservedFloors(plan: ChangePlan, base: Tree, head: Tree, gradle: { base?: GradleInventory; head?: GradleInventory }): Promise<string[]> {
@@ -86,11 +86,6 @@ function matchesFloor(dependency: DeclaredDependency, floor: Floor): boolean {
 
 function declarationSignatures(entries: ReadonlyArray<DeclaredDependency>): string[] {
   return entries.map((entry) => JSON.stringify(entry)).sort();
-}
-
-async function floorsOf(tree: Tree): Promise<Floor[]> {
-  const text = await tree.read(FLOORS_PATH);
-  return text === undefined ? [] : parseFloors(JSON.parse(text));
 }
 
 function normalized(floor: Floor): Floor {

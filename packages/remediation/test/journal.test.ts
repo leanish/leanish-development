@@ -36,6 +36,22 @@ describe("FileJournal", () => {
     await expect(new FileJournal(dir).last("leanish/broken", 1)).rejects.toThrow("isn't a journal");
   });
 
+  it("fails on a damaged or hand-edited entry rather than recovering from it", async () => {
+    const head = "c".repeat(40);
+    const entries = {
+      "1": { head: "not-a-sha", base: head },
+      "2": { head, base: head, publication: { title: "t", body: "b", adaptations: "1" } },
+      "3": { head, base: head, publication: null },
+      "4": { head, base: head },
+    };
+    await writeFile(join(dir, "journal", "leanish__damaged.json"), JSON.stringify(entries));
+    const journal = new FileJournal(dir);
+    await expect(journal.last("leanish/damaged", 1)).rejects.toThrow("#1 lacks its head and base commits");
+    await expect(journal.last("leanish/damaged", 2)).rejects.toThrow("#2 has a malformed publication");
+    await expect(journal.last("leanish/damaged", 3)).rejects.toThrow("#3 has a malformed publication");
+    expect(await journal.last("leanish/damaged", 4)).toEqual({ head, base: head });
+  });
+
   it("persists the complete publication for recovery after a body update fails", async () => {
     const state = { head: "c".repeat(40), base: "e".repeat(40), publication: { title: "new plan", body: "plan and state markers", adaptations: 1 } };
     await new FileJournal(dir).pushed("leanish/content", 7, state);

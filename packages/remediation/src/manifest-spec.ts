@@ -28,6 +28,7 @@ export function withSpec(text: string, key: string, from: string, to: string, fi
   return text.replace(pair, (_whole, colon: string) => `${JSON.stringify(key)}${colon}${JSON.stringify(to)}`);
 }
 
-function escape(text: string): string {
+/** `text` as a literal inside a regular expression. */
+export function escape(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
