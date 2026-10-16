@@ -25,6 +25,7 @@ import { directDependencies } from "../../ci/src/npm-lock.ts";
 import type { Tree } from "../../ci/src/tree.ts";
 
 import { lockfilesOf } from "./inventories.ts";
+import type { StrictCallParser } from "./strict-calls.ts";
 
 export const FLOORS_FILE = ".github/dependency-floors.json";
 
@@ -90,133 +91,6 @@ export async function actionsOutsidePlan(pins: ReadonlyArray<PlannedPin>, base: 
 }
 
 /**
- * Whether `strictly` appears in the line's code, not inside a string or a comment: `strictly("1.0")`, Groovy's
- * `strictly pinVersion` count; a `because("… strictly pinned …")` or a comment doesn't.
- * Strings and block comments keep their state across continuation lines.
- */
-interface CodeState {
-  quote?: string;
-  quoted: string;
-  member: boolean;
-  blockComment: boolean;
-}
-
-function lineCode(line: string, state: CodeState, path: string): string {
-  let code = "";
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i]!;
-    if (state.blockComment) {
-      // Kotlin nests block comments, so a `/*` inside one moves where it ends; Groovy's don't nest (`/* src/**/*.java */`).
-      if (char === "/" && line[i + 1] === "*" && path.endsWith(".kts")) throw new Error("a nested block comment can't be verified");
-      if (char === "*" && line[i + 1] === "/") { state.blockComment = false; i++; }
-      continue;
-    }
-    if (state.quote !== undefined) {
-      // Kotlin raw strings do not escape their closing quotes; Groovy strings do.
-      const escapes = state.quote.length === 1 || path.endsWith(".gradle");
-      if (char === "\\" && escapes) i++;
-      else if (char === "$" && line[i + 1] === "{" && state.quote.startsWith('"')) {
-        // `${…}` in a Kotlin or Groovy string is code the scanner doesn't read, and where it ends is easy to misjudge: a
-        // line with one and the word `strictly` anywhere fails, instead of trusting where the interpolation seems to end.
-        if (/\bstrictly\b/.test(line)) throw new Error("a strictly(...) on a line with a string interpolation can't be verified");
-        const end = interpolationEnd(line, i + 2);
-        // One that doesn't close on its line could hide a pin on the next ones.
-        if (end === undefined) throw new Error("a string interpolation spanning lines can't be verified");
-        // Comments, escapes and triple-quoted strings inside one could move where it seems to close: not read, so refused.
-        if (/\/\*|\/\/|\\|'''|"""/.test(line.slice(i + 2, end))) {
-          throw new Error("a string interpolation with comments, escapes or triple-quoted strings can't be verified");
-        }
-        i = end;
-      } else if (line.startsWith(state.quote, i)) {
-        const quote = state.quote;
-        i += quote.length - 1;
-        // Kotlin allows content quotes immediately before the closing triple delimiter.
-        if (quote.length === 3 && !path.endsWith(".gradle")) {
-          while (line[i + 1] === char) i++;
-        }
-        state.quote = undefined;
-        // A quoted Groovy name (`delegate."strictly"`, called with or without parentheses, or assigned) is still code.
-        if (quote.length === 1) code += state.member || /^\s*[=(]/.test(line.slice(i + 1)) ? state.quoted : char;
-      } else if (state.quote.length === 1) state.quoted += char;
-      continue;
-    }
-    if (char === '"' || char === "'") {
-      // Consume a triple delimiter together: treating its quotes separately can hide code after an embedded quote.
-      state.quote = line.startsWith(char.repeat(3), i) ? char.repeat(3) : char;
-      state.quoted = "";
-      state.member = /\.\s*$/.test(code);
-      code += char;
-      i += state.quote.length - 1;
-      continue;
-    }
-    if (char === "/" && line[i + 1] === "*") {
-      state.blockComment = true;
-      i++;
-      code += " ";
-      continue;
-    }
-    if (char === "/" && line[i + 1] === "/") break;
-    code += char;
-  }
-  return code;
-}
-
-/** Where a `${` interpolation that starts at `from` closes (its `}`), skipping nested strings; undefined past the line's end. */
-function interpolationEnd(line: string, from: number): number | undefined {
-  let depth = 1;
-  for (let i = from; i < line.length; i++) {
-    const char = line[i]!;
-    if (char === '"' || char === "'") {
-      const close = line.indexOf(char, i + 1);
-      if (close < 0) return undefined;
-      i = close;
-    } else if (char === "{") depth++;
-    else if (char === "}" && --depth === 0) return i;
-  }
-  return undefined;
-}
-
-const MAX_STRICT_LINES = 128;
-const MAX_STRICT_BYTES = 64 * 1024;
-
-function strictStatements(text: string | undefined, path: string): string[] {
-  const lines = (text ?? "").split("\n");
-  const state: CodeState = { quoted: "", member: false, blockComment: false };
-  const statements: string[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    const code = lineCode(lines[i]!, state, path);
-    const at = /\bstrictly\b/.exec(code);
-    if (at === null) continue;
-    const statement = [lines[i]!];
-    const opened: string[] = [];
-    balanceStrict(code.slice(at.index), opened);
-    while (opened.length > 0 && i + 1 < lines.length) {
-      if (statement.length >= MAX_STRICT_LINES || Buffer.byteLength(statement.join("\n")) > MAX_STRICT_BYTES) {
-        throw new Error("a strictly statement exceeds the continuation limit");
-      }
-      statement.push(lines[++i]!);
-      balanceStrict(lineCode(lines[i]!, state, path), opened);
-    }
-    if (opened.length > 0) throw new Error("an unbalanced strictly statement can't be verified");
-    const captured = statement.join("\n");
-    if (Buffer.byteLength(captured) > MAX_STRICT_BYTES) throw new Error("a strictly statement exceeds the continuation limit");
-    statements.push(captured);
-  }
-  return statements;
-}
-
-/** Balances the whole rest of the line: a second `strictly(` opened after the first closes keeps the statement going. */
-function balanceStrict(code: string, opened: string[]): void {
-  for (const char of code) {
-    if (char === "(" || char === "{") opened.push(char);
-    else if (char === ")" || char === "}") {
-      if (opened.length === 0) continue;
-      if (opened.pop() !== (char === ")" ? "(" : "{")) throw new Error("a mismatched strictly statement can't be verified");
-    }
-  }
-}
-
-/**
  * Every catalog entry a strict version belongs to, whole (`[libraries] x`, with its module, group, name and version),
  * paired with its key path, in traversal order: the entries holding a `strictly`, and the entries whose `version.ref`
  * names a strict `[versions]` one. Comparing only the values would let an edit move a pin to another dependency.
@@ -245,24 +119,48 @@ function asTable(value: unknown): Record<string, unknown> {
 }
 
 /**
- * Catalogs compare the whole entries strict versions belong to, parsed, in order; malformed TOML fails.
- * Build and settings files compare strict statements, including balanced continuations, in order and byte for byte.
- * Their hand lexer can miss unfamiliar string/comment forms or a changed variable outside a statement; the Gradle
- * inventory checks active pins, but this textual guard cannot guarantee protection of inactive branches.
+ * Catalogs compare the whole entries strict versions belong to, parsed with `smol-toml`, in order; malformed TOML fails.
+ * Build and settings scripts compare what Gradle's own Groovy and Kotlin compilers parse in them (`parse`): each
+ * `strictly(...)` call with the dependency it pins, in order, and any other form that names `strictly`. A version that
+ * reaches a call through a variable or a helper is still read only where the inventory sees it (an active pin).
  */
-export async function strictPinsChanged(changedFiles: ReadonlyArray<string>, base: Tree, head: Tree): Promise<string[]> {
+export async function strictPinsChanged(changedFiles: ReadonlyArray<string>, base: Tree, head: Tree, parse: StrictCallParser): Promise<string[]> {
   const problems: string[] = [];
-  for (const path of changedFiles.filter(isGradleVersionFile)) {
+  const changed = changedFiles.filter(isGradleVersionFile);
+  for (const path of changed.filter((file) => file.endsWith(".versions.toml"))) {
     try {
-      const pins = (text: string | undefined) => path.endsWith(".versions.toml") ? catalogStrictEntries(text) : strictStatements(text, path);
-      if (!isDeepStrictEqual(pins(await base.read(path)), pins(await head.read(path)))) {
-        problems.push(`the edit changed a Gradle strictly(...) pin in ${path}: strict versions are the owner's, which no plan moves`);
-      }
+      if (!isDeepStrictEqual(catalogStrictEntries(await base.read(path)), catalogStrictEntries(await head.read(path)))) problems.push(changedPin(path));
     } catch (err) {
       problems.push(`${path}: ${(err as Error).message}`);
     }
   }
+  const scripts = changed.filter((file) => !file.endsWith(".versions.toml"));
+  if (scripts.length === 0) return problems;
+  try {
+    // Each side with its own Gradle's compilers: an edit that moves the wrapper parses with the new one.
+    const parsed = async (tree: Tree) => parse(await Promise.all(scripts.map(async (path) => ({ path, text: await tree.read(path) ?? "" }))), tree);
+    const [before, after] = [await parsed(base), await parsed(head)];
+    for (const path of scripts) {
+      // Only scripts the edit touched get here, so a side that doesn't parse refuses, naming only that script: equal
+      // errors on both sides could still hide a moved pin.
+      const unparsed = parseError(after.get(path)) ?? parseError(before.get(path), "the base ");
+      if (unparsed !== undefined) problems.push(`${path}: doesn't parse, so its strict pins can't be checked: ${unparsed}`);
+      else if (!isDeepStrictEqual(before.get(path), after.get(path))) problems.push(changedPin(path));
+    }
+  } catch (err) {
+    problems.push(`${scripts.join(", ")}: ${(err as Error).message}`);
+  }
   return problems;
+}
+
+/** The reason a parser gave for not parsing a script, with `side` before it, if it gave one. */
+function parseError(findings: ReadonlyArray<string> | undefined, side = ""): string | undefined {
+  const error = findings?.find((finding) => finding.startsWith("error\t"));
+  return error === undefined ? undefined : `${side}${error.slice("error\t".length)}`;
+}
+
+function changedPin(path: string): string {
+  return `the edit changed a Gradle strictly(...) pin in ${path}: strict versions are the owner's, which no plan moves`;
 }
 
 function isGradleVersionFile(path: string): boolean {

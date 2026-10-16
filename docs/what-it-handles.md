@@ -192,17 +192,13 @@ it. A strictly pinned parent is never moved to carry a fix; the vulnerable
 dependency gets a floor instead. Gradle's own strict constraints on its embedded
 Kotlin (buildscript and settings classpaths) don't block fixes elsewhere.
 For `*.versions.toml` catalogs, verification uses `smol-toml` to compare every
-parsed value under a key named `strictly`, paired with its full key path, in order.
-Changed values or paths, added or removed pins, and catalogs that don't parse
-fail verification. Equivalent formatting and unrelated catalog edits can pass.
-
-The backstop for `.gradle` and `.gradle.kts` is a hand-written lexer with a known
-deficiency: string or comment forms it doesn't understand, including Groovy slashy
-(`/…/`) and dollar-slashy (`$/…/$`) strings, can hide a changed `strictly(...)`
-in a branch the Gradle inventory doesn't see. Active pins are still caught by
-the inventory and reference checks. Recognized strict statements remain protected,
-and nested Kotlin block comments (Groovy's don't nest) fail visibly. Version 0.6.0 plans to replace this lexer
-with the official parsers Gradle ships: its Groovy and Kotlin compilers.
+entry a strict version belongs to, whole, in order. For `.gradle` and
+`.gradle.kts`, it parses the scripts with the Groovy and Kotlin compilers the
+build's own Gradle distribution ships, without running them, and compares each
+`strictly(...)` call with the dependency it pins, in any branch or class.
+Unrelated edits, comments and formatting outside the calls pass; a script that
+doesn't parse fails. A version that reaches a pin through a variable or a helper
+is checked only when the pin is active, through the inventory.
 
 ### What bump-it updates
 
