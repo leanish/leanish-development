@@ -9,12 +9,13 @@ import java.util.Set;
 
 /**
  * Lists what a Gradle build script says about strict versions, parsed (never run) with the compilers the build's own
- * Gradle distribution ships: Groovy's for `.gradle`, Kotlin's for `.gradle.kts`. Run with Java's source launcher:
+ * Gradle distribution ships: Kotlin's for `.kt`/`.kts`, Groovy's otherwise. Run with Java's source launcher:
  * `java -cp <the distribution's lib jars> StrictCalls.java <file>...`.
  *
  * <p>Prints one line per finding, `<file> TAB <kind> TAB <text>`, the text escaped so no two differ only by a newline:
  * <ul>
- *   <li>`call`: a direct `strictly(...)` call, with its receiver and every enclosing call's non-closure arguments (the
+ *   <li>`call`: a direct `strictly(...)` call, with full receivers, navigation operators, type arguments and every
+ *       enclosing call's non-closure arguments (the
  *       dependency it pins, `implementation("g:a") { version { strictly("1.0") } }`);</li>
  *   <li>`indirect`: anything else that names `strictly`: a dynamic method name, a property, or a string holding the
  *       word, with the whole call it's an argument of (`invokeMethod('strictly', ['1.0'])`). They aren't followed, so
@@ -24,6 +25,8 @@ import java.util.Set;
  *       the language's lexer finds a `strictly` identifier or string occurrence the visitor hasn't accounted for at
  *       that source position; counts cannot hide an unvisited occurrence behind a visited one.</li>
  * </ul>
+ * Enclosing property assignments and Kotlin infix lambda scopes retain their target too. Groovy source columns
+ * are code points, converted to UTF-16 only for slicing; Kotlin PSI offsets are already UTF-16.
  * Parameter defaults (methods, constructors and closures too) are visited. Lexer errors fail like parse errors.
  * A file that doesn't parse prints one `error` line with the first line of the reason, and the others are still read.
  */
@@ -33,9 +36,10 @@ public class StrictCalls {
       List<String[]> found;
       try {
         String text = Files.readString(Path.of(file));
-        found = file.endsWith(".kts") ? kotlin(file, text) : groovy(file, text);
-      } catch (Exception | StackOverflowError err) {
-        String reason = String.valueOf(err.getMessage()).strip().lines().filter(line -> !line.isBlank()).findFirst().orElse(err.getClass().getSimpleName());
+        found = file.endsWith(".kt") || file.endsWith(".kts") ? kotlin(file, text) : groovy(file, text);
+      } catch (Exception | StackOverflowError | org.apache.groovy.parser.antlr4.GroovySyntaxError err) {
+        String reason = String.valueOf(err.getMessage()).lines().map(String::strip).filter(line -> !line.isBlank() && !line.equals("startup failed:")).findFirst().orElse(err.getClass().getSimpleName());
+        if (err instanceof org.apache.groovy.parser.antlr4.GroovySyntaxError syntax) reason = file + ": " + syntax.getLine() + ": " + reason;
         found = List.<String[]>of(new String[] {"error", reason});
       }
       for (String[] finding : found) System.out.println(file + "\t" + finding[0] + "\t" + escape(finding[1]));
@@ -137,12 +141,20 @@ public class StrictCalls {
   static String kotlinCall(org.jetbrains.kotlin.psi.KtCallExpression call) {
     StringBuilder out = new StringBuilder();
     if (call.getParent() instanceof org.jetbrains.kotlin.psi.KtQualifiedExpression qualified && qualified.getSelectorExpression() == call) {
-      out.append(qualified.getReceiverExpression().getText()).append('.');
+      out.append(qualified.getReceiverExpression().getText()).append(qualified.getOperationTokenNode().getText());
     }
     out.append(call.getText());
     for (var ancestor = call.getParent(); ancestor != null; ancestor = ancestor.getParent()) {
+      if (ancestor instanceof org.jetbrains.kotlin.psi.KtBinaryExpression binary && binary.getRight() instanceof org.jetbrains.kotlin.psi.KtLambdaExpression) {
+        out.append(" | ").append(binary.getLeft() == null ? "" : binary.getLeft().getText()).append(' ').append(binary.getOperationReference().getText());
+      }
       if (!(ancestor instanceof org.jetbrains.kotlin.psi.KtCallExpression outer)) continue;
-      out.append(" | ").append(outer.getCalleeExpression() == null ? "" : outer.getCalleeExpression().getText());
+      out.append(" | ");
+      if (outer.getParent() instanceof org.jetbrains.kotlin.psi.KtQualifiedExpression qualified && qualified.getSelectorExpression() == outer) {
+        out.append(qualified.getReceiverExpression().getText()).append(qualified.getOperationTokenNode().getText());
+      }
+      out.append(outer.getCalleeExpression() == null ? "" : outer.getCalleeExpression().getText());
+      if (outer.getTypeArgumentList() != null) out.append(outer.getTypeArgumentList().getText());
       for (var argument : outer.getValueArguments()) {
         var expression = argument.getArgumentExpression();
         if (!(expression instanceof org.jetbrains.kotlin.psi.KtLambdaExpression)) out.append('(').append(expression == null ? "" : expression.getText()).append(')');
@@ -154,7 +166,7 @@ public class StrictCalls {
   // ---- Groovy ----
 
   static List<String[]> groovy(String file, String text) {
-    var unit = org.codehaus.groovy.control.SourceUnit.create(Path.of(file).getFileName().toString(), text);
+    var unit = org.codehaus.groovy.control.SourceUnit.create(file, text);
     // Parse and convert only: the later compilation phases, where AST transformations run, never start.
     unit.parse();
     unit.completePhase();
@@ -166,13 +178,13 @@ public class StrictCalls {
     Set<Position> accounted = new HashSet<>();
     List<org.codehaus.groovy.ast.ASTNode> strings = new ArrayList<>();
     var visitor = new org.codehaus.groovy.ast.CodeVisitorSupport() {
-      final Deque<org.codehaus.groovy.ast.expr.MethodCallExpression> enclosing = new ArrayDeque<>();
+      final Deque<String> enclosing = new ArrayDeque<>();
       @Override public void visitMethodCallExpression(org.codehaus.groovy.ast.expr.MethodCallExpression call) {
         String name = call.getMethodAsString();
         if ("strictly".equals(name)) {
           accounted.add(position(call.getMethod()));
           StringBuilder out = new StringBuilder(slice(lines, call));
-          for (var outer : enclosing) out.append(" | ").append(outer.getMethodAsString()).append(headerArguments(lines, outer));
+          for (var outer : enclosing) out.append(" | ").append(outer);
           found.add(new String[] {"call", out.toString()});
         } else if (name == null) {
           // `"$name"(...)` or `"strictly"` built at run time: the call can't be named, so its text is compared.
@@ -183,9 +195,15 @@ public class StrictCalls {
           // `invokeMethod('strictly', ['1.0'])`: the whole call, so its other arguments are compared too.
           found.add(new String[] {"indirect", slice(lines, call)});
         }
-        enclosing.push(call);
+        enclosing.push(callHeader(lines, call));
         super.visitMethodCallExpression(call);
         enclosing.pop();
+      }
+      @Override public void visitBinaryExpression(org.codehaus.groovy.ast.expr.BinaryExpression binary) {
+        boolean closure = binary.getRightExpression() instanceof org.codehaus.groovy.ast.expr.ClosureExpression;
+        if (closure) enclosing.push(slice(lines, binary.getLeftExpression()) + " " + binary.getOperation().getText());
+        super.visitBinaryExpression(binary);
+        if (closure) enclosing.pop();
       }
       @Override public void visitMethodPointerExpression(org.codehaus.groovy.ast.expr.MethodPointerExpression pointer) {
         if (names(pointer.getMethodName().getText())) {
@@ -251,6 +269,7 @@ public class StrictCalls {
     }
   }
 
+  /** Groovy AST and ANTLR columns are both one-based code points, never UTF-16 offsets. */
   record Position(int line, int column) implements Comparable<Position> {
     @Override public int compareTo(Position other) {
       return line == other.line ? Integer.compare(column, other.column) : Integer.compare(line, other.line);
@@ -275,6 +294,20 @@ public class StrictCalls {
     if (method.getCode() != null) method.getCode().visit(visitor);
   }
 
+  /** Full receiver and navigation operator, method name and non-closure arguments; closure bodies stay separate. */
+  static String callHeader(String[] lines, org.codehaus.groovy.ast.expr.MethodCallExpression call) {
+    StringBuilder out = new StringBuilder();
+    if (!call.isImplicitThis()) {
+      out.append(slice(lines, call.getObjectExpression())).append(call.isSpreadSafe() ? "*." : call.isSafe() ? "?." : ".");
+    }
+    if (call.getGenericsTypes() != null) {
+      out.append('<');
+      for (var type : call.getGenericsTypes()) out.append(slice(lines, type)).append(',');
+      out.append('>');
+    }
+    return out.append(slice(lines, call.getMethod())).append(headerArguments(lines, call)).toString();
+  }
+
   /** An enclosing call's non-closure arguments: where `implementation('g:a') {…}` names the dependency it pins. */
   static String headerArguments(String[] lines, org.codehaus.groovy.ast.expr.MethodCallExpression call) {
     StringBuilder out = new StringBuilder();
@@ -286,15 +319,28 @@ public class StrictCalls {
     return out.toString();
   }
 
+  /** Chained Groovy calls can start at their final method name; retain the receiver's earlier start as well. */
+  static org.codehaus.groovy.ast.ASTNode sourceStart(org.codehaus.groovy.ast.ASTNode node) {
+    org.codehaus.groovy.ast.ASTNode receiver = null;
+    if (node instanceof org.codehaus.groovy.ast.expr.MethodCallExpression call && !call.isImplicitThis()) receiver = call.getObjectExpression();
+    else if (node instanceof org.codehaus.groovy.ast.expr.PropertyExpression property) receiver = property.getObjectExpression();
+    else if (node instanceof org.codehaus.groovy.ast.expr.BinaryExpression binary) receiver = binary.getLeftExpression();
+    if (receiver == null || receiver.getLineNumber() < 1) return node;
+    var start = sourceStart(receiver);
+    return position(start).compareTo(position(node)) < 0 ? start : node;
+  }
+
   /** The node's source text, from its first line and column to its last. */
   static String slice(String[] lines, org.codehaus.groovy.ast.ASTNode node) {
     if (node.getLineNumber() < 1) return node.getText();
+    var start = sourceStart(node);
     StringBuilder out = new StringBuilder();
-    for (int line = node.getLineNumber(); line <= node.getLastLineNumber(); line++) {
+    for (int line = start.getLineNumber(); line <= node.getLastLineNumber(); line++) {
       String text = lines[line - 1];
-      int from = line == node.getLineNumber() ? node.getColumnNumber() - 1 : 0;
-      int to = line == node.getLastLineNumber() ? node.getLastColumnNumber() - 1 : text.length();
-      out.append(text, from, Math.min(to, text.length()));
+      int points = text.codePointCount(0, text.length());
+      int from = line == start.getLineNumber() ? start.getColumnNumber() - 1 : 0;
+      int to = line == node.getLastLineNumber() ? Math.min(node.getLastColumnNumber() - 1, points) : points;
+      out.append(text, text.offsetByCodePoints(0, from), text.offsetByCodePoints(0, to));
       if (line < node.getLastLineNumber()) out.append("\n");
     }
     return out.toString();

@@ -90,6 +90,17 @@ describe("gradleStrictCalls", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it("makes a Kotlin parser copy for a .kt source file", async () => {
+    const { install } = compilers();
+    const run: RunProcess = async (_command, args) => {
+      const copy = args[args.length - 1]!;
+      expect(copy).toMatch(/\.gradle\.kts$/);
+      return { code: 0, stdout: `${copy}\tcall\tstrictly("1.0")\n`, stderr: "" };
+    };
+    expect(await gradleStrictCalls(home(), run, install)([{ path: "Pins.kt", text: 'fun pin() { strictly("1.0") }' }], tree()))
+      .toEqual(new Map([["Pins.kt", ['call\tstrictly("1.0")']]]));
+  });
+
   it("doesn't install compilers without inputs or a readable wrapper version", async () => {
     const { install } = compilers();
     const parse = gradleStrictCalls(home(), undefined, install);

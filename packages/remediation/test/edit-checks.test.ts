@@ -9,6 +9,7 @@ import type { StrictCallParser } from "../src/strict-calls.ts";
 import type { Tree } from "../../ci/src/tree.ts";
 import { isDependencyFile, isMechanical, strictPinsChanged } from "../src/edit-checks.ts";
 import { LOCAL_GRADLE, LOCAL_WRAPPER as WRAPPER, localGradleParser } from "./local-gradle-parser.ts";
+import { PARSER_REGRESSIONS } from "./parser-regressions.ts";
 import { textStrictCalls } from "./strict-calls-fake.ts";
 
 const tree = (files: Record<string, string>): Tree => ({ id: "fixture", read: async (path) => files[path], list: async () => [] });
@@ -80,12 +81,18 @@ describe("strict-pin script selection", () => {
   it.each([
     ["base only", "strictly('1.0')", ""],
     ["head only", "", "strictly('1.0')"],
-  ])("parses both sides of an arbitrary file mentioning strictly in %s", async (_side, before, after) => {
+  ])("parses both sides of a Groovy helper mentioning strictly in %s", async (_side, before, after) => {
     const parse = vi.fn<StrictCallParser>(textStrictCalls);
     const path = "gradle/pins.groovy";
     expect(await strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: after }), parse))
       .toEqual([expect.stringContaining(`pin in ${path}:`)]);
     expect(parse.mock.calls.map(([files]) => files)).toEqual([[{ path, text: before }], [{ path, text: after }]]);
+  });
+
+  it.each(["README.md", "Pins.java", "pins.txt"])("leaves %s mentioning strictly to outside-plan checks", async (path) => {
+    const parse = vi.fn<StrictCallParser>();
+    expect(await strictPinsChanged([path], tree({ [path]: "strictly before" }), tree({ [path]: "strictly after" }), parse)).toEqual([]);
+    expect(parse).not.toHaveBeenCalled();
   });
 
   it("leaves other changed files without strictly alone, without calling a parser", async () => {
@@ -213,15 +220,82 @@ describe.skipIf(LOCAL_GRADLE === undefined)("strict pins in build scripts, parse
   it.each([
     ["gradle/pins.groovy", "strictly('1.0')\n"],
     ["pins.kts", 'val kotlinOnly: String = "value"\nstrictly("1.0")\n'],
+    ["Pins.kt", 'fun pin() { strictly("1.0") }\n'],
   ])("refuses a changed pin in %s with the real parser", async (path, before) => {
     expect(await check(path, before, before.replace("1.0", "2.0"))).toEqual(changed(path));
     expect(await check(path, before, before + "// unrelated\n")).toEqual([]);
   });
 
-  it("refuses prose mentioning strictly when it doesn't parse as Groovy, naming that file", async () => {
-    const before = "# Strict pins\nWe strictly preserve the owner's versions.\n";
-    expect(await check("README.md", before, before + "Another sentence.\n"))
-      .toEqual([expect.stringMatching(/^README\.md: doesn't parse, so its strict pins can't be checked:/)]);
+  it.each(PARSER_REGRESSIONS)("protects $name through strictPinsChanged", async ({ path, before, after }) => {
+    const findings = (await parse([{ path, text: before }], tree(WRAPPER))).get(path)!;
+    expect(findings.some((finding) => finding.startsWith("call\t") && finding.includes('strictly("1.0")'))).toBe(true);
+    expect(findings.some((finding) => finding.startsWith("file\t") || finding.startsWith("error\t"))).toBe(false);
+    expect(await check(path, before, after)).toEqual(changed(path));
+  });
+
+  it.each([
+    ["Groovy", ".gradle", [
+      'dependencies.create("g:a")?.version { strictly("1.0") }',
+      'dependencies.create("g:a")*.version { strictly("1.0") }',
+      'dependencies.create("g:a").configure().version { strictly("1.0") }',
+      'dependencies.create("g:a").with { version { strictly("1.0") } }',
+      'with(dependencies.create("g:a")) { version { strictly("1.0") } }',
+      'dependencies."g:a".version { strictly("1.0") }',
+      'dependencies.create("g:a").configuration.version { strictly("1.0") }',
+      'dependencies.create("g:a")["target"].version { strictly("1.0") }',
+      'dependencies.create("g:a").version = { strictly("1.0") }',
+    ]],
+    ["Kotlin", ".gradle.kts", [
+      'dependencies.create("g:a")?.version { strictly("1.0") }',
+      'dependencies.create("g:a").configure().version { strictly("1.0") }',
+      'dependencies.create("g:a").apply { version { strictly("1.0") } }',
+      'dependencies.create("g:a").also { it.version { strictly("1.0") } }',
+      'with(dependencies.create("g:a")) { version { strictly("1.0") } }',
+      'dependencies.`g:a`.version { strictly("1.0") }',
+      'dependencies.create("g:a").configuration.version { strictly("1.0") }',
+      'dependencies.create("g:a")["target"].version { strictly("1.0") }',
+      'dependencies.create("g:a") version { strictly("1.0") }',
+      'dependencies.create("g:a").version = { strictly("1.0") }',
+    ]],
+  ] as const)("keeps %s dependency context through navigation, chains, scopes and properties", async (_language, suffix, scripts) => {
+    const paths = scripts.map((_script, index) => `context-${index}/build${suffix}`);
+    const before = Object.fromEntries(scripts.map((script, index) => [paths[index]!, `if (false) { ${script} }\n`]));
+    const after = Object.fromEntries(Object.entries(before).map(([path, script]) => [path, script.replace("g:a", "g:b")]));
+    expect(await strictPinsChanged(paths, tree({ ...WRAPPER, ...before }), tree({ ...WRAPPER, ...after }), parse)).toEqual(paths.flatMap(changed));
+  });
+
+  it.each([
+    ["build.gradle", 'dependencies.create("g:a")?.version { strictly("1.0") }', '?.', '.'],
+    ["build.gradle", 'dependencies.create("g:a")*.version { strictly("1.0") }', '*.', '.'],
+    ["build.gradle.kts", 'dependencies.create("g:a")?.version { strictly("1.0") }', '?.', '.'],
+  ])("keeps the navigation operator of enclosing calls in %s", async (path, before, operator, replacement) => {
+    expect(await check(path, before, before.replace(operator, replacement))).toEqual(changed(path));
+  });
+
+  it.each([
+    ["build.gradle", 'dependencies.<TargetA>create { version { strictly("1.0") } }'],
+    ["build.gradle.kts", 'dependencies.create<TargetA> { version { strictly("1.0") } }'],
+  ])("retains an enclosing generic call's target type in %s", async (path, before) => {
+    expect(await check(path, before, before.replace("TargetA", "TargetB"))).toEqual(changed(path));
+  });
+
+  it("compares a dynamic Groovy call even without a literal strictly mention", async () => {
+    const before = 'def name = "pin"\n"$name"("1.0")\n';
+    expect(before).not.toContain("strictly");
+    expect(await check("build.gradle", before, before.replace("1.0", "2.0"))).toEqual(changed("build.gradle"));
+  });
+
+  it("reports the Groovy cause with its source line, skipping startup failed", async () => {
+    const problems = await check("build.gradle", "strictly('1.0')\n", "def x = )\n");
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatch(/build\.gradle: doesn't parse, so its strict pins can't be checked: build\.gradle: 1: .+/);
+    expect(problems[0]).not.toContain("startup failed:");
+  });
+
+  it("refuses a Groovy lexer error visibly", async () => {
+    const problems = await check("build.gradle", "strictly('1.0')\n", "strictly('1.0')\n§\n");
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatch(/build\.gradle: doesn't parse, so its strict pins can't be checked: .*Unexpected character/);
   });
 });
 
