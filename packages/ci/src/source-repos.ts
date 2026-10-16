@@ -130,10 +130,10 @@ function interpolate(value: string, properties: ReadonlyMap<string, string>): st
 export function githubRepository(value: unknown): string | undefined {
   const raw = isObject(value) ? dig(value, ["url"]) : value;
   if (typeof raw !== "string") return undefined;
+  const connection = raw.replace(/^scm:git:(?:ssh:(?!\/\/))?/i, "");
   const match =
-    // `github.com` as the whole host: after `//`, `@` or the start, never the end of another name (`notgithub.com`) nor a
-    // path segment (`https://evil.example/github.com/…`).
-    /(?:^|\/\/)(?:[\w.-]+@)?(?:www\.)?github\.com(?::\d+)?\/([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:[/#?]|$)/i.exec(raw) ??
-    /(?:^|@)(?:www\.)?github\.com:([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:[/#?]|$)/i.exec(raw) ?? /^(?:github:)?([\w.-]+)\/([\w.-]+?)(?:\.git)?$/i.exec(raw);
+    // Anchor the whole connection, including its scheme and userinfo: a path or query must never supply the host.
+    /^(?:(?:[a-z][a-z\d+.-]*:)?\/\/)?(?:[^/\\?#@\s]*@)?(?:www\.)?github\.com(?::\d+)?\/([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:[/#?]|$)/i.exec(connection) ??
+    /^(?:[^/\\?#@\s]*@)?(?:www\.)?github\.com:([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:[/#?]|$)/i.exec(connection) ?? /^(?:github:)?([\w.-]+)\/([\w.-]+?)(?:\.git)?$/i.exec(raw);
   return match === null ? undefined : `${match[1]}/${match[2]}`.toLowerCase();
 }
