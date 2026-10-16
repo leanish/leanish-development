@@ -33,6 +33,13 @@ permissions and schedules are in the [adoption guide](adopting-tools.md).
 | `modelPrices` | Built-in dated OpenAI Standard prices | Absolute path to an optional JSON table replacing the built-in rates; see [below](#optional-price-table). Claude models have no built-in rate. |
 | `maxNewMajorsPerRun` | bump-it only, `3` | Nonnegative integer. Caps newly opened major PRs, never updates to existing ones. `0` defers all new majors. Deferred majors have priority next run. |
 
+Strict-pin verification needs Java. The first check for a Gradle version also needs `unzip` on `PATH` and network
+access to `services.gradle.org` and its HTTPS redirect hosts to install the compiler jars under
+`dirs.state/tools/gradle-parsers/<version>`. The streamed distribution download is limited to 512 MiB. Later checks
+reuse that protected install and re-verify its jars before Java runs. The wrapper's `distributionUrl` must end in
+`gradle-<version>-(bin|all).zip`; a different filename, a query suffix or a missing wrapper refuses script edits
+visibly because their strict pins can't be checked.
+
 Notes on `secrets`:
 
 - The defaults (`leanish-secure-it-write` / `leanish-secure-it-read`,

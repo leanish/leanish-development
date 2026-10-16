@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { runProcess } from "../../ci/src/process.ts";
-import { gradleParserJars, PARSER_JARS, protectedDir, type ParserHome } from "../src/gradle-parsers.ts";
+import { gradleParserJars, PARSER_JARS, protectedDir, saveDistribution, type ParserHome } from "../src/gradle-parsers.ts";
 
 const VERSION = "9.1.0";
 const URL = `https://services.gradle.org/distributions/gradle-${VERSION}-bin.zip`;
@@ -139,5 +139,28 @@ describe("protected Gradle parser jars", () => {
     const { home, fetch } = await fixture();
     await expect(gradleParserJars(home, version)).rejects.toThrow("isn't a Gradle version");
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("bounded distribution streaming", () => {
+  it("accepts a stream exactly at the byte limit", async () => {
+    const path = join(root, "bounded.zip");
+    await saveDistribution(new Response("12345678"), path, URL, 8);
+    expect(await readFile(path, "utf8")).toBe("12345678");
+  });
+
+  it.each([undefined, "1"])("refuses past the streamed limit with Content-Length=%s and cancels the source", async (length) => {
+    let pulls = 0;
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) { pulls++; controller.enqueue(new Uint8Array([1, 2, 3, 4])); },
+      cancel,
+    });
+    const response = new Response(body, { headers: length === undefined ? {} : { "content-length": length } });
+    const path = join(root, "bounded.zip");
+    await expect(saveDistribution(response, path, URL, 8)).rejects.toThrow(`${URL} exceeds the distribution download limit of 8 bytes`);
+    expect((await readFile(path)).length).toBeLessThanOrEqual(8);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(pulls).toBeLessThan(10);
   });
 });

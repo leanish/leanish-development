@@ -79,6 +79,17 @@ describe("gradleStrictCalls", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it.each([
+    "https://example.com/custom-gradle.zip",
+    "https://example.com/gradle-9.1.0-bin.zip?download=1",
+  ])("refuses a wrapper URL without the required distribution filename suffix: %s", async (url) => {
+    const { install } = compilers();
+    const run = vi.fn<RunProcess>();
+    await expect(gradleStrictCalls(home(), run, install)(files, tree(`distributionUrl=${url}`))).rejects.toThrow("no Gradle wrapper names the distribution");
+    expect(install).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("doesn't install compilers without inputs or a readable wrapper version", async () => {
     const { install } = compilers();
     const parse = gradleStrictCalls(home(), undefined, install);

@@ -441,3 +441,22 @@ it.skipIf(LOCAL_GRADLE === undefined)("refuses a constructor-default strict pin 
     await rm(state, { recursive: true, force: true });
   }
 }, 120_000);
+
+it.skipIf(LOCAL_GRADLE === undefined).each([
+  [false, "gradle/pins.groovy", "strictly('1.0')\n"],
+  [true, "gradle/pins.groovy", "strictly('1.0')\n"],
+  [false, "pins.kts", 'val kotlinOnly: String = "value"\nstrictly("1.0")\n'],
+  [true, "pins.kts", 'val kotlinOnly: String = "value"\nstrictly("1.0")\n'],
+] as const)("refuses a changed helper-script pin with major=%s in %s", async (major, path, script) => {
+  const state = await mkdtemp(join(tmpdir(), "secure-helper-parser-test-"));
+  try {
+    const before = { ...LOCAL_WRAPPER, [path]: script, "package-lock.json": (await BASE.read("package-lock.json"))! };
+    const after = { ...before, [path]: script.replace("1.0", "2.0"), "package-lock.json": lock({ lib: "^1.0.0", other: "^1.0.0" }, { lib: "1.0.1", other: "1.0.0" }) };
+    const plan: ChangePlan = { ...PLAN, moves: PLAN.moves.map((move) => ({ ...move, major })) };
+    expect(await verifyPlan({ reference: undefined, plan, base: tree("base", before), head: tree("head", after), env: environment(AFFECTED),
+      gradle: {}, strictCalls: localGradleParser(state), changedFiles: ["package-lock.json", path] }))
+      .toEqual([`the edit changed a Gradle strictly(...) pin in ${path}: strict versions are the owner's, which no plan moves`]);
+  } finally {
+    await rm(state, { recursive: true, force: true });
+  }
+}, 120_000);

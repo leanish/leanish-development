@@ -197,6 +197,26 @@ describe("bump verification", () => {
     }
   }, 120_000);
 
+  it.skipIf(LOCAL_GRADLE === undefined).each([
+    [false, "gradle/pins.groovy", "strictly('1.0')\n"],
+    [true, "gradle/pins.groovy", "strictly('1.0')\n"],
+    [false, "pins.kts", 'val kotlinOnly: String = "value"\nstrictly("1.0")\n'],
+    [true, "pins.kts", 'val kotlinOnly: String = "value"\nstrictly("1.0")\n'],
+  ] as const)("refuses a changed helper-script pin with major=%s in %s", async (major, path, script) => {
+    const state = await mkdtemp(join(tmpdir(), "bump-helper-parser-test-"));
+    try {
+      const { input, baseFiles, headFiles } = await fixture(major);
+      const problems = await verifyPlan({ ...input, strictCalls: localGradleParser(state), changedFiles: [...input.changedFiles, path],
+        base: tree("base", { ...baseFiles, ...LOCAL_WRAPPER, [path]: script }),
+        head: tree("head", { ...headFiles, ...LOCAL_WRAPPER, [path]: script.replace("1.0", "2.0") }) });
+      const pin = `the edit changed a Gradle strictly(...) pin in ${path}: strict versions are the owner's, which no plan moves`;
+      if (major) expect(problems).toEqual([pin]);
+      else expect(problems).toContain(pin);
+    } finally {
+      await rm(state, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   it("pins Actions and refuses any other change in a planned workflow", async () => {
     const path = ".github/workflows/ci.yml";
     const old = `on: push\njobs:\n  build:\n    steps:\n      - uses: actions/checkout@${"0".repeat(40)} # 1.0.0\n`;

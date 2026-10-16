@@ -51,7 +51,11 @@ package is the code around them. Setup and operation are in [Adopting the tools]
   commands on the git metadata the workspace created.
 - **Strict pins** (`strict-calls.ts`, `gradle-parsers.ts`): parses Gradle scripts without executing them. Compiler jars
   live in `dirs.state/tools/gradle-parsers/<version>`, installed from the official HTTPS distribution after checking its
-  published checksum and re-verified before each run. Input copies live in `dirs.state/tools/strict-calls/run-*` and
+  published checksum and re-verified before each run. The first check for a version needs network access to
+  `services.gradle.org` and its HTTPS redirect hosts, plus `unzip`; later checks reuse the install. Downloads are
+  capped at 512 MiB while streaming. The wrapper URL must end in `gradle-<version>-(bin|all).zip`, or script edits fail
+  visibly. Besides Gradle files, any changed non-catalog file mentioning `strictly` on either side is parsed as Kotlin
+  for `.kts`, otherwise Groovy; non-parsing prose is refused by filename too. Input copies live in `dirs.state/tools/strict-calls/run-*` and
   are removed afterward. Both directories must be outside every sandbox-writable root.
 - **OSV-Scanner** (`osv-scanner.ts`): the version `packages/ci/tools.json` pins, installed into protected tool state by
   CI's installer and checked by sha256 before every use.

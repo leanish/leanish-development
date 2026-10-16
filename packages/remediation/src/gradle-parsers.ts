@@ -95,8 +95,7 @@ async function install(home: ParserHome, version: string, staging: string, run: 
   if (!/^[a-f0-9]{64}$/.test(expected)) throw new Error(`${url}.sha256 isn't a sha256`);
   const zip = join(staging, "distribution.zip");
   const response = await httpsGet(home.fetch, url);
-  if (response.body === null) throw new Error(`${url} has no body`);
-  await pipeline(Readable.fromWeb(response.body as import("node:stream/web").ReadableStream), createWriteStream(zip, { flags: "wx" }));
+  await saveDistribution(response, zip, url);
   const actual = await sha256Of(zip);
   if (actual !== expected) throw new Error(`${url} doesn't match its published sha256`);
   const listed = await run("unzip", ["-Z1", zip]);
@@ -120,6 +119,23 @@ async function install(home: ParserHome, version: string, staging: string, run: 
   };
   await writeFile(join(staging, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx" });
   return manifest;
+}
+
+/** Streams a distribution to disk with a byte cap, regardless of the server's Content-Length. */
+export async function saveDistribution(response: Response, path: string, url: string, maxBytes = 512 * 1024 * 1024): Promise<void> {
+  if (response.body === null) throw new Error(`${url} has no body`);
+  await pipeline(
+    Readable.fromWeb(response.body as import("node:stream/web").ReadableStream),
+    async function* (source) {
+      let bytes = 0;
+      for await (const chunk of source) {
+        bytes += chunk.length;
+        if (bytes > maxBytes) throw new Error(`${url} exceeds the distribution download limit of ${maxBytes} bytes`);
+        yield chunk;
+      }
+    },
+    createWriteStream(path, { flags: "wx" }),
+  );
 }
 
 /** The parsed manifest of an installation, undefined when there's none; a damaged one fails. */

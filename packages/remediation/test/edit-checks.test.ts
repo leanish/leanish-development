@@ -3,8 +3,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import type { StrictCallParser } from "../src/strict-calls.ts";
 import type { Tree } from "../../ci/src/tree.ts";
 import { isDependencyFile, isMechanical, strictPinsChanged } from "../src/edit-checks.ts";
 import { LOCAL_GRADLE, LOCAL_WRAPPER as WRAPPER, localGradleParser } from "./local-gradle-parser.ts";
@@ -74,6 +75,26 @@ describe("parsed catalog strict pins", () => {
   });
 });
 
+
+describe("strict-pin script selection", () => {
+  it.each([
+    ["base only", "strictly('1.0')", ""],
+    ["head only", "", "strictly('1.0')"],
+  ])("parses both sides of an arbitrary file mentioning strictly in %s", async (_side, before, after) => {
+    const parse = vi.fn<StrictCallParser>(textStrictCalls);
+    const path = "gradle/pins.groovy";
+    expect(await strictPinsChanged([path], tree({ [path]: before }), tree({ [path]: after }), parse))
+      .toEqual([expect.stringContaining(`pin in ${path}:`)]);
+    expect(parse.mock.calls.map(([files]) => files)).toEqual([[{ path, text: before }], [{ path, text: after }]]);
+  });
+
+  it("leaves other changed files without strictly alone, without calling a parser", async () => {
+    const parse = vi.fn<StrictCallParser>();
+    expect(await strictPinsChanged(["README.md", "pins.kts", "gradle/pins.groovy"], tree({ "README.md": "Before" }),
+      tree({ "README.md": "After", "pins.kts": "not even valid Kotlin!", "gradle/pins.groovy": "[broken" }), parse)).toEqual([]);
+    expect(parse).not.toHaveBeenCalled();
+  });
+});
 
 describe.skipIf(LOCAL_GRADLE === undefined)("strict pins in build scripts, parsed with Gradle's compilers", { timeout: 120_000 }, () => {
   let state: string;
@@ -189,8 +210,18 @@ describe.skipIf(LOCAL_GRADLE === undefined)("strict pins in build scripts, parse
       .toEqual(await parse([{ path: "build.gradle", text: GROOVY }], tree(WRAPPER)));
   });
 
-  it("ignores files that aren't Gradle build, settings or catalog files", async () => {
-    expect(await strictPinsChanged(["README.md"], tree({}), tree({ "README.md": 'strictly("2.0")' }), parse)).toEqual([]);
+  it.each([
+    ["gradle/pins.groovy", "strictly('1.0')\n"],
+    ["pins.kts", 'val kotlinOnly: String = "value"\nstrictly("1.0")\n'],
+  ])("refuses a changed pin in %s with the real parser", async (path, before) => {
+    expect(await check(path, before, before.replace("1.0", "2.0"))).toEqual(changed(path));
+    expect(await check(path, before, before + "// unrelated\n")).toEqual([]);
+  });
+
+  it("refuses prose mentioning strictly when it doesn't parse as Groovy, naming that file", async () => {
+    const before = "# Strict pins\nWe strictly preserve the owner's versions.\n";
+    expect(await check("README.md", before, before + "Another sentence.\n"))
+      .toEqual([expect.stringMatching(/^README\.md: doesn't parse, so its strict pins can't be checked:/)]);
   });
 });
 

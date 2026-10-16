@@ -13,8 +13,17 @@
 - Strict-pin verification installs its compiler jars under protected tool state from Gradle's official HTTPS
   distribution and published checksum, re-checks them before each run, and keeps its input copies in protected
   state too, outside the build's writable Gradle cache and temporary directories.
+- The first strict-pin check for a Gradle version needs network access to `services.gradle.org` and its HTTPS
+  redirect hosts, plus `unzip`; later checks reuse the protected install. Distribution downloads are capped at
+  512 MiB while streaming. A wrapper URL without the `gradle-<version>-(bin|all).zip` suffix refuses script edits
+  visibly.
 
 ### Fixed
+
+- Strict pins in helper scripts with other names, such as `gradle/pins.groovy` and `pins.kts`, are checked too, for
+  routine and major plans. Every changed non-catalog file mentioning `strictly` on either side is parsed (`.kts` as
+  Kotlin, otherwise Groovy); prose that doesn't parse is refused by filename. Files without the word on either side
+  keep their existing treatment. The filename gap also affected 0.5.2.
 
 - Strict pins in Groovy method, constructor and closure parameter defaults are read too. Both language parsers check
   every `strictly` identifier and string occurrence by source position, refusing any change to a file with an
