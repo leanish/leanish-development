@@ -1,6 +1,6 @@
 # What supply-chain handles
 
-This guide describes supply-chain 0.5.2. The [changelog](../CHANGELOG.md) lists what changed in each release.
+This guide describes supply-chain 0.6.0. The [changelog](../CHANGELOG.md) lists what changed in each release.
 
 - **The gate** checks a pull request (PR) whenever it changes. It also scans the
   default branch each day with current advisories.
