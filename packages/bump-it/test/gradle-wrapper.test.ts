@@ -89,6 +89,18 @@ describe("Gradle wrapper candidates", () => {
     expect(found.routine?.to).toBe("8.1");
     expect(found.major?.to).toBe("9.0");
   });
+  it("never targets a release a malware advisory covers, even one the current wrapper shares, and says so", async () => {
+    // 8.1, the only newer release in 8.x, shares the current wrapper's malware advisory: as inherited debt it would be the routine target.
+    const malware = advisory("GHSA-malware", ">=8.0, <9.0", { cwe_ids: ["CWE-506"] });
+    const { planner } = fixture([release("8.1"), release("9.0")], [malware]);
+    const found = await planner.candidates(tree());
+    expect(found.routine).toBeUndefined();
+    expect(found.major?.to).toBe("9.0");
+    expect(found.notes).toEqual(["Gradle 8.0 is covered by malware advisory GHSA-malware"]);
+    expect(await planner.verify([{ ...found.major!, to: "8.1", major: false }], tree(), tree("8.1"), JAR)).toEqual(["Gradle 8.1 is covered by malware advisory GHSA-malware"]);
+    expect((await planner.candidates(tree())).notes).toEqual(["Gradle 8.0 is covered by malware advisory GHSA-malware"]);
+  });
+
   it("selects through the real repository's mixed comparator and to range without adding the advisory", async () => {
     const { planner } = fixture([release("9.2.1"), release("9.3.0")], [advisory("GHSA-mqwm-5m85-gmcv", "< 8.14.4, 9.0.0 to 9.2.1", {
       vulnerabilities: [{ package: { ecosystem: "maven", name: "org.gradle:gradle-core" },
