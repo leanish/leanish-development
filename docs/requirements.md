@@ -1,6 +1,6 @@
 # Supply-chain: requirements and behavior
 
-**Scope: release 0.5.2 (2026-10-15).** Coverage depends on each adopter's configuration. This document describes the implemented contract, including its limits.
+**Scope: release 0.6.0 (2026-10-16).** Coverage depends on each adopter's configuration. This document describes the implemented contract, including its limits.
 
 For the plain-language guide, see [What supply-chain handles](what-it-handles.md).
 
