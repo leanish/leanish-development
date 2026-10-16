@@ -8,6 +8,8 @@
  * for every build. A false "named" plans a move bump-it may fail to make, visibly; a false
  * "unnamed" skips an update, with a note. Verification doesn't use it.
  *
+ * Kept as is on purpose: docs/simplification-candidates.md#reviewed-and-kept-2026-10-16.
+ *
  * Files read: every `*.gradle`, `*.gradle.kts` and `*.toml`, and the code under `buildSrc/` and
  * `build-logic/` (convention plugins), anywhere in the repository. In each, as raw text:
  * - a library `group:name` is named by a quoted string starting with it (`"g:n"`, `"g:n:1.0"`,

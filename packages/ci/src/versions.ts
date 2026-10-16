@@ -31,6 +31,7 @@ export function versionScheme(ecosystem: Ecosystem): VersionScheme {
 
 // ---------------------------------------------------------------------------
 // npm: SemVer 2.0
+// Own parser and advisory ranges, kept on purpose: docs/simplification-candidates.md#reviewed-and-kept-2026-10-16.
 
 interface SemVer {
   readonly major: bigint;
