@@ -17,7 +17,7 @@ import { basename } from "node:path";
 import { isMap, isScalar, isSeq, parseDocument } from "yaml";
 
 import { commentTag, readActionsInventory } from "../../ci/src/actions-inventory.ts";
-import { gradleLocation, type GradleInventory } from "../../ci/src/gradle.ts";
+import { gradleLocation, type GradleConfiguration, type GradleInventory } from "../../ci/src/gradle.ts";
 import { directDependencies } from "../../ci/src/npm-lock.ts";
 import type { Tree } from "../../ci/src/tree.ts";
 
@@ -123,26 +123,27 @@ export function directChangesOutside(before: ReadonlyMap<string, string>, after:
 /** How a declaration without a version (a BOM's or a constraint's to set) counts among a configuration's versions. */
 export const UNVERSIONED = "(no version)";
 
-/** The versions a configuration declares (or inherits) for `name`, one per declaration (`UNVERSIONED` for one without). */
-export function declaredAt(gradle: GradleInventory | undefined, location: string, name: string): string[] {
+/** The first configuration of the inventory's builds at `location`, if there is one. */
+function configurationAt(gradle: GradleInventory | undefined, location: string): GradleConfiguration | undefined {
   for (const build of gradle?.builds ?? []) {
     for (const configuration of build.configurations) {
-      if (gradleLocation(build.build, configuration.id) !== location) continue;
-      return configuration.declared.filter((declared) => `${declared.group}:${declared.name}` === name).map((declared) => declared.version ?? UNVERSIONED);
+      if (gradleLocation(build.build, configuration.id) === location) return configuration;
     }
   }
-  return [];
+  return undefined;
+}
+
+/** The versions a configuration declares (or inherits) for `name`, one per declaration (`UNVERSIONED` for one without). */
+export function declaredAt(gradle: GradleInventory | undefined, location: string, name: string): string[] {
+  const configuration = configurationAt(gradle, location);
+  if (configuration === undefined) return [];
+  return configuration.declared.filter((declared) => `${declared.group}:${declared.name}` === name).map((declared) => declared.version ?? UNVERSIONED);
 }
 
 /** The version a configuration resolves for `name`, if it resolves it. */
 export function resolvedAt(gradle: GradleInventory | undefined, location: string, name: string): string | undefined {
-  for (const build of gradle?.builds ?? []) {
-    for (const configuration of build.configurations) {
-      if (gradleLocation(build.build, configuration.id) !== location) continue;
-      return configuration.resolved.find((component) => `${component.group}:${component.name}` === name)?.version;
-    }
-  }
-  return undefined;
+  const configuration = configurationAt(gradle, location);
+  return configuration?.resolved.find((component) => `${component.group}:${component.name}` === name)?.version;
 }
 
 /**
@@ -157,10 +158,7 @@ export function pinsMasked(text: string | undefined, actions: ReadonlySet<string
   const doc = parseDocument(text);
   if (doc.errors.length > 0) return undefined;
   const ranges: Array<[number, number]> = [];
-  const visited = new Set<unknown>();
   const walk = (node: unknown): void => {
-    if (visited.has(node)) return;
-    visited.add(node);
     if (isMap(node)) {
       for (const pair of node.items) {
         const value = pair.value;

@@ -16,6 +16,8 @@
  * an entry type npm doesn't pack (links, devices) reads as `unknown` with its
  * reason: never as an empty bundle, and never before the integrity check
  * passed over the complete archive.
+ *
+ * Hand-written on purpose: docs/simplification-candidates.md#reviewed-and-kept-2026-10-16.
  */
 import { createHash } from "node:crypto";
 import { pipeline } from "node:stream/promises";

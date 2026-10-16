@@ -61,6 +61,7 @@ export function parseUses(text: string, file: string): { uses: ActionUse[]; loca
   // `ancestors` only stops cycles: an alias reached again elsewhere is another occurrence. `place` is where GitHub runs
   // a `uses:`: a job (`jobs.<id>`) or a step (`steps[]`, a composite action's too); its `uses:` must be an action.
   // Elsewhere (`env`, an input) a key named `uses` is counted when it reads as an action, and otherwise left alone.
+  // Kept as is on purpose: docs/simplification-candidates.md#reviewed-and-kept-2026-10-16.
   const walk = (start: unknown, ancestors: ReadonlySet<unknown> = new Set(), place: "jobs" | "steps" | "runner" | "other" = "other"): void => {
     const node = resolve(start);
     if (ancestors.has(node)) return;
