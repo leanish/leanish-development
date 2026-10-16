@@ -2,7 +2,7 @@
 import { dirname } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import { type Floor, FLOORS_PATH, overrideAt, parseFloors } from "../../ci/src/floors.ts";
+import { type Floor, overrideAt } from "../../ci/src/floors.ts";
 import { gradleLocation, type GradleInventory } from "../../ci/src/gradle.ts";
 import type { Tree } from "../../ci/src/tree.ts";
 
