@@ -114,12 +114,16 @@ Both tools are in this tree: [`secure-it`](../packages/secure-it) and [`bump-it`
 - **Published text keeps the machine out.** In a PR's title, description and commit message, absolute paths inside the working copy become repository-relative, and paths under the home, temp, state and cache directories become `<local path>` ([`publication-text.ts`](../packages/remediation/src/publication-text.ts)). The tool's own `<!-- leanish:… -->` markers (its state and encoded plan) pass through: this cleans what readers see, not every byte.
 - **Floor history stays intact.** secure-it compares recorded floors and their declarations before `compare`: compatibility floors never change, and security floors change only at exact planned targets with their scope and history preserved. New floors must be planned security additions, and only a dedicated floor-removal plan may remove security floors. Remaining target advisories are checked against compare's head findings from the same snapshot.
 - **Strict pins stay the owner's.** Gradle interprets the build and catalogs. Its inventory records each resolved
-  configuration's strict declarations and strict dependency constraints. Neither tool plans a move of a strict pin
-  where the change acts, and the reference refuses to move one. Both tools compare that planned reference with the
-  edit, configuration by configuration, including declared versions, strictness and strict constraints
+  configuration's external module declarations and every dependency constraint, including their full rich versions.
+  Neither tool plans a move of a strict pin where the change acts, and the reference refuses to move one. Both tools compare that planned reference with the
+  edit, configuration by configuration, including each declaration's and constraint's strict, required and preferred
+  versions, rejected versions (order independent), and branch
   ([`gradle-reference.ts`](../packages/remediation/src/gradle-reference.ts)). Changing, adding or removing an
-  interpreted pin, or turning it into a plain declaration at the same version, fails verification. The comparison
-  also applies during secure-it's floor removal and covers catalog pins that Gradle uses.
+  interpreted pin, turning it into a plain declaration at the same version, or changing any rich-version facet
+  (strict or otherwise) fails verification even when the resolved modules stay the same. The comparison
+  also applies during secure-it's floor removal and covers catalog versions that Gradle uses. Declaration
+  `because(...)` reasons and graph edges are exported but aren't compared here; secure-it checks floor reasons separately.
+  The reference-only `moved` markers prove the plan's declaration moves rather than matching edit markers.
   There is no separate textual or parsed pin check, Java parser run, compiler download or parser state directory.
   By the owner's deliberate choice, a pin Gradle doesn't resolve, such as an inactive branch or unused catalog
   entry, isn't checked. The agent's instructions still forbid changing any strict pin, and the owner reviews the PR

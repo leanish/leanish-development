@@ -7,6 +7,7 @@ import { gradleWrapperPlanner, WRAPPER_FILES, WRAPPER_PROPERTIES } from "../src/
 import { routineUnit, majorUnits } from "../src/units.ts";
 import { plannedFiles, verifyPlan, type VerifyInputs } from "../src/verify.ts";
 import { STRICT_PIN_SOURCES, strictPinInventory } from "../../remediation/test/strict-pin-inventory.ts";
+import { RICH_VERSION_CHANGES, richVersionInventory } from "../../remediation/test/rich-version-inventory.ts";
 import { candidate } from "./fixtures.ts";
 
 vi.mock("../../ci/src/gate.ts", async (original) => ({ ...await original<object>(), runCompare: vi.fn(async () => ({ failures: [], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, group: (id: string) => id, cooldown: { evaluated: true, releaseAgeDays: 7, held: [] } })) }));
@@ -148,6 +149,20 @@ describe("bump verification", () => {
       ] as const) {
         expect(await verifyPlan({ ...inputs, reference: before, gradle: { base: before, head: after } }))
           .toContainEqual(expect.stringContaining(message));
+      }
+    }
+  });
+
+  it.each(["declaration", "constraint"] as const)("protects every rich-version facet of an active %s in routine and major plans", async (kind) => {
+    for (const major of [false, true]) {
+      const { input } = await fixture(major);
+      for (const { before, after } of RICH_VERSION_CHANGES) {
+        const reference = richVersionInventory(kind, before);
+        const inputs: VerifyInputs = { ...input, reference, gradle: { base: reference, head: reference }, changedFiles: [...input.changedFiles, "build.gradle.kts"] };
+        // The unrelated planned npm move passes with the rich version intact.
+        expect(await verifyPlan(inputs)).toEqual([]);
+        expect(await verifyPlan({ ...inputs, gradle: { base: reference, head: richVersionInventory(kind, after) } }))
+          .toContainEqual(expect.stringContaining("unlike the plan's reference"));
       }
     }
   });

@@ -29,10 +29,24 @@ export interface Coordinates {
   readonly version: string;
 }
 
-export interface DeclaredDependency {
+/** Gradle's complete VersionConstraint, normalized on read: absent facets become empty strings/lists or a null branch. */
+export interface GradleVersionConstraint {
+  readonly strictVersion: string;
+  readonly requiredVersion: string;
+  readonly preferredVersion: string;
+  readonly rejectedVersions: ReadonlyArray<string>;
+  readonly branch: string | null;
+}
+
+export interface DeclaredConstraint {
   readonly group: string;
   readonly name: string;
   readonly version: string | undefined;
+  /** Absent for plain required/versionless declarations and in older inventories; `version` covers the plain case. */
+  readonly versionConstraint?: GradleVersionConstraint;
+}
+
+export interface DeclaredDependency extends DeclaredConstraint {
   /** Gradle's `because(...)`. */
   readonly reason: string | undefined;
   /** Its version is strict (`strictly(...)`): the owner's pin, which the tools never move. */
@@ -48,7 +62,9 @@ export interface GradleConfiguration {
   readonly resolved: ReadonlyArray<Coordinates>;
   readonly unresolved: ReadonlyArray<{ readonly requested: string; readonly failure: string }>;
   readonly declared: ReadonlyArray<DeclaredDependency>;
-  /** The strict dependency constraints (`constraints { … strictly(…) }`) it declares or inherits; absent when built by hand. */
+  /** Every dependency constraint it declares or inherits; absent in older inventories. */
+  readonly constraints?: ReadonlyArray<DeclaredConstraint>;
+  /** Legacy projection of strict constraints; use `constraints` for the full rich versions when available. */
   readonly strictConstraints?: ReadonlyArray<Coordinates>;
   /**
    * The resolved graph's edges: who brought what, as `group:name:version` for modules and Gradle's display name for
@@ -306,9 +322,17 @@ function parseConfiguration(raw: unknown, where: string): GradleConfiguration {
         name: text(item["name"], "name"),
         version: optional(item["version"], "version"),
         reason: optional(item["reason"], "reason"),
+        ...parseVersionConstraint(item["versionConstraint"]),
         ...flag(item["strict"], "strict"),
         ...flag(item["moved"], "moved"),
       };
+    }),
+    ...(raw["constraints"] === undefined ? {} : {
+      constraints: list("constraints").map((entry) => {
+        const item = isObject(entry) ? entry : {};
+        return { group: text(item["group"], "group"), name: text(item["name"], "name"), version: optional(item["version"], "version"),
+          ...parseVersionConstraint(item["versionConstraint"]) };
+      }),
     }),
     ...(raw["strictConstraints"] === undefined ? {} : {
       strictConstraints: list("strictConstraints").map((entry) => {
@@ -323,6 +347,17 @@ function parseConfiguration(raw: unknown, where: string): GradleConfiguration {
     }),
     error: optional(raw["error"], "error"),
   };
+}
+
+function parseVersionConstraint(raw: unknown): { readonly versionConstraint?: GradleVersionConstraint } {
+  if (raw === undefined) return {};
+  if (!isObject(raw)) throw new Error("Gradle inventory: malformed versionConstraint");
+  const { strictVersion = "", requiredVersion = "", preferredVersion = "", rejectedVersions = [], branch = null } = raw;
+  if (typeof strictVersion !== "string" || typeof requiredVersion !== "string" || typeof preferredVersion !== "string" ||
+    !isStrings(rejectedVersions) || !(branch === null || typeof branch === "string")) {
+    throw new Error("Gradle inventory: malformed versionConstraint");
+  }
+  return { versionConstraint: { strictVersion, requiredVersion, preferredVersion, rejectedVersions, branch } };
 }
 
 function flag<Name extends "strict" | "moved">(value: unknown, name: Name): { [key in Name]?: true } {
@@ -341,7 +376,7 @@ export function strictPins(gradle: GradleInventory | undefined): Map<string, str
   const pins = new Map<string, Set<string>>();
   for (const build of gradle?.builds ?? []) {
     for (const configuration of build.configurations) {
-      const strict = [...configuration.declared.filter((declared) => declared.strict === true), ...(configuration.strictConstraints ?? [])];
+      const strict = [...configuration.declared.filter((declared) => declared.strict === true), ...(configuration.constraints?.filter((constraint) => constraint.versionConstraint?.strictVersion) ?? configuration.strictConstraints ?? [])];
       for (const pin of strict) {
         const name = `${pin.group}:${pin.name}`;
         pins.set(name, (pins.get(name) ?? new Set()).add(gradleLocation(build.build, configuration.id)));
