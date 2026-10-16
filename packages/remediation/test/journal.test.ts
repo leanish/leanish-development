@@ -52,6 +52,24 @@ describe("FileJournal", () => {
     expect(await journal.last("leanish/damaged", 4)).toEqual({ head, base: head });
   });
 
+  it("fails on an entry whose base isn't a commit, even when its head is", async () => {
+    await writeFile(join(dir, "journal", "leanish__base.json"), JSON.stringify({ "1": { head: "c".repeat(40), base: "not-a-sha" } }));
+    await expect(new FileJournal(dir).last("leanish/base", 1)).rejects.toThrow("#1 lacks its head and base commits");
+  });
+
+  it("accepts a publication with no adaptations yet, and fails on a negative count", async () => {
+    const head = "c".repeat(40);
+    const base = "e".repeat(40);
+    const entries = {
+      "1": { head, base, publication: { title: "t", body: "b", adaptations: 0 } },
+      "2": { head, base, publication: { title: "t", body: "b", adaptations: -1 } },
+    };
+    await writeFile(join(dir, "journal", "leanish__counts.json"), JSON.stringify(entries));
+    const journal = new FileJournal(dir);
+    expect(await journal.last("leanish/counts", 1)).toEqual({ head, base, publication: { title: "t", body: "b", adaptations: 0 } });
+    await expect(journal.last("leanish/counts", 2)).rejects.toThrow("#2 has a malformed publication");
+  });
+
   it("persists the complete publication for recovery after a body update fails", async () => {
     const state = { head: "c".repeat(40), base: "e".repeat(40), publication: { title: "new plan", body: "plan and state markers", adaptations: 1 } };
     await new FileJournal(dir).pushed("leanish/content", 7, state);
