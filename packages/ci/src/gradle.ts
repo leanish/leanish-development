@@ -62,7 +62,7 @@ export interface GradleConfiguration {
   readonly resolved: ReadonlyArray<Coordinates>;
   readonly unresolved: ReadonlyArray<{ readonly requested: string; readonly failure: string }>;
   readonly declared: ReadonlyArray<DeclaredDependency>;
-  /** Every external module constraint it declares or inherits; project constraints excluded; absent in older inventories. */
+  /** Declared/inherited constraints with nonempty group and name, including grouped projects; absent in older inventories. */
   readonly constraints?: ReadonlyArray<DeclaredConstraint>;
   /** Legacy projection of strict constraints; use `constraints` for the full rich versions when available. */
   readonly strictConstraints?: ReadonlyArray<Coordinates>;
