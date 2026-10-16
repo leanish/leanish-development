@@ -84,7 +84,7 @@ const sourceOptions = (routes: Parameters<typeof fakeFetch>[0]) => ({
 });
 
 describe("source repositories", () => {
-  it.each(githubRepositoryCases)("reads repository from %j as %s", (input, expected) => {
+  it.each(githubRepositoryCases)("preserves v0.5.2 repository discovery from %j as %s", (input, expected) => {
     expect(githubRepository(input)).toBe(expected);
   });
 

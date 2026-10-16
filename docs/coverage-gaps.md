@@ -13,6 +13,10 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 
 ## Limits
 
+- **GitHub source repository matching stays as in v0.5.2**: a repository URL whose host only ends in `github.com`
+  (`notgithub.com/acme/lib`), or names it in a path, query or fragment, can be read as the wrong GitHub repository.
+  A numeric port in a URL (`https://github.com:443/acme/lib`) can be read as the owner (`443/acme`). These limits
+  only add or miss repository advisories; OSV still covers the package.
 - **Operating-system packages** in container images: no scanner here reads them (Trivy or similar, later).
 - **Code copied into a package without its own manifest**: npm bundles are read package by package (each bundled `node_modules/<name>/package.json`); JavaScript vendored into a package's own files isn't a package anywhere, so its advisories can't match.
 - **Shaded Java dependencies**: classes a library copies (and usually relocates) into its own jar aren't a module in the Gradle inventory, only the jar that ships them is; an advisory on the shaded library doesn't match it, and the only fix is another version of the shading artifact.

@@ -18,6 +18,11 @@ After the strict-pin parser went, the rest of the code was searched for the same
 authoritative tool already interprets, or guarding a case no build depends on). These were checked and kept; each entry
 says what was tried or measured, so the analysis needn't be repeated unless what it rests on changes.
 
+- **GitHub source repository matcher** (`githubRepository` in [`source-repos.ts`](../packages/ci/src/source-repos.ts)):
+  stays exactly as in v0.5.2 by the owner's decision. Three attempts to tighten host boundaries and handle ports
+  each lost valid forms v0.5.2 read, losing those repositories' advisories. The gain was low: reading the wrong
+  repository only adds or misses repository advisories; OSV still covers the package. The known host and port
+  limits are documented in [coverage gaps](coverage-gaps.md), and tests pin the v0.5.2 results.
 - **Gradle source scan** ([`gradle-sources.ts`](../packages/ci/src/gradle-sources.ts)): planning only, verification
   doesn't use it. Gradle's inventory exports `allDependencies`, declared and inherited or plugin-added alike, with no
   origin, so only this scan tells bump-it which coordinates the repository's own files name; without it bump-it would
