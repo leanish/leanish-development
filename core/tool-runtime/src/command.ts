@@ -14,7 +14,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Writable } from "node:stream";
-import { parseArgs } from "node:util";
+import { isDeepStrictEqual, parseArgs } from "node:util";
 
 import { createGitHubClient } from "@leanish/agent-runtime/github/github-client";
 import { codexIsolation } from "@leanish/agent-runtime/isolation";
@@ -42,6 +42,9 @@ import { type CodingAgent, defaultConfigPath, parseToolConfig, repoOf, type Tool
 import { DEFAULT_MODEL_PRICES } from "./model-prices.ts";
 import type { ToolName } from "./own-pr.ts";
 import { GitHubRequests } from "./github-requests.ts";
+import { changedSince, fileState, type FileState, git } from "./git-copies.ts";
+import { runProcess } from "@leanish/gate/process";
+import { safePath } from "./local-files.ts";
 
 const GUARD_DIR = fileURLToPath(new URL("../../agent-runtime/guard", import.meta.url));
 
@@ -66,8 +69,8 @@ export interface ToolRunContext {
   readonly readToken: string;
   /** How the agent is isolated; `runSandboxed` runs repository code the same way. */
   readonly isolation: CodexRunnerOptions;
-  /** Runs one of the tool's skills on the working copy, with write access and the read-only token. */
-  readonly agent: <TInput, TOutput>(call: { readonly entrypoint: string; readonly input: TInput }) => Promise<TOutput>;
+  /** Runs a skill with write access and the read-only token; restoredFiles declares dependency restores to its guard only. */
+  readonly agent: <TInput, TOutput>(call: { readonly entrypoint: string; readonly input: TInput; readonly restoredFiles?: ReadonlyArray<FileState> }) => Promise<TOutput>;
 }
 
 export interface ToolHandlers {
@@ -80,6 +83,7 @@ export interface ToolHandlers {
 
 /** The machine a command runs on; each defaults to the real one, tests replace them. */
 export interface Machine {
+  readonly assertAgentWorkspace: typeof assertAgentWorkspace;
   readonly secrets: SecretStore;
   readonly fetch: typeof globalThis.fetch;
   readonly stderr: NodeJS.WritableStream;
@@ -180,8 +184,9 @@ export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray
       releaseAgeExclude,
       readToken: read,
       isolation,
-      agent: (call) =>
-        runSkill(skillContext, {
+      agent: async (call) => {
+        await m.assertAgentWorkspace(workingCopy, call.input, call.restoredFiles);
+        return runSkill(skillContext, {
           entrypoint: call.entrypoint,
           input: call.input,
           workingCopies: [workingCopy],
@@ -190,7 +195,8 @@ export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray
           effort: config.agent.effort,
           access: "write",
           credentials: { env: { GH_TOKEN: read }, secrets: [{ name: "GH_TOKEN", value: read }] },
-        }),
+        });
+      },
     };
     const result = command === "run" ? await handlers.run(context) : await handlers.review(context);
     return finish(0, "ok", { result });
@@ -242,6 +248,7 @@ async function defaultBranch(repo: string, token: string, fetch: typeof globalTh
 
 function defaultMachine(): Machine {
   return {
+    assertAgentWorkspace,
     secrets: new KeychainStore(),
     fetch: globalThis.fetch,
     stderr: process.stderr,
@@ -255,4 +262,46 @@ function defaultMachine(): Machine {
         ? new CodexRunner(isolation)
         : new ClaudeCodeRunner({ env: isolation.env ?? {}, readDenied: isolation.readDenied ?? [], ...(isolation.buildCacheRoot !== undefined ? { buildCacheRoot: isolation.buildCacheRoot } : {}) }),
   };
+}
+
+/** Refuse unexplained staged, unstaged or untracked edits before handing the workspace to an agent. */
+export async function assertAgentWorkspace(workingCopy: WorkingCopy, value: unknown, restoredFiles: ReadonlyArray<FileState> = []): Promise<void> {
+  const input = value !== null && typeof value === "object" ? value as Record<string, unknown> : {};
+  const paths = (key: string): string[] => {
+    const entries = input[key];
+    if (entries === undefined) return [];
+    if (!Array.isArray(entries) || !entries.every(safePath)) throw new Error(`agent input ${key} must contain repository-relative file paths`);
+    return entries;
+  };
+  for (const expected of restoredFiles) {
+    if (!safePath(expected.path)) throw new Error("restoredFiles must contain repository-relative file paths");
+    if (!isDeepStrictEqual(await fileState(workingCopy, expected.path), expected)) throw new Error(`agent workspace changed after tool restore: ${expected.path}`);
+  }
+  const resolving = input["mode"] === "resolve";
+  const allowed = new Set([...paths("toolWritten"), ...restoredFiles.map((file) => file.path), ...(resolving ? paths("conflicted") : [])]);
+  if (resolving) for (const path of await cleanMergePaths(workingCopy)) allowed.add(path);
+  const staged = await git(workingCopy, ["diff", "--cached", "--name-only", "-z", "--no-renames", "HEAD", "--"], runProcess);
+  if (staged.code !== 0) throw new Error(`checking the agent workspace index failed: ${staged.stderr.trim()}`);
+  const changed = new Set([...await changedSince(workingCopy, "HEAD"), ...staged.stdout.split("\0").filter(Boolean)]);
+  const unexpected = [...changed].filter((path) => !allowed.has(path)).sort();
+  if (unexpected.length > 0) throw new Error(`agent workspace has undeclared changes against HEAD: ${unexpected.join(", ")}`);
+}
+
+/** Only untouched, non-conflicted entries from Git's own automatic merge result may pass without a declaration. */
+async function cleanMergePaths(workingCopy: WorkingCopy): Promise<string[]> {
+  const merging = await git(workingCopy, ["rev-parse", "--quiet", "--verify", "MERGE_HEAD"], runProcess);
+  if (merging.code === 1) return [];
+  if (merging.code !== 0) throw new Error(`reading the agent workspace merge failed: ${merging.stderr.trim()}`);
+  const automatic = await git(workingCopy, ["rev-parse", "--quiet", "--verify", "AUTO_MERGE^{tree}"], runProcess);
+  if (automatic.code !== 0) throw new Error("the agent workspace merge has no AUTO_MERGE tree to check");
+  const tree = automatic.stdout.trim();
+  const names = async (args: string[]): Promise<string[]> => {
+    const result = await git(workingCopy, ["diff", "--name-only", "-z", "--no-renames", ...args, "--"], runProcess);
+    if (result.code !== 0) throw new Error(`checking the agent workspace merge failed: ${result.stderr.trim()}`);
+    return result.stdout.split("\0").filter(Boolean);
+  };
+  const brought = await names(["HEAD", tree]);
+  // Check both index and files: a staged edit hidden by restoring its worktree must still be refused.
+  const different = new Set([...await names(["--cached", tree]), ...await names([tree]), ...await names(["--diff-filter=U"])]);
+  return brought.filter((path) => !different.has(path));
 }

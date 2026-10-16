@@ -165,7 +165,8 @@ again and checks every exact target. Peer-resolved copies use temporary exact ro
 npm may ignore overrides for peers. Unsupported placements stop that unit with a reason. Persistent security
 `npm-override` floors are written by the tool too. Induced transitive versions are npm's choice, judged by `compare`.
 
-Never edit npm dependency fields or lockfiles, or add a companion yourself. Leave `toolWritten` files byte for byte;
+Never edit npm dependency fields or lockfiles, or add a companion yourself. Leave `toolWritten` files byte for byte,
+except that a supplied `gradle-floor` may add its planned record to `floorsFile`, preserving the tool's npm records;
 a major may adapt only a package.json's other fields (for example scripts), preserving dependencies, devDependencies,
 optionalDependencies, peerDependencies, bundleDependencies/bundledDependencies, peerDependenciesMeta, overrides
 and workspaces. If installation is needed for checks use `npm ci --ignore-scripts`, passing every supplied
@@ -348,8 +349,9 @@ the same configuration):
 
 ## `mode: resolve`
 
-The default branch moved and merging it into this PR's branch conflicted in `conflicted` (code files; secure-it already
-took the default branch's side of the dependency files). Resolve each file so it keeps both the default branch's
+The default branch moved and merging it into this PR's branch conflicted. `conflicted` lists code files; it can be
+empty when only dependency files conflicted. Secure-it already took the default branch's side of the dependency
+files. Preserve the cleanly merged base changes. Resolve each listed file so it keeps both the default branch's
 changes and what this PR's moves need (a major's adaptation), with no conflict markers left; then apply the moves as in
 `apply`. Same limits as above.
 
@@ -385,7 +387,7 @@ End with one fenced `json` block, nothing after it:
     it; don't narrate your process; leave out environment noise (sandbox denials, daemon fallbacks, warnings) unless
     it changes what a reviewer should trust.
   - `commitMessage`: in the repository's style.
-  Leave all tool-written bytes unchanged; the tool verifies them before publishing.
+  Preserve the tool-written files as required above; the tool verifies them before publishing.
 - `cannot-apply`, with a `summary` of what stopped you. Omit `publication` or set it to `null`.
 
 Never claim a check passed unless you ran it successfully.

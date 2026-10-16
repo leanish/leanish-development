@@ -21,7 +21,7 @@ and [coverage gaps](coverage-gaps.md) before giving a tool repository access.
 - **macOS, currently Apple Silicon:** the secret store uses macOS Keychain,
   `run.sh` uses `lockf`, and the pinned scanner has a macOS arm64 build. Linux's
   scanner pin does not make the current Keychain launcher portable.
-- **Node 24 or newer**, git, `gh`, npm and the Codex CLI on the command path,
+- **Node 24 or newer**, **git 2.42 or newer** (reviews that resolve merge conflicts read the `AUTO_MERGE` tree it records), `gh`, npm and the Codex CLI on the command path,
   whichever agent you choose: the tool runs repository code (the Gradle inventory,
   npm resolution) under `codex sandbox`, which needs no login.
 - **npm 11.17.0 or newer** whenever there are own npm scopes, planned young

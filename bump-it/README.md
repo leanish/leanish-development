@@ -97,7 +97,8 @@ core/tool-runtime/run.sh bump-it review leanish/widget   # every few hours
   constraints matching the Gradle reference, correct action pins, and all generated wrapper bytes/modes plus official checksums. Only after every local check passes does it run
   `compare`, which must also pass. A report of local problems means `compare` has not run.
 - Open PRs count only when the head matches their body state or the exact tool journal entry. Same plan: leave it to
-  review. Changed plan: merge base, revert all old PR edits to base, apply the new plan, verify and push a normal commit.
+  review. Changed plan: redo on a clean base checkout, apply the new plan, verify and append a normal commit to the
+  existing PR history. Earlier major adaptations are redone for the new target.
   A human push is left alone; a separate PR is opened. Other tools' overlapping PRs never suppress work.
 - `maxNewMajorsPerRun` (default 3) caps only new major PRs. Updates are uncapped. Deferred packages are saved under
   `<state>/deferred/` and get priority next run. Reports include every failed/deferred unit and unresolved copy.

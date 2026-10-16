@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it, vi } from "vitest";
 
 import { ConsoleLogger } from "@leanish/agent-runtime/logger/console-logger";
 import type { GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
@@ -12,18 +13,23 @@ import type { SecurityFix } from "@leanish/gate/candidates";
 import { FLOORS_PATH, parseFloors } from "@leanish/gate/floors";
 import { selectRemovals, withoutFloorRecords } from "../src/floor-removal.ts";
 import type { Tree } from "@leanish/gate/tree";
-import type { ToolRunContext } from "@leanish/tool-runtime/command";
+import { assertAgentWorkspace, type ToolRunContext } from "@leanish/tool-runtime/command";
+import { retargetRepository } from "@leanish/tool-runtime/test/retarget-repository";
+import { runCompare } from "@leanish/gate/gate";
 import { parseToolConfig } from "@leanish/tool-runtime/config";
 import { MemoryJournal } from "@leanish/tool-runtime/test/memory-journal";
-import { stateOf, withMarker } from "@leanish/tool-runtime/own-pr";
+import { branchFor, stateOf, withMarker } from "@leanish/tool-runtime/own-pr";
 import { BASE_SHA, FakeGitHub, GREEN, HEAD_SHA, ownPr, PUSHED_SHA, RED } from "@leanish/tool-runtime/test/fake-github";
 import { planOf, planSection, withPlanSection } from "../src/plan-block.ts";
 import { planFor } from "../src/plan.ts";
-import type { VerifyInputs } from "../src/verify.ts";
+import { verifyPlan, type VerifyInputs } from "../src/verify.ts";
 import { computedNpmProblems } from "@leanish/tool-runtime/npm-file-checks";
 import { materializeInCopy } from "../src/npm-materialize.ts";
 import { preservedFloors } from "../src/floor-checks.ts";
-import { RULES, type SecureItDeps, secureIt } from "../src/secure-it.ts";
+import { defaultDeps, RULES, type SecureItDeps, secureIt } from "../src/secure-it.ts";
+
+// Keep local security verification real; replace only the external scan.
+vi.mock("@leanish/gate/gate", async (original) => ({ ...await original<object>(), runCompare: vi.fn() }));
 
 /** The verification snapshot the fakes hand back, and its tree (publication must stage it). */
 const SNAPSHOT = "5".repeat(40);
@@ -108,6 +114,8 @@ function harness(options: { prs?: GitHubPullRequest[]; fixes?: SecurityFix[]; an
     }) as ToolRunContext["agent"],
   };
   const deps: SecureItDeps = {
+    publicationParent: async (_wc, prepared) => prepared,
+    fileState: async (_wc, path) => ({ path, sha256: null, executable: false, index: "" }),
     requiredNpm: async (_base, plan) => plan,
     materializeNpm: async () => new Map(),
     floorProbe: async () => ({ files: new Map(), findings: [], problems: [] }),
@@ -147,6 +155,126 @@ async function vitePr(overrides: Partial<GitHubPullRequest> = {}, fix = vite()):
 }
 
 describe("secure-it run", () => {
+  it("declares the tool-written floors file when npm writes it before a planned Gradle floor addition", async () => {
+    const h = harness({ fixes: [vite(), vite({ ecosystem: "Maven", name: "g:lib", from: "1.0", locations: [":runtimeClasspath"], to: { version: "1.1", line: "1", aged: true, major: false, blockers: [] } })] });
+    const inventory: GradleInventory = { schemaVersion: 3, tree: "base", builds: [{ build: ".", configurations: [{ id: ":runtimeClasspath", kind: "project", declared: [], resolved: [{ group: "g", name: "lib", version: "1.0" }], unresolved: [], error: undefined }] }] };
+    const result = await secureIt({ ...h.deps, gradle: () => ({ ofCommit: async () => inventory, ofWorkingTree: async () => inventory }), materializeNpm: async () => new Map([[FLOORS_PATH, '{"floors":[]}']]) }).run(h.context);
+    expect(result, JSON.stringify(result)).toMatchObject({ outcome: "published" });
+    expect(h.agentCalls).toMatchObject([{ input: { toolWritten: [FLOORS_PATH], moves: expect.arrayContaining([expect.objectContaining({ mechanism: "gradle-floor" })]) } }]);
+  });
+  it.each(["clean", "untracked", "merged-edit", "dependencies-only"] as const)("reviews a real conflicted merge with production agent inputs: %s", async (problem) => {
+    const root = await mkdtemp(fileURLToPath(new URL("../../.resolve-test-", import.meta.url)));
+    try {
+      const path = ".github/workflows/supply-chain.yml";
+      const name = "leanish/leanish-development";
+      const workflow = (sha: string, tag: string) => `on: push\njobs:\n  gate:\n    uses: ${name}/.github/workflows/supply-chain.yml@${sha} # ${tag}\n`;
+      const fix = vite({ ecosystem: "GitHub Actions", name, from: "v0.4.0", locations: [path], to: { version: "v0.6.0", line: "0.6", aged: true, major: true, blockers: [] } });
+      const unit = { kind: "major" as const, topic: `${name}-major` };
+      const branch = branchFor(RULES, NOW, unit.topic);
+      const lock = (side: string) => JSON.stringify({ name: side, lockfileVersion: 3, packages: {} }) + "\n";
+      const codeConflict = problem !== "dependencies-only";
+      const fixture = await retargetRepository(root, REPO, branch, {
+        [path]: workflow("a".repeat(40), "v0.4.0"), "app.ts": "original\n", "package-lock.json": lock("original"), "README.md": "original\n",
+      }, { [path]: workflow("1".repeat(40), "v0.6.0"), "package-lock.json": lock("PR"), ...(codeConflict ? { "app.ts": "PR\n" } : {}) }, {
+        "app.ts": "base\n", "package-lock.json": lock("base"), "README.md": "cleanly merged\n",
+      });
+      const { workingCopy: wc, git, oldHead, oldBase, baseSha } = fixture;
+      const previous = await planFor([fix], { named: undefined, lockfiles: new Map(), gradle: undefined, tagCommit: async () => "1".repeat(40) }, unit);
+      const pr = ownPr({ headRef: branch, labels: [RULES.label], headSha: oldHead, body: withMarker(RULES, planSection(previous), { head: oldHead, base: oldBase, adaptations: 0 }) });
+      const h = harness({ prs: [pr], fixes: [fix] });
+      h.workspace.prepareBranch = fixture.workspace.prepareBranch.bind(fixture.workspace);
+      h.workspace.publishBranch = fixture.publishBranch;
+      const actual = defaultDeps();
+      let invoked = false;
+      const agent: ToolRunContext["agent"] = async (call) => {
+        expect(call.input).toMatchObject({ mode: "resolve", toolWritten: [] });
+        expect(call.restoredFiles).toMatchObject([{ path: "package-lock.json", sha256: expect.any(String), index: expect.any(String) }]);
+        expect((call.input as { conflicted?: string[] }).conflicted ?? []).toEqual(codeConflict ? ["app.ts"] : []);
+        expect(git("rev-parse", "HEAD")).toBe(oldHead);
+        expect(git("rev-parse", "MERGE_HEAD")).toBe(baseSha);
+        expect(await readFile(join(wc.path, "package-lock.json"), "utf8")).toBe(lock("base"));
+        expect(await readFile(join(wc.path, "README.md"), "utf8")).toBe("cleanly merged\n");
+        if (problem === "untracked") await writeFile(join(wc.path, "scratch.txt"), "undeclared\n");
+        if (problem === "merged-edit") await writeFile(join(wc.path, "README.md"), "undeclared\n");
+        await assertAgentWorkspace(wc, call.input, call.restoredFiles);
+        invoked = true;
+        if (codeConflict) await writeFile(join(wc.path, "app.ts"), "resolved\n");
+        return h.context.agent(call);
+      };
+      const result = await secureIt({ ...h.deps, trees: actual.trees, writeFile: actual.writeFile, fileState: actual.fileState, publicationParent: actual.publicationParent,
+        gate: async (context) => ({ ...await h.deps.gate(context), fetch: async () => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => ({ object: { type: "commit", sha: "1".repeat(40) } }), text: async () => "" }) }),
+        snapshot: actual.snapshot, candidateTree: actual.candidateTree, changedBetween: actual.changedBetween, linkProblems: actual.linkProblems,
+      }).review({ ...h.context, workingCopy: wc, agent });
+      if (problem === "untracked" || problem === "merged-edit") {
+        expect(result, JSON.stringify(result)).toMatchObject({ reviewed: [{ outcome: "error", detail: expect.stringContaining(`undeclared changes against HEAD: ${problem === "untracked" ? "scratch.txt" : "README.md"}`) }] });
+        expect(invoked).toBe(false);
+        expect(fixture.publications).toEqual([]);
+      } else {
+        expect(result, JSON.stringify(result)).toMatchObject({ reviewed: [{ outcome: "rebased" }] });
+        expect(invoked).toBe(true);
+        expect(fixture.publications).toHaveLength(1);
+        const published = fixture.publications[0]!;
+        expect(git("rev-parse", `${published.sha}^{tree}`)).toBe(await actual.candidateTree(wc));
+        expect(git("show", "-s", "--format=%P", published.sha).split(" ")).toEqual([oldHead, baseSha]);
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+  it.each(["run", "review"] as const)("retargets an open major from a clean base in %s, dropping old adaptations and publishing the verified tree on the PR history", async (command) => {
+    const root = await mkdtemp(fileURLToPath(new URL("../../.secure-retarget-test-", import.meta.url)));
+    try {
+      const path = ".github/workflows/supply-chain.yml";
+      const name = "leanish/leanish-development";
+      const workflow = (sha: string, tag: string) => `on: push\njobs:\n  gate:\n    uses: ${name}/.github/workflows/supply-chain.yml@${sha} # ${tag}\n`;
+      const baseFiles = { [path]: workflow("a".repeat(40), "v0.4.0"), "EXPECTED.md": "base expectations\n", "README.md": "base docs\n" };
+      const fix = vite({ ecosystem: "GitHub Actions", name, from: "v0.4.0", locations: [path], to: { version: "v0.6.0", line: "0.6", aged: true, major: true, blockers: [] } });
+      const unit = { kind: "major" as const, topic: `${name}-major` };
+      const branch = branchFor(RULES, NOW, unit.topic);
+      const fixture = await retargetRepository(root, REPO, branch, baseFiles, {
+        [path]: workflow("b".repeat(40), "v0.5.2"), "EXPECTED.md": "old adaptation\n", "README.md": "old adaptation\n",
+      }, command === "review");
+      const { workingCopy: wc, git, oldHead, oldBase, baseSha } = fixture;
+      const previous = await planFor([{ ...fix, to: { ...fix.to!, version: "v0.5.2" } }], { named: undefined, lockfiles: new Map(), gradle: undefined, tagCommit: async () => "b".repeat(40) }, unit);
+      const pr = ownPr({ headRef: branch, headSha: oldHead, body: withMarker(RULES, planSection(previous), { head: oldHead, base: oldBase, adaptations: 0 }) });
+      const h = harness({ prs: [pr], fixes: [fix] });
+      h.workspace.prepareBranch = fixture.workspace.prepareBranch.bind(fixture.workspace);
+      h.workspace.publishBranch = fixture.publishBranch;
+      const actual = defaultDeps();
+      const verified: VerifyInputs[] = [];
+      const deps: SecureItDeps = { ...h.deps, publicationParent: actual.publicationParent, trees: actual.trees, revert: actual.revert, snapshot: actual.snapshot, candidateTree: actual.candidateTree, changedBetween: actual.changedBetween, linkProblems: actual.linkProblems,
+        gate: async (context) => ({ ...await h.deps.gate(context), fetch: async () => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => ({ object: { type: "commit", sha: "1".repeat(40) } }), text: async () => "" }) }),
+        verify: async (input) => { verified.push(input); return verifyPlan(input); },
+      };
+      const agent: ToolRunContext["agent"] = async (call) => {
+        await assertAgentWorkspace(wc, call.input);
+        expect(git("rev-parse", "HEAD")).toBe(baseSha);
+        expect(git("diff", "--cached", "--name-only")).toBe("");
+        expect(git("diff", "--name-only")).toBe("");
+        for (const [path, text] of Object.entries(baseFiles)) expect(await readFile(join(wc.path, path), "utf8")).toBe(text);
+        expect(call.input).toMatchObject({ mode: "apply", moves: [{ from: "v0.4.0", to: "v0.6.0" }], toolWritten: [] });
+        await writeFile(join(wc.path, path), workflow("1".repeat(40), "v0.6.0"));
+        await writeFile(join(wc.path, "EXPECTED.md"), "fresh adaptation\n");
+        return h.context.agent(call);
+      };
+      vi.mocked(runCompare).mockReset().mockResolvedValue({ headFindings: [], failures: [], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, group: (id: string) => id, cooldown: { evaluated: true, releaseAgeDays: 7, held: [] } });
+      const result = await secureIt(deps)[command]({ ...h.context, workingCopy: wc, agent });
+      expect(result, JSON.stringify(result)).toMatchObject(command === "run" ? { units: [{ outcome: "updated" }] } : { reviewed: [{ outcome: "rebased" }] });
+      expect(h.agentCalls).toHaveLength(1);
+      expect(verified).toHaveLength(1);
+      expect(verified[0]!.base.id).toBe(baseSha);
+      expect(await verified[0]!.head.read("README.md")).toBe(baseFiles["README.md"]);
+      expect(await verified[0]!.head.read("EXPECTED.md")).toBe("fresh adaptation\n");
+      expect(runCompare).toHaveBeenCalledOnce();
+      expect(fixture.publications).toHaveLength(1);
+      const published = fixture.publications[0]!;
+      expect(git("rev-parse", `${published.sha}^{tree}`)).toBe(await actual.candidateTree(wc));
+      expect(git("show", "-s", "--format=%P", published.sha).split(" ")).toEqual(command === "review" ? [oldHead, baseSha] : [oldHead]);
+      expect(planOf(h.github.prs.get(pr.number)!.body)?.moves).toMatchObject([{ from: "v0.4.0", to: "v0.6.0" }]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it("writes computed npm before the agent and protects it through verification", async () => {
     const h = harness();
     const files = new Map([["package-lock.json", "computed lock"], ["package.json", "computed manifest"]]);
@@ -551,7 +679,8 @@ describe("secure-it review", () => {
       }
       const base = tree(NEW_BASE, baseFiles);
       let verifications = 0;
-      const deps: SecureItDeps = { ...h.deps,
+      const deps: SecureItDeps = {
+        ...h.deps,
         // The verification snapshot holds the working tree as it is then.
         trees: { commit: async (_wc, sha) => (sha === SNAPSHOT ? tree(SNAPSHOT, { ...current }) : base), working: () => tree("merged", current) },
         materializeNpm: async (context, source, recomputed, exclude) => materializeInCopy(context, dir, source, recomputed, exclude, async (cwd, args) => {
@@ -619,7 +748,7 @@ describe("secure-it review", () => {
     h.workspace.setPrepareConflict("secure-it/2026-10-05-security");
     expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "rebased" }] });
     expect(h.written).toEqual([`package-lock.json=${LOCK}`]);
-    expect(h.agentCalls.map((call) => call.input["mode"])).toEqual(["apply"]);
+    expect(h.agentCalls.map((call) => call.input["mode"])).toEqual(["resolve"]);
     expect(h.agentCalls[0]?.input["npmAgeExclusions"]).toEqual(["left-pad", "vite"]);
   });
 

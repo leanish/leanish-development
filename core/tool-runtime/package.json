@@ -54,6 +54,7 @@
     "./sandboxed": "./src/sandboxed.ts",
     "./test/fake-github": "./test/fake-github.ts",
     "./test/memory-journal": "./test/memory-journal.ts",
+    "./test/retarget-repository": "./test/retarget-repository.ts",
     "./test/rich-version-inventory": "./test/rich-version-inventory.ts",
     "./test/strict-pin-inventory": "./test/strict-pin-inventory.ts"
   }

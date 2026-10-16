@@ -6,6 +6,7 @@ import type { BumpCandidate } from "@leanish/gate/candidates";
 import { failingCheckNames } from "@leanish/tool-runtime/ci-state";
 import type { ToolHandlers, ToolRunContext } from "@leanish/tool-runtime/command";
 import { DEFAULT_MAX_NEW_MAJORS_PER_RUN } from "@leanish/tool-runtime/config";
+import type { FileState } from "@leanish/tool-runtime/git-copies";
 import { isMechanical } from "@leanish/tool-runtime/edit-checks";
 import { branchFor, topicOf, stateOf } from "@leanish/tool-runtime/own-pr";
 import { closeAndDelete, ownOpenPullRequests, publishNew, publishUpdate, recoverPublication } from "@leanish/tool-runtime/publication";
@@ -52,6 +53,7 @@ async function createExecution(context: ToolRunContext, deps: BumpItDeps): Promi
       journal: deps.journal(context),
       localRoots: machineRoots(context.config.dirs),
       verifiedTree: () => deps.candidateTree(context.workingCopy),
+      publicationParent: (prepared) => deps.publicationParent(context.workingCopy, prepared),
     },
   };
 }
@@ -232,6 +234,7 @@ async function review(context: ToolRunContext, deps: BumpItDeps): Promise<Readon
         content = await edit(execution, computed, "apply");
       } else if (merge.kind === "conflicted") {
         const code: string[] = [];
+        const restoredFiles: FileState[] = [];
         const pins = new Set(computed.plan.moves.filter((move) => move.mechanism === "action-pin").flatMap((move) => move.locations));
         for (const path of merge.conflicted) {
           if (!isMechanical(path) && !pins.has(path) && !WRAPPER_FILES.includes(path)) {
@@ -240,6 +243,7 @@ async function review(context: ToolRunContext, deps: BumpItDeps): Promise<Readon
           }
           if (WRAPPER_FILES.includes(path)) {
             await deps.restoreWrapperFile(context.workingCopy, base.id, path);
+            restoredFiles.push(await deps.fileState(context.workingCopy, path));
             continue;
           }
           const theirs = await base.read(path);
@@ -248,11 +252,12 @@ async function review(context: ToolRunContext, deps: BumpItDeps): Promise<Readon
           } else {
             await deps.writeFile(context.workingCopy, path, theirs);
           }
+          restoredFiles.push(await deps.fileState(context.workingCopy, path));
         }
         if (code.length > 0 && previous.kind === "routine") {
           throw new Error("a routine PR may not resolve code conflicts");
         }
-        content = await edit(execution, computed, code.length > 0 ? "resolve" : "apply", code.length > 0 ? { conflicted: code } : {});
+        content = await edit(execution, computed, "resolve", { conflicted: code, restoredFiles });
       } else {
         await writeNpm(execution, computed.files, previous.kind === "major");
         await writeWrapper(execution, computed);

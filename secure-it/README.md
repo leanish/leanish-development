@@ -59,8 +59,8 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
      `already-open`. Other major units still proceed. An already-open malware unit is left to review without
      planning other work.
    - One with a different plan, while its head is still the tool's: that PR is reconciled. The default branch is
-     merged into it, every file it changed goes back to the base's content, and the new plan is applied on top, so
-     nothing the old plan did lingers. It's pushed as a normal commit.
+     prepared as a clean base checkout for the new plan, so nothing the old plan did lingers. After verification,
+     the tool appends the verified tree to the existing PR history as a normal commit.
    - One someone else pushed to: the fix goes in a PR of its own.
 5. **The tool resolves npm; the agent applies non-npm moves** (skill [`secure-it`](skills/secure-it/SKILL.md)).
    - **npm, by the tool.** In a sandboxed export of base, before any agent work, the tool pins every planned direct

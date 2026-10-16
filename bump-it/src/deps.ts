@@ -9,12 +9,12 @@ import { FileRepositoryAdvisoryCache } from "@leanish/tool-runtime/repository-ad
 import { runProcess } from "@leanish/gate/process";
 import { gitTree, type Tree, workingTree } from "@leanish/gate/tree";
 import type { ToolRunContext } from "@leanish/tool-runtime/command";
-import { candidateTree, changedBetween, exportCommit, git, linkProblems, snapshotCandidate } from "@leanish/tool-runtime/git-copies";
+import { candidateTree, changedBetween, fileState, exportCommit, git, linkProblems, snapshotCandidate } from "@leanish/tool-runtime/git-copies";
 import { type GradleInventories, sandboxedGradleInventories } from "@leanish/tool-runtime/inventories";
 import { FileJournal, type PublicationJournal } from "@leanish/tool-runtime/journal";
 import { ensureOsvScanner, verifyingRun } from "@leanish/tool-runtime/osv-scanner";
 import { sandboxWritable } from "@leanish/tool-runtime/sandboxed";
-import { revertToBase } from "@leanish/tool-runtime/reconcile";
+import { publicationParent, revertToBase } from "@leanish/tool-runtime/reconcile";
 
 import { generateWrapper, readWrapperFiles, writeWrapperFiles, type WrapperArtifact } from "./wrapper-generation.ts";
 import type { DirectMove } from "./units.ts";
@@ -27,6 +27,8 @@ import type { Unit } from "./units.ts";
 import { verifyPlan, type VerifyInputs } from "./verify.ts";
 
 export interface BumpItDeps {
+  readonly publicationParent: typeof publicationParent;
+  readonly fileState: typeof fileState;
   readonly generateWrapper: (context: ToolRunContext, baseSha: string, move: DirectMove) => Promise<ReadonlyArray<WrapperArtifact>>;
   readonly readWrapperFiles: (workingCopy: WorkingCopy) => Promise<ReadonlyArray<WrapperArtifact>>;
   readonly writeWrapperFiles: (workingCopy: WorkingCopy, files: ReadonlyArray<WrapperArtifact>) => Promise<void>;
@@ -52,11 +54,14 @@ export interface BumpItDeps {
   readonly priority: (context: ToolRunContext) => MajorPriority;
   readonly writeFile: (workingCopy: WorkingCopy, path: string, content: string) => Promise<void>;
   readonly removeFile: (workingCopy: WorkingCopy, path: string) => Promise<void>;
+  /** Starts a redo detached at the base, dropping the previous plan's edits. */
   readonly revert: (workingCopy: WorkingCopy, baseSha: string) => Promise<ReadonlyArray<string>>;
 }
 
 export function defaultDeps(): BumpItDeps {
   return {
+    publicationParent,
+    fileState,
     wrapper: gradleWrapperPlanner,
     generateWrapper,
     readWrapperFiles,

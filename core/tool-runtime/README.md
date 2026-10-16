@@ -25,6 +25,19 @@ package is the code around them. Setup and operation are in [Adopting the tools]
     included) and adaptation count in its state directory. If the body update fails, the next run or review
     recognises the tool's exact head and restores that publication before reuse or CI handling. An old head/base-only
     entry can't restore it: review refuses readiness or adaptation until a run recomputes and republishes.
+- **Plan redos** (`reconcile.ts`): both tools detach at the exact base with a clean index/worktree, then write the new
+  plan's files. Earlier PR edits and adaptations are discarded. Only after verification does publication reattach the
+  existing PR head as first parent; a moved base is a second merge parent. The runtime stages the same files, requires
+  the verified tree, checks the remote head and pushes normally. Attached conflict-resolution workspaces stay intact.
+- **Agent workspace guard** (`command.ts`): before every invocation, reject staged, unstaged and untracked changes
+  against HEAD outside the input's `toolWritten` paths and the tool's explicitly declared dependency restores.
+  Conflicted reviews use `resolve`, including when only dependency files conflict. That mode also permits its
+  `conflicted` paths and clean merge changes whose index and files still match Git's `AUTO_MERGE` tree, with
+  `MERGE_HEAD` present; extra edits to those paths fail. Restores are guard metadata, leaving the agent free to
+  reapply the plan over them. Their content hash (or absence), executable bit and index entries must still match
+  the state recorded at restoration. Intentional npm/wrapper rewrites update the content expectation while retaining
+  the original index expectation. Ignored build output is not a Git change. The error names the unexplained paths and
+  stops the unit before the agent starts.
 - **The review tick** (`review.ts`) goes through every open PR of the tool, in this order:
   1. Someone else pushed: leave the PR alone.
   2. The base moved: the tool recomputes on the new base, before anything else, with the base merged in or the
