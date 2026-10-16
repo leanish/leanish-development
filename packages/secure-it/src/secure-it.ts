@@ -339,6 +339,7 @@ function declaringLocations(gradle: GradleInventory | undefined, name: string): 
     .map((configuration) => gradleLocation(build.build, configuration.id)));
 }
 
+// Automatic floor removal, kept on purpose: docs/simplification-candidates.md#reviewed-and-kept-2026-10-16.
 async function computeRemoval(execution: Execution, base: PlanBase): Promise<ComputedRemoval> {
   const pins = strictPins(base.gradle);
   // A floor declared with strictly(...) is the owner's pin too: it stays, whatever the proof would say.
@@ -388,6 +389,7 @@ async function runRemoval(execution: Execution, removal: ComputedRemoval, base: 
  * A routine fix whose required npm dependency is younger than the wait can't
  * wait either: it moves to the held unit with every package coupled to it.
  * Moving roots only drops requirements, so one pass leaves the rest aged.
+ * Kept on purpose: docs/simplification-candidates.md#reviewed-and-kept-2026-10-16.
  */
 async function holdRequiredYoung(execution: Execution, units: ReadonlyArray<SecurityUnit>, base: PlanBase): Promise<SecurityUnit[]> {
   const aged = units.find((unit) => unit.kind === "routine" && unit.held !== true);

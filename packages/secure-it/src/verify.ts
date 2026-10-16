@@ -133,6 +133,7 @@ export async function verifyPlan(inputs: VerifyInputs): Promise<string[]> {
 /**
  * Each carrier move's head copies lock the registry's archive of `to`, and record exactly the bundle that archive
  * ships: npm wrote the bundled entries, and they're what the gate scanned.
+ * Kept on purpose (verification and the gate check different facts): docs/simplification-candidates.md#reviewed-and-kept-2026-10-16.
  */
 async function carriersShipped(plan: ChangePlan, head: Tree, reader: BundleReader, registry: NpmRegistry): Promise<string[]> {
   const problems: string[] = [];

@@ -280,6 +280,7 @@ const OUTSIDE = Symbol("outside");
  * `{ variant }` at the first path the tree has only by another case or Unicode form, where a case-insensitive checkout
  * could go on through a link the walk doesn't see; undefined for a loop, or more links than a checkout follows, which
  * lead nowhere it can read.
+ * Kept on purpose: docs/simplification-candidates.md#reviewed-and-kept-2026-10-16.
  */
 function resolved(link: string, tree: LinkTree): string | typeof OUTSIDE | { readonly variant: string } | undefined {
   const at: string[] = [];
