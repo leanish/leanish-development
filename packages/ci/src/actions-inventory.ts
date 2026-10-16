@@ -68,7 +68,9 @@ export function parseUses(text: string, file: string): { uses: ActionUse[]; loca
     const inside = new Set(ancestors).add(node);
     if (isMap(node)) {
       for (const pair of node.items) {
-        const key = isScalar(pair.key) ? pair.key.value : undefined;
+        // A key can be an alias too (`*k: owner/action@v1` with `k: &k uses`).
+        const keyNode = resolve(pair.key);
+        const key = isScalar(keyNode) ? keyNode.value : undefined;
         if (key === "uses") {
           const value = resolve(pair.value);
           const comment = (isScalar(pair.value) ? pair.value.comment : undefined) ?? (isAlias(pair.value) ? pair.value.comment : undefined) ?? (isScalar(value) ? value.comment : undefined);

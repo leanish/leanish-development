@@ -366,14 +366,12 @@ export class LocalGitWorkspace implements Workspace {
    * the commit gets), never the live working tree, which something left running could change for the check alone.
    */
   async #assertResolved(repo: Repo, conflicted: ReadonlyArray<string>): Promise<void> {
-    // Seven or more: a `.gitattributes` `conflict-marker-size` makes git write longer markers.
-    const markers = /^(<{7,}|>{7,})( |$)|^={7,}$|^\|{7,}( |$)/m;
     const unresolved: string[] = [];
     for (const path of conflicted) {
       // A path resolved by removing it has nothing staged.
       // `:0:` names the staged entry: in `:<path>`, a path like `0:package.json` would read as a stage and another path.
       const staged = await this.#capture(repo, ["show", `:0:${path}`]).then((result) => result.stdout, () => "");
-      if (markers.test(staged)) unresolved.push(path);
+      if (conflictMarkers(await this.#markerSize(repo, path)).test(staged)) unresolved.push(path);
     }
     if (unresolved.length > 0) throw new Error(`publishBranch: ${unresolved.join(", ")} still has conflict markers`);
   }
@@ -463,6 +461,14 @@ export class LocalGitWorkspace implements Workspace {
     });
   }
 
+  /** The `conflict-marker-size` the staged `.gitattributes` give `path`, which git used for its markers; 7 by default. */
+  async #markerSize(repo: Repo, path: string): Promise<number> {
+    const { stdout } = await this.#capture(repo, ["check-attr", "--cached", "-z", "conflict-marker-size", "--", path]);
+    // `<path> NUL conflict-marker-size NUL <value> NUL`
+    const size = Number.parseInt(stdout.split("\0")[2] ?? "", 10);
+    return Number.isInteger(size) && size > 0 ? size : 7;
+  }
+
   #capture(repo: Repo, args: ReadonlyArray<string>): Promise<{ stdout: string }> {
     return new Promise((resolve, reject) => {
       const child = spawn(this.#git, [...TRUSTED_CONFIG_ARGS, ...repoArgs(repo), ...args], {
@@ -546,4 +552,15 @@ function redactArgs(args: ReadonlyArray<string>): string {
 function sanitizeProjectId(id: string): string {
   // owner/slug → owner__slug; safe for a filesystem directory under WORKSPACE_ROOT.
   return id.replace(/\//g, "__");
+}
+
+/**
+ * Conflict markers of the size git wrote for this path, and of the default size or longer whatever the attribute says,
+ * so a `.gitattributes` the merge changed can't hide the markers git wrote before it: `<<<<<<<`/`>>>>>>>` lines (with a
+ * label or none), a `|||||||` base marker, and a `=======` separator alone on its line at exactly that size, as git
+ * writes it: a longer run, or one followed by text, is a Markdown heading's underline.
+ */
+function conflictMarkers(size: number): RegExp {
+  const sized = `<{${size}}|>{${size}}`;
+  return new RegExp(`^(<{7,}|>{7,}|${sized}|\\|{7}|\\|{${size}})( |$)|^(={7}|={${size}})$`, "m");
 }

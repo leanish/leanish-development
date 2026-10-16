@@ -17,16 +17,18 @@
 - A submodule moved to another commit is reported as moved, not as added.
 - bump-it never moves the Gradle wrapper to a release a malware advisory (CWE-506) covers, even one the installed
   wrapper shares, and reports an installed wrapper such an advisory covers.
-- A bump-it major fails visibly when it brings a new transitive version that is deprecated, or whose registry catalog
-  can't be read to rule that out.
-- A repository URL on a host that only ends in `github.com` (`notgithub.com`) is no longer read as a GitHub
-  repository when looking up repository advisories.
+- A bump-it major fails visibly when it brings a new transitive version from the npm registry that is deprecated, or
+  whose catalog can't be read to rule that out.
+- A `uses` key written as a YAML alias is read like any other.
+- A repository URL whose host only ends in `github.com` (`notgithub.com`), or that names `github.com` in its path, is
+  no longer read as a GitHub repository when looking up repository advisories.
 - Maven versions compare a sub-list against a missing component item by item, as Maven does: `1.0-0.1` is above
   `1.0`, so an advisory covering `>1.0` matches it.
 - An action's versions are its full release tags only: a partial tag (`v1.1`), which a pin's comment can't name, is
   no longer picked over a full one (`v1.0.1`) and then refused at verification.
-- Publication recognizes conflict markers longer than seven characters, as a `.gitattributes` `conflict-marker-size`
-  makes git write.
+- Publication recognizes conflict markers at the size the staged `.gitattributes` give a file (shorter or longer than
+  seven) as well as seven or more whatever it says; a separator counts only alone on its line at that size, so a
+  Markdown heading's underline (a longer run of `=`, or one followed by text) isn't one.
 - A key named `uses` outside a job or step (`env: { uses: production }`, an action input) no longer fails the Actions
   inventory: it counts when it reads as an action and is otherwise left alone; a job's or step's `uses:` stays strict.
 
