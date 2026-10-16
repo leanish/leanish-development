@@ -70,7 +70,7 @@ describe("strictestPolicy", () => {
   it("owns a package only where both sides own it, however each side spells it", () => {
     expect(isOwn({ ecosystem: "npm", name: "@leanish/tool" })).toBe(true);
     expect(isOwn({ ecosystem: "npm", name: "@added/tool" })).toBe(false);
-    expect(isOwn({ ecosystem: "GitHub Actions", name: "leanish/supply-chain" })).toBe(true);
+    expect(isOwn({ ecosystem: "GitHub Actions", name: "leanish/leanish-development" })).toBe(true);
     // Overlapping prefixes: both sides own this plugin marker, though neither lists the other's prefix.
     expect(isOwn({ ecosystem: "Maven", name: "com.acme.tools.check:com.acme.tools.check.gradle.plugin" })).toBe(true);
     expect(isOwn({ ecosystem: "Maven", name: "com.acme.other:com.acme.other.gradle.plugin" })).toBe(false);

@@ -76,7 +76,7 @@ unreleased changes collect under its "Unreleased" heading.
    existing tag or publish packages.
 6. When the reusable workflow or gate code changes, resolve the tag's full commit
    SHA and repin adopting workflows to
-   `leanish/supply-chain/.github/workflows/supply-chain.yml@<full-sha> # v<version>`.
+   `leanish/leanish-development/.github/workflows/supply-chain.yml@<full-sha> # v<version>`.
    Require green adoption PR checks before merging. Tool-only releases do not
    require gate repins.
 7. Install tools from that release commit in a stable checkout outside `/tmp`,
