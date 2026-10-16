@@ -7,16 +7,13 @@
  *     reads its policy from head);
  *   - planned action pins landed (the tag's commit with `# <tag>`), and no
  *     other action use changed;
- *   - no Gradle `strictly(...)` pin changed;
  *   - the declared npm versions, per declaration, to compare base with head;
  *   - which files are dependency files (an edit that isn't a major may only
  *     touch those) and which conflicted files take the base's side when the
  *     default branch is merged in.
  */
 import { basename } from "node:path";
-import { isDeepStrictEqual } from "node:util";
 
-import { parse as parseToml } from "smol-toml";
 import { isMap, isScalar, isSeq, parseDocument } from "yaml";
 
 import { commentTag, readActionsInventory } from "../../ci/src/actions-inventory.ts";
@@ -25,7 +22,6 @@ import { directDependencies } from "../../ci/src/npm-lock.ts";
 import type { Tree } from "../../ci/src/tree.ts";
 
 import { lockfilesOf } from "./inventories.ts";
-import type { StrictCallParser } from "./strict-calls.ts";
 
 export const FLOORS_FILE = ".github/dependency-floors.json";
 
@@ -88,94 +84,6 @@ export async function actionsOutsidePlan(pins: ReadonlyArray<PlannedPin>, base: 
   const now = count(await occurrences(head));
   const changed = [...new Set([...was.keys(), ...now.keys()])].filter((entry) => was.get(entry) !== now.get(entry)).map((entry) => labels.get(entry)!).sort();
   return changed.map((label) => `the action use ${label} changed outside the plan`);
-}
-
-/**
- * Every catalog entry a strict version belongs to, whole (`[libraries] x`, with its module, group, name and version),
- * paired with its key path, in traversal order: the entries holding a `strictly`, and the entries whose `version.ref`
- * names a strict `[versions]` one. Comparing only the values would let an edit move a pin to another dependency.
- */
-function catalogStrictEntries(text: string | undefined): Array<readonly [ReadonlyArray<string>, unknown]> {
-  const catalog = parseToml(text ?? "") as Record<string, unknown>;
-  const holds = (value: unknown): boolean =>
-    value !== null && typeof value === "object" && Object.entries(value).some(([key, child]) => key === "strictly" || holds(child));
-  const strictVersions = new Set(Object.entries(asTable(catalog["versions"])).filter(([, value]) => holds(value)).map(([name]) => name));
-  const entries: Array<readonly [ReadonlyArray<string>, unknown]> = [];
-  for (const [section, table] of Object.entries(catalog)) {
-    if (table === null || typeof table !== "object" || Array.isArray(table)) {
-      if (section === "strictly" || holds(table)) entries.push([[section], table]);
-      continue;
-    }
-    for (const [name, entry] of Object.entries(table)) {
-      const ref = asTable(asTable(entry)["version"])["ref"];
-      if (name === "strictly" || holds(entry) || (typeof ref === "string" && strictVersions.has(ref))) entries.push([[section, name], entry]);
-    }
-  }
-  return entries;
-}
-
-function asTable(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
-}
-
-/**
- * Catalogs compare the whole entries strict versions belong to, parsed with `smol-toml`, in order; malformed TOML fails.
- * Build and settings scripts, and changed `.groovy`, `.kt` or `.kts` files mentioning `strictly` on either side, compare
- * what Gradle's own Groovy and Kotlin compilers parse in them (`parse`): each
- * `strictly(...)` call with the dependency it pins, in order, and any other form that names `strictly`. A version that
- * reaches a call through a variable or a helper is still read only where the inventory sees it (an active pin).
- */
-export async function strictPinsChanged(changedFiles: ReadonlyArray<string>, base: Tree, head: Tree, parse: StrictCallParser): Promise<string[]> {
-  const problems: string[] = [];
-  for (const path of changedFiles.filter((file) => file.endsWith(".versions.toml"))) {
-    try {
-      if (!isDeepStrictEqual(catalogStrictEntries(await base.read(path)), catalogStrictEntries(await head.read(path)))) problems.push(changedPin(path));
-    } catch (err) {
-      problems.push(`${path}: ${(err as Error).message}`);
-    }
-  }
-  const scripts: Array<{ readonly path: string; readonly before: string; readonly after: string }> = [];
-  for (const path of changedFiles.filter((file) => !file.endsWith(".versions.toml"))) {
-    try {
-      const [before, after] = await Promise.all([base.read(path), head.read(path)]);
-      if (isGradleVersionFile(path) || /\.(?:groovy|kts?)$/.test(path) && (before?.includes("strictly") || after?.includes("strictly"))) {
-        scripts.push({ path, before: before ?? "", after: after ?? "" });
-      }
-    } catch (err) {
-      problems.push(`${path}: ${(err as Error).message}`);
-    }
-  }
-  if (scripts.length === 0) return problems;
-  try {
-    // Each side with its own Gradle's compilers: an edit that moves the wrapper parses with the new one.
-    const before = await parse(scripts.map((file) => ({ path: file.path, text: file.before })), base);
-    const after = await parse(scripts.map((file) => ({ path: file.path, text: file.after })), head);
-    for (const { path } of scripts) {
-      // Only scripts the edit touched get here, so a side that doesn't parse refuses, naming only that script: equal
-      // errors on both sides could still hide a moved pin.
-      const unparsed = parseError(after.get(path)) ?? parseError(before.get(path), "the base ");
-      if (unparsed !== undefined) problems.push(`${path}: doesn't parse, so its strict pins can't be checked: ${unparsed}`);
-      else if (!isDeepStrictEqual(before.get(path), after.get(path))) problems.push(changedPin(path));
-    }
-  } catch (err) {
-    problems.push(`${scripts.map((file) => file.path).join(", ")}: ${(err as Error).message}`);
-  }
-  return problems;
-}
-
-/** The reason a parser gave for not parsing a script, with `side` before it, if it gave one. */
-function parseError(findings: ReadonlyArray<string> | undefined, side = ""): string | undefined {
-  const error = findings?.find((finding) => finding.startsWith("error\t"));
-  return error === undefined ? undefined : `${side}${error.slice("error\t".length)}`;
-}
-
-function changedPin(path: string): string {
-  return `the edit changed a Gradle strictly(...) pin in ${path}: strict versions are the owner's, which no plan moves`;
-}
-
-function isGradleVersionFile(path: string): boolean {
-  const name = basename(path);
-  return name.endsWith(".gradle") || name.endsWith(".gradle.kts") || name.endsWith(".versions.toml");
 }
 
 /** `npm|name|where` → version, for every direct npm declaration: per lockfile, workspace and key. Gradle's are compared with the plan's reference (`gradle-reference.ts`). */

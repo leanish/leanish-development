@@ -1,7 +1,5 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -12,10 +10,8 @@ import type { Tree } from "../../ci/src/tree.ts";
 import { fakeFetch } from "../../ci/test/fake-fetch.ts";
 import { archive, manifest, serving } from "../../ci/test/tarballs.ts";
 import type { ChangePlan } from "../src/plan.ts";
+import { STRICT_PIN_SOURCES, strictPinInventory } from "../../remediation/test/strict-pin-inventory.ts";
 import { referencePlan, verifyPlan } from "../src/verify.ts";
-import { LOCAL_GRADLE, LOCAL_WRAPPER, localGradleParser } from "../../remediation/test/local-gradle-parser.ts";
-import { PARSER_REGRESSIONS } from "../../remediation/test/parser-regressions.ts";
-import { textStrictCalls } from "../../remediation/test/strict-calls-fake.ts";
 
 const NOW = new Date("2026-10-07T12:00:00Z");
 const OLD = "2026-01-01T00:00:00Z";
@@ -76,7 +72,7 @@ async function verify(headLock: string, options: { affected?: Record<string, str
     head: tree("worktree", { "package-lock.json": headLock }),
     env: environment(options.affected ?? AFFECTED),
     gradle: {},
-    strictCalls: textStrictCalls, changedFiles: options.changed ?? ["package.json", "package-lock.json"],
+    changedFiles: options.changed ?? ["package.json", "package-lock.json"],
   });
 }
 
@@ -123,7 +119,7 @@ async function verifyInduced(options: InducedOptions = {}): Promise<string[]> {
     plan: coupled,
     base: tree("b".repeat(40), { "package-lock.json": postcssLock("8.5.22", "3.3.12", options.direct ?? false) }),
     head: tree("worktree", { "package-lock.json": postcssLock("8.5.23", options.nanoid ?? "3.3.19", options.direct ?? false) }),
-    env: environment(affected, routes), gradle: {}, strictCalls: textStrictCalls, changedFiles: ["package-lock.json"],
+    env: environment(affected, routes), gradle: {}, changedFiles: ["package-lock.json"],
   });
 }
 
@@ -157,7 +153,7 @@ describe("verifying a carrier move", () => {
     "https://registry.npmjs.org/brace/5.0.12": { body: {} },
   };
   const check = (headLock: string) => verifyPlan({
-    reference: undefined, plan, gradle: {}, strictCalls: textStrictCalls, changedFiles: ["package.json", "package-lock.json"],
+    reference: undefined, plan, gradle: {}, changedFiles: ["package.json", "package-lock.json"],
     base: tree("b".repeat(40), { "package-lock.json": carrierLock("1.0.0", "5.0.9") }),
     head: tree("worktree", { "package-lock.json": headLock }),
     env: { ...environment({ "brace@5.0.9": ["GHSA-brace"] }, routes), fetchArchive: serving({ [url("1.0.0")]: archives["1.0.0"].bytes, [url("1.1.0")]: archives["1.1.0"].bytes }) },
@@ -201,7 +197,7 @@ describe("verifying a carrier move", () => {
     };
     const carriedZ = { ...carried, advisories: ["GHSA-z"] };
     const problems = await verifyPlan({
-      reference: undefined, gradle: {}, strictCalls: textStrictCalls, changedFiles: ["package.json", "package-lock.json"],
+      reference: undefined, gradle: {}, changedFiles: ["package.json", "package-lock.json"],
       plan: { ...plan, moves: [{ ...plan.moves[0]!, carries: [carriedZ] }] },
       base: tree("b".repeat(40), { "package-lock.json": lockWithRoot("1.0.0", "5.0.9") }),
       head: tree("worktree", { "package-lock.json": lockWithRoot("1.1.0", "5.0.12") }),
@@ -221,7 +217,7 @@ describe("verifyPlan", () => {
     const run = env.run;
     let snapshots = 0;
     const problems = await verifyPlan({ reference: undefined, plan: PLAN, base: BASE, head: tree("worktree", { "package-lock.json": lock({ lib: "^1.0.1", other: "^1.0.0" }, { lib: "1.0.1", other: "1.0.0" }) }),
-      env: { ...env, run: async (command, args, options) => { if (args.includes("--lockfile")) snapshots++; return run(command, args, options); } }, gradle: {}, strictCalls: textStrictCalls, changedFiles: ["package-lock.json"] });
+      env: { ...env, run: async (command, args, options) => { if (args.includes("--lockfile")) snapshots++; return run(command, args, options); } }, gradle: {}, changedFiles: ["package-lock.json"] });
     expect(problems).toContain("lib@1.0.1 still has GHSA-a, which the plan was to fix");
     expect(snapshots).toBe(1);
   });
@@ -276,9 +272,38 @@ describe("verifyPlan", () => {
       head: tree("worktree", { "package-lock.json": lock({ lib: "^1.0.1", other: "^1.0.0" }, { lib: "1.0.1", other: "1.0.0" }) }),
       env: environment(AFFECTED),
       gradle: {},
-      strictCalls: textStrictCalls, changedFiles: ["package-lock.json", ".github/supply-chain-exceptions.json", ".github/workflows/ci.yml"],
+      changedFiles: ["package-lock.json", ".github/supply-chain-exceptions.json", ".github/workflows/ci.yml"],
     });
     expect(problems).toEqual(["the edit changed .github/supply-chain-exceptions.json, .github/workflows/ci.yml: the gate's own policy, which no plan may change"]);
+  });
+
+  it.each(STRICT_PIN_SOURCES)("protects Gradle's interpreted $kind pins from $path in routine and major plans", async ({ kind, path }) => {
+    for (const major of [false, true]) {
+      const reference = strictPinInventory(kind, "1.0");
+      const plan: ChangePlan = { ...PLAN, moves: PLAN.moves.map((move) => ({ ...move, major })) };
+      const inputs = { plan, base: BASE, head: tree("head", { "package-lock.json": lock({ lib: "^1.0.0", other: "^1.0.0" }, { lib: "1.0.1", other: "1.0.0" }) }),
+        env: environment(AFFECTED), reference, gradle: { base: reference, head: reference }, changedFiles: ["package-lock.json", path] };
+      expect(await verifyPlan(inputs)).toEqual([]);
+      const pinKind = kind === "declaration" ? "strict" : "strict constraint";
+      for (const [before, after, message] of [
+        [reference, strictPinInventory(kind, "2.0"), `also declares g:pinned 2.0 (${pinKind})`],
+        [strictPinInventory(kind, undefined), reference, `also declares g:pinned 1.0 (${pinKind})`],
+        [reference, strictPinInventory(kind, undefined), `no longer declares g:pinned 1.0 (${pinKind})`],
+        [reference, strictPinInventory(kind, "1.0", false), `no longer declares g:pinned 1.0 (${pinKind})`],
+      ] as const) {
+        expect(await verifyPlan({ ...inputs, reference: before, gradle: { base: before, head: after } }))
+          .toContainEqual(expect.stringContaining(message));
+      }
+    }
+  });
+
+  it("leaves an inactive script pin and an unused catalog entry to the agent's instructions and PR diff", async () => {
+    const inactive = (version: string) => ({ "build.gradle.kts": `if (false) { strictly("${version}") }`,
+      "gradle/libs.versions.toml": `[libraries]\nunused = { module = "g:unused", version = { strictly = "${version}" } }` });
+    const inventory: GradleInventory = { schemaVersion: 3, tree: "fixture", builds: [{ build: ".", configurations: [] }] };
+    expect(await verifyPlan({ plan: PLAN, base: tree("base", { "package-lock.json": (await BASE.read("package-lock.json"))!, ...inactive("1.0") }),
+      head: tree("head", { "package-lock.json": lock({ lib: "^1.0.0", other: "^1.0.0" }, { lib: "1.0.1", other: "1.0.0" }), ...inactive("2.0") }),
+      env: environment(AFFECTED), reference: inventory, gradle: { base: inventory, head: inventory }, changedFiles: ["package-lock.json", ...Object.keys(inactive("1.0"))] })).toEqual([]);
   });
 
   it("requires head to resolve and declare what the plan's reference does, a higher resolution included when the reference has it", async () => {
@@ -291,7 +316,7 @@ describe("verifyPlan", () => {
     };
     const verifyWith = (reference: [string, string], head: [string, string]) => verifyPlan({
       plan, base: tree("b".repeat(40), { "settings.gradle": "" }), head: tree("worktree", { "settings.gradle": "" }), env: environment({}),
-      gradle: { base: config("1.0", "1.0") as never, head: config(...head) as never }, reference: markMoved(config(...reference), "g:lib", "1.1", [":runtimeClasspath"]), strictCalls: textStrictCalls, changedFiles: ["build.gradle.kts"],
+      gradle: { base: config("1.0", "1.0") as never, head: config(...head) as never }, reference: markMoved(config(...reference), "g:lib", "1.1", [":runtimeClasspath"]), changedFiles: ["build.gradle.kts"],
     }).then((problems) => problems.filter((problem) => !problem.startsWith("compare:")));
     expect(await verifyWith(["1.1", "1.1"], ["1.1", "1.1"])).toEqual([]);
     expect(await verifyWith(["1.1", "1.1"], ["1.2", "1.2"])).toContain(":runtimeClasspath, unlike the plan's reference, also declares g:lib 1.2 and no longer declares g:lib 1.1");
@@ -312,7 +337,7 @@ describe("verifyPlan", () => {
     };
     const run = (head: string[]) => verifyPlan({
       plan, base: tree("b".repeat(40), { "build.gradle.kts": "" }), head: tree("worktree", { "build.gradle.kts": "" }), env: environment({}),
-      gradle: { base: inventory("2.0", []) as never, head: inventory("2.1", head) as never }, reference: markMoved(inventory("2.1", ["added"]), `${marker.group}:${marker.name}`, "2.1", [":buildscript.classpath"]), strictCalls: textStrictCalls, changedFiles: ["build.gradle.kts"],
+      gradle: { base: inventory("2.0", []) as never, head: inventory("2.1", head) as never }, reference: markMoved(inventory("2.1", ["added"]), `${marker.group}:${marker.name}`, "2.1", [":buildscript.classpath"]), changedFiles: ["build.gradle.kts"],
     }).then((problems) => problems.filter((problem) => !problem.startsWith("compare:")));
     expect(await run(["added"])).toEqual([]);
     expect(await run(["added", "extra"])).toContainEqual(expect.stringContaining("g:extra"));
@@ -330,7 +355,7 @@ describe("verifyPlan", () => {
     const problems = await verifyPlan({
       plan, base: tree("b".repeat(40), { "build.gradle": "" }), head: tree("worktree", { "build.gradle": "" }), env: environment({}),
       gradle: { base: inventory(["1.0.0", "2.0.0"], "1.0.0") as never, head: inventory(["3.0.0", "2.0.0"], "1.0.1") as never }, reference: markMoved(inventory(["1.0.0", "2.0.0"], "1.0.1"), "g:lib", "1.0.1", [":runtimeClasspath"]),
-      strictCalls: textStrictCalls, changedFiles: ["build.gradle"],
+      changedFiles: ["build.gradle"],
     });
     expect(problems).toContain(":runtimeClasspath, unlike the plan's reference, also declares g:other 3.0.0 and no longer declares g:other 1.0.0");
   });
@@ -364,7 +389,7 @@ describe("verifyPlan", () => {
       head: tree("worktree", { ".github/workflows/ci.yml": workflow("c".repeat(40)) }),
       env: environment({}),
       gradle: {},
-      strictCalls: textStrictCalls, changedFiles: [],
+      changedFiles: [],
     });
     expect(problems.filter((problem) => problem.includes("outside the plan"))).toEqual([
       `the action use .github/workflows/ci.yml: actions/cache@${"a".repeat(40)} # v4.2.4 changed outside the plan`,
@@ -391,7 +416,7 @@ describe("verifyPlan", () => {
         head: tree("worktree", { ".github/workflows/ci.yml": workflow(trigger, pin, "v4.2.3") }),
         env: environment({}),
         gradle: {},
-        strictCalls: textStrictCalls, changedFiles: [".github/workflows/ci.yml"],
+        changedFiles: [".github/workflows/ci.yml"],
       });
     expect(await verifyWith("workflow_dispatch")).toEqual([
       "the edit changed .github/workflows/ci.yml beyond its planned action pins: the gate's own policy, which no plan may change",
@@ -407,7 +432,7 @@ describe("verifyPlan", () => {
       head: tree("worktree", { ".github/workflows/ci.yml": withScript("uses: actions/checkout@$(touch${IFS}/tmp/pwn)", pin, "v4.2.3") }),
       env: environment({}),
       gradle: {},
-      strictCalls: textStrictCalls, changedFiles: [".github/workflows/ci.yml"],
+      changedFiles: [".github/workflows/ci.yml"],
     });
     expect(script).toEqual(["the edit changed .github/workflows/ci.yml beyond its planned action pins: the gate's own policy, which no plan may change"]);
 
@@ -419,60 +444,8 @@ describe("verifyPlan", () => {
       head: tree("worktree", { ".github/workflows/ci.yml": reusable("deploy.yml", pin, "v4.2.3") }),
       env: environment({}),
       gradle: {},
-      strictCalls: textStrictCalls, changedFiles: [".github/workflows/ci.yml"],
+      changedFiles: [".github/workflows/ci.yml"],
     });
     expect(subpath).toEqual(["the edit changed .github/workflows/ci.yml beyond its planned action pins: the gate's own policy, which no plan may change"]);
   });
 });
-
-// The production parser boundary through verification, without downloading Gradle or running repository code.
-it.skipIf(LOCAL_GRADLE === undefined)("refuses a constructor-default strict pin through the real parser", async () => {
-  const state = await mkdtemp(join(tmpdir(), "secure-parser-test-"));
-  try {
-    const script = "class Pins { Pins(Closure c = { strictly('1.0') }) { c() } }\n";
-    const before = { ...LOCAL_WRAPPER, "build.gradle": script, "package-lock.json": (await BASE.read("package-lock.json"))! };
-    const after = { ...LOCAL_WRAPPER, "build.gradle": script, "package-lock.json": lock({ lib: "^1.0.0", other: "^1.0.0" }, { lib: "1.0.1", other: "1.0.0" }) };
-    const inventory: GradleInventory = { schemaVersion: 3, tree: "fixture", builds: [{ build: ".", configurations: [] }] };
-    const inputs = { reference: inventory, plan: PLAN, base: tree("base", before), head: tree("head", after), env: environment(AFFECTED),
-      gradle: { base: inventory, head: inventory }, strictCalls: localGradleParser(state), changedFiles: ["package-lock.json", "build.gradle"] };
-    expect(await verifyPlan(inputs)).toEqual([]);
-    expect(await verifyPlan({ ...inputs, head: tree("head", { ...after, "build.gradle": script.replace("1.0", "2.0") }) }))
-      .toEqual(["the edit changed a Gradle strictly(...) pin in build.gradle: strict versions are the owner's, which no plan moves"]);
-  } finally {
-    await rm(state, { recursive: true, force: true });
-  }
-}, 120_000);
-
-it.skipIf(LOCAL_GRADLE === undefined).each([
-  [false, "gradle/pins.groovy", "strictly('1.0')\n"],
-  [true, "gradle/pins.groovy", "strictly('1.0')\n"],
-  [false, "pins.kts", 'val kotlinOnly: String = "value"\nstrictly("1.0")\n'],
-  [true, "pins.kts", 'val kotlinOnly: String = "value"\nstrictly("1.0")\n'],
-] as const)("refuses a changed helper-script pin with major=%s in %s", async (major, path, script) => {
-  const state = await mkdtemp(join(tmpdir(), "secure-helper-parser-test-"));
-  try {
-    const before = { ...LOCAL_WRAPPER, [path]: script, "package-lock.json": (await BASE.read("package-lock.json"))! };
-    const after = { ...before, [path]: script.replace("1.0", "2.0"), "package-lock.json": lock({ lib: "^1.0.0", other: "^1.0.0" }, { lib: "1.0.1", other: "1.0.0" }) };
-    const plan: ChangePlan = { ...PLAN, moves: PLAN.moves.map((move) => ({ ...move, major })) };
-    expect(await verifyPlan({ reference: undefined, plan, base: tree("base", before), head: tree("head", after), env: environment(AFFECTED),
-      gradle: {}, strictCalls: localGradleParser(state), changedFiles: ["package-lock.json", path] }))
-      .toEqual([`the edit changed a Gradle strictly(...) pin in ${path}: strict versions are the owner's, which no plan moves`]);
-  } finally {
-    await rm(state, { recursive: true, force: true });
-  }
-}, 120_000);
-
-it.skipIf(LOCAL_GRADLE === undefined).each(PARSER_REGRESSIONS)("refuses $name through verifyPlan", async ({ path, before, after }) => {
-  const state = await mkdtemp(join(tmpdir(), "secure-rc3-parser-test-"));
-  try {
-    const inventory: GradleInventory = { schemaVersion: 3, tree: "fixture", builds: [{ build: ".", configurations: [] }] };
-    const baseFiles = { ...LOCAL_WRAPPER, [path]: before, "package-lock.json": (await BASE.read("package-lock.json"))! };
-    const headFiles = { ...LOCAL_WRAPPER, [path]: after, "package-lock.json": lock({ lib: "^1.0.0", other: "^1.0.0" }, { lib: "1.0.1", other: "1.0.0" }) };
-    const plan: ChangePlan = { ...PLAN, moves: PLAN.moves.map((move) => ({ ...move, major: true })) };
-    expect(await verifyPlan({ reference: inventory, plan, base: tree("base", baseFiles), head: tree("head", headFiles), env: environment(AFFECTED),
-      gradle: { base: inventory, head: inventory }, strictCalls: localGradleParser(state), changedFiles: ["package-lock.json", path] }))
-      .toEqual([`the edit changed a Gradle strictly(...) pin in ${path}: strict versions are the owner's, which no plan moves`]);
-  } finally {
-    await rm(state, { recursive: true, force: true });
-  }
-}, 120_000);

@@ -4,40 +4,14 @@
 
 ### Changed
 
-- Strict pins in `.gradle` and `.gradle.kts` scripts are read with the Groovy and Kotlin compilers the build's own
-  Gradle distribution ships, parsed without running, instead of a hand-written lexer: no string or comment form can
-  hide a `strictly(...)` any more (Groovy slashy strings, nested Kotlin comments, interpolations), each call is
-  compared with the dependency it pins and in classes too, and an interpolation on a pin's line no longer refuses an
-  unrelated edit. A script that doesn't parse is refused by name, without blaming the others. Verification needs
-  Java and the compiler jars from that distribution.
-- Strict-pin verification installs its compiler jars under protected tool state from Gradle's official HTTPS
-  distribution and published checksum, re-checks them before each run, and keeps its input copies in protected
-  state too, outside the build's writable Gradle cache and temporary directories.
-- The first strict-pin check for a Gradle version needs network access to `services.gradle.org` and its HTTPS
-  redirect hosts, plus `unzip`; later checks reuse the protected install. Distribution downloads are capped at
-  512 MiB while streaming. A wrapper URL without the `gradle-<version>-(bin|all).zip` suffix refuses script edits
-  visibly.
+- Strict pins are protected through what Gradle resolves: verification compares declared strict versions and strict
+  constraints in the planned reference with the edit, including pins supplied by catalogs. The separate script and
+  catalog parser check is removed, with no parser-specific Java run, compiler downloads or `unzip` requirement.
+  By the owner's decision, pins Gradle doesn't resolve (an inactive branch, an unused catalog entry, a build the
+  inventory doesn't run) aren't checked; the agent's instructions and the PR diff cover them.
 
 ### Fixed
 
-- A supplementary Unicode character before a Groovy strict pin no longer shifts the captured source text and hides
-  a changed version: Groovy columns are sliced as code points, while Kotlin's offsets remain UTF-16.
-- Strict-pin fingerprints keep enclosing calls' full receivers, including method and property chains, safe and
-  spread navigation, scope calls and generic target types. Kotlin infix scopes and closures assigned to properties
-  keep their target too, so changing it can't silently move a pin in an inactive branch.
-- Groovy parse errors show their first cause line instead of `startup failed:`. A damaged parser-install manifest
-  reports the remove-and-reinstall hint instead of a raw JSON error.
-
-- Strict pins in helper scripts with other names, such as `gradle/pins.groovy` and `pins.kts`, are checked too, for
-  routine and major plans. Changed `.groovy`, `.kt` and `.kts` helpers mentioning `strictly` on either side are parsed
-  (`.kt`/`.kts` as Kotlin, `.groovy` as Groovy); prose and Java are left to the outside-plan checks. Gradle files are
-  still parsed without a literal mention, while other helpers without the word keep their existing treatment.
-  Scripts loaded under unusual extensions remain a coverage gap. The helper filename gap also affected 0.5.2.
-
-- Strict pins in Groovy method, constructor and closure parameter defaults are read too. Both language parsers check
-  every `strictly` identifier and string occurrence by source position, refusing any change to a file with an
-  unaccounted mention. Quoted Groovy and backticked Kotlin call names are accounted for, and wrapper properties with
-  leading whitespace, continuation lines or CRLF are read like Gradle's.
 - A path the edit adds behind an existing link is matched regardless of case, as a case-insensitive checkout places
   `FOO/x` in a linked `foo/`.
 - An npm `integrity` filled in for a same-version entry that had none no longer fails the gate: it only pins the bytes

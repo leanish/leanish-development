@@ -8,7 +8,7 @@ import { versionScheme } from "../../ci/src/versions.ts";
 
 import { gradleAdvisoryAffects } from "./gradle-advisories.ts";
 import type { DirectMove } from "./units.ts";
-import { wrapperProperties } from "../../remediation/src/wrapper-properties.ts";
+import { wrapperProperties } from "./wrapper-properties.ts";
 
 export const WRAPPER_PROPERTIES = "gradle/wrapper/gradle-wrapper.properties";
 export const WRAPPER_JAR = "gradle/wrapper/gradle-wrapper.jar";

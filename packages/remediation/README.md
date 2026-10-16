@@ -49,16 +49,11 @@ package is the code around them. Setup and operation are in [Adopting the tools]
 - **Git copies** (`git-copies.ts`): a commit's files exported to a temporary directory (to inventory a commit the
   working copy doesn't have checked out), and what the working tree changed since a commit. These are read-only git
   commands on the git metadata the workspace created.
-- **Strict pins** (`strict-calls.ts`, `gradle-parsers.ts`): parses Gradle scripts without executing them. Compiler jars
-  live in `dirs.state/tools/gradle-parsers/<version>`, installed from the official HTTPS distribution after checking its
-  published checksum and re-verified before each run. The first check for a version needs network access to
-  `services.gradle.org` and its HTTPS redirect hosts, plus `unzip`; later checks reuse the install. Downloads are
-  capped at 512 MiB while streaming. The wrapper URL must end in `gradle-<version>-(bin|all).zip`, or script edits fail
-  visibly. Besides Gradle files, changed `.groovy`, `.kt` and `.kts` helpers mentioning `strictly` on either side are
-  parsed (`.kt`/`.kts` as Kotlin); prose and Java aren't. Fingerprints retain full enclosing receivers, navigation
-  operators, generic target types, non-closure arguments, property assignments and Kotlin infix scopes. Groovy
-  source slices use code-point columns, while Kotlin PSI offsets use UTF-16. Input copies live in `dirs.state/tools/strict-calls/run-*` and
-  are removed afterward. Both directories must be outside every sandbox-writable root.
+- **Strict pins** (`gradle-reference.ts`): compares the strict declarations and strict constraints Gradle interprets
+  in each configuration with the planned reference, including pins supplied by catalogs. Changes, additions,
+  removals and loss of strictness fail verification. By the owner's decision, pins Gradle doesn't resolve, such as
+  an inactive branch or unused catalog entry, are left to the agent's instructions and the PR diff. There is no
+  separate source parser, compiler download or parser state directory.
 - **OSV-Scanner** (`osv-scanner.ts`): the version `packages/ci/tools.json` pins, installed into protected tool state by
   CI's installer and checked by sha256 before every use.
 - **`run.sh`**: `run.sh <tool> run|review <owner/repo>`, what launchd or cron calls. It takes one lock per tool and
