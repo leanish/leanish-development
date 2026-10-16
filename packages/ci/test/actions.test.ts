@@ -40,6 +40,30 @@ function github(extra: Record<string, FakeResponse> = {}): ActionsGitHub {
 }
 
 describe("reading workflows", () => {
+  it("reads a key named `uses` outside a job or step only when it's an action, and stays strict in steps", () => {
+    const workflow = [
+      "on: push",
+      "env:",
+      "  uses: production",
+      "  SHADOW: { uses: acme/shadow@v1 }",
+      "jobs:",
+      "  build:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - uses: acme/tool@0123456789abcdef0123456789abcdef01234567 # v1.0.0",
+      "        with:",
+      "          uses: not-an-action",
+      "  call:",
+      "    uses: ./.github/workflows/reusable.yml",
+    ].join("\n");
+    const parsed = parseUses(workflow, "ci.yml");
+    expect(parsed.uses.map((use) => use.name)).toEqual(["acme/shadow", "acme/tool"]);
+    expect(parsed.local).toEqual(["./.github/workflows/reusable.yml"]);
+    expect(() => parseUses("jobs:\n  a:\n    steps:\n      - uses: production\n", "ci.yml")).toThrow("can't read `uses: production`");
+    expect(() => parseUses("jobs:\n  a:\n    uses: 3\n", "ci.yml")).toThrow("isn't a string");
+    expect(() => parseUses("runs:\n  using: composite\n  steps:\n    - uses: [x]\n", "action.yml")).toThrow("isn't a string");
+  });
+
   it("reads every uses: with its comment, follows local actions, and keeps docker uses apart", async () => {
     const workflow = `on: pull_request
 jobs:
