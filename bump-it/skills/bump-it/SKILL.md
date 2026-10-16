@@ -35,6 +35,13 @@ inputSchema:
               distributionSha256: { type: string, minLength: 64, maxLength: 64 }
               jarSha256: { type: string, minLength: 64, maxLength: 64 }
     toolWritten: { type: array, items: { type: string } }
+    reconciliation:
+      type: object
+      additionalProperties: false
+      required: [baseSha, revertedFiles]
+      properties:
+        baseSha: { type: string, minLength: 40, maxLength: 40 }
+        revertedFiles: { type: array, items: { type: string } }
     failingChecks: { type: array, items: { type: string } }
     conflicted: { type: array, items: { type: string } }
 outputSchema:
@@ -82,6 +89,15 @@ then apply only the moves supplied. The tool verifies the edit and publishes; yo
 or touch git metadata. Leave no temporary files: everything in the working tree is committed.
 
 ## Apply
+
+When `reconciliation` is supplied, the tool is redoing an existing PR from the default branch at `baseSha`.
+It has restored `revertedFiles` in both the index and working tree to that base (removing paths absent there), then
+written the new `toolWritten` files. HEAD still contains the earlier PR, or its merge with the base: staged reversions
+of its old pins, code and docs are intentional, including paths outside `moves`. Do not unstage or undo that restore,
+or re-plan from HEAD. Read `from` against `baseSha` and apply the supplied moves to the prepared working tree;
+assess the final diff against `baseSha`, not HEAD. Redo any major adaptation needed for the new target; earlier
+adaptations are not carried forward automatically. This context authorizes only the listed restorations and the
+usual planned edits, not arbitrary staged changes. The tool verifies the complete result against this base.
 
 - `npm-range`: already applied by the tool. Never change npm dependency fields, package versions, ranges or lockfiles.
   Keep every `toolWritten` lockfile byte for byte. Keep manifests' dependency fields unchanged (dependencies,

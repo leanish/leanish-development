@@ -152,8 +152,8 @@ async function runUnit(execution: Execution, computed: Computed, unit: Unit, own
     return { topic: unit.topic, outcome: "already-open", pullRequest: same.url, notes: computed.plan.notes };
   }
   const reusable = owned[0];
-  const prepared = await prepare(execution, unit, own, reusable, computed.base.id);
-  const content = await edit(execution, computed, "apply");
+  const { prepared, reconciliation } = await prepare(execution, unit, own, reusable, computed.base.id);
+  const content = await edit(execution, computed, "apply", reconciliation === undefined ? {} : { reconciliation });
   await verify(execution, computed);
   if (reusable !== undefined) {
     const { pr } = await publishUpdate(execution.publication, prepared, reusable.number, content, 0);
@@ -228,8 +228,8 @@ async function review(context: ToolRunContext, deps: BumpItDeps): Promise<Readon
       const reconcile = previous.kind === "routine" ? planDigest(previous) !== planDigest(computed.plan) : !sameTargets(previous, computed.plan);
       let content = { title: pr.title, body: withPlanSection(pr.body, computed.plan), commitMessage: `merging ${context.base}` };
       if (reconcile) {
-        await deps.revert(context.workingCopy, base.id);
-        content = await edit(execution, computed, "apply");
+        const revertedFiles = await deps.revert(context.workingCopy, base.id);
+        content = await edit(execution, computed, "apply", { reconciliation: { baseSha: base.id, revertedFiles } });
       } else if (merge.kind === "conflicted") {
         const code: string[] = [];
         const pins = new Set(computed.plan.moves.filter((move) => move.mechanism === "action-pin").flatMap((move) => move.locations));

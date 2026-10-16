@@ -98,6 +98,8 @@ core/tool-runtime/run.sh bump-it review leanish/widget   # every few hours
   `compare`, which must also pass. A report of local problems means `compare` has not run.
 - Open PRs count only when the head matches their body state or the exact tool journal entry. Same plan: leave it to
   review. Changed plan: merge base, revert all old PR edits to base, apply the new plan, verify and push a normal commit.
+  The agent receives that base's SHA and the reverted paths: HEAD retains the PR history, while staged reversions
+  intentionally remove its earlier edits. Major adaptations are redone for the new target and verified against base.
   A human push is left alone; a separate PR is opened. Other tools' overlapping PRs never suppress work.
 - `maxNewMajorsPerRun` (default 3) caps only new major PRs. Updates are uncapped. Deferred packages are saved under
   `<state>/deferred/` and get priority next run. Reports include every failed/deferred unit and unresolved copy.

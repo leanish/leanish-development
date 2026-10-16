@@ -51,6 +51,18 @@ interface SkillAnswer {
   readonly publication?: PullRequestContent | null;
 }
 
+/** The tool deliberately undid the old PR's edits before applying a fresh plan from this base. */
+interface Reconciliation {
+  readonly baseSha: string;
+  readonly revertedFiles: ReadonlyArray<string>;
+}
+
+interface EditContext {
+  readonly failingChecks?: string[];
+  readonly conflicted?: ReadonlyArray<string>;
+  readonly reconciliation?: Reconciliation;
+}
+
 export async function compute(execution: Execution, unit: Unit, base: Tree, gradle: GradleInputs["head"], peers?: NpmPeerPlanner, wrapper: WrapperCandidates = {}): Promise<Computed> {
   const coupled = await coupledUnit(unit, peers === undefined ? new Map() : await lockfilesOf(base), peers);
   const bounded = await constrainedUnit(coupled.unit, base);
@@ -147,7 +159,7 @@ export async function verify(execution: Execution, computed: Computed): Promise<
   }
 }
 
-export async function edit(execution: Execution, computed: Computed, mode: "apply" | "adapt" | "resolve", extra: { failingChecks?: string[]; conflicted?: ReadonlyArray<string> } = {}): Promise<PullRequestContent> {
+export async function edit(execution: Execution, computed: Computed, mode: "apply" | "adapt" | "resolve", extra: EditContext = {}): Promise<PullRequestContent> {
   await writeNpm(execution, computed.files);
   await writeWrapper(execution, computed);
   const { plan } = computed;
@@ -166,7 +178,7 @@ export async function edit(execution: Execution, computed: Computed, mode: "appl
   return { ...answer.publication, body: `${answer.publication.body}\n\n${planSection(plan)}` };
 }
 
-function skillInput(context: ToolRunContext, plan: BumpPlan, mode: "apply" | "adapt" | "resolve", toolWritten: string[], extra: { failingChecks?: string[]; conflicted?: ReadonlyArray<string> }) {
+function skillInput(context: ToolRunContext, plan: BumpPlan, mode: "apply" | "adapt" | "resolve", toolWritten: string[], extra: EditContext) {
   return {
     repo: context.repo.repo,
     today: context.now.toISOString().slice(0, 10),
@@ -183,7 +195,7 @@ export function mechanicalContent(plan: BumpPlan): PullRequestContent {
   return { title, body: `Updates selected by the supply-chain version rule and verified before publication.\n\n${planSection(plan)}`, commitMessage: title };
 }
 
-export async function prepare(execution: Execution, unit: Unit, own: ReadonlyArray<GitHubPullRequest>, reusable: GitHubPullRequest | undefined, baseSha: string): Promise<PreparedBranch> {
+export async function prepare(execution: Execution, unit: Unit, own: ReadonlyArray<GitHubPullRequest>, reusable: GitHubPullRequest | undefined, baseSha: string): Promise<{ readonly prepared: PreparedBranch; readonly reconciliation?: Reconciliation }> {
   const { context, deps } = execution;
   if (reusable !== undefined) {
     const merged = await context.workspace.prepareBranch(context.workingCopy, { branch: reusable.headRef, start: "remote-merging" });
@@ -194,8 +206,8 @@ export async function prepare(execution: Execution, unit: Unit, own: ReadonlyArr
       throw new Error(`${reusable.url}: someone pushed while preparing it`);
     }
     assertBase(merged.prepared, baseSha);
-    await deps.revert(context.workingCopy, baseSha);
-    return merged.prepared;
+    const revertedFiles = await deps.revert(context.workingCopy, baseSha);
+    return { prepared: merged.prepared, reconciliation: { baseSha, revertedFiles } };
   }
   const taken = new Set(own.map((pr) => pr.headRef));
   const branch = freeBranch(RULES, context.now, unit.topic, taken);
@@ -205,7 +217,7 @@ export async function prepare(execution: Execution, unit: Unit, own: ReadonlyArr
     throw new Error(`${branch} couldn't be prepared`);
   }
   assertBase(fresh.prepared, baseSha);
-  return fresh.prepared;
+  return { prepared: fresh.prepared };
 }
 
 export function assertBase(prepared: PreparedBranch, baseSha: string): void {

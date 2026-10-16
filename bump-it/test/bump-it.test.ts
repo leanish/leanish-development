@@ -1,9 +1,17 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it, vi } from "vitest";
 import { ConsoleLogger } from "@leanish/agent-runtime/logger/console-logger";
 import type { GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
 import type { WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
 import { InMemoryWorkspace } from "@leanish/agent-runtime/working-copy/in-memory-workspace";
+import { LocalGitWorkspace } from "@leanish/agent-runtime/working-copy/local-git-workspace";
+import { SkillLoader } from "@leanish/agent-runtime/skill/skill-loader";
+import { SchemaValidator } from "@leanish/agent-runtime/skill/validator";
+import { runCompare } from "@leanish/gate/gate";
 import type { BumpCandidate } from "@leanish/gate/candidates";
 import { prepareNpmPeers } from "@leanish/gate/npm-peers";
 import { versionKey } from "@leanish/gate/package-version";
@@ -20,6 +28,11 @@ import { type BumpPlan, planFor, planOf, planSection } from "../src/plan.ts";
 import { majorUnits, routineUnit, type Unit } from "../src/units.ts";
 import { WRAPPER_FILES, WRAPPER_JAR, WRAPPER_PROPERTIES, WRAPPER_PACKAGE, type WrapperCandidates, type WrapperTarget } from "../src/gradle-wrapper.ts";
 import { candidate } from "./fixtures.ts";
+import { defaultDeps } from "../src/deps.ts";
+import { verifyPlan } from "../src/verify.ts";
+
+// Only the external gate scan is stubbed; retarget tests retain all local plan verification.
+vi.mock("@leanish/gate/gate", async (original) => ({ ...await original<object>(), runCompare: vi.fn() }));
 
 /** The verification snapshot the fakes hand back, and its tree (publication must stage it). */
 const SNAPSHOT = "5".repeat(40);
@@ -117,6 +130,100 @@ const wrapperCandidates = (): WrapperCandidates => ({
 });
 
 describe("bump-it run", () => {
+  it.each([
+    { command: "run", problem: undefined },
+    { command: "review", problem: undefined },
+    { command: "run", problem: "pin" },
+    { command: "run", problem: "compare" },
+  ] as const)("retargets an open action major with staged-base context: $command, problem=$problem", async ({ command, problem }) => {
+    vi.mocked(runCompare).mockReset();
+    const root = await mkdtemp(fileURLToPath(new URL("../../.retarget-test-", import.meta.url)));
+    try {
+      const source = join(root, "source");
+      await mkdir(join(source, ".github/workflows"), { recursive: true });
+      const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.com", ...args], { cwd, encoding: "utf8" }).trim();
+      git(source, "init", "-q", "-b", "main", "--separate-git-dir", join(root, "source-git"));
+      git(source, "config", "maintenance.auto", "false");
+      git(source, "config", "gc.auto", "0");
+      const path = ".github/workflows/supply-chain.yml";
+      const name = "leanish/leanish-development";
+      const workflow = (sha: string, tag: string) => `on: push\njobs:\n  gate:\n    uses: ${name}/.github/workflows/supply-chain.yml@${sha} # ${tag}\n`;
+      const baseFiles = { [path]: workflow("a".repeat(40), "v0.4.0"), "EXPECTED.md": "base expectations\n", "README.md": "base docs\n" };
+      for (const [path, text] of Object.entries(baseFiles)) await writeFile(join(source, path), text);
+      git(source, "add", "-A");
+      git(source, "commit", "-q", "-m", "base");
+      const oldBase = git(source, "rev-parse", "HEAD");
+      const bump = candidate({ ecosystem: "GitHub Actions", name, from: "v0.4.0", minor: undefined, major: { version: "v0.6.0", line: "0.6" }, declarations: [], locations: [path] });
+      const branch = branchFor(RULES, NOW, major(bump).topic);
+      git(source, "checkout", "-q", "-b", branch);
+      await writeFile(join(source, path), workflow("b".repeat(40), "v0.5.2"));
+      for (const path of ["EXPECTED.md", "README.md"]) await writeFile(join(source, path), "old v0.5.2 adaptation\n");
+      git(source, "add", "-A");
+      git(source, "commit", "-q", "-m", "old major");
+      const oldHead = git(source, "rev-parse", "HEAD");
+      git(source, "checkout", "-q", "main");
+      if (command === "review") {
+        await writeFile(join(source, "base-moved.txt"), "new base\n");
+        git(source, "add", "-A");
+        git(source, "commit", "-q", "-m", "base moved");
+      }
+      const baseSha = git(source, "rev-parse", "HEAD");
+      const remote = join(root, "remote");
+      git(source, "clone", "-q", "--bare", source, remote);
+      const local = new LocalGitWorkspace({ workspaceRoot: join(root, "workspace"), commitIdentity: { name: "test", email: "test@example.com" } });
+      const { workingCopies: [workingCopy] } = await local.sync([{ id: REPO, source: { url: remote, branch: "main" } }]);
+      expect(workingCopy).toBeDefined();
+      const wc = workingCopy!;
+      const pr = await prFor(major({ ...bump, major: { version: "v0.5.2", line: "0.5" } }), {
+        headRef: branch, headSha: oldHead, body: withMarker(RULES, planSection(await planFor(major({ ...bump, major: { version: "v0.5.2", line: "0.5" } }), { files: new Map(), changes: [], notes: [] }, async () => "b".repeat(40))), { head: oldHead, base: oldBase, adaptations: 0 }),
+      });
+      const h = harness({ prs: [pr], bumps: [bump] });
+      h.workspace.prepareBranch = local.prepareBranch.bind(local);
+      const actual = defaultDeps();
+      const verified: Parameters<BumpItDeps["verify"]>[0][] = [];
+      const skill = await new SkillLoader({ skillsDirs: [fileURLToPath(new URL("../skills", import.meta.url))] }).loadEntrypoint("bump-it");
+      const agent: ToolRunContext["agent"] = async (call) => {
+        const input = call.input as Record<string, unknown>;
+        // This is the reported failure: HEAD remains the old PR, but index AND worktree are the base.
+        expect(git(wc.path, "show", `HEAD:${path}`)).toContain("v0.5.2");
+        expect(git(wc.path, "diff", "--cached", "--name-only").split("\n")).toEqual([path, "EXPECTED.md", "README.md"]);
+        expect(git(wc.path, "diff", "--name-only", baseSha)).toBe("");
+        expect(git(wc.path, "diff", "--name-only")).toBe("");
+        for (const [path, text] of Object.entries(baseFiles)) expect(await readFile(join(wc.path, path), "utf8")).toBe(text);
+        expect(input.moves).toMatchObject([{ from: "v0.4.0", to: "v0.6.0", commitSha: "1".repeat(40) }]);
+        expect(input.reconciliation).toEqual({ baseSha, revertedFiles: [path, "EXPECTED.md", "README.md"] });
+        expect(new SchemaValidator().validate(skill.inputSchema!, input)).toEqual([]);
+        await writeFile(join(wc.path, path), workflow(problem === "pin" ? "2".repeat(40) : "1".repeat(40), "v0.6.0"));
+        await writeFile(join(wc.path, "EXPECTED.md"), "fresh v0.6.0 adaptation\n");
+        return h.context.agent(call);
+      };
+      vi.mocked(runCompare).mockResolvedValue({ headFindings: [], failures: problem === "compare" ? ["new advisory"] : [], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, group: (id: string) => id, cooldown: { evaluated: true, releaseAgeDays: 7, held: [] } });
+      const deps = { ...h.deps, trees: actual.trees, revert: actual.revert, snapshot: actual.snapshot, candidateTree: actual.candidateTree, changedBetween: actual.changedBetween, linkProblems: actual.linkProblems,
+        verify: async (input: Parameters<BumpItDeps["verify"]>[0]) => { verified.push(input); return verifyPlan(input); },
+      };
+      const result = await bumpIt(deps)[command]({ ...h.context, workingCopy: wc, agent });
+      if (problem !== undefined) {
+        expect(result, JSON.stringify(result)).toMatchObject({ units: [{ outcome: "nothing-to-move" }, { outcome: "failed", detail: expect.stringContaining(problem === "pin" ? "verification failed:" : "compare: new advisory") }] });
+        expect(verified).toHaveLength(1);
+        expect(h.workspace.publications).toEqual([]);
+        expect(h.github.prs.get(pr.number)!.headSha).toBe(oldHead);
+        expect(runCompare).toHaveBeenCalledTimes(problem === "pin" ? 0 : 1);
+        return;
+      }
+      expect(result, JSON.stringify(result)).toMatchObject(command === "run" ? { units: [{ outcome: "nothing-to-move" }, { outcome: "updated" }] } : { reviewed: [{ outcome: "rebased" }] });
+      expect(verified).toHaveLength(1);
+      expect(verified[0]!.base.id).toBe(baseSha);
+      expect(await verified[0]!.head.read("README.md")).toBe(baseFiles["README.md"]);
+      expect(await verified[0]!.head.read("EXPECTED.md")).toBe("fresh v0.6.0 adaptation\n");
+      expect(runCompare).toHaveBeenCalledOnce();
+      expect(h.workspace.publications).toHaveLength(1);
+      expect(h.workspace.publications[0]!.args.expectedTree).toBe(await actual.candidateTree(wc));
+      expect(h.workspace.publications[0]!.prepared.remoteHeadSha).toBe(oldHead);
+      expect(planOf(h.github.prs.get(pr.number)!.body)?.moves).toMatchObject([{ from: "v0.4.0", to: "v0.6.0" }]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it("adds wrapper moves to the routine and its own major, sharing the planner and reading the jar before verification", async () => {
     const h = harness({ bumps: [] });
     const planner = { candidates: async () => wrapperCandidates(), verify: async () => [] };
@@ -257,6 +364,7 @@ describe("bump-it run", () => {
     await bumpIt(h.deps).run(h.context);
     expect(h.agentCalls).toMatchObject([{ input: { kind: "routine", moves: [{ mechanism: "gradle-declared" }] } }]);
     expect(h.agentCalls[0]).not.toHaveProperty("effort");
+    expect(h.agentCalls[0]!.input).not.toHaveProperty("reconciliation");
   });
   it("can publish a routine transitive-only refresh", async () => {
     const h = harness({ bumps: [], npm: async () => ({ files: new Map([["package-lock.json", "refreshed"]]), changes: [], notes: [] }) });
