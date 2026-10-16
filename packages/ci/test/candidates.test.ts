@@ -4,9 +4,12 @@ import { dirname, join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { bumpCandidates, type SecurityFix, securityCandidates, untrustedActionReleases } from "../src/candidates.ts";
+import { bumpCandidates, IdentityCheck, type SecurityFix, securityCandidates, untrustedActionReleases } from "../src/candidates.ts";
 import { parseConfig } from "../src/config.ts";
+import { NO_EXCEPTIONS } from "../src/exceptions.ts";
 import type { GateEnvironment } from "../src/gate.ts";
+import { NPM_REGISTRY } from "../src/npm-lock.ts";
+import type { NpmRegistry } from "../src/npm-registry.ts";
 import { runProcess, type RunProcess } from "../src/process.ts";
 import { workingTree } from "../src/tree.ts";
 import { fakeFetch } from "./fake-fetch.ts";
@@ -582,5 +585,46 @@ describe("action compatible lines", () => {
     expect(found.bumps).toEqual([expect.objectContaining({
       name: "acme/tool", from: "v1.2.0", minor: expect.objectContaining({ version: "v1.3.0" }), major: expect.objectContaining({ version: "v2.2.0" }),
     })]);
+  });
+
+  it("selects only full release tags, which a pin's comment can name, over a newer partial one", async () => {
+    const sha = "1".repeat(40);
+    const head = await tree({}, { ".github/workflows/ci.yml": `jobs:\n  test:\n    steps:\n      - uses: acme/tool@${sha} # v1.0.0\n` });
+    const env = environment({}, {});
+    const found = await bumpCandidates(head, { ...env, fetch: fakeFetch({
+      "https://api.github.com/repos/acme/tool/git/ref/tags/v1.0.0": { body: { object: { type: "commit", sha } } },
+      "https://api.github.com/repos/acme/tool/releases?per_page=100&page=1": {
+        body: ["v1.0.0", "v1.0.1", "v1.1"].map((tag_name) => ({ tag_name, published_at: OLD, draft: false, immutable: true })),
+      },
+    }) });
+    expect(found.bumps).toEqual([expect.objectContaining({ name: "acme/tool", from: "v1.0.0", minor: expect.objectContaining({ version: "v1.0.1" }) })]);
+  });
+});
+
+describe("IdentityCheck", () => {
+  it("checks a replacement against the first integrity among the registry copies the lockfiles ship of the replaced version", async () => {
+    const seen: Array<ReadonlyMap<string, string | undefined>> = [];
+    const registry = {
+      packument: async () => ({ versions: { "1.1.0": { dist: { tarball: `${NPM_REGISTRY}/a/-/a-1.1.0.tgz`, integrity: "sha512-new" } } } }),
+      identityProblems: async (_pkg: unknown, shipped: ReadonlyMap<string, string | undefined>) => {
+        seen.push(shipped);
+        return [];
+      },
+    } as unknown as NpmRegistry;
+    const copy = (path: string, version: string, integrity: string | undefined, resolved = `${NPM_REGISTRY}/a/-/a-${version}.tgz`, bundled = false) =>
+      ({ name: "a", version, path, resolved, bundled, integrity });
+    const lockfiles = [
+      { path: "package-lock.json", bundleProblems: [], packages: [copy("node_modules/a", "1.0.0", undefined), copy("node_modules/x/node_modules/a", "1.0.0", "sha512-first")] },
+      { path: "sub/package-lock.json", bundleProblems: [], packages: [
+        copy("node_modules/a", "1.0.0", "sha512-later"),
+        copy("node_modules/b/node_modules/a", "0.9.0", "sha512-bundled", undefined, true),
+        copy("node_modules/c/node_modules/a", "0.8.0", "sha512-git", "git+https://github.com/o/a.git"),
+      ] },
+    ];
+    const check = new IdentityCheck(registry, lockfiles, NO_EXCEPTIONS, "2026-10-16");
+    for (const from of ["1.0.0", "0.9.0", "0.8.0"]) await check.problems({ ecosystem: "npm", name: "a", version: from }, "1.1.0");
+    expect(seen.map((shipped) => [...shipped])).toEqual([[["1.0.0", "sha512-first"]], [], []]);
+    expect(await check.problems({ ecosystem: "Maven", name: "a", version: "1.0.0" }, "1.1.0")).toEqual([]);
+    expect(seen).toHaveLength(3);
   });
 });

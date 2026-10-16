@@ -192,17 +192,13 @@ it. A strictly pinned parent is never moved to carry a fix; the vulnerable
 dependency gets a floor instead. Gradle's own strict constraints on its embedded
 Kotlin (buildscript and settings classpaths) don't block fixes elsewhere.
 For `*.versions.toml` catalogs, verification uses `smol-toml` to compare every
-parsed value under a key named `strictly`, paired with its full key path, in order.
-Changed values or paths, added or removed pins, and catalogs that don't parse
-fail verification. Equivalent formatting and unrelated catalog edits can pass.
-
-The backstop for `.gradle` and `.gradle.kts` is a hand-written lexer with a known
-deficiency: string or comment forms it doesn't understand, including Groovy slashy
-(`/…/`) and dollar-slashy (`$/…/$`) strings, can hide a changed `strictly(...)`
-in a branch the Gradle inventory doesn't see. Active pins are still caught by
-the inventory and reference checks. Recognized strict statements remain protected,
-and nested block comments fail visibly. Version 0.6.0 plans to replace this lexer
-with the official parsers Gradle ships: its Groovy and Kotlin compilers.
+entry a strict version belongs to, whole, in order. For `.gradle` and
+`.gradle.kts`, it parses the scripts with the Groovy and Kotlin compilers the
+build's own Gradle distribution ships, without running them, and compares each
+`strictly(...)` call with the dependency it pins, in any branch or class.
+Unrelated edits, comments and formatting outside the calls pass; a script that
+doesn't parse fails. A version that reaches a pin through a variable or a helper
+is checked only when the pin is active, through the inventory.
 
 ### What bump-it updates
 
@@ -248,16 +244,16 @@ When secure-it targets different version lines of the same action in one workflo
 verification rejects the conflicting planned pins visibly. A person must update those uses.
 An action pinned through a scalar YAML anchor, such as `&action owner/repo@sha # vX`
 with `uses: *action`, also cannot be updated automatically: verification refuses
-the edit visibly, and a person must update it. bump-it can pick a release whose tag
-isn't a full `vX.Y.Z` (`v1.1`); verification requires a full tag in the pin's
-comment, so that update fails visibly and a person makes it.
+the edit visibly, and a person must update it. Only full release tags (`vX.Y.Z`) are
+versions an action can move to, since a pin's comment can name no other: a
+partial one (`v1.1`) is left for a person.
 
 The gate reads a workflow, local reusable workflow or action metadata file (`action.yml`) that is a symbolic link as
 the path it points to, so the actions behind it aren't read; this is a documented gap, see
 [coverage gaps](coverage-gaps.md). The tools refuse an edit that adds or changes a symbolic link or a submodule, or
 changes anything an existing link leads to, since a commit records only where a link points. A repository with a
-link leading out of it, or to a path it has only by another case or Unicode form, can't be updated by the tools,
-since a checkout could take that link anywhere. Other links the edit leaves alone are the repository's own and are
+link leading out of it, or through a path it has only by another case or Unicode form, can't be updated by the
+tools, since a checkout could take that link anywhere; an edit that removes such a link passes. Other links the edit leaves alone are the repository's own and are
 tolerated.
 
 ## Pull requests over time

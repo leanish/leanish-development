@@ -5,6 +5,7 @@ import type { Tree } from "../../ci/src/tree.ts";
 import { preservedFloors } from "../src/floor-checks.ts";
 import type { ChangePlan } from "../src/plan.ts";
 import { verifyPlan } from "../src/verify.ts";
+import { textStrictCalls } from "../../remediation/test/strict-calls-fake.ts";
 
 const ID = "CVE-2026-12345";
 const floor = (overrides: Record<string, unknown> = {}) => ({ ecosystem: "Maven", package: "g:lib", version: "1.0", declaredIn: "build.gradle.kts",
@@ -29,7 +30,7 @@ describe("secure-it floor preservation", () => {
     expect(await preservedFloors(plan, base, tree([]), {})).toEqual([expect.stringContaining("was removed")]);
     expect(await preservedFloors(plan, base, tree([floor({ selector: [":testRuntimeClasspath"] })]), {})).toContainEqual(expect.stringContaining("selector changed"));
     const unreachable = async () => { throw new Error("compare must not run"); };
-    expect(await verifyPlan({ reference: undefined, plan, base, head: tree([]), gradle: {}, changedFiles: [".github/dependency-floors.json"],
+    expect(await verifyPlan({ reference: undefined, plan, base, head: tree([]), gradle: {}, strictCalls: textStrictCalls, changedFiles: [".github/dependency-floors.json"],
       env: { run: unreachable, fetch: unreachable, now: () => new Date(), osvScanner: "osv-scanner", githubToken: undefined } })).toEqual([expect.stringContaining("was removed")]);
   });
 

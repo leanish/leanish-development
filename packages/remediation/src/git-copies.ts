@@ -191,7 +191,9 @@ export async function changedBetween(workingCopy: WorkingCopy, base: string, sha
 /**
  * What the edit (`base` → `sha`) did with links, as verification problems. Verification reads a commit, where a link is
  * only the path it points to, so it can't check what's behind one: the edit may not add or change a symbolic link or a
- * submodule (modes 120000 and 160000), nor change anything an existing link, in `base` or `sha`, leads to. Links the
+ * submodule (modes 120000 and 160000), nor change anything an existing link, in `base` or `sha`, leads to. A link in
+ * `sha` that leaves the repository, or reaches a path by another case or Unicode form only, fails as well, since a
+ * checkout could take it anywhere; one only `base` has, which the edit removed, no longer leads anywhere. Links the
  * edit leaves alone, with nothing changed behind them, are the repository's own.
  */
 export async function linkProblems(workingCopy: WorkingCopy, base: string, sha: string, run: RunProcess = runProcess): Promise<string[]> {
@@ -203,31 +205,34 @@ export async function linkProblems(workingCopy: WorkingCopy, base: string, sha: 
   const problems: string[] = [];
   for (let i = 0; i + 1 < fields.length; i += 2) {
     const path = fields[i + 1]!;
-    const mode = fields[i]!.split(" ")[1];
+    const [oldMode, newMode] = fields[i]!.slice(1).split(" ");
     changed.push(path);
-    if (mode === "120000") problems.push(`the edit made ${path} a symbolic link: verification can't check what's behind one`);
-    if (mode === "160000") problems.push(`the edit added or moved the submodule ${path}: verification can't read a submodule's files`);
+    if (newMode === "120000") problems.push(`the edit made ${path} a symbolic link: verification can't check what's behind one`);
+    if (newMode === "160000") {
+      problems.push(oldMode === "160000"
+        ? `the edit moved the submodule ${path} to another commit: verification can't read a submodule's files`
+        : `the edit added the submodule ${path}: verification can't read a submodule's files`);
+    }
   }
   for (const revision of [base, sha]) {
     const tree = await treeOf(workingCopy, revision, run);
     for (const link of [...tree.links.keys()].sort()) {
-      const target = resolved(link, tree.links);
+      const target = resolved(link, tree);
       if (target === undefined) continue;
-      if (target === OUTSIDE) {
-        problems.push(`the link ${link} leads outside the repository: verification can't tell whether it comes back to what the edit changed`);
+      if (typeof target !== "string") {
+        if (revision !== sha) continue;
+        problems.push(target === OUTSIDE
+          ? `the link ${link} leads outside the repository: verification can't tell whether it comes back to what the edit changed`
+          : `the link ${link} leads through ${target.variant}, which this commit has only by another case or form: verification can't tell where a checkout takes it`);
         continue;
       }
-      if (target !== "" && !tree.entries.has(target)) {
-        // Missing under every name, it leads nowhere (an edit creating it is caught in the edit's own tree). Missing
-        // only by its exact name, a case-insensitive checkout (macOS's) may take it to a variant: no folding agrees
-        // with every filesystem, so such a link is refused rather than matched.
-        if (tree.folded.has(loosely(target))) {
-          problems.push(`the link ${link} leads to ${target}, which this commit has only by another case or form: verification can't tell where a checkout takes it`);
-        }
-        continue;
-      }
+      // A target missing under every name leads nowhere; an edit creating it is caught in the edit's own tree.
+      if (target !== "" && !tree.entries.has(target)) continue;
+      // Changed paths are matched loosely too: on a case-insensitive checkout an added `FOO/x` lands in `foo/`.
+      const behind = loosely(target);
       for (const path of changed) {
-        if (target === "" || path === target || path.startsWith(`${target}/`)) {
+        const changedPath = loosely(path);
+        if (target === "" || changedPath === behind || changedPath.startsWith(`${behind}/`)) {
           problems.push(`the edit changed ${path}, behind the link ${link}: verification can't check what's behind one`);
         }
       }
@@ -236,22 +241,29 @@ export async function linkProblems(workingCopy: WorkingCopy, base: string, sha: 
   return [...new Set(problems)].sort();
 }
 
-/** `revision`'s symbolic links, with the path each points to, and every path it has (files, links and folders). */
-async function treeOf(workingCopy: WorkingCopy, revision: string, run: RunProcess): Promise<{ links: Map<string, string>; entries: Set<string>; folded: Set<string> }> {
+interface LinkTree {
+  /** Each symbolic link, with the path it points to. */
+  readonly links: ReadonlyMap<string, string>;
+  /** Every path: files, links and folders. */
+  readonly entries: ReadonlySet<string>;
+  /** `entries`, folded by `loosely`. */
+  readonly folded: ReadonlySet<string>;
+}
+
+/** `revision`'s links and paths; the links' targets read in one `git cat-file --batch`, however many there are. */
+async function treeOf(workingCopy: WorkingCopy, revision: string, run: RunProcess): Promise<LinkTree> {
   const listed = await git(workingCopy, ["ls-tree", "-r", "-t", "-z", revision], run);
   if (listed.code !== 0) throw new Error(`git ls-tree ${revision} failed: ${listed.stderr.trim()}`);
-  const links = new Map<string, string>();
+  const objects = new Map<string, string>();
   const entries = new Set<string>();
   for (const entry of listed.stdout.split("\0")) {
     if (entry === "") continue;
     const path = entry.slice(entry.indexOf("\t") + 1);
     entries.add(path);
-    if (!entry.startsWith("120000 ")) continue;
-    const object = entry.split(" ")[2]!.split("\t")[0]!;
-    const target = await git(workingCopy, ["cat-file", "blob", object], run);
-    if (target.code !== 0) throw new Error(`git cat-file ${object} failed: ${target.stderr.trim()}`);
-    links.set(path, target.stdout);
+    if (entry.startsWith("120000 ")) objects.set(path, entry.split(" ")[2]!.split("\t")[0]!);
   }
+  const targets = objects.size === 0 ? new Map<string, Buffer>() : await catFileBatch(workingCopy, [...objects.values()]);
+  const links = new Map([...objects].map(([path, object]) => [path, targets.get(object)!.toString("utf8")]));
   return { links, entries, folded: new Set([...entries].map(loosely)) };
 }
 
@@ -266,9 +278,11 @@ const OUTSIDE = Symbol("outside");
 /**
  * The repository path `link` leads to, walked component by component as a checkout would: links in it followed, a `..`
  * after one going up from where it leads. `""` is the repository's root; `OUTSIDE` when it leaves the repository;
- * undefined for a loop, or more links than a checkout follows, which lead nowhere it can read.
+ * `{ variant }` at the first path the tree has only by another case or Unicode form, where a case-insensitive checkout
+ * could go on through a link the walk doesn't see; undefined for a loop, or more links than a checkout follows, which
+ * lead nowhere it can read.
  */
-function resolved(link: string, links: ReadonlyMap<string, string>): string | typeof OUTSIDE | undefined {
+function resolved(link: string, tree: LinkTree): string | typeof OUTSIDE | { readonly variant: string } | undefined {
   const at: string[] = [];
   const pending = link.split("/");
   for (let hops = 0; pending.length > 0;) {
@@ -280,7 +294,9 @@ function resolved(link: string, links: ReadonlyMap<string, string>): string | ty
       continue;
     }
     at.push(part);
-    const target = links.get(at.join("/"));
+    const here = at.join("/");
+    if (!tree.entries.has(here) && tree.folded.has(loosely(here))) return { variant: here };
+    const target = tree.links.get(here);
     if (target === undefined) continue;
     if (++hops > 40) return undefined;
     if (target.startsWith("/")) return OUTSIDE;

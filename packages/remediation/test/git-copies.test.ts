@@ -178,7 +178,7 @@ describe("the verification snapshot", () => {
     await writeFile(join(sub, "action.yml"), "runs: {}\n");
     spawnSync("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "sub"], { cwd: sub });
     expect(await linkProblems(copy, base, await snapshotCandidate(copy))).toEqual([
-      "the edit added or moved the submodule vendor: verification can't read a submodule's files",
+      "the edit added the submodule vendor: verification can't read a submodule's files",
       "the edit made gradle a symbolic link: verification can't check what's behind one",
       "the edit made package-lock.json a symbolic link: verification can't check what's behind one",
       // The new links lead to a file the edit also wrote.
@@ -202,8 +202,8 @@ describe("the verification snapshot", () => {
     const cased = run(["rev-parse", "HEAD"]);
     await writeFile(join(copy.path, "tools", "recipe.txt"), "runs: { using: node }\n");
     expect(await linkProblems(copy, cased, await snapshotCandidate(copy))).toEqual([
-      "the link local/action.yml leads to TOOLS/recipe.txt, which this commit has only by another case or form: verification can't tell where a checkout takes it",
-      "the link sigma.yml leads to recipes/AΣ/ci.yml, which this commit has only by another case or form: verification can't tell where a checkout takes it",
+      "the link local/action.yml leads through TOOLS, which this commit has only by another case or form: verification can't tell where a checkout takes it",
+      "the link sigma.yml leads through recipes/AΣ, which this commit has only by another case or form: verification can't tell where a checkout takes it",
     ]);
     run(["checkout", "-q", "--", "."]);
     await symlink("../wc/tools/recipe.txt", join(copy.path, "reentering"));
@@ -214,9 +214,69 @@ describe("the verification snapshot", () => {
     await writeFile(join(copy.path, "package-lock.json"), '{"v":3}\n');
     expect(await linkProblems(copy, out, await snapshotCandidate(copy))).toEqual([
       "the link absolute leads outside the repository: verification can't tell whether it comes back to what the edit changed",
-      "the link local/action.yml leads to TOOLS/recipe.txt, which this commit has only by another case or form: verification can't tell where a checkout takes it",
+      "the link local/action.yml leads through TOOLS, which this commit has only by another case or form: verification can't tell where a checkout takes it",
       "the link reentering leads outside the repository: verification can't tell whether it comes back to what the edit changed",
-      "the link sigma.yml leads to recipes/AΣ/ci.yml, which this commit has only by another case or form: verification can't tell where a checkout takes it",
+      "the link sigma.yml leads through recipes/AΣ, which this commit has only by another case or form: verification can't tell where a checkout takes it",
+    ]);
+  });
+
+  it("lets an edit remove a link that leaves the repository or reaches a variant, and checks variants on the way", async () => {
+    const { copy, run } = await repository();
+    await mkdir(join(copy.path, "scripts"));
+    await writeFile(join(copy.path, "scripts", "file"), "x\n");
+    await symlink("scripts", join(copy.path, "alias"));
+    // Through `Alias`, which only a case-insensitive checkout resolves to the `alias` link.
+    await symlink("Alias/file", join(copy.path, "outer"));
+    await symlink("../../shared", join(copy.path, "shared"));
+    run(["add", "--all"]);
+    run(["commit", "-q", "-m", "links out and through a variant"]);
+    const base = run(["rev-parse", "HEAD"]);
+    await writeFile(join(copy.path, "README.md"), "edited\n");
+    expect(await linkProblems(copy, base, await snapshotCandidate(copy))).toEqual([
+      "the link outer leads through Alias, which this commit has only by another case or form: verification can't tell where a checkout takes it",
+      "the link shared leads outside the repository: verification can't tell whether it comes back to what the edit changed",
+    ]);
+    await rm(join(copy.path, "outer"));
+    await rm(join(copy.path, "shared"));
+    expect(await linkProblems(copy, base, await snapshotCandidate(copy))).toEqual([]);
+  });
+
+  it("says when the edit moves an existing submodule to another commit", async () => {
+    const { copy, run } = await repository();
+    const index = join(copy.gitDir!, "submodule-index");
+    const env = { ...process.env, GIT_INDEX_FILE: index, GIT_DIR: copy.gitDir! };
+    const plumb = (args: string[]) => spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args], { cwd: copy.path, env, encoding: "utf8" }).stdout.trim();
+    const head = run(["rev-parse", "HEAD"]);
+    const commitWith = (parent: string, gitlink: string) => {
+      plumb(["read-tree", parent]);
+      plumb(["update-index", "--add", "--cacheinfo", `160000,${gitlink},vendor`]);
+      return plumb(["commit-tree", plumb(["write-tree"]), "-p", parent, "-m", "submodule"]);
+    };
+    const added = commitWith(head, "1".repeat(40));
+    const moved = commitWith(added, "2".repeat(40));
+    expect(await linkProblems(copy, added, moved)).toEqual([
+      "the edit moved the submodule vendor to another commit: verification can't read a submodule's files",
+    ]);
+  });
+
+  it("matches an added path behind a link loosely, as a case-insensitive checkout puts `FOO/x` in `foo/`", async () => {
+    const { copy, run } = await repository();
+    await mkdir(join(copy.path, "foo"));
+    await writeFile(join(copy.path, "foo", "y.txt"), "y\n");
+    await symlink("foo", join(copy.path, "L"));
+    run(["add", "--all"]);
+    run(["commit", "-q", "-m", "a link to a folder"]);
+    const base = run(["rev-parse", "HEAD"]);
+    // `FOO/x.txt` beside `foo/` can't be written on a case-insensitive disk: built from git objects instead.
+    const index = join(copy.gitDir!, "variant-index");
+    const env = { ...process.env, GIT_INDEX_FILE: index, GIT_DIR: copy.gitDir! };
+    const plumb = (args: string[], input?: string) => spawnSync("git", args, { cwd: copy.path, env, input, encoding: "utf8" }).stdout.trim();
+    plumb(["read-tree", base]);
+    const blob = plumb(["hash-object", "-w", "--stdin"], "x\n");
+    plumb(["update-index", "--add", "--cacheinfo", `100644,${blob},FOO/x.txt`]);
+    const variant = plumb(["-c", "user.name=t", "-c", "user.email=t@example.com", "commit-tree", plumb(["write-tree"]), "-p", base, "-m", "variant"]);
+    expect(await linkProblems(copy, base, variant)).toEqual([
+      "the edit changed FOO/x.txt, behind the link L: verification can't check what's behind one",
     ]);
   });
 

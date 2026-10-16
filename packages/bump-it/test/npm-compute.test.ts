@@ -208,6 +208,21 @@ describe("exact npm computation", () => {
     await computeNpm({ ...h.inputs, kind: "major", moves: h.inputs.moves.map((move) => ({ ...move, to: "2.0.0" })) });
     expect(h.calls.map((call) => call[0])).toEqual(["install", "install"]);
   });
+  it("fails a major that brings a deprecated or unverifiable new transitive version, and passes an eligible one", async () => {
+    // The new transitive comes from the npm registry; one from git or another registry has no catalog to ask.
+    const registryLock = (resolved: string) => {
+      const base = lock("2.0.0", "1.5.0");
+      return { ...base, packages: { ...base.packages, "node_modules/child": { version: "1.5.0", resolved } } };
+    };
+    const major = async (versions: (name: string) => Promise<ReadonlyArray<string> | undefined>, resolved = "https://registry.npmjs.org/child/-/child-1.5.0.tgz") => {
+      const h = await fixture(async (dir) => { await writeFile(join(dir, "package-lock.json"), json(registryLock(resolved))); });
+      return computeNpm({ ...h.inputs, kind: "major", moves: h.inputs.moves.map((move) => ({ ...move, to: "2.0.0" })), sources: { ...h.inputs.sources, versions } });
+    };
+    await expect(major(async (name) => name === "child" ? ["1.0.0"] : ["1.0.0", "2.0.0"])).rejects.toThrow("the major brings child@1.5.0, which is deprecated");
+    await expect(major(async (name) => name === "child" ? undefined : ["1.0.0", "2.0.0"])).rejects.toThrow("can't be read to rule out deprecation");
+    await expect(major(async (name) => name === "child" ? ["1.0.0", "1.5.0"] : ["1.0.0", "2.0.0"])).resolves.toBeDefined();
+    await expect(major(async (name) => name === "child" ? undefined : ["1.0.0", "2.0.0"], "git+ssh://git@github.com/acme/child.git#abc")).resolves.toBeDefined();
+  });
   it("fails after MAX_PASSES when npm keeps undoing the exact targets", async () => {
     const h = await fixture(async (dir) => { await writeFile(join(dir, "package-lock.json"), json(lock())); });
     await expect(computeNpm(h.inputs)).rejects.toThrow(`after ${MAX_PASSES} passes`);

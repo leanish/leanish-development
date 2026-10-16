@@ -1,6 +1,7 @@
 /** A bounded PR payload: exact npm and generated wrapper hashes, never their contents. */
 import { createHash } from "node:crypto";
 
+import { safePath } from "../../remediation/src/local-files.ts";
 import { planBlock, planPayload, withPlanSection as replaceSection } from "../../remediation/src/plan-blocks.ts";
 
 import type { WrapperFile } from "./wrapper-generation.ts";
@@ -168,16 +169,6 @@ function validCopyChange(change: unknown): boolean {
 
 function optionalString(value: unknown): boolean {
   return value === undefined || typeof value === "string";
-}
-
-export function safePath(path: unknown): path is string {
-  if (typeof path !== "string" || path === "") {
-    return false;
-  }
-  if (path.startsWith("/") || path.includes("\\") || path.includes("\0")) {
-    return false;
-  }
-  return path.split("/").every((part) => part !== "" && part !== "." && part !== "..");
 }
 
 function object(value: unknown): value is Record<string, unknown> {

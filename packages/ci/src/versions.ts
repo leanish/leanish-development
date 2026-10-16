@@ -216,7 +216,14 @@ function compareItem(left: MavenItem | undefined, right: MavenItem | undefined):
     if (right.kind === "string") return compareStrings(comparableQualifier(left.value), comparableQualifier(right.value));
     return -1;
   }
-  if (right === undefined) return left.items.length === 0 ? 0 : compareItem(left.items[0], undefined);
+  // Against a missing component a list compares item by item, not by its first item only (Maven's MNG-6964): `1.0-0.1` > `1.0`.
+  if (right === undefined) {
+    for (const item of left.items) {
+      const result = compareItem(item, undefined);
+      if (result !== 0) return result;
+    }
+    return 0;
+  }
   if (right.kind === "int") return -1;
   if (right.kind === "string") return 1;
   return compareLists(left.items, right.items);

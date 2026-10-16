@@ -85,6 +85,12 @@ describe("source repositories", () => {
     expect(githubRepository("git+ssh://git@github.com/Acme/Lib.git#main")).toBe("acme/lib");
     expect(githubRepository("scm:git:git@github.com:FasterXML/jackson-databind.git")).toBe("fasterxml/jackson-databind");
     expect(githubRepository("https://github.com/aws/aws-sdk-js-v3/tree/main/clients/client-s3")).toBe("aws/aws-sdk-js-v3");
+    expect(githubRepository("https://www.github.com/Acme/Lib")).toBe("acme/lib");
+    // A host that only ends in `github.com` isn't GitHub.
+    expect(githubRepository("https://notgithub.com/acme/lib")).toBeUndefined();
+    expect(githubRepository("git+https://evilgithub.com/acme/lib.git")).toBeUndefined();
+    expect(githubRepository("https://evil.example/github.com/victim/repo")).toBeUndefined();
+    expect(githubRepository("git://github.com/Acme/Lib.git")).toBe("acme/lib");
     expect(githubRepository("github:acme/lib")).toBe("acme/lib");
     expect(githubRepository("acme/lib")).toBe("acme/lib");
     expect(githubRepository("https://gitlab.com/acme/lib")).toBeUndefined();

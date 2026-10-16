@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Strict pins in `.gradle` and `.gradle.kts` scripts are read with the Groovy and Kotlin compilers the build's own
+  Gradle distribution ships, parsed without running, instead of a hand-written lexer: no string or comment form can
+  hide a `strictly(...)` any more (Groovy slashy strings, nested Kotlin comments, interpolations), each call is
+  compared with the dependency it pins and in classes too, and an interpolation on a pin's line no longer refuses an
+  unrelated edit. A script that doesn't parse is refused by name, without blaming the others. Verification needs
+  Java and that distribution, which the Gradle inventory already downloads.
+
+### Fixed
+
+- A path the edit adds behind an existing link is matched regardless of case, as a case-insensitive checkout places
+  `FOO/x` in a linked `foo/`.
+- An npm `integrity` filled in for a same-version entry that had none no longer fails the gate: it only pins the bytes
+  the same URL serves. Removing or changing one still fails.
+- An edit that removes a link leading out of the repository, or to a case or Unicode variant, is no longer refused for
+  it; only the links the edit's own tree has are. A variant is now found on the way through a link too, not only at its
+  end.
+- Link targets are read in one `git cat-file --batch`: 2,000 links take about half a second instead of 50.
+- A submodule moved to another commit is reported as moved, not as added.
+- bump-it never moves the Gradle wrapper to a release a malware advisory (CWE-506) covers, even one the installed
+  wrapper shares, and reports an installed wrapper such an advisory covers.
+- A bump-it major fails visibly when it brings a new transitive version from the npm registry that is deprecated, or
+  whose catalog can't be read to rule that out.
+- A `uses` key written as a YAML alias is read like any other.
+- A repository URL whose host only ends in `github.com` (`notgithub.com`), or that names `github.com` in its path, is
+  no longer read as a GitHub repository when looking up repository advisories.
+- Maven versions compare a sub-list against a missing component item by item, as Maven does: `1.0-0.1` is above
+  `1.0`, so an advisory covering `>1.0` matches it.
+- An action's versions are its full release tags only: a partial tag (`v1.1`), which a pin's comment can't name, is
+  no longer picked over a full one (`v1.0.1`) and then refused at verification.
+- Publication recognizes conflict markers at the size the staged `.gitattributes` give a file (shorter or longer than
+  seven) as well as seven or more whatever it says; a separator counts only alone on its line at that size, so a
+  Markdown heading's underline (a longer run of `=`, or one followed by text) isn't one.
+- A damaged or hand-edited entry of a tool's publication journal fails the review that reads it, instead of being
+  trusted to recover a PR's body.
+- A conflicted file only named like a Gradle catalog (`xgradle/libs.versions.toml`) is no longer taken from the base
+  side as a dependency file when reviewing a PR: conflicts resolve mechanically for exactly the files a move may touch.
+- A key named `uses` outside a job or step (`env: { uses: production }`, an action input) no longer fails the Actions
+  inventory: it counts when it reads as an action and is otherwise left alone; a job's or step's `uses:` stays strict.
+
 ## 0.5.2 - 2026-10-15
 
 ### Changed

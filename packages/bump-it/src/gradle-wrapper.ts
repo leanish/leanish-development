@@ -3,6 +3,7 @@ import type { GateEnvironment } from "../../ci/src/gate.ts";
 import { isObject } from "../../ci/src/json.ts";
 import { fetchRepositoryAdvisories, type RepositoryAdvisory } from "../../ci/src/repository-advisories.ts";
 import type { Tree } from "../../ci/src/tree.ts";
+import { isMalware } from "../../ci/src/snapshot.ts";
 import { versionScheme } from "../../ci/src/versions.ts";
 
 import { gradleAdvisoryAffects } from "./gradle-advisories.ts";
@@ -80,10 +81,15 @@ export function gradleWrapperPlanner(env: GateEnvironment, releaseAgeDays: numbe
         if (current === undefined) {
           return {};
         }
-        const { releases, advisories, notes } = await readSnapshot();
+        const { releases, advisories, notes: snapshotNotes } = await readSnapshot();
+        const notes = [...snapshotNotes];
         const inherited = affecting(advisories, current.version);
+        // Known malware is never inherited debt: a release a malware advisory covers is no target, whatever covers the
+        // current one too.
         const eligible = releases.filter((release) => SCHEME.compare(release.version, current.version) > 0 && aged(release) &&
-          affecting(advisories, release.version).every((id) => inherited.includes(id)));
+          affecting(advisories, release.version).every((id) => inherited.includes(id)) && malicious(advisories, release.version).length === 0);
+        const infected = malicious(advisories, current.version);
+        if (infected.length > 0) notes.push(`Gradle ${current.version} is covered by malware advisory ${infected.join(", ")}`);
         const routine = eligible.find((release) => majorOf(release.version) === majorOf(current.version));
         const major = eligible.find((release) => majorOf(release.version) > majorOf(current.version));
         const move = async (release: Release, major: boolean): Promise<DirectMove> => ({
@@ -126,6 +132,10 @@ export function gradleWrapperPlanner(env: GateEnvironment, releaseAgeDays: numbe
       const added = affecting(advisories, move.to).filter((id) => !inherited.includes(id));
       if (added.length > 0) {
         return [`Gradle ${move.to} adds ${added.join(", ")}`];
+      }
+      const infected = malicious(advisories, move.to);
+      if (infected.length > 0) {
+        return [`Gradle ${move.to} is covered by malware advisory ${infected.join(", ")}`];
       }
       const expected = await target(release, current.type);
       const properties = wrapperProperties(await head.read(WRAPPER_PROPERTIES) ?? "");
@@ -200,6 +210,12 @@ function majorOf(version: string): number {
 /** Repository advisories describe Gradle itself; never silently discard an unreadable published range. */
 function affecting(advisories: ReadonlyArray<RepositoryAdvisory>, version: string): string[] {
   return advisories.filter((advisory) => gradleAdvisoryAffects(advisory, version)).map((advisory) => advisory.ghsaId);
+}
+
+/** The malware advisories (CWE-506) affecting `version`. */
+function malicious(advisories: ReadonlyArray<RepositoryAdvisory>, version: string): string[] {
+  return advisories.filter((advisory) => gradleAdvisoryAffects(advisory, version) &&
+    isMalware([advisory.ghsaId, ...(advisory.cveId === undefined ? [] : [advisory.cveId])], advisory.cweIds)).map((advisory) => advisory.ghsaId);
 }
 
 async function officialTarget(release: Release, type: CurrentWrapper["type"], env: GateEnvironment): Promise<WrapperTarget> {

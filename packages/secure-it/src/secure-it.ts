@@ -54,6 +54,7 @@ import { planDigest, planOf, planSection, withPlanSection } from "./plan-block.t
 import { type ChangePlan, coupledWork, type FixWork, HELD_TOPIC, packageKey, planFor, type PlannedHold, type SecurityUnit, withUnsupportedCarriers } from "./plan.ts";
 import { namedProblems, retryWithoutNamed, type ProblemMoves } from "./retry.ts";
 import { referencePlan, verifyPlan, type VerifyInputs } from "./verify.ts";
+import { gradleHome, gradleStrictCalls } from "../../remediation/src/strict-calls.ts";
 
 export const RULES = ownPullRequests("secure-it");
 const SKILLS_DIR = fileURLToPath(new URL("../skills", import.meta.url));
@@ -600,6 +601,7 @@ async function verifyEdit(
   const links = await deps.linkProblems(context.workingCopy, base.id, candidate);
   return [...links, ...await deps.verify({
     plan, base, head, env, npmFiles, gradle: { base: baseGradle, head: headGradle }, reference, changedFiles,
+    strictCalls: gradleStrictCalls(gradleHome(context.isolation.buildCacheRoot)),
     ...(cooldown === undefined ? {} : { cooldown }),
   })];
 }
@@ -630,6 +632,13 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
     const plan = planOf(pr.body);
     if (plan === undefined) throw new Error(`${pr.url} has no plan secure-it can read`);
     return plan;
+  };
+  /** Verifies a reviewed PR's new content and publishes it with its plan section; what verification left out is noted. */
+  const verifyAndPublish = async (pr: GitHubPullRequest, prepared: PreparedBranch, base: PlanBase, plan: ChangePlan, content: Content, failure: string, attempt?: number) => {
+    const verified = await verifyWithRetry(execution, base, plan, content);
+    if (verified.leftOut.length > 0) notes.push({ number: pr.number, leftOut: verified.leftOut, named: verified.named });
+    if (verified.problems.length > 0) throw new Error(`${failure}: ${verified.problems.join("; ")}`);
+    return publishUpdate(publication, prepared, pr.number, { ...verified.content, body: withPlanSection(verified.content.body, verified.plan) }, attempt);
   };
   const steps: ReviewSteps = {
     cooldown: (pr) => cooldownState(planFrom(pr), context.now),
@@ -702,10 +711,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
         await prepareNpmFiles(execution, plan, base, true);
       }
       // Fixes remain (the recomputation said so): an edit that left the base as it was fails verification, it isn't retired.
-      const verified = await verifyWithRetry(execution, { tree: base, gradle: baseGradle }, plan, content);
-      if (verified.leftOut.length > 0) notes.push({ number: pr.number, leftOut: verified.leftOut, named: verified.named });
-      if (verified.problems.length > 0) throw new Error(`after merging the default branch: ${verified.problems.join("; ")}`);
-      await publishUpdate(publication, merge.prepared, pr.number, { ...verified.content, body: withPlanSection(verified.content.body, verified.plan) });
+      await verifyAndPublish(pr, merge.prepared, { tree: base, gradle: baseGradle }, plan, content, "after merging the default branch");
       return "rebased";
     },
     async adapt(pr, prepared, _context, attempt) {
@@ -724,10 +730,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       });
       if (answer.outcome !== "applied" || answer.publication == null) return false;
       assertNoPlanMarker(answer.publication.body);
-      const verified = await verifyWithRetry(execution, { tree: base, gradle: await inventories.ofCommit(base) }, plan, answer.publication);
-      if (verified.leftOut.length > 0) notes.push({ number: pr.number, leftOut: verified.leftOut, named: verified.named });
-      if (verified.problems.length > 0) throw new Error(`the adaptation doesn't verify: ${verified.problems.join("; ")}`);
-      const { pushed } = await publishUpdate(publication, prepared, pr.number, { ...verified.content, body: withPlanSection(verified.content.body, verified.plan) }, attempt);
+      const { pushed } = await verifyAndPublish(pr, prepared, { tree: base, gradle: await inventories.ofCommit(base) }, plan, answer.publication, "the adaptation doesn't verify", attempt);
       return pushed;
     },
   };

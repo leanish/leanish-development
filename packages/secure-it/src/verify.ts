@@ -31,6 +31,7 @@
  *      update's own fallout is in it: `gradle-reference.ts`);
  *   5. only dependency files changed, unless a move is a major.
  */
+import type { StrictCallParser } from "../../remediation/src/strict-calls.ts";
 import { computedNpmProblems } from "../../remediation/src/npm-file-checks.ts";
 import { registryIntegrity } from "../../ci/src/carrier-fixes.ts";
 import { type BundleReader, bundleMismatches } from "../../ci/src/npm-bundles.ts";
@@ -75,6 +76,8 @@ export interface VerifyInputs {
   readonly reference: GradleInventory | undefined;
   /** Paths the edit changed, added or removed in the working copy. */
   readonly changedFiles: ReadonlyArray<string>;
+  /** Reads strict pins in Gradle build scripts with the build's own Gradle compilers (`gradleStrictCalls`). */
+  readonly strictCalls: StrictCallParser;
   /** Told what the verifying comparison's cooldown holds, whenever the comparison runs. */
   readonly cooldown?: (evaluation: CooldownEvaluation) => void;
   /** Reads carrier archives; one shared with planning saves downloads. */
@@ -94,7 +97,7 @@ export async function verifyPlan(inputs: VerifyInputs): Promise<string[]> {
   const floors = await preservedFloors(plan, base, head, gradle);
   if (floors.length > 0) return floors;
 
-  const strict = await strictPinsChanged(inputs.changedFiles, base, head);
+  const strict = await strictPinsChanged(inputs.changedFiles, base, head, inputs.strictCalls);
   if (strict.length > 0) return strict;
 
   if (plan.kind === "floor-removal") return verifyRemovalEdit(inputs);

@@ -383,12 +383,21 @@ describe.skipIf(!hasGit)("LocalGitWorkspace branch publication (real git)", () =
     await expect(ws.publishBranch(wc, merging.prepared, { message: "merging main" })).rejects.toThrow("README.md still has conflict markers");
     // A refused attempt leaves the conflict in place: another one checks it again.
     await expect(ws.publishBranch(wc, merging.prepared, { message: "merging main" })).rejects.toThrow("README.md still has conflict markers");
+    // `conflict-marker-size=9` in `.gitattributes` makes git write longer markers.
+    writeFileSync(join(wc.path, "README.md"), "<<<<<<<<< HEAD\nbranch side\n=========\nmain side\n>>>>>>>>> main\n");
+    await expect(ws.publishBranch(wc, merging.prepared, { message: "merging main" })).rejects.toThrow("README.md still has conflict markers");
+    // And shorter ones, at the size the staged attributes give the file.
+    writeFileSync(join(wc.path, ".gitattributes"), "README.md conflict-marker-size=3\n");
+    writeFileSync(join(wc.path, "README.md"), "<<< HEAD\nbranch side\n===\nmain side\n>>> main\n");
+    await expect(ws.publishBranch(wc, merging.prepared, { message: "merging main" })).rejects.toThrow("README.md still has conflict markers");
+    rmSync(join(wc.path, ".gitattributes"));
 
-    writeFileSync(join(wc.path, "README.md"), "both sides\n");
+    // A Markdown heading's underline isn't a separator, nor is a run of seven followed by text.
+    writeFileSync(join(wc.path, "README.md"), "Both sides\n==========\n======= kept\n");
     const published = await ws.publishBranch(wc, merging.prepared, { message: "merging main" });
     if (published.kind !== "pushed") throw new Error("expected a push");
     expect(gitOut(origin, ["log", "-1", "--format=%P|%s", BRANCH])).toBe(`${prHead} ${mainHead}|merging main`);
-    expect(gitOut(origin, ["show", `${BRANCH}:README.md`])).toBe("both sides");
+    expect(gitOut(origin, ["show", `${BRANCH}:README.md`])).toBe("Both sides\n==========\n======= kept");
   });
 
   it("rechecks conflict markers after refusing a changed verification tree, without pushing", async () => {

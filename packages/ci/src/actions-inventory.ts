@@ -58,24 +58,33 @@ export function parseUses(text: string, file: string): { uses: ActionUse[]; loca
   const docker: string[] = [];
   let nodes = 0;
   const resolve = (node: unknown): unknown => (isAlias(node) ? node.resolve(doc) : node);
-  // `ancestors` only stops cycles: an alias reached again elsewhere is another occurrence.
-  const walk = (start: unknown, ancestors: ReadonlySet<unknown> = new Set()): void => {
+  // `ancestors` only stops cycles: an alias reached again elsewhere is another occurrence. `place` is where GitHub runs
+  // a `uses:`: a job (`jobs.<id>`) or a step (`steps[]`, a composite action's too); its `uses:` must be an action.
+  // Elsewhere (`env`, an input) a key named `uses` is counted when it reads as an action, and otherwise left alone.
+  const walk = (start: unknown, ancestors: ReadonlySet<unknown> = new Set(), place: "jobs" | "steps" | "runner" | "other" = "other"): void => {
     const node = resolve(start);
     if (ancestors.has(node)) return;
     if (++nodes > MAX_NODES) throw new Error(`${file}: too many YAML nodes once aliases are followed`);
     const inside = new Set(ancestors).add(node);
     if (isMap(node)) {
       for (const pair of node.items) {
-        if (isScalar(pair.key) && pair.key.value === "uses") {
+        // A key can be an alias too (`*k: owner/action@v1` with `k: &k uses`).
+        const keyNode = resolve(pair.key);
+        const key = isScalar(keyNode) ? keyNode.value : undefined;
+        if (key === "uses") {
           const value = resolve(pair.value);
-          if (!isScalar(value) || typeof value.value !== "string") throw new Error(`${file}: a \`uses:\` isn't a string`);
-          const comment = (isScalar(pair.value) ? pair.value.comment : undefined) ?? (isAlias(pair.value) ? pair.value.comment : undefined) ?? value.comment;
-          record(value.value.trim(), comment?.trim() || undefined);
+          const comment = (isScalar(pair.value) ? pair.value.comment : undefined) ?? (isAlias(pair.value) ? pair.value.comment : undefined) ?? (isScalar(value) ? value.comment : undefined);
+          if (place === "runner") {
+            if (!isScalar(value) || typeof value.value !== "string") throw new Error(`${file}: a \`uses:\` isn't a string`);
+            record(value.value.trim(), comment?.trim() || undefined);
+          } else if (isScalar(value) && typeof value.value === "string" && readsAsAction(value.value.trim())) {
+            record(value.value.trim(), comment?.trim() || undefined);
+          }
         }
-        walk(pair.value, inside);
+        walk(pair.value, inside, place === "jobs" ? "runner" : key === "jobs" ? "jobs" : key === "steps" ? "steps" : "other");
       }
     } else if (isSeq(node)) {
-      for (const item of node.items) walk(item, inside);
+      for (const item of node.items) walk(item, inside, place === "steps" ? "runner" : "other");
     }
   };
   const record = (value: string, comment: string | undefined) => {
@@ -89,6 +98,11 @@ export function parseUses(text: string, file: string): { uses: ActionUse[]; loca
   };
   walk(doc.contents);
   return { uses, local, docker };
+}
+
+/** Whether a value outside a job or step reads as an action reference, so counting it errs toward checking more. */
+function readsAsAction(value: string): boolean {
+  return value.startsWith("./") || value.startsWith("docker://") || USES.test(value);
 }
 
 /** Every `uses:` in the tree's workflows and actions, local actions followed. */
@@ -142,6 +156,11 @@ export type Resolution =
 const COMMIT = /^[0-9a-f]{40}$/;
 /** A full release version (`v7.0.1`): a floating major tag (`v7`) can't name what's pinned. */
 const TAG = /^(?:tag=)?(v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$/;
+
+/** Whether `tag` names a full release version (`v7.0.1`), the only kind a pin's comment can name. */
+export function isFullTag(tag: string): boolean {
+  return TAG.test(tag) && !tag.startsWith("tag=");
+}
 
 /** The tag a use's comment names, if any. */
 export function commentTag(use: Pick<ActionUse, "comment">): string | undefined {

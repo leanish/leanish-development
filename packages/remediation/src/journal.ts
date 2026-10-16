@@ -46,14 +46,16 @@ export class FileJournal implements PublicationJournal {
   }
 
   async last(repo: string, number: number): Promise<PushedState | undefined> {
-    return (await this.#read(this.#file(repo)))[String(number)];
+    const file = this.#file(repo);
+    const entry = (await this.#read(file))[String(number)];
+    return entry === undefined ? undefined : pushedState(entry, `${file}: #${number}`);
   }
 
   #file(repo: string): string {
     return join(this.#dir, `${repo.toLowerCase().replace("/", "__")}.json`);
   }
 
-  async #read(file: string): Promise<Record<string, PushedState>> {
+  async #read(file: string): Promise<Record<string, unknown>> {
     let text: string;
     try {
       text = await readFile(file, "utf8");
@@ -63,19 +65,28 @@ export class FileJournal implements PublicationJournal {
     }
     const parsed = JSON.parse(text) as unknown;
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error(`${file} isn't a journal`);
-    return parsed as Record<string, PushedState>;
+    return parsed as Record<string, unknown>;
   }
 }
 
-/** A journal in memory, for tests. */
-export class MemoryJournal implements PublicationJournal {
-  readonly entries = new Map<string, PushedState>();
-
-  async pushed(repo: string, number: number, state: PushedState): Promise<void> {
-    this.entries.set(`${repo.toLowerCase()}#${number}`, state);
+/** A recorded entry, checked before recovery trusts it: a hand-edited or damaged one fails instead. */
+function pushedState(value: unknown, where: string): PushedState {
+  if (!isRecord(value)) throw new Error(`${where} isn't a pushed state`);
+  const { head, base, publication } = value;
+  if (!isSha(head) || !isSha(base)) throw new Error(`${where} lacks its head and base commits`);
+  if (publication === undefined) return { head, base };
+  if (!isRecord(publication)) throw new Error(`${where} has a malformed publication`);
+  const { title, body, adaptations } = publication;
+  if (typeof title !== "string" || typeof body !== "string" || typeof adaptations !== "number" || !Number.isInteger(adaptations) || adaptations < 0) {
+    throw new Error(`${where} has a malformed publication`);
   }
+  return { head, base, publication: { title, body, adaptations } };
+}
 
-  async last(repo: string, number: number): Promise<PushedState | undefined> {
-    return this.entries.get(`${repo.toLowerCase()}#${number}`);
-  }
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isSha(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(value);
 }

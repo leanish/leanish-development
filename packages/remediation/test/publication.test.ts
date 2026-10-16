@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { ConsoleLogger } from "../../agent-basics/src/logger/console-logger.ts";
 import type { PreparedBranch, WorkingCopy } from "../../agent-basics/src/types/working-copy.ts";
 import { InMemoryWorkspace } from "../../agent-basics/src/working-copy/in-memory-workspace.ts";
-import { MemoryJournal } from "../src/journal.ts";
+import { MemoryJournal } from "./memory-journal.ts";
 import { ownPullRequests, stateOf, withMarker } from "../src/own-pr.ts";
 import { clearLeftoverBranch, closeAndDelete, markReady, ownOpenPullRequests, publishNew, publishUpdate, recordState, recoverPublication, rewriteText, type PublicationContext } from "../src/publication.ts";
 import { BASE_SHA, FakeGitHub, HEAD_SHA, OWN_BRANCH, ownPr, PUSHED_SHA, RULES } from "./fake-github.ts";

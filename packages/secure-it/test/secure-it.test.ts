@@ -14,7 +14,7 @@ import { selectRemovals, withoutFloorRecords } from "../src/floor-removal.ts";
 import type { Tree } from "../../ci/src/tree.ts";
 import type { ToolRunContext } from "../../remediation/src/command.ts";
 import { parseToolConfig } from "../../remediation/src/config.ts";
-import { MemoryJournal } from "../../remediation/src/journal.ts";
+import { MemoryJournal } from "../../remediation/test/memory-journal.ts";
 import { stateOf, withMarker } from "../../remediation/src/own-pr.ts";
 import { BASE_SHA, FakeGitHub, GREEN, HEAD_SHA, ownPr, PUSHED_SHA, RED } from "../../remediation/test/fake-github.ts";
 import { planOf, planSection, withPlanSection } from "../src/plan-block.ts";
