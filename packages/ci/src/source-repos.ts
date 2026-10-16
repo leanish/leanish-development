@@ -130,9 +130,7 @@ function interpolate(value: string, properties: ReadonlyMap<string, string>): st
 export function githubRepository(value: unknown): string | undefined {
   const raw = isObject(value) ? dig(value, ["url"]) : value;
   if (typeof raw !== "string") return undefined;
-  const connection = raw.trim();
   const match =
-    // Schemes may have any slash spelling; paths cannot supply the host, and numeric ports cannot be owners.
-    /^(?:[a-z][a-z\d+.-]*:[/\\]*)*(?:\/\/)?(?:[^/\\?#@]*@)?(?:www\.)?github\.com(?::\d+\/|\/|:(?!\d+\/))([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:[/#?]|$)/i.exec(connection) ?? /^(?:github:)?([\w.-]+)\/([\w.-]+?)(?:\.git)?$/i.exec(connection);
+    /github\.com[/:]([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:[/#?]|$)/i.exec(raw) ?? /^(?:github:)?([\w.-]+)\/([\w.-]+?)(?:\.git)?$/i.exec(raw);
   return match === null ? undefined : `${match[1]}/${match[2]}`.toLowerCase();
 }
