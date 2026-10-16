@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { GradleInventory } from "../../ci/src/gradle.ts";
 import { referenceDifferences, referenceProblems, referenceTransform } from "../src/gradle-reference.ts";
 
+import { RICH_VERSION, RICH_VERSION_CHANGES, richVersionInventory } from "./rich-version-inventory.ts";
+
 const inventory = (versions: ReadonlyArray<string | undefined>, resolved = "1.0.0", extra: Partial<GradleInventory["builds"][number]["configurations"][number]> = {}): GradleInventory => ({ tree: "tree", schemaVersion: 1, builds: [{ build: ".", configurations: [{
   id: ":runtimeClasspath", kind: "project", declared: versions.map((version) => ({ group: "g", name: "lib", version, reason: undefined })),
   resolved: [{ group: "g", name: "lib", version: resolved }], unresolved: [], error: undefined, ...extra,
@@ -63,6 +65,24 @@ describe("the plan's Gradle reference", () => {
     expect(referenceProblems(inventory(["1.0.0"]), inventory(["1.2.0"]), [], [floor])).toHaveLength(1);
   });
 
+  it("keeps plain-version and simple strict-pin comparisons identical with the new inventory fields", () => {
+    const plain = { strictVersion: "", requiredVersion: "1.0.0", preferredVersion: "", rejectedVersions: [], branch: null };
+    const legacy = inventory(["1.0.0"]);
+    const configuration = legacy.builds[0]!.configurations[0]!;
+    expect(referenceDifferences(legacy, inventory(["1.0.0"], "1.0.0", {
+      declared: configuration.declared.map((entry) => ({ ...entry, versionConstraint: plain })), constraints: [],
+    }))).toEqual([]);
+    const pin = { group: "g", name: "lib", version: "1.0.0", reason: undefined, strict: true as const };
+    const strictConstraints = [{ group: "g", name: "other", version: "1.0.0" }];
+    const rich = { ...plain, strictVersion: "1.0.0" };
+    const before = inventory([], "1.0.0", { declared: [pin], strictConstraints });
+    const after = inventory([], "1.0.0", { declared: [{ ...pin, versionConstraint: rich }], strictConstraints,
+      constraints: strictConstraints.map((entry) => ({ ...entry, versionConstraint: rich })),
+    });
+    expect(referenceDifferences(before, after)).toEqual([]);
+    expect(referenceDifferences(after, inventory(["1.0.0"]))).toEqual(referenceDifferences(before, inventory(["1.0.0"])));
+  });
+
   it("finds every way head differs from the reference: modules, declarations (versionless too), configurations and failures", () => {
     const reference = inventory(["1.0.0", undefined]);
     expect(referenceDifferences(reference, inventory(["1.0.0", undefined]))).toEqual([]);
@@ -83,5 +103,23 @@ describe("the plan's Gradle reference", () => {
     ]);
     expect(referenceDifferences(undefined, undefined)).toEqual([]);
     expect(referenceDifferences(reference, undefined)).toHaveLength(1);
+  });
+});
+
+describe.each(["declaration", "constraint"] as const)("rich version of a %s", (kind) => {
+  it.each(RICH_VERSION_CHANGES)("detects $facet even when resolution is unchanged", ({ before, after }) => {
+    expect(referenceDifferences(richVersionInventory(kind, before), richVersionInventory(kind, after)))
+      .toContainEqual(expect.stringContaining("unlike the plan's reference"));
+  });
+
+  it("compares every facet in both directions and treats rejected versions as unordered", () => {
+    const reference = richVersionInventory(kind, { ...RICH_VERSION, rejectedVersions: ["2.0", "2.5"] });
+    expect(referenceDifferences(reference, richVersionInventory(kind, { ...RICH_VERSION, rejectedVersions: ["2.5", "2.0"] }))).toEqual([]);
+    for (const { before, after } of RICH_VERSION_CHANGES) {
+      expect(referenceDifferences(richVersionInventory(kind, after), richVersionInventory(kind, before))).not.toEqual([]);
+    }
+    const empty = inventory([], "1.5");
+    expect(referenceDifferences(reference, empty)).toContainEqual(expect.stringContaining("no longer declares g:rich"));
+    expect(referenceDifferences(empty, reference)).toContainEqual(expect.stringContaining("also declares g:rich"));
   });
 });

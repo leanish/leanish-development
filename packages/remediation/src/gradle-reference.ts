@@ -5,11 +5,11 @@
  * including whatever a planned plugin update adds or moves by running. Both tools then require the edit's inventory to
  * be the same, location by location, so nothing the plan didn't do can change what the build resolves (a constraint, a
  * forced version, a resolution rule, a substitution, from any file or code) or declares (a versionless declaration
- * included). A change that alters neither isn't seen: the protected scope is the resolved modules and the declarations.
+ * included) or constrains (every rich-version facet). A change that alters none of these isn't seen.
  */
 import { fileURLToPath } from "node:url";
 
-import { gradleLocation, type GradleInventory } from "../../ci/src/gradle.ts";
+import { gradleLocation, type DeclaredConstraint, type GradleInventory } from "../../ci/src/gradle.ts";
 
 import { declaredAt, UNVERSIONED } from "./edit-checks.ts";
 import type { GradleTransform } from "./inventories.ts";
@@ -81,8 +81,8 @@ export function referenceProblems(base: GradleInventory | undefined, reference: 
 
 /**
  * Where `head` differs from `reference`: a build or configuration only one has (or of another kind), the modules a
- * configuration resolves, its declarations (every version, versionless ones included), and anything either fails to
- * resolve.
+ * configuration resolves, its declarations and dependency constraints (every rich-version facet, versionless ones
+ * included), and anything either fails to resolve.
  */
 export function referenceDifferences(reference: GradleInventory | undefined, head: GradleInventory | undefined): string[] {
   if (reference === undefined && head === undefined) return [];
@@ -129,16 +129,33 @@ function locations(inventory: GradleInventory): Map<string, LocationEntries> {
       entries.set(gradleLocation(build.build, configuration.id), {
         kind: configuration.kind,
         resolved: configuration.resolved.map((module) => `${module.group}:${module.name}:${module.version}`).sort(),
-        // Strictness counts: a build-logic change can turn a pin into a plain declaration at the same version.
+        // Compare every rich-version facet, retaining the old diagnostics for plain versions and simple strict pins.
         declared: [
-          ...configuration.declared.map((declared) => `${declared.group}:${declared.name} ${declared.version ?? UNVERSIONED}${declared.strict === true ? " (strict)" : ""}`),
-          ...(configuration.strictConstraints ?? []).map((pin) => `${pin.group}:${pin.name} ${pin.version} (strict constraint)`),
+          ...configuration.declared.map((declared) => `${declared.group}:${declared.name} ${constraintVersion(declared, declared.strict === true)}${declared.strict === true ? " (strict)" : ""}`),
+          ...(configuration.constraints === undefined
+            ? (configuration.strictConstraints ?? []).map((pin) => `${pin.group}:${pin.name} ${pin.version} (strict constraint)`)
+            : configuration.constraints.map((constraint) => {
+              const strict = Boolean(constraint.versionConstraint?.strictVersion);
+              return `${constraint.group}:${constraint.name} ${constraintVersion(constraint, strict)} (${strict ? "strict constraint" : "constraint"})`;
+            })),
         ].sort(),
         failures: [...(configuration.error === undefined ? [] : [configuration.error]), ...configuration.unresolved.map((entry) => `${entry.requested}: ${entry.failure}`)],
       });
     }
   }
   return entries;
+}
+
+/** Only nontrivial rich versions need extra text; the comparison still includes all five model facets. */
+function constraintVersion(constraint: DeclaredConstraint, strict: boolean): string {
+  const version = constraint.version ?? UNVERSIONED;
+  const rich = constraint.versionConstraint;
+  if (rich === undefined) return version;
+  const plain = { strictVersion: strict ? constraint.version ?? "" : "", requiredVersion: constraint.version ?? "",
+    preferredVersion: "", rejectedVersions: [], branch: null };
+  const normalized = { strictVersion: rich.strictVersion, requiredVersion: rich.requiredVersion, preferredVersion: rich.preferredVersion,
+    rejectedVersions: [...rich.rejectedVersions].sort(), branch: rich.branch };
+  return JSON.stringify(normalized) === JSON.stringify(plain) ? version : `${version} ${JSON.stringify(normalized)}`;
 }
 
 /** What `actual` has beyond `expected` and lacks from it, as multisets. */
