@@ -11,7 +11,10 @@ import { fileURLToPath } from "node:url";
 import { runProcess, type RunProcess } from "../../ci/src/process.ts";
 import type { Tree } from "../../ci/src/tree.ts";
 
-/** Each file's findings (`<kind> TAB <text>` lines, in order); `tree` is the one whose Gradle wrapper names the distribution. */
+/**
+ * Each file's findings (`<kind> TAB <text>` lines, in order; `error TAB <reason>` for a file that doesn't parse);
+ * `tree` is the one whose Gradle wrapper names the distribution.
+ */
 export type StrictCallParser = (files: ReadonlyArray<{ readonly path: string; readonly text: string }>, tree: Tree) => Promise<ReadonlyMap<string, ReadonlyArray<string>>>;
 
 const PROGRAM = join(dirname(fileURLToPath(import.meta.url)), "..", "gradle", "StrictCalls.java");
@@ -36,13 +39,18 @@ export function gradleStrictCalls(gradleHome: string, run: RunProcess = runProce
       // The suffix picks the parser: `.gradle.kts` for Kotlin, anything else Groovy.
       const copies = await Promise.all(files.map(async (file, index) => {
         const copy = join(dir, `${index}${file.path.endsWith(".kts") ? ".gradle.kts" : ".gradle"}`);
-        await writeFile(copy, file.text);
+        // A byte-order mark the Groovy parser rejects carries no code.
+        await writeFile(copy, file.text.replace(/^\uFEFF/, ""));
         return copy;
       }));
       const env = Object.fromEntries(["PATH", "JAVA_HOME", "HOME"].flatMap((key) => (process.env[key] === undefined ? [] : [[key, process.env[key]!]])));
       const java = process.env["JAVA_HOME"] === undefined ? "java" : join(process.env["JAVA_HOME"], "bin", "java");
-      const result = await run(java, ["-cp", classpath.join(":"), PROGRAM, ...copies], { cwd: dir, env, timeoutMs: TIMEOUT_MS });
+      const result = await run(java, ["-cp", classpath.join(":"), PROGRAM, ...copies], { cwd: dir, env, timeoutMs: TIMEOUT_MS }).catch((err: Error) => {
+        throw new Error(`Java isn't available to parse the build files (${err.message})`);
+      });
       // The source launcher warns on stderr even when it succeeds: only the exit code says whether it parsed.
+      // `runProcess` reports a signal as 128: the timeout's SIGKILL, or a stop from outside.
+      if (result.code === 128) throw new Error(`parsing the build files was stopped, past its ${TIMEOUT_MS / 1000}s limit or from outside`);
       if (result.code !== 0) throw new Error(`the build files couldn't be parsed: ${result.stderr.trim().split("\n").filter((line) => !line.includes("warning")).slice(-3).join(" ")}`);
       const found = new Map<string, string[]>(files.map((file) => [file.path, []]));
       for (const line of result.stdout.split("\n")) {
@@ -50,7 +58,8 @@ export function gradleStrictCalls(gradleHome: string, run: RunProcess = runProce
         const tab = line.indexOf("\t");
         const index = copies.indexOf(line.slice(0, tab));
         if (index < 0) throw new Error(`the strict-pin parser named an unknown file: ${line.slice(0, tab)}`);
-        found.get(files[index]!.path)!.push(line.slice(tab + 1));
+        // A parse error may name the temporary copy; the edit's own path is what the reader knows.
+        found.get(files[index]!.path)!.push(line.slice(tab + 1).replaceAll(copies[index]!, files[index]!.path));
       }
       return found;
     } finally {

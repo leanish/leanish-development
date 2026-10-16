@@ -8,7 +8,8 @@
   Gradle distribution ships, parsed without running, instead of a hand-written lexer: no string or comment form can
   hide a `strictly(...)` any more (Groovy slashy strings, nested Kotlin comments, interpolations), each call is
   compared with the dependency it pins and in classes too, and an interpolation on a pin's line no longer refuses an
-  unrelated edit. Verification needs Java and that distribution, which the Gradle inventory already downloads.
+  unrelated edit. A script that doesn't parse is refused by name, without blaming the others. Verification needs
+  Java and that distribution, which the Gradle inventory already downloads.
 
 ### Fixed
 

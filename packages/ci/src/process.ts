@@ -18,22 +18,25 @@ export type RunProcess = (command: string, args: ReadonlyArray<string>, options?
 
 export const runProcess: RunProcess = (command, args, options = {}) =>
   new Promise((resolve, reject) => {
-    const child = spawn(command, [...args], {
-      cwd: options.cwd, env: options.env ?? process.env, stdio: ["ignore", "pipe", "pipe"],
-      ...(options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs, killSignal: "SIGKILL" as const }),
-    });
+    const child = spawn(command, [...args], { cwd: options.cwd, env: options.env ?? process.env, stdio: ["ignore", "pipe", "pipe"] });
+    // Its own timer, cleared however the command ends: spawn's `timeout` would outlive a command that never started.
+    const timer = options.timeoutMs === undefined ? undefined : setTimeout(() => child.kill("SIGKILL"), options.timeoutMs);
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
     child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-    child.on("error", (err) => reject(new Error(`couldn't run ${command}: ${err.message}`)));
-    child.on("close", (code, signal) =>
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(new Error(`couldn't run ${command}: ${err.message}`));
+    });
+    child.on("close", (code, signal) => {
+      clearTimeout(timer);
       resolve({
         code: code ?? (signal === null ? 1 : 128),
         stdout: Buffer.concat(stdout).toString("utf8"),
         stderr: Buffer.concat(stderr).toString("utf8"),
-      }),
-    );
+      });
+    });
   });
 
 /** Credentials no tool the gate runs needs, kept out of its environment (a PR's `.npmrc` can expand variables). */

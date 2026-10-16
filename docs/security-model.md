@@ -128,8 +128,9 @@ Both tools are in this tree: [`secure-it`](../packages/secure-it) and [`bump-it`
     timeout. It compares, in order, each `strictly(...)` call with its receiver and the enclosing calls' arguments
     (the dependency it pins), in any class or branch, and every other form that names `strictly` (a dynamic method
     name, a property, a string holding the word with the call it's passed to); a file that takes a reference to
-    `strictly` (`.&strictly`, `::strictly`) differs on any change. A script that doesn't parse, or whose Gradle
-    distribution isn't there, fails visibly.
+    `strictly` (`.&strictly`, `::strictly`) differs on any change. A changed script that doesn't parse on either side
+    fails visibly, naming only that script and the first line of the reason (a leading byte-order mark is read as
+    nothing); missing Java, a missing Gradle distribution, or a parse past its two-minute limit fails the whole check.
   - A version that reaches a strict call through a variable, a helper or a property file is read only where the
     inventory and the reference see it, that is, when the pin is active.
 - **Floor removal requires a joint unlocked proof**, computed in sandboxed scratch copies of base

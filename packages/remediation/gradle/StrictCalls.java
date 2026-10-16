@@ -20,13 +20,19 @@ import java.util.List;
  *   <li>`file`: the whole file's SHA-256, when it takes a reference to `strictly` (`this.&strictly`, `::strictly`):
  *       stored under another name, it could be called anywhere, so any change to such a file differs.</li>
  * </ul>
- * A file that doesn't parse exits non-zero with the reason.
+ * A file that doesn't parse prints one `error` line with the first line of the reason, and the others are still read.
  */
 public class StrictCalls {
   public static void main(String[] args) throws Exception {
     for (String file : args) {
-      String text = Files.readString(Path.of(file));
-      List<String[]> found = file.endsWith(".kts") ? kotlin(file, text) : groovy(file, text);
+      List<String[]> found;
+      try {
+        String text = Files.readString(Path.of(file));
+        found = file.endsWith(".kts") ? kotlin(file, text) : groovy(file, text);
+      } catch (Exception | StackOverflowError err) {
+        String reason = String.valueOf(err.getMessage()).strip().lines().filter(line -> !line.isBlank()).findFirst().orElse(err.getClass().getSimpleName());
+        found = List.<String[]>of(new String[] {"error", reason});
+      }
       for (String[] finding : found) System.out.println(file + "\t" + finding[0] + "\t" + escape(finding[1]));
     }
   }
@@ -57,7 +63,7 @@ public class StrictCalls {
       configuration.put(org.jetbrains.kotlin.cli.common.CLIConfigurationKeys.MESSAGE_COLLECTOR_KEY, org.jetbrains.kotlin.cli.common.messages.MessageCollector.Companion.getNONE());
       var environment = org.jetbrains.kotlin.cli.jvm.compiler.KotlinCoreEnvironment.createForProduction(disposable, configuration, org.jetbrains.kotlin.cli.jvm.compiler.EnvironmentConfigFiles.JVM_CONFIG_FILES);
       var parsed = new org.jetbrains.kotlin.psi.KtPsiFactory(environment.getProject(), false).createFile(Path.of(file).getFileName().toString(), text);
-      if (org.jetbrains.kotlin.com.intellij.psi.util.PsiTreeUtil.hasErrorElements(parsed)) throw new IllegalArgumentException(file + " doesn't parse as Kotlin");
+      if (org.jetbrains.kotlin.com.intellij.psi.util.PsiTreeUtil.hasErrorElements(parsed)) throw new IllegalArgumentException("it doesn't parse as Kotlin");
       List<String[]> found = new ArrayList<>();
       parsed.accept(new org.jetbrains.kotlin.psi.KtTreeVisitorVoid() {
         @Override public void visitCallExpression(org.jetbrains.kotlin.psi.KtCallExpression call) {

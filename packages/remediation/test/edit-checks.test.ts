@@ -132,9 +132,33 @@ describe.skipIf(!hasGradle)("strict pins in build scripts, parsed with Gradle's 
   });
 
   it("refuses a build script that doesn't parse, and one whose Gradle distribution isn't there", async () => {
-    expect((await check("build.gradle.kts", KTS, "val x = = 3\n"))[0]).toContain("couldn't be parsed");
+    expect((await check("build.gradle.kts", KTS, "val x = = 3\n"))[0]).toMatch(/^build\.gradle\.kts: doesn't parse, so its strict pins can't be checked: it doesn't parse as Kotlin$/);
     const missing = await strictPinsChanged(["build.gradle"], tree({ "build.gradle": GROOVY }), tree({ "build.gradle": GROOVY.replace("1.0", "2.0") }), gradleStrictCalls(join(gradleHome, "missing")));
     expect(missing[0]).toContain("no Gradle wrapper names the distribution");
+  });
+
+  it("blames only the script that doesn't parse, with the first line of the reason, and reads a byte-order mark as nothing", async () => {
+    const files = ["build.gradle", "sub/build.gradle", "other/build.gradle.kts"];
+    const base = tree({ ...WRAPPER, "build.gradle": GROOVY, "sub/build.gradle": GROOVY, "other/build.gradle.kts": KTS });
+    const head = tree({ ...WRAPPER, "build.gradle": "\uFEFF" + GROOVY, "sub/build.gradle": "dependencies {\n", "other/build.gradle.kts": KTS.replace("g:plain:1.0", "g:plain:1.1") });
+    const problems = await strictPinsChanged(files, base, head, parse);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatch(/^sub\/build\.gradle: doesn't parse, so its strict pins can't be checked: [^\n]+$/);
+    expect(problems[0]).not.toContain("strict-calls-");
+    // Broken on both sides, with the same error, a moved pin still can't pass; nor can an edit that fixes the base.
+    const broken = "dependencies {\n  implementation('g:a') { version { strictly '1.0' } }\n";
+    expect(await check("build.gradle", broken, broken.replace("'1.0'", "'2.0'"))).toEqual([expect.stringContaining("build.gradle: doesn't parse")]);
+    expect(await check("build.gradle", broken, GROOVY)).toEqual([expect.stringContaining("can't be checked: the base ")]);
+  });
+
+  it("says when Java isn't there to parse with", async () => {
+    const noJava = gradleStrictCalls(gradleHome, async () => { throw new Error("couldn't run java: spawn java ENOENT"); });
+    await expect(noJava([{ path: "build.gradle", text: GROOVY }], tree(WRAPPER))).rejects.toThrow("Java isn't available to parse the build files (couldn't run java: spawn java ENOENT)");
+  });
+
+  it("says when the parser was stopped rather than reporting a parse error", async () => {
+    const stopped = gradleStrictCalls(gradleHome, async () => ({ code: 128, stdout: "", stderr: "" }));
+    await expect(stopped([{ path: "build.gradle", text: GROOVY }], tree(WRAPPER))).rejects.toThrow("was stopped, past its 120s limit");
   });
 
   it("ignores files that aren't Gradle build, settings or catalog files", async () => {

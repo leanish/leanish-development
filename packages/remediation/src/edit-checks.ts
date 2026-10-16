@@ -140,11 +140,23 @@ export async function strictPinsChanged(changedFiles: ReadonlyArray<string>, bas
     // Each side with its own Gradle's compilers: an edit that moves the wrapper parses with the new one.
     const parsed = async (tree: Tree) => parse(await Promise.all(scripts.map(async (path) => ({ path, text: await tree.read(path) ?? "" }))), tree);
     const [before, after] = [await parsed(base), await parsed(head)];
-    for (const path of scripts) if (!isDeepStrictEqual(before.get(path), after.get(path))) problems.push(changedPin(path));
+    for (const path of scripts) {
+      // Only scripts the edit touched get here, so a side that doesn't parse refuses, naming only that script: equal
+      // errors on both sides could still hide a moved pin.
+      const unparsed = parseError(after.get(path)) ?? parseError(before.get(path), "the base ");
+      if (unparsed !== undefined) problems.push(`${path}: doesn't parse, so its strict pins can't be checked: ${unparsed}`);
+      else if (!isDeepStrictEqual(before.get(path), after.get(path))) problems.push(changedPin(path));
+    }
   } catch (err) {
     problems.push(`${scripts.join(", ")}: ${(err as Error).message}`);
   }
   return problems;
+}
+
+/** The reason a parser gave for not parsing a script, with `side` before it, if it gave one. */
+function parseError(findings: ReadonlyArray<string> | undefined, side = ""): string | undefined {
+  const error = findings?.find((finding) => finding.startsWith("error\t"));
+  return error === undefined ? undefined : `${side}${error.slice("error\t".length)}`;
 }
 
 function changedPin(path: string): string {
