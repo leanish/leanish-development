@@ -94,6 +94,16 @@ describe("protected Gradle parser jars", () => {
     await expect(gradleParserJars(home, VERSION)).rejects.toThrow("isn't the parser jar that was installed");
   });
 
+  it("reports a truncated JSON manifest with the remove-and-reinstall hint", async () => {
+    const { home, fetch } = await fixture();
+    await gradleParserJars(home, VERSION);
+    const dir = join(protectedDir(home, "gradle-parsers"), VERSION);
+    await writeFile(join(dir, "manifest.json"), '{"version":');
+    fetch.mockClear();
+    await expect(gradleParserJars(home, VERSION)).rejects.toThrow(`remove ${dir} to reinstall it`);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it.each(["version", "distributionSha256", "jars"])("refuses a damaged manifest's %s", async (key) => {
     const { home, fetch } = await fixture();
     await gradleParserJars(home, VERSION);

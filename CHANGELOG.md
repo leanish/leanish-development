@@ -20,10 +20,19 @@
 
 ### Fixed
 
+- A supplementary Unicode character before a Groovy strict pin no longer shifts the captured source text and hides
+  a changed version: Groovy columns are sliced as code points, while Kotlin's offsets remain UTF-16.
+- Strict-pin fingerprints keep enclosing calls' full receivers, including method and property chains, safe and
+  spread navigation, scope calls and generic target types. Kotlin infix scopes and closures assigned to properties
+  keep their target too, so changing it can't silently move a pin in an inactive branch.
+- Groovy parse errors show their first cause line instead of `startup failed:`. A damaged parser-install manifest
+  reports the remove-and-reinstall hint instead of a raw JSON error.
+
 - Strict pins in helper scripts with other names, such as `gradle/pins.groovy` and `pins.kts`, are checked too, for
-  routine and major plans. Every changed non-catalog file mentioning `strictly` on either side is parsed (`.kts` as
-  Kotlin, otherwise Groovy); prose that doesn't parse is refused by filename. Files without the word on either side
-  keep their existing treatment. The filename gap also affected 0.5.2.
+  routine and major plans. Changed `.groovy`, `.kt` and `.kts` helpers mentioning `strictly` on either side are parsed
+  (`.kt`/`.kts` as Kotlin, `.groovy` as Groovy); prose and Java are left to the outside-plan checks. Gradle files are
+  still parsed without a literal mention, while other helpers without the word keep their existing treatment.
+  Scripts loaded under unusual extensions remain a coverage gap. The helper filename gap also affected 0.5.2.
 
 - Strict pins in Groovy method, constructor and closure parameter defaults are read too. Both language parsers check
   every `strictly` identifier and string occurrence by source position, refusing any change to a file with an

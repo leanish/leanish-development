@@ -12,6 +12,7 @@ import { routineUnit, majorUnits } from "../src/units.ts";
 import { plannedFiles, verifyPlan, type VerifyInputs } from "../src/verify.ts";
 import { candidate } from "./fixtures.ts";
 import { LOCAL_GRADLE, LOCAL_WRAPPER, localGradleParser } from "../../remediation/test/local-gradle-parser.ts";
+import { PARSER_REGRESSIONS } from "../../remediation/test/parser-regressions.ts";
 import { textStrictCalls } from "../../remediation/test/strict-calls-fake.ts";
 
 vi.mock("../../ci/src/gate.ts", async (original) => ({ ...await original<object>(), runCompare: vi.fn(async () => ({ failures: [], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, group: (id: string) => id, cooldown: { evaluated: true, releaseAgeDays: 7, held: [] } })) }));
@@ -212,6 +213,19 @@ describe("bump verification", () => {
       const pin = `the edit changed a Gradle strictly(...) pin in ${path}: strict versions are the owner's, which no plan moves`;
       if (major) expect(problems).toEqual([pin]);
       else expect(problems).toContain(pin);
+    } finally {
+      await rm(state, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it.skipIf(LOCAL_GRADLE === undefined).each(PARSER_REGRESSIONS)("refuses $name through verifyPlan", async ({ path, before, after }) => {
+    const state = await mkdtemp(join(tmpdir(), "bump-rc3-parser-test-"));
+    try {
+      const { input, baseFiles, headFiles } = await fixture(true);
+      expect(await verifyPlan({ ...input, strictCalls: localGradleParser(state), changedFiles: [...input.changedFiles, path],
+        base: tree("base", { ...baseFiles, ...LOCAL_WRAPPER, [path]: before }),
+        head: tree("head", { ...headFiles, ...LOCAL_WRAPPER, [path]: after }) }))
+        .toEqual([`the edit changed a Gradle strictly(...) pin in ${path}: strict versions are the owner's, which no plan moves`]);
     } finally {
       await rm(state, { recursive: true, force: true });
     }

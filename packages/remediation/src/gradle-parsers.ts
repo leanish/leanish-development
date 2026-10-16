@@ -147,13 +147,19 @@ async function readManifest(dir: string): Promise<Manifest | undefined> {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw err;
   }
-  const parsed = JSON.parse(text) as unknown;
+  const invalid = `${dir}/manifest.json isn't a parser installation's manifest; remove ${dir} to reinstall it`;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch (err) {
+    throw new Error(invalid, { cause: err });
+  }
   const manifest = typeof parsed === "object" && parsed !== null ? parsed as Partial<Manifest> : undefined;
   const jars = manifest?.jars;
   const valid = manifest?.version === basename(dir) && typeof manifest.distributionSha256 === "string" && /^[a-f0-9]{64}$/.test(manifest.distributionSha256)
     && Array.isArray(jars) && jars.length === PARSER_JARS.length
     && jars.every((jar, index) => typeof jar?.name === "string" && PARSER_JARS[index]!.test(jar.name) && typeof jar.sha256 === "string" && /^[a-f0-9]{64}$/.test(jar.sha256));
-  if (!valid) throw new Error(`${dir}/manifest.json isn't a parser installation's manifest; remove ${dir} to reinstall it`);
+  if (!valid) throw new Error(invalid);
   return parsed as Manifest;
 }
 
