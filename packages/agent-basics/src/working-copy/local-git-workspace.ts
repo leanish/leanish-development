@@ -366,7 +366,8 @@ export class LocalGitWorkspace implements Workspace {
    * the commit gets), never the live working tree, which something left running could change for the check alone.
    */
   async #assertResolved(repo: Repo, conflicted: ReadonlyArray<string>): Promise<void> {
-    const markers = /^(<{7}|>{7})( |$)|^={7}$|^\|{7}( |$)/m;
+    // Seven or more: a `.gitattributes` `conflict-marker-size` makes git write longer markers.
+    const markers = /^(<{7,}|>{7,})( |$)|^={7,}$|^\|{7,}( |$)/m;
     const unresolved: string[] = [];
     for (const path of conflicted) {
       // A path resolved by removing it has nothing staged.

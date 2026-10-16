@@ -15,7 +15,7 @@
  * named tag is resolved with GitHub once for both sides.
  */
 import type { ActionsGitHub } from "./actions-github.ts";
-import { type ActionsInventory, type ActionUse, occurrenceKey, type Resolution, resolutionKey, resolveUse } from "./actions-inventory.ts";
+import { type ActionsInventory, type ActionUse, isFullTag, occurrenceKey, type Resolution, resolutionKey, resolveUse } from "./actions-inventory.ts";
 import { type Config, isOwnPackage } from "./config.ts";
 import type { Located } from "./findings.ts";
 import { mapLimited } from "./http.ts";
@@ -143,10 +143,13 @@ export class ActionsCatalog implements VersionCatalog {
     this.github = github;
   }
 
-  /** Undefined when the repository has more releases than the gate reads: an older fix could hide past them. */
+  /**
+   * Undefined when the repository has more releases than the gate reads: an older fix could hide past them. Only full
+   * release tags (`v1.0.1`, not `v1.1`) are versions: a pin's comment can't name another, so one couldn't be landed.
+   */
   async versions(pkg: PackageName): Promise<ReadonlyArray<string> | undefined> {
     const releases = await this.github.releasesOf(pkg.name);
-    return releases.complete ? [...releases.byTag.keys()] : undefined;
+    return releases.complete ? [...releases.byTag.keys()].filter(isFullTag) : undefined;
   }
 
   published(pkg: PackageVersion): Promise<Date | undefined> {
