@@ -16,7 +16,8 @@
   reference: strict, required and preferred versions, rejected versions and branch. Removing a reject from an active
   strict range now fails verification even when resolution stays the same; non-strict external constraints are covered too.
   Plain-version declarations keep their previous output; rich versions emit only set facets, defaulted to empty on read.
-  Project constraints are excluded, so constraining a root project without a group no longer aborts the inventory.
+  Constraints without a group or name are skipped using Gradle's public API, so constraining a root project without
+  a group no longer aborts the inventory. Grouped project constraints remain in the comparison.
 - GitHub repository URLs with explicit ports, including `git+ssh://git@github.com:22/acme/lib.git`, resolve to the
   correct owner and repository; scp-style SCM connections without a user and URLs with percent-encoded userinfo
   retain repository advisory coverage.
@@ -35,8 +36,9 @@
 - A bump-it major fails visibly when it brings a new transitive version from the npm registry that is deprecated, or
   whose catalog can't be read to rule that out.
 - A `uses` key written as a YAML alias is read like any other.
-- A repository URL whose host only ends in `github.com` (`notgithub.com`), or that names `github.com` in its path, is
-  no longer read as a GitHub repository when looking up repository advisories.
+- A repository URL whose host only ends in `github.com` (`notgithub.com`), or that names `github.com` in its path,
+  query or fragment, is no longer read as a GitHub repository when looking up repository advisories. Existing URL
+  and SCM spellings retain coverage, and surrounding whitespace is trimmed.
 - Maven versions compare a sub-list against a missing component item by item, as Maven does: `1.0-0.1` is above
   `1.0`, so an advisory covering `>1.0` matches it.
 - An action's versions are its full release tags only: a partial tag (`v1.1`), which a pin's comment can't name, is

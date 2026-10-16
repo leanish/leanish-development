@@ -8,8 +8,8 @@
 // plugins DSL and `buildscript {}` put plugins), plus the settings classpath once per build:
 // every module component the resolution selected, every dependency it couldn't resolve, and
 // the external dependencies declared in or inherited by that configuration, with their version,
-// `because(...)` reason (what the floors check reads) and full rich version, plus every external module
-// constraint and its full rich version: a strict version is its owner's pin. The CLI reads the files as data.
+// `because(...)` reason (what the floors check reads) and full rich version, plus every constraint with a nonempty
+// group and name and its full rich version: a strict version is its owner's pin. The CLI reads the files as data.
 // Declarations are read only once every configuration of the build has resolved: resolving adds
 // some (`defaultDependencies`, such as a code-quality plugin's tool, or `withDependencies`).
 //
@@ -26,7 +26,6 @@ import org.gradle.api.artifacts.ExternalModuleDependency
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
 import org.gradle.api.artifacts.result.ResolvedDependencyResult
 import org.gradle.api.artifacts.result.UnresolvedDependencyResult
-import org.gradle.api.internal.artifacts.dependencies.DefaultDependencyConstraint
 
 def outPath = System.getProperty("supplyChain.out")
 if (outPath == null || outPath.isEmpty()) {
@@ -52,7 +51,7 @@ def relativeToRequested = { File dir ->
 // A component in the resolved graph: `group:name:version` for a module, Gradle's display name otherwise (`project :app`).
 def componentKey = { id -> id instanceof ModuleComponentIdentifier ? "${id.group}:${id.module}:${id.version}".toString() : id.displayName }
 
-// Match the reader's coordinate contract before emitting external modules; project coordinates never enter these lists.
+// Match the reader's coordinate contract before emitting module coordinates.
 def moduleCoordinates = { group, name, String where ->
     [group: group, name: name].each { field, value ->
         if (!(value instanceof String) || value.isEmpty()) throw new GradleException("supply-chain inventory: ${where} has a malformed ${field}")
@@ -102,9 +101,13 @@ def declare = { configuration, Map entry ->
             reason : dependency.reason,
         ] + richVersion(constraint) + (constraint.strictVersion ? [strict: true] : [:]) + (moved.contains(dependency) ? [moved: true] : [:])
     }
-    // Gradle exposes no public external-module constraint subtype; project constraints have a different implementation.
-    configuration.allDependencyConstraints.withType(DefaultDependencyConstraint).each { constraint ->
-        def coordinates = moduleCoordinates(constraint.group, constraint.name, "${entry.id} external constraint")
+    // The public constraint/module APIs expose only coordinates, not whether the target is a project.
+    // Skip missing coordinates (including ungrouped projects); grouped project constraints remain comparable.
+    configuration.allDependencyConstraints.each { constraint ->
+        def group = constraint.group
+        def name = constraint.name
+        if (group == null || group.isEmpty() || name == null || name.isEmpty()) return
+        def coordinates = moduleCoordinates(group, name, "${entry.id} constraint")
         def version = constraint.versionConstraint
         entry.constraints << coordinates + [version: version.strictVersion ?: version.requiredVersion ?: version.preferredVersion ?: null] + richVersion(version)
         def strict = version.strictVersion

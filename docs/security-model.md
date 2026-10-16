@@ -115,7 +115,8 @@ Both tools are in this tree: [`secure-it`](../packages/secure-it) and [`bump-it`
 - **Floor history stays intact.** secure-it compares recorded floors and their declarations before `compare`: compatibility floors never change, and security floors change only at exact planned targets with their scope and history preserved. New floors must be planned security additions, and only a dedicated floor-removal plan may remove security floors. Remaining target advisories are checked against compare's head findings from the same snapshot.
 - **Strict pins stay the owner's.** Gradle interprets the build and catalogs. Its inventory records each resolved
   configuration's external module declarations and constraints, including their full rich versions. Project dependencies
-  and project constraints are excluded from these module lists.
+  are excluded. Constraints without a group or name (including ungrouped projects) are skipped; grouped project
+  constraints remain in the comparison because Gradle's public constraint API exposes no project marker.
   Neither tool plans a move of a strict pin where the change acts, and the reference refuses to move one. Both tools compare that planned reference with the
   edit, configuration by configuration, including each declaration's and constraint's strict, required and preferred
   versions, rejected versions (order independent), and branch
