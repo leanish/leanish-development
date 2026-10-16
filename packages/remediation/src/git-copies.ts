@@ -7,8 +7,7 @@
  *     committed (no `export-ignore`, `export-subst`, line-ending or filter
  *     attributes applied), for the sandboxed Gradle inventory of a commit the
  *     working copy doesn't have checked out;
- *   - `changedSince`: what the working tree changed relative to a commit;
- *   - `sameTreeAs`: whether the working tree equals a commit.
+ *   - `changedSince`: what the working tree changed relative to a commit.
  */
 import { spawn } from "node:child_process";
 import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
@@ -304,9 +303,4 @@ function resolved(link: string, tree: LinkTree): string | typeof OUTSIDE | { rea
     pending.unshift(...target.split("/"));
   }
   return at.join("/");
-}
-
-/** Whether the working tree has exactly `sha`'s files. */
-export async function sameTreeAs(workingCopy: WorkingCopy, sha: string, run: RunProcess = runProcess): Promise<boolean> {
-  return (await changedSince(workingCopy, sha, run)).length === 0;
 }

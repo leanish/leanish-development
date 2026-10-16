@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { WorkingCopy } from "../../agent-basics/src/types/working-copy.ts";
-import { candidateTree, changedBetween, changedSince, exportCommit, linkProblems, sameTreeAs, snapshotCandidate } from "../src/git-copies.ts";
+import { candidateTree, changedBetween, changedSince, exportCommit, linkProblems, snapshotCandidate } from "../src/git-copies.ts";
 
 let root: string;
 let workingCopy: WorkingCopy;
@@ -70,7 +70,7 @@ describe("git copies", () => {
       await writeFile(join(path, ".git"), `gitdir: ${alternate}\n`);
       const wc: WorkingCopy = { projectId: "fixture", path, gitDir, branch: "main", headSha: base };
       expect(await changedSince(wc, base)).toEqual(["package.json"]);
-      expect(await sameTreeAs(wc, base)).toBe(false);
+      expect((await changedSince(wc, base)).length === 0).toBe(false);
       const exported = await exportCommit(wc, base);
       try {
         expect(await readFile(join(exported.dir, "package.json"), "utf8")).toBe("original");
@@ -102,10 +102,10 @@ describe("git copies", () => {
     spawnSync("mkdir", ["-p", join(workingCopy.path, "build")]);
     await writeFile(join(workingCopy.path, "build", "out.txt"), "x\n");
     expect(await changedSince(workingCopy, first)).toEqual(["new.txt", "package.json"]);
-    expect(await sameTreeAs(workingCopy, first)).toBe(false);
+    expect((await changedSince(workingCopy, first)).length === 0).toBe(false);
     await writeFile(join(workingCopy.path, "package.json"), '{"name":"a"}\n');
     await rm(join(workingCopy.path, "new.txt"));
-    expect(await sameTreeAs(workingCopy, first)).toBe(true);
+    expect((await changedSince(workingCopy, first)).length === 0).toBe(true);
   });
 
   it("refuses a tree with an entry under its own symlink, case-insensitively: a symlink A and a file under a/", async () => {

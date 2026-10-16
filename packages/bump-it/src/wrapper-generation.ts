@@ -67,6 +67,8 @@ async function generateInCopy(context: Pick<ToolRunContext, "isolation">, workin
   const before = await repositoryFiles(workingCopy, run, tracked);
   const type = move.wrapper.distributionUrl.endsWith("-all.zip") ? "all" : "bin";
   const command = ["./gradlew", "wrapper", "--gradle-version", move.to, "--gradle-distribution-sha256-sum", move.wrapper.distributionSha256, "--distribution-type", type, "--no-daemon"];
+  // The first pass runs the current Gradle, which only updates gradle-wrapper.properties. The second runs the
+  // new version, which regenerates the wrapper scripts and jar (Gradle's documented wrapper upgrade).
   for (let pass = 0; pass < 2; pass++) {
     const result = await runSandboxed(context.isolation, { workingCopy, command }, run);
     if (result.code !== 0) {
