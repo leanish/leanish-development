@@ -6,7 +6,7 @@
 	<string>leanish.bump-it.widget.review</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/Users/YOUR_USER/dev/supply-chain/packages/remediation/run.sh</string>
+		<string>/Users/YOUR_USER/dev/supply-chain/core/tool-runtime/run.sh</string>
 		<string>bump-it</string>
 		<string>review</string>
 		<string>acme/widget</string>

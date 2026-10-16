@@ -17,7 +17,7 @@ No job writes anything to the repository or its PRs: the gate needs only `conten
 - **Repository build commands get no token.** The Gradle wrapper runs with `GITHUB_TOKEN`, `GH_TOKEN` and the Actions runtime tokens removed from its environment. npm signature verification instead uses the clean projects and fixed configuration described below. git only reads the checkout (`show`, `ls-tree`).
 - **The verdict never leaves the job that computes it.** The job's result is the check, so no artifact another job uploads can stand in for a verdict.
 - **What a build can still do:** Gradle runs the build's own code, so a malicious build script or plugin can alter its own inventory (hide a dependency from it). The job split keeps it from touching the comparison and the publishing credentials, not from lying about itself; review build changes.
-- **Fork PRs** run the workflow from the fork's own files, with a read-only token and no secrets: their check is only as trustworthy as the PR, and nothing re-runs it from the default branch's files; see the adoption guide in [`packages/ci/README.md`](../packages/ci/README.md).
+- **Fork PRs** run the workflow from the fork's own files, with a read-only token and no secrets: their check is only as trustworthy as the PR, and nothing re-runs it from the default branch's files; see the adoption guide in [`core/gate/README.md`](../core/gate/README.md).
 
 ### npm signature verification
 
@@ -48,13 +48,13 @@ So the gate holds every young version a PR adds or changes, justified or not: th
 red until the last one turns old enough, and no exception clears it. secure-it keeps such fixes in a draft PR of
 their own, opened with a warning, and retires it once everything aged. Taking it earlier is a person's explicit
 decision: every other check green, the reason written on the PR, an admin merge. Details:
-[the gate's cooldown](../packages/ci/README.md#the-cooldown-young-versions-are-held-however-justified) and
-[secure-it's warning](../packages/secure-it/README.md#the-cooldown-warning).
+[the gate's cooldown](../core/gate/README.md#the-cooldown-young-versions-are-held-however-justified) and
+[secure-it's warning](../secure-it/README.md#the-cooldown-warning).
 
 ## The gate itself
 
 - It's pinned to one full commit SHA, and checked out from that same commit.
-- OSV-Scanner is pinned by version and sha256 ([`packages/ci/tools.json`](../packages/ci/tools.json)).
+- OSV-Scanner is pinned by version and sha256 ([`core/gate/tools.json`](../core/gate/tools.json)).
 - Its runtime dependencies (`yaml`, `semver`, `smol-toml` for Gradle version catalogs, and `fast-xml-parser` with its own seven for POMs and Maven metadata) install from this repository's lockfile, without lifecycle scripts. A smoke test installs only the CI workspace's production dependencies and loads its CLI.
 - XML from repositories is read under fixed budgets: a 5 MB size cap, 100 levels of nesting, and DOCTYPE entities that are few (50), small (1,000 characters) and rarely expanded (1,000 times); none is fetched. A document over budget, using reserved names such as `__proto__`, or whose root doesn't close at its end (a truncated download) reads as nothing: for a POM, no source repository (a coverage gap); for Maven metadata, a failed check.
 - A lockfile entry that keeps its name and version but changes its source, bytes or bundling (`resolved`, `integrity`, `inBundle`) fails: nothing about the version tells the new artifact from the original, so the age and identity checks a version change gets can't apply.
@@ -64,7 +64,7 @@ decision: every other check green, the reason written on the PR, an admin merge.
 
 ## secure-it and bump-it
 
-Both tools are in this tree: [`secure-it`](../packages/secure-it) and [`bump-it`](../packages/bump-it), using [`packages/remediation`](../packages/remediation).
+Both tools are in this tree: [`secure-it`](../secure-it) and [`bump-it`](../bump-it), using [`core/tool-runtime`](../core/tool-runtime).
 
 - **Two GitHub tokens per tool**, both personal access tokens for now (PAT mode will remain an alternative when the planned GitHub App mode lands):
   - one that writes (branches, PRs, comments), only for the tool's own process;
@@ -111,7 +111,7 @@ Both tools are in this tree: [`secure-it`](../packages/secure-it) and [`bump-it`
 - **CI adaptation updates the published verdict.** After verification, both tools publish the agent's new title,
   description and commit message with the current plan and state markers, so the PR reports the latest adaptation and checks.
 - **The tool decides versions, verifies the result with this gate, and publishes.** Every write to a PR re-reads it first and stops unless it's still the tool's, at the expected head. Nothing merges by itself.
-- **Published text keeps the machine out.** In a PR's title, description and commit message, absolute paths inside the working copy become repository-relative, and paths under the home, temp, state and cache directories become `<local path>` ([`publication-text.ts`](../packages/remediation/src/publication-text.ts)). The tool's own `<!-- leanish:… -->` markers (its state and encoded plan) pass through: this cleans what readers see, not every byte.
+- **Published text keeps the machine out.** In a PR's title, description and commit message, absolute paths inside the working copy become repository-relative, and paths under the home, temp, state and cache directories become `<local path>` ([`publication-text.ts`](../core/tool-runtime/src/publication-text.ts)). The tool's own `<!-- leanish:… -->` markers (its state and encoded plan) pass through: this cleans what readers see, not every byte.
 - **Floor history stays intact.** secure-it compares recorded floors and their declarations before `compare`: compatibility floors never change, and security floors change only at exact planned targets with their scope and history preserved. New floors must be planned security additions, and only a dedicated floor-removal plan may remove security floors. Remaining target advisories are checked against compare's head findings from the same snapshot.
 - **Strict pins stay the owner's.** Gradle interprets the build and catalogs. Its inventory records each resolved
   configuration's external module declarations and constraints, including their full rich versions. Project dependencies
@@ -120,7 +120,7 @@ Both tools are in this tree: [`secure-it`](../packages/secure-it) and [`bump-it`
   Neither tool plans a move of a strict pin where the change acts, and the reference refuses to move one. Both tools compare that planned reference with the
   edit, configuration by configuration, including each declaration's and constraint's strict, required and preferred
   versions, rejected versions (order independent), and branch
-  ([`gradle-reference.ts`](../packages/remediation/src/gradle-reference.ts)). Changing, adding or removing an
+  ([`gradle-reference.ts`](../core/tool-runtime/src/gradle-reference.ts)). Changing, adding or removing an
   interpreted pin, turning it into a plain declaration at the same version, or changing any rich-version facet
   (strict or otherwise) fails verification even when the resolved modules stay the same. The comparison
   also applies during secure-it's floor removal and covers catalog versions that Gradle uses. Declaration
@@ -131,7 +131,7 @@ Both tools are in this tree: [`secure-it`](../packages/secure-it) and [`bump-it`
   entry, isn't checked. The agent's instructions still forbid changing any strict pin, and the owner reviews the PR
   diff for those Gradle didn't see. The existing limits on which files routine plans may edit still apply.
 - **Floor removal requires a joint unlocked proof**, computed in sandboxed scratch copies of base
-  ([how](../packages/secure-it/README.md#removing-redundant-security-floors)). npm resolves without lifecycle scripts;
+  ([how](../secure-it/README.md#removing-redundant-security-floors)). npm resolves without lifecycle scripts;
   Gradle runs with a trusted init script, `--no-daemon` and no configuration cache. Incomplete data keeps the floors.
   The tool writes exact npm/floor bytes; the agent only removes named Gradle declarations. Gradle still runs
   repository code and can misrepresent its own inventory, as noted above: this proof is not an independent Gradle
@@ -141,12 +141,12 @@ Both tools are in this tree: [`secure-it`](../packages/secure-it) and [`bump-it`
 Covered elsewhere, with the points that matter here:
 
 - **npm resolution** (temporary exact pins, narrowed overrides, retention pins) is in the
-  [secure-it](../packages/secure-it/README.md) and [bump-it](../packages/bump-it/README.md#run) READMEs. It runs
+  [secure-it](../secure-it/README.md) and [bump-it](../bump-it/README.md#run) READMEs. It runs
   sandboxed and scriptless; exempting a name from npm's window never authorizes a different explicit target, and final
   verification protects lock bytes and manifest dependency fields.
 - **The npm required-dependency age exception** is the gate's own proof: it rebuilds the closure from lockfile
   placements, baseline overrides and registry manifests instead of trusting secure-it's plan or notes, and a limit hit
-  grants nothing ([details](../packages/ci/README.md#npm-dependencies-required-by-a-security-fix)). Ordinary bumps and
+  grants nothing ([details](../core/gate/README.md#npm-dependencies-required-by-a-security-fix)). Ordinary bumps and
   other ecosystems get no such exemption.
-- **The skill answer schemas** the copied runtime accepts are in [`packages/agent-basics`](../packages/agent-basics/README.md);
+- **The skill answer schemas** the copied runtime accepts are in [`core/agent-runtime`](../core/agent-runtime/README.md);
   unknown fields and malformed objects still fail.

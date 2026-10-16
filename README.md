@@ -27,8 +27,8 @@ and what's unreleased. Licensed under Apache-2.0.
 
 - [Requirements and scenario behavior](docs/requirements.md)
 - [Why this adds value alongside dependency alerts](docs/why.md)
-- [Adopting the gate](packages/ci/README.md#adopting-the-gate), including
-  [repository policy, exceptions and floors](packages/ci/README.md)
+- [Adopting the gate](core/gate/README.md#adopting-the-gate), including
+  [repository policy, exceptions and floors](core/gate/README.md)
 - [Adopting secure-it and bump-it](docs/adopting-tools.md): prerequisites, PATs and
   Keychain, candidate preview, launchd, logs, costs and troubleshooting
 - [Tool configuration](docs/tool-configuration.md): every agent.yaml field, including
@@ -42,17 +42,17 @@ and what's unreleased. Licensed under Apache-2.0.
 
 ## Packages
 
-- [`ci`](packages/ci): inventories, advisory/version rules, candidate selection and
+- [`@leanish/gate`](core/gate): inventories, advisory/version rules, candidate selection and
   the reusable gate with daily default-branch scans
-- [`secure-it`](packages/secure-it): security batches, separate majors and verified
+- [`secure-it`](secure-it): security batches, separate majors and verified
   removal of security floors; compatibility floors stay
-- [`bump-it`](packages/bump-it): routine/major plans, tool-computed npm changes and
+- [`bump-it`](bump-it): routine/major plans, tool-computed npm changes and
   checksummed Gradle wrapper generation
-- [`remediation`](packages/remediation): shared config, sandboxed inventories,
+- [`@leanish/tool-runtime`](core/tool-runtime): shared config, sandboxed inventories,
   publication (PR text cleanup, race checks, journal recovery), review ticks and `run.sh`
-- [`agent-basics`](packages/agent-basics): the Codex and Claude Code runners and their
+- [`@leanish/agent-runtime`](core/agent-runtime): the Codex and Claude Code runners and their
   support, mostly copied from leanish-development's runtime, with
-  [provenance](packages/agent-basics/PROVENANCE.md)
+  [provenance](core/agent-runtime/PROVENANCE.md)
 
 ## Development
 

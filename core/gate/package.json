@@ -1,0 +1,72 @@
+{
+  "name": "@leanish/gate",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The CI gate: one advisory snapshot for base and head, a PR fails only on what it makes worse.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "supply-chain": "./src/cli.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.1",
+    "ajv": "^8.20.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.11.2",
+    "semver": "^7.8.5",
+    "smol-toml": "^1.9.0",
+    "yaml": "^2.9.1"
+  },
+  "exports": {
+    "./actions-github": "./src/actions-github.ts",
+    "./actions-inventory": "./src/actions-inventory.ts",
+    "./candidates": "./src/candidates.ts",
+    "./carrier-candidates": "./src/carrier-candidates.ts",
+    "./carrier-fixes": "./src/carrier-fixes.ts",
+    "./catalogs": "./src/catalogs.ts",
+    "./config": "./src/config.ts",
+    "./cooldown": "./src/cooldown.ts",
+    "./exceptions": "./src/exceptions.ts",
+    "./findings": "./src/findings.ts",
+    "./floors": "./src/floors.ts",
+    "./gate": "./src/gate.ts",
+    "./git": "./src/git.ts",
+    "./gradle": "./src/gradle.ts",
+    "./gradle-sources": "./src/gradle-sources.ts",
+    "./http": "./src/http.ts",
+    "./inventory": "./src/inventory.ts",
+    "./json": "./src/json.ts",
+    "./node-runtime": "./src/node-runtime.ts",
+    "./npm-bundles": "./src/npm-bundles.ts",
+    "./npm-lock": "./src/npm-lock.ts",
+    "./npm-peers": "./src/npm-peers.ts",
+    "./npm-registry": "./src/npm-registry.ts",
+    "./npm-required": "./src/npm-required.ts",
+    "./npm-required-gate": "./src/npm-required-gate.ts",
+    "./npm-required-overrides": "./src/npm-required-overrides.ts",
+    "./npm-required-peers": "./src/npm-required-peers.ts",
+    "./package-version": "./src/package-version.ts",
+    "./process": "./src/process.ts",
+    "./release-age": "./src/release-age.ts",
+    "./repository-advisories": "./src/repository-advisories.ts",
+    "./snapshot": "./src/snapshot.ts",
+    "./take-snapshot": "./src/take-snapshot.ts",
+    "./test/fake-fetch": "./test/fake-fetch.ts",
+    "./test/required-fixture": "./test/required-fixture.ts",
+    "./test/tarballs": "./test/tarballs.ts",
+    "./tree": "./src/tree.ts",
+    "./versions": "./src/versions.ts",
+    "./young-fixes": "./src/young-fixes.ts"
+  }
+}

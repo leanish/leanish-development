@@ -417,5 +417,5 @@ only the cooldown check reuses the old report.
 
 For details: [scenario rules](requirements.md), [coverage gaps](coverage-gaps.md),
 [security boundaries](security-model.md),
-[gate](../packages/ci/README.md), [secure-it](../packages/secure-it/README.md) and
-[bump-it](../packages/bump-it/README.md) guides.
+[gate](../core/gate/README.md), [secure-it](../secure-it/README.md) and
+[bump-it](../bump-it/README.md) guides.

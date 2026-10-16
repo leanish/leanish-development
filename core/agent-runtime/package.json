@@ -1,0 +1,52 @@
+{
+  "name": "@leanish/agent-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "description": "What secure-it and bump-it need to run a coding agent: Codex and Claude runners, skills, usage, git workspace, GitHub client, logger. Copied from leanish-development's runtime (see PROVENANCE.md).",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  },
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "yaml": "^2.9.1"
+  },
+  "exports": {
+    "./github/github-client": "./src/github/github-client.ts",
+    "./isolation": "./src/isolation.ts",
+    "./logger/console-logger": "./src/logger/console-logger.ts",
+    "./report/run-report": "./src/report/run-report.ts",
+    "./secret-store": "./src/secret-store.ts",
+    "./skill/claude-code-runner": "./src/skill/claude-code-runner.ts",
+    "./skill/codex-permissions": "./src/skill/codex-permissions.ts",
+    "./skill/codex-runner": "./src/skill/codex-runner.ts",
+    "./skill/fake-runner": "./src/skill/fake-runner.ts",
+    "./skill/run-skill": "./src/skill/run-skill.ts",
+    "./skill/runner": "./src/skill/runner.ts",
+    "./skill/skill-loader": "./src/skill/skill-loader.ts",
+    "./skill/spawn-capture": "./src/skill/spawn-capture.ts",
+    "./skill/validator": "./src/skill/validator.ts",
+    "./types/clients": "./src/types/clients.ts",
+    "./types/logger": "./src/types/logger.ts",
+    "./types/repo-source": "./src/types/repo-source.ts",
+    "./types/working-copy": "./src/types/working-copy.ts",
+    "./usage/api-cost": "./src/usage/api-cost.ts",
+    "./usage/model-prices": "./src/usage/model-prices.ts",
+    "./usage/skill-usage": "./src/usage/skill-usage.ts",
+    "./working-copy/git-clone-auth": "./src/working-copy/git-clone-auth.ts",
+    "./working-copy/in-memory-workspace": "./src/working-copy/in-memory-workspace.ts",
+    "./working-copy/local-git-workspace": "./src/working-copy/local-git-workspace.ts",
+    "./working-copy/workspace": "./src/working-copy/workspace.ts"
+  }
+}
