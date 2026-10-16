@@ -214,6 +214,8 @@ async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions
       () => npm("install"), () => npm("install"));
   }
 
+  if (inputs.kind !== "routine") await assertNoNewDeprecated(new NpmGraph(JSON.parse(await readFile(at(lockName), "utf8"))), baseVersions, lockfile, inputs.sources);
+
   const files = new Map<string, string>();
   for (const [path, text] of planned) {
     const onDisk = await readFile(at(manifestOf(path)), "utf8");
@@ -325,6 +327,21 @@ function rememberAccepted(graph: NpmGraph, retained: ReadonlyMap<string, Copy>, 
     if (version !== undefined && graph.nameAt(path) === retained.get(path)?.name && version !== retained.get(path)?.version) {
       accepted.set(path, version);
     }
+  }
+}
+
+/**
+ * A major keeps the graph npm induces, but none of its new versions may be deprecated: each version a transitive copy
+ * takes that base didn't have must be in the registry's non-deprecated catalog, which unreadable data can't show.
+ * Direct copies are the unit's own, chosen with their checks; bundled copies follow their carrier.
+ */
+async function assertNoNewDeprecated(graph: NpmGraph, baseVersions: ReadonlyMap<string, ReadonlyArray<string>>, lockfile: string, sources: TargetSources): Promise<void> {
+  const declared = new Set(graph.declaredEdges().flatMap((edge) => (edge.to === undefined ? [] : [edge.to])));
+  for (const copy of graph.copies()) {
+    if (copy.bundled || declared.has(copy.path) || baseVersions.get(copy.name)?.includes(copy.version)) continue;
+    const listed = await sources.versions(copy.name).catch(() => undefined);
+    if (listed === undefined) throw new Error(`${lockfile}: the major brings ${copy.name}@${copy.version}, whose registry catalog can't be read to rule out deprecation`);
+    if (!listed.includes(copy.version)) throw new Error(`${lockfile}: the major brings ${copy.name}@${copy.version}, which is deprecated`);
   }
 }
 
