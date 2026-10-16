@@ -6,14 +6,13 @@ import { type CooldownEvaluation, heldLines } from "../../ci/src/cooldown.ts";
 import { type GateEnvironment, type GradleInputs, readSettings, runCompare, treeSources } from "../../ci/src/gate.ts";
 import type { GradleInventory } from "../../ci/src/gradle.ts";
 import type { Tree } from "../../ci/src/tree.ts";
-import { actionsOutsidePlan, declaredAt, directChangesOutside, directVersions, FLOORS_FILE, isDependencyFile, policyFence, strictPinsChanged } from "../../remediation/src/edit-checks.ts";
+import { actionsOutsidePlan, declaredAt, directChangesOutside, directVersions, FLOORS_FILE, isDependencyFile, policyFence } from "../../remediation/src/edit-checks.ts";
 
 import type { WrapperFile } from "./wrapper-generation.ts";
 import { WRAPPER_FILES, type WrapperPlanner } from "./gradle-wrapper.ts";
 import { plannedPinsLanded } from "./action-pins.ts";
 import { referenceDifferences, type ReferenceMove, referenceProblems } from "../../remediation/src/gradle-reference.ts";
 import { type BumpPlan, DEPENDENCY_FIELDS, dependencyDigest, sha256 } from "./plan.ts";
-import type { StrictCallParser } from "../../remediation/src/strict-calls.ts";
 
 export interface VerifyInputs {
   readonly plan: BumpPlan;
@@ -28,8 +27,6 @@ export interface VerifyInputs {
   /** The base's inventory with the plan's Gradle moves (and wrapper) applied by Gradle: what head's must be. */
   readonly reference: GradleInventory | undefined;
   readonly changedFiles: ReadonlyArray<string>;
-  /** Reads strict pins in Gradle build scripts with the build's own Gradle compilers (`gradleStrictCalls`). */
-  readonly strictCalls: StrictCallParser;
 }
 
 /** The plan's declaration moves, for its reference. */
@@ -61,7 +58,6 @@ export async function verifyPlan(inputs: VerifyInputs): Promise<string[]> {
     problems.push("bump-it may not change dependency floors");
   }
   problems.push(...await floorProblems(base, head, gradle));
-  problems.push(...await strictPinsChanged(inputs.changedFiles, base, head, inputs.strictCalls));
   problems.push(...directChangesOutside(await directVersions(base), await directVersions(head), (ecosystem, name, where) => includesDeclaration(plan, ecosystem, name, where)));
   // Gradle: the plan landed in the reference, and head resolves and declares exactly what the reference does.
   problems.push(...referenceProblems(gradle.base, inputs.reference, referenceMoves(plan), []), ...referenceDifferences(inputs.reference, gradle.head));

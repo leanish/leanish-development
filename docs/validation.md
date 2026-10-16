@@ -166,7 +166,9 @@ added concrete coverage beyond the first review and calibrated the non-blocking 
   and non-parsing catalogs fail; unrelated changes beside unchanged pins pass. Sol's Groovy slashy-string finding
   is documented as a known deficiency for 0.6.0: string/comment forms the hand-written Kotlin/Groovy lexer doesn't
   understand can hide strict-pin changes in inactive branches. Active pins remain checked by the inventory and
-  reference. Version 0.6.0 plans to use the official parsers Gradle ships (its Groovy and Kotlin compilers).
+  reference. At this review, version 0.6.0 planned to use the official parsers Gradle ships (its Groovy and Kotlin
+  compilers). That plan was later superseded by the owner's decision to use Gradle's interpreted inventory and
+  reference comparison only; see the [deliberate inactive-pin limit](coverage-gaps.md).
 - **Scalar YAML aliases — non-blocking limitation.** An action pin supplied through a scalar anchor cannot be
   updated automatically; verification refuses it visibly. Documented for manual updating.
 - **Mixed mutable/immutable releases — non-blocking limitation.** An undated mutable release in a fixing line

@@ -93,8 +93,8 @@ packages/remediation/run.sh bump-it review leanish/widget   # every few hours
   - PR text that gives `from → to`, each major's adaptation verdict and the checks run. The published text keeps local
     paths out (see [remediation](../remediation)).
 - Verification fences off policy changes first, then requires exact planned lockfiles and dependency fields, exact
-  planned Gradle declarations, unchanged unplanned declarations and floors, unchanged `strictly` statements and their continuation lines, correct action
-  pins, and all generated wrapper bytes/modes plus official checksums. Only after every local check passes does it run
+  planned Gradle declarations, unchanged unplanned declarations and floors, interpreted strict declarations and strict
+  constraints matching the Gradle reference, correct action pins, and all generated wrapper bytes/modes plus official checksums. Only after every local check passes does it run
   `compare`, which must also pass. A report of local problems means `compare` has not run.
 - Open PRs count only when the head matches their body state or the exact tool journal entry. Same plan: leave it to
   review. Changed plan: merge base, revert all old PR edits to base, apply the new plan, verify and push a normal commit.

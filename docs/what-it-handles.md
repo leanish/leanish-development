@@ -191,14 +191,12 @@ holds where the fix would act, and the gate keeps failing until the owner moves
 it. A strictly pinned parent is never moved to carry a fix; the vulnerable
 dependency gets a floor instead. Gradle's own strict constraints on its embedded
 Kotlin (buildscript and settings classpaths) don't block fixes elsewhere.
-For `*.versions.toml` catalogs, verification uses `smol-toml` to compare every
-entry a strict version belongs to, whole, in order. For `.gradle` and
-`.gradle.kts`, it parses the scripts with the Groovy and Kotlin compilers the
-build's own Gradle distribution ships, without running them, and compares each
-`strictly(...)` call with the dependency it pins, in any branch or class.
-Unrelated edits, comments and formatting outside the calls pass; a script that
-doesn't parse fails. A version that reaches a pin through a variable or a helper
-is checked only when the pin is active, through the inventory.
+Verification compares the edit with the planned reference through Gradle's inventory, configuration by
+configuration. It refuses changed, added or removed strict declarations and strict constraints, including pins
+supplied by catalogs, and a pin turned into a plain declaration at the same version. There is no separate source or
+catalog parser, Java parser run or compiler download for this check.
+By the owner's decision, pins Gradle doesn't resolve, such as an inactive branch or unused catalog entry, aren't
+checked. The agent's instructions still forbid changing them, and the PR diff covers those Gradle didn't see.
 
 ### What bump-it updates
 

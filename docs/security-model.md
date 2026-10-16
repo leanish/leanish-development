@@ -113,47 +113,17 @@ Both tools are in this tree: [`secure-it`](../packages/secure-it) and [`bump-it`
 - **The tool decides versions, verifies the result with this gate, and publishes.** Every write to a PR re-reads it first and stops unless it's still the tool's, at the expected head. Nothing merges by itself.
 - **Published text keeps the machine out.** In a PR's title, description and commit message, absolute paths inside the working copy become repository-relative, and paths under the home, temp, state and cache directories become `<local path>` ([`publication-text.ts`](../packages/remediation/src/publication-text.ts)). The tool's own `<!-- leanish:… -->` markers (its state and encoded plan) pass through: this cleans what readers see, not every byte.
 - **Floor history stays intact.** secure-it compares recorded floors and their declarations before `compare`: compatibility floors never change, and security floors change only at exact planned targets with their scope and history preserved. New floors must be planned security additions, and only a dedicated floor-removal plan may remove security floors. Remaining target advisories are checked against compare's head findings from the same snapshot.
-- **Strict pins stay the owner's.** The Gradle inventory marks strict
-  declarations and records strict dependency constraints. Neither tool plans a change that would move a strict
-  version where the change acts; the reference refuses to move one and compares strictness with the edit.
-  - For `*.versions.toml` catalogs, verification parses base and head with `smol-toml` and compares, as an ordered
-    list, every entry a strict version belongs to, whole (module, group, name and version), with the entries whose
-    `version.ref` names a strict version, so a pin can't be moved to another dependency. Changed paths or values, added or removed
-    pins, and a catalog that doesn't parse fail. Formatting changes with the same parsed pins can pass.
-  - Changed `.gradle` and `.gradle.kts` files are always parsed, including dynamic calls with no literal `strictly`.
-    Changed `.groovy`, `.kt` and `.kts` helpers are also parsed when either side contains `strictly`. `.kt` and `.kts`
-    use Kotlin; other selected scripts use Groovy. Prose, Java and other extensions remain subject to the existing
-    outside-plan checks; see the [unusual-extension limit](coverage-gaps.md). Parsing runs through
-    [`StrictCalls.java`](../packages/remediation/gradle/StrictCalls.java) run by Java's source launcher. It only parses: Groovy stops at conversion, before any AST transformation, and Kotlin builds a syntax tree, so
-    nothing in the script runs. Only the version is read from the wrapper, never its download host: the tool fetches
-    `https://services.gradle.org/distributions/gradle-<version>-bin.zip`, follows only HTTPS redirects, and checks the
-    published `.sha256`. The first strict-pin check for each Gradle version needs network access to
-    `services.gradle.org` and its HTTPS redirect hosts, plus `unzip`; later runs reuse the protected installation.
-    Distribution downloads are capped at 512 MiB while streaming, even without a truthful `Content-Length`.
-    A wrapper's `distributionUrl` must end in `gradle-<version>-(bin|all).zip`; a custom filename, query suffix or
-    missing wrapper makes the selected script edits fail visibly because their compiler version can't be read.
-    HTTPS and that published checksum are the trust root. Exactly one jar per compiler family
-    is installed atomically into `dirs.state/tools/gradle-parsers/<version>` with a checksum manifest; every jar's
-    canonical path, regular-file status and SHA-256 are re-verified right before each Java run. The jars never come
-    from the sandbox-writable Gradle cache. Java gets a minimal environment, a timeout, and fresh input copies in
-    `dirs.state/tools/strict-calls/run-*`, removed afterward. Both locations are refused if they resolve inside any
-    sandbox-writable root (working copy, cache, build cache or temp directories).
-    It compares, in order, each `strictly(...)` call with its full receiver, and each enclosing call's full receiver,
-    navigation operator, generic target types and non-closure arguments (the dependency it pins). Chains, property
-    receivers, Groovy `with`, Kotlin `with`/`apply`/`also` and infix lambda scopes, and closure assignments to properties
-    retain their target. This applies in any class or branch, including method, constructor and closure parameter defaults,
-    and every other form that names `strictly` (a dynamic method name, a property, a string holding the word with the call it's passed to); a file that takes a reference to
-    `strictly` (`.&strictly`, `::strictly`) differs on any change. Each language's own lexer also checks identifier
-    and string occurrences by source position: any mention the visitor hasn't accounted for makes the whole file's
-    SHA-256 a finding, so any change to that file is refused. Comments don't produce findings. A changed script that doesn't
-    parse or lex on either side fails visibly, naming only that script and the first cause line, skipping Groovy's
-    `startup failed:` banner. Groovy source columns are code points, converted to UTF-16 offsets only when slicing;
-    its safety-net positions stay in code points, while Kotlin PSI positions are UTF-16. A leading byte-order mark
-    is read as nothing; missing Java, a failed compiler installation or verification, or a parse past
-    its two-minute limit fails the whole check.
-  - A version or dependency target that reaches a strict call through a variable, a helper or a property file is
-    read only where the inventory and the reference see it, that is, when the pin is active. Fingerprints retain
-    enclosing source context and receiver names; they don't trace assignments elsewhere in the file.
+- **Strict pins stay the owner's.** Gradle interprets the build and catalogs. Its inventory records each resolved
+  configuration's strict declarations and strict dependency constraints. Neither tool plans a move of a strict pin
+  where the change acts, and the reference refuses to move one. Both tools compare that planned reference with the
+  edit, configuration by configuration, including declared versions, strictness and strict constraints
+  ([`gradle-reference.ts`](../packages/remediation/src/gradle-reference.ts)). Changing, adding or removing an
+  interpreted pin, or turning it into a plain declaration at the same version, fails verification. The comparison
+  also applies during secure-it's floor removal and covers catalog pins that Gradle uses.
+  There is no separate textual or parsed pin check, Java parser run, compiler download or parser state directory.
+  By the owner's deliberate choice, a pin Gradle doesn't resolve, such as an inactive branch or unused catalog
+  entry, isn't checked. The agent's instructions still forbid changing any strict pin, and the owner reviews the PR
+  diff for those Gradle didn't see. The existing limits on which files routine plans may edit still apply.
 - **Floor removal requires a joint unlocked proof**, computed in sandboxed scratch copies of base
   ([how](../packages/secure-it/README.md#removing-redundant-security-floors)). npm resolves without lifecycle scripts;
   Gradle runs with a trusted init script, `--no-daemon` and no configuration cache. Incomplete data keeps the floors.
