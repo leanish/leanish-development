@@ -36,7 +36,7 @@ Three components share one dependency policy: the **CI gate** blocks security re
 | R20 | Missing required data, proof or verification fails closed. Allowed omissions are reported. | Unverified is not safe. |
 | R21 | Consume reviewed commits, pin workflow/scanner, and release through real-run rc validation and an independent unprimed review. | Ship what was reviewed. |
 
-Contracts: [gate](../packages/ci/README.md), [secure-it](../packages/secure-it/README.md), [bump-it](../packages/bump-it/README.md), [configuration](tool-configuration.md).
+Contracts: [gate](../core/gate/README.md), [secure-it](../secure-it/README.md), [bump-it](../bump-it/README.md), [configuration](tool-configuration.md).
 
 ## 3. Behavior by scenario
 
@@ -91,7 +91,7 @@ Age evidence: npm registry publication time; Maven POM `Last-Modified` from the 
 | Updating a plugin changes dependencies it injects | **bump-it and secure-it:** the reference runs the new plugin, on a buildscript/settings classpath or as a `buildSrc`/`build-logic` dependency, so what it adds, moves or removes is expected, next to floors in the same batch too. **Gate:** judges every resulting version. | Attribute fallout by running the plugin, not by reading the diff. |
 | Routine edit outside build scripts and `gradle/libs.versions.toml` | Verification's file check fails it; only a major may change other files. A shared catalog version that also moves an unplanned package fails against the reference. | Editability limits do not authorize a broader diff. |
 
-Gradle source evidence is textual and repository-wide: coordinates, group/name pairs, plugin IDs and catalogs. **Comments count; names in another build count.** It does not interpret Kotlin/Groovy semantics, and misses shorthands such as `kotlin("stdlib")`, escapes inside Kotlin/Groovy strings (TOML catalogs are parsed and decoded) and external sources. It may skip an update or attempt one that fails visibly. It only chooses candidates for bump-it; strict-pin verification doesn't use it. See [candidate selection](../packages/ci/README.md#picking-a-fix-candidates) and [the reference](../packages/remediation/src/gradle-reference.ts).
+Gradle source evidence is textual and repository-wide: coordinates, group/name pairs, plugin IDs and catalogs. **Comments count; names in another build count.** It does not interpret Kotlin/Groovy semantics, and misses shorthands such as `kotlin("stdlib")`, escapes inside Kotlin/Groovy strings (TOML catalogs are parsed and decoded) and external sources. It may skip an update or attempt one that fails visibly. It only chooses candidates for bump-it; strict-pin verification doesn't use it. See [candidate selection](../core/gate/README.md#picking-a-fix-candidates) and [the reference](../core/tool-runtime/src/gradle-reference.ts).
 
 ### 3.4. Floors, identity, Actions and wrapper
 
@@ -143,16 +143,16 @@ Isolation, tokens and sandboxes are described in the [security model](security-m
 | Gradle | Build/plugin can misrepresent inventory. Local files/JARs are not scanned. Job isolation protects credentials/verdict, not inventory truth. |
 | Selection | Textual limits in §3.3. Direct bump selection weighs ten newest aged versions per line; rejecting that window does not exhaust older ones. More than 2,000 Actions releases prevents complete young-fix proof. |
 | Advisory ranges | Unreadable prose is reported; upper-bound-first AND (`< 2.0.0, >= 1.0.0`) can over-match as all versions. |
-| Images/wrapper | No OS packages/images; CLIs only through configured locks. No Gradle distribution-content scan; generated scripts are not independently compared with official ones. |
+| Images/wrapper | No OS package or image scans; CLIs only through configured locks. No Gradle distribution-content scan; generated scripts are not independently compared with official ones. |
 | Operations | GitHub scheduling may delay/drop runs or disable inactive public repos after 60 days. Local tools currently macOS Apple Silicon/Keychain/PAT, with Codex or Claude Code as the agent (Codex always for the tool's own sandbox); no full dry-run, operational GitHub App mode, Linux or Windows launcher. Review cannot see another app's Checks-only results. It reads observed CI, not GitHub's required-check list. |
 
-References: [security model](security-model.md), [reported gaps](coverage-gaps.md#reported-gaps), [undetectable limits](coverage-gaps.md#limits), [wrapper](coverage-gaps.md#gradle-wrapper-updates), [workflow](../packages/ci/README.md#adopting-the-gate).
+References: [security model](security-model.md), [reported gaps](coverage-gaps.md#reported-gaps), [undetectable limits](coverage-gaps.md#limits), [wrapper](coverage-gaps.md#gradle-wrapper-updates), [workflow](../core/gate/README.md#adopting-the-gate).
 
 ## 5. Operation
 
 ### Adoption
 
-Adopt the [gate](../packages/ci/README.md#adopting-the-gate) first; its README covers the pinned workflow, triggers, configuration, exceptions and required checks. Points that shape this contract:
+Adopt the [gate](../core/gate/README.md#adopting-the-gate) first; its README covers the pinned workflow, triggers, configuration, exceptions and required checks. Points that shape this contract:
 
 - Exceptions name an exact package/version, reason and expiry (inclusive UTC day). An age exception needs an advisory affecting the replaced version, not the target. Malware cannot be excepted or justify age.
 - Defaults detect root npm/Gradle; `gradle.builds: []` explicitly disables Gradle. Unknown fields and missing configured files fail.
@@ -172,7 +172,7 @@ Preview with `candidates --rule security|bump`: read-only, no model or publicati
 | Weekly | `bump-it run`; review routine/majors/deferred work, tests/compatibility and decide merges. |
 | After merge/urgent alert | Run/review as needed; recompute base without force-push. Re-run a PR's workflow for today's advisories, or push to compare it with the current base. |
 
-Invocation: `packages/remediation/run.sh <secure-it|bump-it> <run|review> <owner/repo>`. Per-tool/repo lock: concurrent invocation exits 75. Reports distinguish applied/omitted/failed/blocked/deferred work and gaps; cost is an API-equivalent token estimate, not a subscription bill or spending cap.
+Invocation: `core/tool-runtime/run.sh <secure-it|bump-it> <run|review> <owner/repo>`. Per-tool/repo lock: concurrent invocation exits 75. Reports distinguish applied/omitted/failed/blocked/deferred work and gaps; cost is an API-equivalent token estimate, not a subscription bill or spending cap.
 
 ### Releases
 

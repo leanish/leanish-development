@@ -99,13 +99,13 @@ files as the gate, documented there:
 
 | File | Reference |
 |---|---|
-| `.github/supply-chain.json` | [Gate configuration](../packages/ci/README.md#configuration-githubsupply-chainjson): lockfiles/builds, allowed registries, `releaseAgeDays`, own packages, repository mappings and compatible lines. |
-| `.github/supply-chain-exceptions.json` | [Exceptions](../packages/ci/README.md#exceptions-githubsupply-chain-exceptionsjson): narrowly scoped vulnerability, release-age and reviewed identity exceptions. Malware cannot be excepted. |
-| `.github/dependency-floors.json` | [Floors](../packages/ci/README.md#floors-githubdependency-floorsjson): recorded security/compatibility constraints and npm overrides. |
+| `.github/supply-chain.json` | [Gate configuration](../core/gate/README.md#configuration-githubsupply-chainjson): lockfiles/builds, allowed registries, `releaseAgeDays`, own packages, repository mappings and compatible lines. |
+| `.github/supply-chain-exceptions.json` | [Exceptions](../core/gate/README.md#exceptions-githubsupply-chain-exceptionsjson): narrowly scoped vulnerability, release-age and reviewed identity exceptions. Malware cannot be excepted. |
+| `.github/dependency-floors.json` | [Floors](../core/gate/README.md#floors-githubdependency-floorsjson): recorded security/compatibility constraints and npm overrides. |
 
 The tools preserve this policy and its exceptions. bump-it never raises floors;
 secure-it removes only the exact security floors in a jointly verified
-[floor-removal plan](../packages/secure-it/README.md#removing-redundant-security-floors).
+[floor-removal plan](../secure-it/README.md#removing-redundant-security-floors).
 Compatibility floors stay. An own npm scope exempts its own packages from age,
 not their dependencies or the other checks.
 
@@ -124,11 +124,11 @@ not family aliases such as `sol`. Each entry requires:
 
 Unknown fields fail. Prices more than 90 days old still estimate the run but add
 a dated gap. Models missing from the table, and incomplete measurements, produce
-explicit cost gaps. [The parser](../packages/agent-basics/src/usage/model-prices.ts)
-and [cost calculation](../packages/agent-basics/src/usage/api-cost.ts) define the
+explicit cost gaps. [The parser](../core/agent-runtime/src/usage/model-prices.ts)
+and [cost calculation](../core/agent-runtime/src/usage/api-cost.ts) define the
 format.
 
-The [default table](../packages/remediation/src/model-prices.ts) covers GPT-6.1
+The [default table](../core/tool-runtime/src/model-prices.ts) covers GPT-6.1
 Sol, GPT-6 Sol/Astra/Luna and retained GPT-5.6 Sol/Terra/Luna, checked on
 2026-10-08 against [OpenAI pricing](https://developers.openai.com/api/docs/pricing)
 and its model pages. It assumes Standard API processing without a regional
