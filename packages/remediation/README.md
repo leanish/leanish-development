@@ -54,8 +54,10 @@ package is the code around them. Setup and operation are in [Adopting the tools]
   published checksum and re-verified before each run. The first check for a version needs network access to
   `services.gradle.org` and its HTTPS redirect hosts, plus `unzip`; later checks reuse the install. Downloads are
   capped at 512 MiB while streaming. The wrapper URL must end in `gradle-<version>-(bin|all).zip`, or script edits fail
-  visibly. Besides Gradle files, any changed non-catalog file mentioning `strictly` on either side is parsed as Kotlin
-  for `.kts`, otherwise Groovy; non-parsing prose is refused by filename too. Input copies live in `dirs.state/tools/strict-calls/run-*` and
+  visibly. Besides Gradle files, changed `.groovy`, `.kt` and `.kts` helpers mentioning `strictly` on either side are
+  parsed (`.kt`/`.kts` as Kotlin); prose and Java aren't. Fingerprints retain full enclosing receivers, navigation
+  operators, generic target types, non-closure arguments, property assignments and Kotlin infix scopes. Groovy
+  source slices use code-point columns, while Kotlin PSI offsets use UTF-16. Input copies live in `dirs.state/tools/strict-calls/run-*` and
   are removed afterward. Both directories must be outside every sandbox-writable root.
 - **OSV-Scanner** (`osv-scanner.ts`): the version `packages/ci/tools.json` pins, installed into protected tool state by
   CI's installer and checked by sha256 before every use.

@@ -38,9 +38,9 @@ export function gradleStrictCalls(home: ParserHome, run: RunProcess = runProcess
     await mkdir(parent, { recursive: true });
     const dir = await mkdtemp(join(parent, "run-"));
     try {
-      // The suffix picks the parser: `.gradle.kts` for Kotlin, anything else Groovy.
+      // The copy suffix picks Kotlin for `.kt` and `.kts`, Groovy otherwise.
       const copies = await Promise.all(files.map(async (file, index) => {
-        const copy = join(dir, `${index}${file.path.endsWith(".kts") ? ".gradle.kts" : ".gradle"}`);
+        const copy = join(dir, `${index}${/\.kts?$/.test(file.path) ? ".gradle.kts" : ".gradle"}`);
         // A byte-order mark the Groovy parser rejects carries no code.
         await writeFile(copy, file.text.replace(/^\uFEFF/, ""));
         return copy;

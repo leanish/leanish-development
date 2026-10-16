@@ -14,6 +14,7 @@ import { archive, manifest, serving } from "../../ci/test/tarballs.ts";
 import type { ChangePlan } from "../src/plan.ts";
 import { referencePlan, verifyPlan } from "../src/verify.ts";
 import { LOCAL_GRADLE, LOCAL_WRAPPER, localGradleParser } from "../../remediation/test/local-gradle-parser.ts";
+import { PARSER_REGRESSIONS } from "../../remediation/test/parser-regressions.ts";
 import { textStrictCalls } from "../../remediation/test/strict-calls-fake.ts";
 
 const NOW = new Date("2026-10-07T12:00:00Z");
@@ -455,6 +456,21 @@ it.skipIf(LOCAL_GRADLE === undefined).each([
     const plan: ChangePlan = { ...PLAN, moves: PLAN.moves.map((move) => ({ ...move, major })) };
     expect(await verifyPlan({ reference: undefined, plan, base: tree("base", before), head: tree("head", after), env: environment(AFFECTED),
       gradle: {}, strictCalls: localGradleParser(state), changedFiles: ["package-lock.json", path] }))
+      .toEqual([`the edit changed a Gradle strictly(...) pin in ${path}: strict versions are the owner's, which no plan moves`]);
+  } finally {
+    await rm(state, { recursive: true, force: true });
+  }
+}, 120_000);
+
+it.skipIf(LOCAL_GRADLE === undefined).each(PARSER_REGRESSIONS)("refuses $name through verifyPlan", async ({ path, before, after }) => {
+  const state = await mkdtemp(join(tmpdir(), "secure-rc3-parser-test-"));
+  try {
+    const inventory: GradleInventory = { schemaVersion: 3, tree: "fixture", builds: [{ build: ".", configurations: [] }] };
+    const baseFiles = { ...LOCAL_WRAPPER, [path]: before, "package-lock.json": (await BASE.read("package-lock.json"))! };
+    const headFiles = { ...LOCAL_WRAPPER, [path]: after, "package-lock.json": lock({ lib: "^1.0.0", other: "^1.0.0" }, { lib: "1.0.1", other: "1.0.0" }) };
+    const plan: ChangePlan = { ...PLAN, moves: PLAN.moves.map((move) => ({ ...move, major: true })) };
+    expect(await verifyPlan({ reference: inventory, plan, base: tree("base", baseFiles), head: tree("head", headFiles), env: environment(AFFECTED),
+      gradle: { base: inventory, head: inventory }, strictCalls: localGradleParser(state), changedFiles: ["package-lock.json", path] }))
       .toEqual([`the edit changed a Gradle strictly(...) pin in ${path}: strict versions are the owner's, which no plan moves`]);
   } finally {
     await rm(state, { recursive: true, force: true });

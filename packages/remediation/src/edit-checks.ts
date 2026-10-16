@@ -120,7 +120,7 @@ function asTable(value: unknown): Record<string, unknown> {
 
 /**
  * Catalogs compare the whole entries strict versions belong to, parsed with `smol-toml`, in order; malformed TOML fails.
- * Build and settings scripts, and any other changed non-catalog file mentioning `strictly` on either side, compare
+ * Build and settings scripts, and changed `.groovy`, `.kt` or `.kts` files mentioning `strictly` on either side, compare
  * what Gradle's own Groovy and Kotlin compilers parse in them (`parse`): each
  * `strictly(...)` call with the dependency it pins, in order, and any other form that names `strictly`. A version that
  * reaches a call through a variable or a helper is still read only where the inventory sees it (an active pin).
@@ -138,7 +138,7 @@ export async function strictPinsChanged(changedFiles: ReadonlyArray<string>, bas
   for (const path of changedFiles.filter((file) => !file.endsWith(".versions.toml"))) {
     try {
       const [before, after] = await Promise.all([base.read(path), head.read(path)]);
-      if (isGradleVersionFile(path) || before?.includes("strictly") || after?.includes("strictly")) {
+      if (isGradleVersionFile(path) || /\.(?:groovy|kts?)$/.test(path) && (before?.includes("strictly") || after?.includes("strictly"))) {
         scripts.push({ path, before: before ?? "", after: after ?? "" });
       }
     } catch (err) {
