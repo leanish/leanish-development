@@ -2,12 +2,13 @@ import { randomUUID } from "node:crypto";
 import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { gte } from "semver";
 
 import { gitArgs } from "@leanish/gate/git";
 
 import { Commands } from "./commands.ts";
 import { result, type SetupResult } from "./contracts.ts";
-import { latestRelease, RELEASE_REPOSITORY, type VerifiedRelease } from "./github-release.ts";
+import { isStableReleaseTag, latestRelease, RELEASE_REPOSITORY, type VerifiedRelease } from "./github-release.ts";
 
 async function entry(path: string) {
   try { return await lstat(path); } catch (error) {
@@ -80,9 +81,20 @@ async function installed(path: string, release: VerifiedRelease): Promise<boolea
 
 export interface InstalledRelease extends VerifiedRelease { readonly path: string }
 
+export const GUIDED_SETUP_REQUIREMENT = "Guided setup needs a stable release that ships core/setup/run.sh (v0.7.0 or newer). Until such a release is published, use the manual guide: docs/adopting-tools.md.";
+
+export async function hasGuidedSetup(release: InstalledRelease): Promise<boolean> {
+  return gte(release.tag.slice(1), "0.7.0") && (await entry(join(release.path, "core", "setup", "run.sh")))?.isFile() === true;
+}
+
+async function releaseResult(release: InstalledRelease, status: "changed" | "already-done", message: string): Promise<SetupResult> {
+  if (!await hasGuidedSetup(release)) return result("release", "checkout", "blocked", `Installed ${release.tag}. ${GUIDED_SETUP_REQUIREMENT}`, { ...release });
+  return result("release", "checkout", status, message, { ...release });
+}
+
 /** Reuse a completed installation's recorded pin offline; never select or upgrade a release as a side effect. */
 export async function readInstalledRelease(tag: string, commands = new Commands(), home = homedir()): Promise<InstalledRelease> {
-  if (!/^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(tag)) throw new Error("Select an installed stable vX.Y.Z release");
+  if (!isStableReleaseTag(tag)) throw new Error("Select an installed stable vX.Y.Z release");
   const path = join(home, ".local", "share", "leanish", "releases", tag);
   await directory(path);
   await directory(join(path, ".git"));
@@ -129,9 +141,9 @@ export async function installRelease(commands: Commands = new Commands(), home: 
     const path = join(root, release.tag);
     if (await entry(path) !== undefined) {
       await verifyCheckout(commands, path, release);
-      if (await installed(path, release)) return result("release", "checkout", "already-done", "Verified installed release", { ...release, path });
+      if (await installed(path, release)) return await releaseResult({ ...release, path }, "already-done", "Verified installed release");
       await installDependencies(commands, path, release);
-      return result("release", "checkout", "changed", "Installed locked dependencies in the verified checkout", { ...release, path });
+      return await releaseResult({ ...release, path }, "changed", "Installed locked dependencies in the verified checkout");
     }
     staging = await mkdtemp(join(root, ".install-"));
     await writeFile(join(staging, STAGING_MARKER), STAGING_OWNER, { mode: 0o600, flag: "wx" });
@@ -146,7 +158,7 @@ export async function installRelease(commands: Commands = new Commands(), home: 
     await verifyCheckout(commands, checkout, release);
     await installDependencies(commands, checkout, release);
     await rename(checkout, path);
-    return result("release", "checkout", "changed", "Installed immutable stable release", { ...release, path });
+    return await releaseResult({ ...release, path }, "changed", "Installed immutable stable release");
   } catch (error) {
     failed = true;
     throw error;

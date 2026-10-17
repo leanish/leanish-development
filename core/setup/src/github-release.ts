@@ -1,8 +1,13 @@
 import { Commands } from "./commands.ts";
+import { valid } from "semver";
 
 export const RELEASE_REPOSITORY = "leanish/leanish-development";
 const SHA = /^[0-9a-f]{40}$/;
 const STABLE_TAG = /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
+
+export function isStableReleaseTag(value: string): boolean {
+  return STABLE_TAG.test(value) && valid(value.slice(1)) !== null;
+}
 
 export interface VerifiedRelease {
   readonly tag: string;
@@ -27,7 +32,7 @@ export async function latestRelease(commands: Commands): Promise<VerifiedRelease
     if (typeof entry["draft"] !== "boolean" || typeof entry["prerelease"] !== "boolean" || typeof entry["tag_name"] !== "string") {
       throw new Error("GitHub returned incomplete release metadata");
     }
-    return entry["draft"] === false && entry["prerelease"] === false && STABLE_TAG.test(entry["tag_name"]);
+    return entry["draft"] === false && entry["prerelease"] === false && isStableReleaseTag(entry["tag_name"]);
   }).map((entry) => {
     const published = typeof entry["published_at"] === "string" ? Date.parse(entry["published_at"]) : NaN;
     if (!Number.isFinite(published)) throw new Error("GitHub returned an invalid release publication date");

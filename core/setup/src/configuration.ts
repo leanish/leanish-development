@@ -70,7 +70,7 @@ export async function readInstallation(options: InstallationOptions, home = home
 }
 
 /** Publish a complete PID lock atomically, so interruption cannot leave an empty live-looking lock. */
-async function lockConfiguration(lock: string): Promise<void> {
+export async function lockConfiguration(lock: string): Promise<void> {
   const temporary = `${lock}.${randomUUID()}.tmp`;
   try {
     try { await writeFile(temporary, `${process.pid}\n`, { mode: 0o600, flag: "wx" }); }
