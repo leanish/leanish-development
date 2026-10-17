@@ -1,0 +1,146 @@
+import { randomUUID } from "node:crypto";
+import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+import { gitArgs } from "@leanish/gate/git";
+
+import { Commands } from "./commands.ts";
+import { result, type SetupResult } from "./contracts.ts";
+import { latestRelease, RELEASE_REPOSITORY, type VerifiedRelease } from "./github-release.ts";
+
+async function entry(path: string) {
+  try { return await lstat(path); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+async function directory(path: string): Promise<void> {
+  const found = await entry(path);
+  if (found?.isDirectory() !== true) throw new Error("Release paths must be real directories, not symlinks or files");
+}
+
+function git(commands: Commands, path: string, args: ReadonlyArray<string>, message: string): Promise<string> {
+  return commands.checked("git", gitArgs(path, join(path, ".git"), ["-c", "credential.helper=", "-c", "protocol.file.allow=never", ...args]), message, path);
+}
+
+/** Refuse changed, attached or mismatched checkouts; never repair them or move their HEAD. */
+async function verifyCheckout(commands: Commands, path: string, release: VerifiedRelease): Promise<void> {
+  await directory(path);
+  await directory(join(path, ".git"));
+  const top = await git(commands, path, ["rev-parse", "--show-toplevel"], "Release checkout is not a Git repository");
+  if (await realpath(top) !== await realpath(path)) throw new Error("Release path is not the checkout root");
+  const head = await git(commands, path, ["rev-parse", "--verify", "HEAD^{commit}"], "Could not read release HEAD");
+  const tag = await git(commands, path, ["rev-parse", "--verify", `refs/tags/${release.tag}^{commit}`], "Could not peel the checked-out release tag");
+  if (head !== release.sha || tag !== release.sha) throw new Error("Existing release checkout has a different SHA; refusing to repair it");
+  const branch = await git(commands, path, ["rev-parse", "--abbrev-ref", "HEAD"], "Could not verify detached release HEAD");
+  if (branch !== "HEAD") throw new Error("Release checkout must have a detached HEAD; refusing to change its branch");
+  const changes = await git(commands, path, ["status", "--porcelain", "--untracked-files=all"], "Could not check release cleanliness");
+  if (changes !== "") throw new Error("Release checkout is dirty; refusing to overwrite local changes");
+}
+
+function receiptPath(path: string): string { return join(path, ".git", "leanish-setup.json"); }
+
+const STAGING_MARKER = ".leanish-setup-staging";
+const STAGING_OWNER = `${RELEASE_REPOSITORY} setup staging v1\n`;
+
+/** Called only while holding the installation lock; never follow a staging or marker symlink. */
+async function cleanStaleStaging(root: string): Promise<void> {
+  const uid = process.getuid?.();
+  if (uid === undefined) return;
+  for (const name of await readdir(root)) {
+    if (!/^\.install-[A-Za-z0-9]{6}$/.test(name)) continue;
+    const path = join(root, name);
+    const found = await entry(path);
+    if (!found?.isDirectory() || found.uid !== uid) continue;
+    const marker = join(path, STAGING_MARKER);
+    const ownership = await entry(marker);
+    if (!ownership?.isFile() || ownership.uid !== uid || ownership.size !== Buffer.byteLength(STAGING_OWNER)) continue;
+    if (await readFile(marker, "utf8") !== STAGING_OWNER) continue;
+    await rm(path, { recursive: true, force: true });
+  }
+}
+
+async function installed(path: string, release: VerifiedRelease): Promise<boolean> {
+  const receipt = await entry(receiptPath(path));
+  if (receipt === undefined) return false;
+  if (!receipt.isFile()) throw new Error("Release installation receipt must be a regular file");
+  let saved: unknown;
+  try { saved = JSON.parse(await readFile(receiptPath(path), "utf8")); } catch { throw new Error("Release installation receipt is unreadable"); }
+  const expected = saved as { schemaVersion?: unknown; tag?: unknown; sha?: unknown } | null;
+  if (expected?.schemaVersion !== 1 || expected.tag !== release.tag || expected.sha !== release.sha) {
+    throw new Error("Release installation receipt does not match the verified release");
+  }
+  const modules = await entry(join(path, "node_modules"));
+  if (modules === undefined) return false;
+  if (!modules.isDirectory()) throw new Error("Release node_modules must be a real directory");
+  return (await entry(join(path, "node_modules", ".package-lock.json")))?.isFile() === true;
+}
+
+async function installDependencies(commands: Commands, path: string, release: VerifiedRelease): Promise<void> {
+  const modules = await entry(join(path, "node_modules"));
+  if (modules !== undefined && !modules.isDirectory()) throw new Error("Release node_modules must be a real directory");
+  await rm(receiptPath(path), { force: true });
+  await commands.checked("npm", ["ci", "--ignore-scripts", "--no-audit", "--no-fund"], "Release npm ci failed; no installation marked complete", path);
+  await verifyCheckout(commands, path, release);
+  const temporary = `${receiptPath(path)}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, JSON.stringify({ schemaVersion: 1, ...release }) + "\n", { mode: 0o600, flag: "wx" });
+    await rename(temporary, receiptPath(path));
+  } finally {
+    await rm(temporary, { force: true });
+  }
+}
+
+/** Install only a GitHub-verified release, outside the source checkout; retain every previous release. */
+export async function installRelease(commands: Commands = new Commands(), home: string = homedir()): Promise<SetupResult> {
+  const release = await latestRelease(commands);
+  const root = join(home, ".local", "share", "leanish", "releases");
+  await mkdir(root, { recursive: true, mode: 0o700 });
+  await directory(root);
+  const lock = join(root, ".setup-lock");
+  try { await mkdir(lock, { mode: 0o700 }); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error("Release installation is locked; check for a running or interrupted installer before removing .setup-lock");
+    throw error;
+  }
+  let staging: string | undefined;
+  let failed = false;
+  try {
+    await cleanStaleStaging(root);
+    const path = join(root, release.tag);
+    if (await entry(path) !== undefined) {
+      await verifyCheckout(commands, path, release);
+      if (await installed(path, release)) return result("release", "checkout", "already-done", "Verified installed release", { ...release, path });
+      await installDependencies(commands, path, release);
+      return result("release", "checkout", "changed", "Installed locked dependencies in the verified checkout", { ...release, path });
+    }
+    staging = await mkdtemp(join(root, ".install-"));
+    await writeFile(join(staging, STAGING_MARKER), STAGING_OWNER, { mode: 0o600, flag: "wx" });
+    const checkout = join(staging, "checkout");
+    await mkdir(checkout);
+    await git(commands, checkout, ["init", "--quiet"], "Could not initialize release checkout");
+    await git(commands, checkout, ["remote", "add", "origin", `https://github.com/${RELEASE_REPOSITORY}.git`], "Could not set release origin");
+    await git(commands, checkout, ["fetch", "--quiet", "--depth=1", "origin", `refs/tags/${release.tag}:refs/tags/${release.tag}`], "Could not fetch release tag");
+    const fetched = await git(commands, checkout, ["rev-parse", "--verify", `refs/tags/${release.tag}^{commit}`], "Could not peel fetched release tag");
+    if (fetched !== release.sha) throw new Error("Fetched release tag differs from GitHub's verified SHA");
+    await git(commands, checkout, ["checkout", "--quiet", "--detach", release.sha], "Could not detach release checkout at the verified SHA");
+    await verifyCheckout(commands, checkout, release);
+    await installDependencies(commands, checkout, release);
+    await rename(checkout, path);
+    return result("release", "checkout", "changed", "Installed immutable stable release", { ...release, path });
+  } catch (error) {
+    failed = true;
+    throw error;
+  } finally {
+    try {
+      try {
+        if (staging !== undefined) await rm(staging, { recursive: true, force: true });
+      } finally {
+        await rm(lock, { recursive: true, force: true });
+      }
+    } catch (error) {
+      if (!failed) throw error;
+    }
+  }
+}

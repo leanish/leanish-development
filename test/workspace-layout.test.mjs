@@ -72,11 +72,13 @@ const ALLOWED = {
   "@leanish/agent-runtime": [],
   "@leanish/gate": [],
   "@leanish/tool-runtime": ["@leanish/agent-runtime", "@leanish/gate"],
+  "@leanish/setup": ["@leanish/tool-runtime", "@leanish/gate"],
   "@leanish/bump-it": ["@leanish/agent-runtime", "@leanish/gate", "@leanish/tool-runtime"],
   "@leanish/secure-it": ["@leanish/agent-runtime", "@leanish/gate", "@leanish/tool-runtime"],
 };
 
-function directionProblem(source, target) {
+function directionProblem(source, target, testFile = false) {
+  if (target === "@leanish/setup" && testFile && source !== target) return undefined;
   return ALLOWED[source]?.includes(target) ? undefined : `${source} must not import ${target}`;
 }
 
@@ -104,7 +106,8 @@ test("package imports follow the dependency direction and declare their dependen
     if (!specifier.startsWith("@leanish/")) continue;
     const source = packages.get(directory);
     const target = specifier.split("/").slice(0, 2).join("/");
-    const problem = directionProblem(source.name, target);
+    const testFile = relative(directory, file).split(sep).some((part) => ["test", "tests"].includes(part));
+    const problem = directionProblem(source.name, target, testFile);
     if (problem !== undefined) problems.push(`${file}: ${problem}`);
     if (source.dependencies?.[target] !== "0.0.0" && source.devDependencies?.[target] !== "0.0.0") problems.push(`${file}: undeclared workspace dependency ${target}`);
   }
@@ -181,4 +184,13 @@ test("direction guard rejects reverse dependencies, tool-to-tool imports and pac
     for (const target of ["@leanish/gate", "@leanish/agent-runtime"]) assert.equal(directionProblem(source, target), undefined);
   }
   for (const tool of ["@leanish/bump-it", "@leanish/secure-it"]) assert.equal(directionProblem(tool, "@leanish/tool-runtime"), undefined);
+});
+
+test("setup can consume only the tool runtime and gate; only tests may consume setup", () => {
+  for (const source of Object.keys(ALLOWED)) {
+    assert.match(directionProblem(source, "@leanish/setup"), /must not import/);
+    if (source !== "@leanish/setup") assert.equal(directionProblem(source, "@leanish/setup", true), undefined);
+  }
+  for (const target of ["@leanish/tool-runtime", "@leanish/gate"]) assert.equal(directionProblem("@leanish/setup", target), undefined);
+  for (const target of ["@leanish/agent-runtime", "@leanish/bump-it", "@leanish/secure-it"]) assert.match(directionProblem("@leanish/setup", target), /must not import/);
 });

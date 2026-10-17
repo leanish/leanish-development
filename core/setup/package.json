@@ -1,0 +1,26 @@
+{
+  "name": "@leanish/setup",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Deterministic local setup commands for bump-it and secure-it.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "@leanish/gate": "0.0.0",
+    "@leanish/tool-runtime": "0.0.0",
+    "semver": "^7.8.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.1",
+    "@types/semver": "^7.8.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  },
+  "exports": {}
+}
