@@ -1,0 +1,148 @@
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { setImmediate } from "node:timers/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { parseToolConfig } from "@leanish/tool-runtime/config";
+
+import { batch, executeBatch, invokeTool } from "../src/batch.ts";
+
+const options = { tool: "bump-it" as const, owner: "acme" };
+const report = { msg: "run finished", tool: "bump-it", repo: "acme/one", status: "ok", result: { outcome: "completed" }, totals: { estimatedApiCostUsd: 0.01 } };
+const ok = () => ({ code: 0, report });
+let root: string | undefined;
+afterEach(async () => { vi.unstubAllEnvs(); if (root !== undefined) await rm(root, { recursive: true, force: true }); root = undefined; });
+
+describe("batch runner", () => {
+  it("runs one review then run chain per repository, keeping failures isolated and reporting PRs", async () => {
+    const calls = new Map<string, string[]>();
+    const records: Readonly<Record<string, unknown>>[] = [];
+    expect(await executeBatch(options, ["acme/one", "acme/two", "acme/three"], async (repo, action) => {
+      calls.set(repo, [...(calls.get(repo) ?? []), action]);
+      if (repo === "acme/one" && action === "review") throw new Error("secret-sentinel");
+      if (repo === "acme/two") return { code: 0, report: { ...report, result: { outcome: "verification-failed", error: "secret-sentinel" } } };
+      return { code: 0, report: { ...report, result: { pullRequest: `https://github.com/${repo}/pull/1`, notes: ["secret-sentinel"] } } };
+    }, (record) => records.push(record))).toBe(1);
+    for (const value of calls.values()) expect(value).toEqual(["review", "run"]);
+    expect(records.at(-1)).toMatchObject({ action: "summary", commands: 6, failed: 3, outcome: "partial-failure", prs: ["https://github.com/acme/three/pull/1", "https://github.com/acme/one/pull/1"] });
+    expect(JSON.stringify(records)).not.toContain("secret-sentinel");
+  });
+
+  it("fills, but never exceeds, eight parallel chains", async () => {
+    const repos = Array.from({ length: 12 }, (_, index) => `acme/r${index}`);
+    let running = 0;
+    let peak = 0;
+    const gates: Array<() => void> = [];
+    let done = false;
+    const execution = executeBatch(options, repos, async () => {
+      running++;
+      peak = Math.max(peak, running);
+      await new Promise<void>((resolve) => gates.push(resolve));
+      running--;
+      return ok();
+    }, () => {}).finally(() => { done = true; });
+    while (!done) { gates.shift()?.(); await setImmediate(); }
+    expect(await execution).toBe(0);
+    expect(peak).toBe(8);
+  });
+
+  it("fails closed on absent reports, embedded failures, or lock refusal, and preserves unknown usage", async () => {
+    const records: Readonly<Record<string, unknown>>[] = [];
+    expect(await executeBatch(options, ["acme/one"], async () => ({ code: 75 }), (entry) => records.push(entry))).toBe(1);
+    expect(records[0]).toMatchObject({ outcome: "error", estimatedApiCostUsd: null, exitCode: 75 });
+    expect(records.at(-1)).toMatchObject({ commands: 2, failed: 2 });
+  });
+
+  it("stops scheduling and drains active commands if its output sink fails", async () => {
+    const calls: string[] = [];
+    await expect(executeBatch(options, Array.from({ length: 20 }, (_, index) => `acme/r${index}`), async (repo, action) => {
+      calls.push(`${repo} ${action}`);
+      return ok();
+    }, () => { throw new Error("secret-sentinel"); })).rejects.toThrow(/^Batch output failed/);
+    expect(calls).toHaveLength(8);
+    expect(calls.every((call) => call.endsWith("review"))).toBe(true);
+  });
+
+  it("uses the installation's explicit config, preflights once, and never invokes unselected repositories", async () => {
+    const config = parseToolConfig("bump-it", "repos: [{repo: acme/one}, {repo: acme/two}]\nagent: {codingAgent: codex, model: sol, effort: medium}\ncommitIdentity: {name: Dev, email: dev@example.com}\n", "agent.yaml", "/home");
+    const release = { tag: "v0.7.0", sha: "a".repeat(40), path: "/release" };
+    const machine = {
+      release: vi.fn(async () => release), installation: vi.fn(async () => ({ path: "/config/acme/bump-it/agent.yaml", config })),
+      preflight: vi.fn(async () => {}), invoke: vi.fn(async () => ok()),
+    };
+    const lines: string[] = [];
+    expect(await batch({ ...options, release: release.tag, repo: "acme/one" }, (line) => lines.push(line), machine)).toBe(0);
+    expect(machine.preflight).toHaveBeenCalledOnce();
+    expect(machine.invoke.mock.calls).toEqual([
+      [release, "/config/acme/bump-it/agent.yaml", "bump-it", "acme/one", "review"],
+      [release, "/config/acme/bump-it/agent.yaml", "bump-it", "acme/one", "run"],
+    ]);
+    machine.invoke.mockClear();
+    expect(await batch({ ...options, release: release.tag, repo: "acme/unselected" }, () => {}, machine)).toBe(1);
+    expect(machine.invoke).not.toHaveBeenCalled();
+    machine.preflight.mockRejectedValue(new Error("secret-sentinel"));
+    const failed: string[] = [];
+    expect(await batch({ ...options, release: release.tag }, (line) => failed.push(line), machine)).toBe(1);
+    expect(JSON.parse(failed[0]!)).toMatchObject({ action: "summary", commands: 0, failed: 1 });
+    expect(failed.join("")).not.toContain("secret-sentinel");
+  });
+
+  it("invokes the release launcher with --config, ignores raw output, and strips ambient secrets and TOOL_CLI", async () => {
+    root = await mkdtemp(join(tmpdir(), "setup-batch-"));
+    await mkdir(join(root, "core/tool-runtime"), { recursive: true });
+    const script = `#!/bin/bash\nif [ -n "\${GH_TOKEN:-}\${GITHUB_TOKEN:-}\${TOOL_CLI:-}" ]; then exit 9; fi\n[ "$1" = bump-it ] && [ "$2" = review ] && [ "$3" = acme/one ] && [ "$4" = --config ] && [ "$5" = '/a config/agent.yaml' ] || exit 8\nprintf '%s\\n' secret-sentinel '${JSON.stringify(report)}' >&2\n`;
+    await writeFile(join(root, "core/tool-runtime/run.sh"), script);
+    vi.stubEnv("GH_TOKEN", "secret-sentinel");
+    vi.stubEnv("GITHUB_TOKEN", "secret-sentinel");
+    vi.stubEnv("TOOL_CLI", "/not/the/installed/tool");
+    const execution = await invokeTool({ tag: "v0.7.0", sha: "a".repeat(40), path: root }, "/a config/agent.yaml", "bump-it", "acme/one", "review");
+    expect(execution.code).toBe(0);
+    expect(execution.report).toEqual(report);
+    expect(JSON.stringify(execution)).not.toContain("secret-sentinel");
+  });
+
+  it.each([
+    ["configuration", "configuration: could not read or validate the installation"],
+    ["release", "release: could not verify the installed release"],
+    ["repository-selection", "repository-selection: no valid opted-in repository selected"],
+    ["scanner", "scanner: could not initialize the pinned scanner"],
+  ])("names a failed %s phase without forwarding raw errors", async (phase, reason) => {
+    const config = parseToolConfig("bump-it", "repos: [{repo: acme/one}]\nagent: {codingAgent: codex, model: sol, effort: medium}\ncommitIdentity: {name: Dev, email: dev@example.com}\n", "agent.yaml", "/home");
+    const machine = {
+      release: vi.fn(async () => ({ tag: "v0.7.0", sha: "a".repeat(40), path: "/release" })),
+      installation: vi.fn(async () => ({ path: "/config", config })),
+      preflight: vi.fn(async () => {}), invoke: vi.fn(async () => ok()),
+    };
+    if (phase === "configuration") machine.installation.mockRejectedValue(new Error("secret-sentinel"));
+    if (phase === "release") machine.release.mockRejectedValue(new Error("secret-sentinel"));
+    if (phase === "scanner") machine.preflight.mockRejectedValue(new Error("secret-sentinel"));
+    const lines: string[] = [];
+    expect(await batch({ ...options, release: "v0.7.0", ...(phase === "repository-selection" ? { repo: "acme/unselected" } : {}) }, (line) => lines.push(line), machine)).toBe(1);
+    expect(lines.map((line) => JSON.parse(line))).toEqual([expect.objectContaining({ phase, reason, commands: 0, failed: 1 })]);
+    expect(lines.join("")).not.toContain("secret-sentinel");
+    expect(machine.invoke).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.platform !== "darwin")("respects the real installed run.sh per-tool/repository lock", async () => {
+    root = await mkdtemp(join(tmpdir(), "setup-lock-"));
+    await mkdir(join(root, "core/tool-runtime"), { recursive: true });
+    await mkdir(join(root, "bump-it/src"), { recursive: true });
+    await copyFile(new URL("../../tool-runtime/run.sh", import.meta.url), join(root, "core/tool-runtime/run.sh"));
+    const started = join(root, "started");
+    const finish = join(root, "finish");
+    await writeFile(join(root, "bump-it/src/cli.ts"), `import { existsSync, writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(started)}, 'started');\nwhile (!existsSync(${JSON.stringify(finish)})) await new Promise(done => setTimeout(done, 10));\nwriteFileSync(process.env.TOOL_REPORT_MARKER, 'reported');\nprocess.stderr.write(${JSON.stringify(JSON.stringify(report) + "\n")});\n`);
+    vi.stubEnv("HOME", root);
+    vi.stubEnv("XDG_STATE_HOME", join(root, "state"));
+    const release = { tag: "v0.7.0", sha: "a".repeat(40), path: root };
+    const first = invokeTool(release, "/config", "bump-it", "acme/one", "review");
+    try {
+      for (let attempt = 0; attempt < 200; attempt++) {
+        try { await readFile(started); break; } catch { await new Promise((resolve) => setTimeout(resolve, 10)); }
+      }
+      expect(await readFile(started, "utf8")).toBe("started");
+      expect((await invokeTool(release, "/config", "bump-it", "acme/one", "run")).code).toBe(75);
+    } finally { await writeFile(finish, "finish"); await first; }
+  }, 15_000);
+});
