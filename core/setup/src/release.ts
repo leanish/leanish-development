@@ -78,6 +78,24 @@ async function installed(path: string, release: VerifiedRelease): Promise<boolea
   return (await entry(join(path, "node_modules", ".package-lock.json")))?.isFile() === true;
 }
 
+export interface InstalledRelease extends VerifiedRelease { readonly path: string }
+
+/** Reuse a completed installation's recorded pin offline; never select or upgrade a release as a side effect. */
+export async function readInstalledRelease(tag: string, commands = new Commands(), home = homedir()): Promise<InstalledRelease> {
+  if (!/^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(tag)) throw new Error("Select an installed stable vX.Y.Z release");
+  const path = join(home, ".local", "share", "leanish", "releases", tag);
+  await directory(path);
+  await directory(join(path, ".git"));
+  if (!(await entry(receiptPath(path)))?.isFile()) throw new Error("Installed release receipt is missing");
+  let receipt: { schemaVersion?: unknown; tag?: unknown; sha?: unknown };
+  try { receipt = JSON.parse(await readFile(receiptPath(path), "utf8")); } catch { throw new Error("Installed release receipt is unreadable"); }
+  if (receipt?.schemaVersion !== 1 || receipt.tag !== tag || typeof receipt.sha !== "string" || !/^[a-f0-9]{40}$/.test(receipt.sha)) throw new Error("Installed release receipt is invalid");
+  const release = { tag, sha: receipt.sha };
+  await verifyCheckout(commands, path, release);
+  if (!await installed(path, release)) throw new Error("Release dependencies are incomplete; run release installation first");
+  return { ...release, path };
+}
+
 async function installDependencies(commands: Commands, path: string, release: VerifiedRelease): Promise<void> {
   const modules = await entry(join(path, "node_modules"));
   if (modules !== undefined && !modules.isDirectory()) throw new Error("Release node_modules must be a real directory");

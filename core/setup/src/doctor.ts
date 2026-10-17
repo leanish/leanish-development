@@ -115,16 +115,23 @@ function selectAgent(agents: ReadonlyArray<AgentAvailability>, requested: Coding
     { usable, agents });
 }
 
-async function checkJava(commands: Commands, major: number): Promise<SetupResult> {
-  const execution = await commands.probe("java", ["-version"]);
+async function checkJava(machine: DoctorMachine, major: number): Promise<SetupResult> {
+  const javaHome = machine.env["JAVA_HOME"];
+  let java = "java";
+  let javac = "javac";
+  if (javaHome !== undefined && javaHome !== "" && await machine.exists(join(javaHome, "bin", "java"), "file") && await machine.exists(join(javaHome, "bin", "javac"), "file")) {
+    java = join(javaHome, "bin", "java");
+    javac = join(javaHome, "bin", "javac");
+  }
+  const execution = await machine.commands.probe(java, ["-version"]);
   const version = /version "([0-9][0-9A-Za-z._+-]*)"/.exec(`${execution.stderr}\n${execution.stdout}`)?.[1];
-  const compiler = await commands.probe("javac", ["-version"]);
+  const compiler = await machine.commands.probe(javac, ["-version"]);
   const compilerVersion = /javac ([0-9][0-9A-Za-z._+-]*)/.exec(`${compiler.stdout}\n${compiler.stderr}`)?.[1];
   const detectedMajor = javaMajor(version);
   const compilerMajor = javaMajor(compilerVersion);
   const ok = execution.code === 0 && compiler.code === 0 && detectedMajor === major && compilerMajor === major;
-  return result("doctor", "java", ok ? "already-done" : "blocked", `JDK ${major} (java and javac) required on PATH for the selected Gradle repositories`,
-    { version, compilerVersion, major: detectedMajor, compilerMajor });
+  return result("doctor", "java", ok ? "already-done" : "blocked", `JDK ${major} (java and javac) required; JAVA_HOME takes precedence over PATH`,
+    { version, compilerVersion, major: detectedMajor, compilerMajor, java, javac, source: java === "java" ? "PATH" : "JAVA_HOME" });
 }
 
 function javaMajor(version: string | undefined): number | undefined {
@@ -167,7 +174,7 @@ export async function doctor(options: DoctorOptions, machine: DoctorMachine = do
   }
   check("sandbox", sandbox, "Codex permission-profile sandbox must run; no login needed, no unsandboxed fallback", { version: codexVersion.version });
 
-  if (options.java !== undefined) results.push(await checkJava(machine.commands, options.java));
+  if (options.java !== undefined) results.push(await checkJava(machine, options.java));
   const apps = await desktopApps(machine);
   const agents: AgentAvailability[] = [];
   for (const agent of CODING_AGENTS) agents.push(await agentAvailability(machine, agent, codexVersion, apps.get(agent)));

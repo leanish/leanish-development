@@ -52,6 +52,7 @@
     "./repository-advisory-cache": "./src/repository-advisory-cache.ts",
     "./review": "./src/review.ts",
     "./sandboxed": "./src/sandboxed.ts",
+    "./secrets": "./src/secrets.ts",
     "./test/fake-github": "./test/fake-github.ts",
     "./test/memory-journal": "./test/memory-journal.ts",
     "./test/retarget-repository": "./test/retarget-repository.ts",

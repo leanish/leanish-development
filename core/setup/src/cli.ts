@@ -1,44 +1,55 @@
 #!/usr/bin/env node
-import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
 
-import { CODING_AGENTS, type CodingAgent } from "@leanish/tool-runtime/config";
-
-import { result, exitCode, type SetupResult } from "./contracts.ts";
+import { setupArguments, USAGE, type SetupCommand } from "./arguments.ts";
+import { batch, type BatchOptions } from "./batch.ts";
+import { configure, type ConfigureOptions, type InstallationOptions } from "./configuration.ts";
+import { result, exitCode, SETUP_COMMANDS, type SetupResult } from "./contracts.ts";
 import { doctor, type DoctorOptions } from "./doctor.ts";
+import { enrollment, verifyTokens } from "./enrollment.ts";
+import { adoptGate, type GateOptions } from "./gate.ts";
 import { installRelease } from "./release.ts";
-
-const USAGE = "usage: node core/setup/src/cli.ts doctor [--agent codex|claude-code] [--java <major>] | release";
 
 export interface SetupActions {
   readonly doctor: (options: DoctorOptions) => Promise<ReadonlyArray<SetupResult>>;
   readonly release: () => Promise<SetupResult>;
+  readonly configure: (options: ConfigureOptions) => Promise<SetupResult>;
+  readonly enroll: (options: InstallationOptions & { readonly login: string }) => Promise<SetupResult>;
+  readonly verifyTokens: (options: InstallationOptions) => Promise<SetupResult>;
+  readonly gate: (options: GateOptions, emit: (entry: SetupResult) => void) => Promise<ReadonlyArray<SetupResult>>;
+  readonly batch: (options: BatchOptions, emit: (line: string) => void) => Promise<number>;
 }
 
 /** Dependency injection keeps command dispatch tests away from the person's machine and GitHub. */
 export async function main(
   argv: ReadonlyArray<string>, emit: (line: string) => void = (line) => process.stdout.write(line + "\n"),
-  actions: SetupActions = { doctor, release: installRelease },
+  actions: SetupActions = { doctor, release: installRelease, configure, enroll: enrollment, verifyTokens, gate: (options, emit) => adoptGate(options, undefined, emit), batch },
 ): Promise<number> {
-  const [command, ...args] = argv;
-  let options: DoctorOptions = {};
+  let parsed: SetupCommand;
   try {
-    if (command !== "doctor" && command !== "release") throw new Error();
-    const { values } = parseArgs({ args, options: command === "doctor" ? { agent: { type: "string" }, java: { type: "string" } } : {}, strict: true });
-    if (values.agent !== undefined && !CODING_AGENTS.includes(values.agent as CodingAgent)) throw new Error();
-    if (values.java !== undefined && (!/^\d+$/.test(values.java as string) || !Number.isSafeInteger(Number(values.java)) || Number(values.java) < 8)) throw new Error();
-    options = { ...(values.agent === undefined ? {} : { agent: values.agent as CodingAgent }), ...(values.java === undefined ? {} : { java: Number(values.java) }) };
+    parsed = setupArguments(argv);
   } catch {
-    emit(JSON.stringify(result(command === "release" ? "release" : "doctor", "arguments", "blocked", USAGE)));
+    const command = SETUP_COMMANDS.find((command) => command === argv[0]) ?? "setup";
+    emit(JSON.stringify(result(command, "arguments", "blocked", USAGE)));
     return 64;
   }
   let results: ReadonlyArray<SetupResult>;
+  const emitted = new Set<SetupResult>();
+  const publish = (entry: SetupResult) => { emit(JSON.stringify(entry)); emitted.add(entry); };
   try {
-    results = command === "doctor" ? await actions.doctor(options) : [await actions.release()];
+    switch (parsed.command) {
+      case "doctor": results = await actions.doctor(parsed.options); break;
+      case "release": results = [await actions.release()]; break;
+      case "configure": results = [await actions.configure(parsed.options)]; break;
+      case "enroll": results = [await actions.enroll(parsed.options)]; break;
+      case "verify-tokens": results = [await actions.verifyTokens(parsed.options)]; break;
+      case "gate": results = await actions.gate(parsed.options, publish); break;
+      case "batch": return await actions.batch(parsed.options, emit);
+    }
   } catch (error) {
-    results = [result(command, command, "blocked", (error as Error).message)];
+    results = [result(parsed.command, parsed.command, "blocked", (error as Error).message)];
   }
-  for (const entry of results) emit(JSON.stringify(entry));
+  for (const entry of results) if (!emitted.has(entry)) publish(entry);
   return exitCode(results);
 }
 

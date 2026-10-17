@@ -81,6 +81,24 @@ describe("doctor", () => {
     expect((await doctor({ java: 8 }, host)).find((entry) => entry.step === "java")?.status).toBe("blocked");
   });
 
+  it("checks JAVA_HOME's JDK instead of a different PATH JDK and reports the chosen executables", async () => {
+    const { host, files, outputs, run } = machine();
+    files.add("/jdk/bin/java");
+    files.add("/jdk/bin/javac");
+    outputs.set("/jdk/bin/java -version", 'openjdk version "21.0.8"');
+    outputs.set("/jdk/bin/javac -version", "javac 21.0.8");
+    const results = await doctor({ agent: "codex", java: 21 }, { ...host, env: { JAVA_HOME: "/jdk" } });
+    expect(results.find((entry) => entry.step === "java")).toMatchObject({ status: "already-done", data: { java: "/jdk/bin/java", javac: "/jdk/bin/javac", source: "JAVA_HOME", major: 21 } });
+    expect(run.mock.calls.some(([command]) => command === "java" || command === "javac")).toBe(false);
+    expect((await doctor({ agent: "codex", java: 25 }, { ...host, env: { JAVA_HOME: "/jdk" } })).find((entry) => entry.step === "java")?.status).toBe("blocked");
+  });
+
+  it.each([undefined, "/missing-jdk"])("falls back to PATH when JAVA_HOME has no usable executable pair: %s", async (javaHome) => {
+    const { host } = machine();
+    const results = await doctor({ agent: "codex", java: 25 }, { ...host, env: javaHome === undefined ? {} : { JAVA_HOME: javaHome } });
+    expect(results.find((entry) => entry.step === "java")).toMatchObject({ status: "already-done", data: { java: "java", javac: "javac", source: "PATH", major: 25 } });
+  });
+
   it("does not return token-based gh authentication diagnostics", async () => {
     const { host, run } = machine();
     const auth = { GH_TOKEN: "secret-sentinel", GITHUB_TOKEN: "github-secret", GH_HOST: "github.com", GH_ENTERPRISE_TOKEN: "enterprise-secret" };

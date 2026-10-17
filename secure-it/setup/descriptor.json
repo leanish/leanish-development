@@ -1,0 +1,17 @@
+{
+  "tool": "secure-it",
+  "agentDefaults": {
+    "codex": { "model": "sol", "effort": "medium" },
+    "claude-code": { "model": "claude-haiku-5-5", "effort": "high" }
+  },
+  "schedule": { "frequency": "daily", "hour": 9, "minute": 17 },
+  "permissions": [
+    { "name": "contents", "label": "Contents", "write": "write", "read": "read" },
+    { "name": "pull_requests", "label": "Pull requests", "write": "write", "read": "read" },
+    { "name": "workflows", "label": "Workflows", "write": "write", "read": "none" },
+    { "name": "actions", "label": "Actions", "write": "read", "read": "read" },
+    { "name": "statuses", "label": "Commit statuses", "write": "read", "read": "read" },
+    { "name": "metadata", "label": "Metadata (automatic)", "write": "read", "read": "read" },
+    { "name": "checks", "label": "Checks", "write": "none", "read": "none" }
+  ]
+}

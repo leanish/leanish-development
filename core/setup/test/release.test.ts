@@ -8,7 +8,7 @@ import { runProcess, type RunProcess } from "@leanish/gate/process";
 
 import { Commands } from "../src/commands.ts";
 import { RELEASE_REPOSITORY } from "../src/github-release.ts";
-import { installRelease } from "../src/release.ts";
+import { installRelease, readInstalledRelease } from "../src/release.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -118,6 +118,17 @@ describe("release installation", () => {
     const path = join(releases, "v0.7.0");
     await expect(stat(join(path, "lifecycle-ran"))).rejects.toMatchObject({ code: "ENOENT" });
     expect((await installRelease(commands, home)).status).toBe("already-done");
+  });
+
+  it("reuses an explicitly selected installed release offline without selecting a new version", async () => {
+    const { commands, calls } = installer();
+    await installRelease(commands, home);
+    calls.length = 0;
+    expect(await readInstalledRelease("v0.7.0", commands, home)).toEqual({ tag: "v0.7.0", sha, path: join(releases, "v0.7.0") });
+    expect(calls.every(({ command }) => command === "git")).toBe(true);
+    await expect(readInstalledRelease("../escape", commands, home)).rejects.toThrow("stable vX.Y.Z");
+    await rm(join(releases, "v0.7.0/node_modules"), { recursive: true });
+    await expect(readInstalledRelease("v0.7.0", commands, home)).rejects.toThrow("dependencies are incomplete");
   });
 
   it("checks out the peeled commit of a real annotated tag", async () => {

@@ -1,0 +1,17 @@
+# Installation template. Agent, identity and repos are selected by configure.
+# The runtime's legacy defaults remain ~/.config/leanish/secure-it/agent.yaml
+# and leanish-secure-it-write/read; owner installations override them explicitly.
+repos: []
+agent:
+  codingAgent: claude-code
+  model: claude-haiku-5-5
+  effort: high
+secrets:
+  write: leanish-secure-it-{{owner}}-write
+  read: leanish-secure-it-{{owner}}-read
+commitIdentity: { name: dependency-bot, email: dependency-bot@users.noreply.github.com }
+dirs:
+  state: ~/.local/share/leanish/installations/{{owner}}/secure-it
+  cache: ~/.cache/leanish/installations/{{owner}}/secure-it
+readDeny: []
+# Optional: modelPrices: ~/.config/leanish/model-prices.json
