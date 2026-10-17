@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { main, type SetupActions } from "../src/cli.ts";
 import { result } from "../src/contracts.ts";
+import { batch } from "../src/batch.ts";
+import { parseToolConfig } from "@leanish/tool-runtime/config";
 
 function actions(): SetupActions {
   return {
@@ -16,10 +18,33 @@ function actions(): SetupActions {
     verifyTokens: vi.fn(async () => result("verify-tokens", "permissions", "blocked", "Unknown permissions")),
     gate: vi.fn(async () => [result("gate", "workflow", "changed", "PR ready")]),
     batch: vi.fn(async (_options, emit) => { emit('{"action":"summary"}'); return 0; }),
+    schedule: vi.fn(async () => result("schedule", "task", "needs-confirmation", "Create the app task")),
+    scheduleCheck: vi.fn(async () => result("schedule-check", "task", "already-done", "Matches")),
   };
 }
 
 describe("setup command contract", () => {
+  const releaseCommands = [
+    { command: "gate", args: ["--repo", "acme/one"] },
+    { command: "batch", args: ["bump-it", "--owner", "acme"] },
+    { command: "schedule", args: ["bump-it", "--owner", "acme", "--agent", "codex"] },
+    { command: "schedule-check", args: ["bump-it", "--owner", "acme", "--agent", "codex", "--task-file", "/tmp/observed.json"] },
+    { command: "test-run", args: ["bump-it", "--owner", "acme", "--repo", "acme/one"] },
+  ];
+
+  it.each(releaseCommands.flatMap((entry) => ["v0.7.0-rc.1", "v0.7.0+build", "0.7.0", "v01.7.0", "v1.2", "../escape", "secret-sentinel"].map((tag) => ({ ...entry, tag }))))("rejects unstable or malformed release tags for $command: $tag", async ({ command, args, tag }) => {
+    const handlers = actions();
+    const emit = vi.fn();
+    expect(await main([command, ...args, "--release", tag], emit, handlers)).toBe(64);
+    expect(JSON.parse(emit.mock.calls[0]![0])).toMatchObject({ command, step: "arguments", status: "blocked", message: expect.stringContaining("--release must be a stable vX.Y.Z tag; prerelease/rc tags") });
+    expect(JSON.stringify(emit.mock.calls)).not.toContain("secret-sentinel");
+    for (const action of Object.values(handlers)) expect(action).not.toHaveBeenCalled();
+  });
+
+  it.each(releaseCommands)("accepts stable release tags for $command", async ({ command, args }) => {
+    expect(await main([command, ...args, "--release", "v1.2.3"], () => {}, actions())).not.toBe(64);
+  });
+
   it("dispatches doctor arguments and emits versioned JSONL only", async () => {
     const handlers = actions();
     const lines: string[] = [];
@@ -53,6 +78,48 @@ describe("setup command contract", () => {
     ["already-done", 0], ["changed", 0], ["needs-confirmation", 2], ["blocked", 1],
   ] as const)("maps %s to exit %i", async (status, code) => {
     expect(await main(["doctor"], () => {}, { ...actions(), doctor: async () => [result("doctor", "agent", status, "Check")] })).toBe(code);
+  });
+
+  it("dispatches schedule/readback and maps test-run directly to the selected batch", async () => {
+    const handlers = actions();
+    const emit = vi.fn();
+    const base = ["bump-it", "--owner", "acme", "--release", "v0.7.0"];
+    expect(await main(["schedule", ...base, "--agent", "claude-code"], emit, handlers)).toBe(2);
+    expect(handlers.schedule).toHaveBeenCalledWith({ tool: "bump-it", owner: "acme", release: "v0.7.0", agent: "claude-code" });
+    expect(await main(["schedule-check", ...base, "--agent", "codex", "--task-file", "/tmp/readback.json"], emit, handlers)).toBe(0);
+    expect(handlers.scheduleCheck).toHaveBeenCalledWith({ tool: "bump-it", owner: "acme", release: "v0.7.0", agent: "codex", taskFile: "/tmp/readback.json" });
+    expect(await main(["test-run", ...base, "--repo", "acme/one"], emit, handlers)).toBe(0);
+    expect(handlers.batch).toHaveBeenCalledExactlyOnceWith({ tool: "bump-it", owner: "acme", release: "v0.7.0", repo: "acme/one" }, emit);
+  });
+
+  it("test-run executes only one opted-in review/run chain through the batch implementation", async () => {
+    const config = parseToolConfig("bump-it", "repos: [{repo: acme/one}, {repo: acme/two}]\nagent: {codingAgent: codex, model: sol, effort: medium}\ncommitIdentity: {name: Dev, email: dev@example.com}\n", "agent.yaml", "/home");
+    const invoke = vi.fn(async () => ({ code: 0, report: { status: "ok", result: { outcome: "completed" } } }));
+    const machine = { release: async () => ({ tag: "v0.7.0", sha: "a".repeat(40), path: "/release" }), installation: async () => ({ path: "/config", config }), preflight: async () => {}, invoke };
+    const handlers = { ...actions(), batch: (options: Parameters<typeof batch>[0], emit: (line: string) => void) => batch(options, emit, machine) };
+    const argv = ["test-run", "bump-it", "--owner", "acme", "--release", "v0.7.0", "--repo"];
+    expect(await main([...argv, "acme/one"], () => {}, handlers)).toBe(0);
+    expect(invoke.mock.calls.map((args) => args.slice(2))).toEqual([["bump-it", "acme/one", "review"], ["bump-it", "acme/one", "run"]]);
+    invoke.mockClear();
+    expect(await main([...argv, "acme/unselected"], () => {}, handlers)).toBe(1);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["schedule", "bump-it", "--owner", "acme", "--release", "v0.7.0"],
+    ["schedule-check", "bump-it", "--owner", "acme", "--release", "v0.7.0", "--agent", "codex"],
+    ["schedule", "bump-it", "--owner", "acme", "--release", "v0.7.0", "--agent", "other"],
+    ["schedule", "bump-it", "--owner", "acme", "--owner", "other", "--release", "v0.7.0", "--agent", "codex"],
+    ["test-run", "bump-it", "--owner", "acme", "--release", "v0.7.0"],
+    ["test-run", "bump-it", "--owner", "acme", "--release", "v0.7.0", "--repo", "other/one"],
+    ["test-run", "bump-it", "--owner", "acme", "--release", "v0.7.0", "--repo", "acme/one", "--repo", "acme/two"],
+    ["test-run", "bump-it", "--owner", "acme", "--release", "v0.7.0", "--repo", "acme/one", "--dry-run"],
+  ].map((argv) => ({ argv })))("rejects incomplete or unsafe part 3 input: $argv", async ({ argv }) => {
+    const handlers = actions();
+    const emit = vi.fn();
+    expect(await main(argv, emit, handlers)).toBe(64);
+    expect(JSON.parse(emit.mock.calls[0]![0])).toMatchObject({ command: argv[0], status: "blocked" });
+    for (const action of Object.values(handlers)) expect(action).not.toHaveBeenCalled();
   });
 
   it.each([

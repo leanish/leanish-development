@@ -1,5 +1,11 @@
 # Adopting secure-it and bump-it
 
+For the guided Mac path, clone this repository and ask Claude Code or Codex desktop
+to "install bump-it", "install secure-it", or "add a repository". The [guided workflow](../core/setup/install.md)
+uses one local app task per tool and GitHub owner, with review→run chains and an
+explicitly consented real test run. The manual path below stays the reference for
+people who prefer to configure and operate the tools themselves.
+
 The tools run on your machine and propose draft PRs; people merge them. Each has
 its own config, default Keychain services and two schedules: `run` plans changes,
 `review` revisits its open PRs. Either command can push or change a PR. There is

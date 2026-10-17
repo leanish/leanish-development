@@ -1,4 +1,4 @@
-export const SETUP_COMMANDS = ["doctor", "release", "configure", "enroll", "verify-tokens", "gate", "batch"] as const;
+export const SETUP_COMMANDS = ["doctor", "release", "configure", "enroll", "verify-tokens", "gate", "batch", "schedule", "schedule-check", "test-run"] as const;
 
 /** One JSON object per stdout line; never include subprocess output or credentials.
  * Exit codes: 0 changed/already-done; 1 blocked; 2 needs-confirmation;
@@ -15,14 +15,19 @@ export interface SetupResult {
 
 /** The skill's agent submits this to its app's scheduling tool; scripts do not create tasks. */
 export interface ScheduleSpec {
-  readonly name: string;
+  readonly taskId: string;
+  readonly title: string;
+  readonly agent: "codex" | "claude-code";
+  readonly cron: string;
+  readonly timeZone: string;
+  readonly command: string;
   readonly prompt: string;
   readonly folder: string;
-  readonly cadence: {
-    readonly hour: number;
-    readonly minute: number;
-    readonly timeZone: string;
-  } & ({ readonly frequency: "daily" } | { readonly frequency: "weekly"; readonly day: 1 | 2 | 3 | 4 | 5 | 6 | 7 });
+  readonly ownerOffsetHours: number;
+  readonly control: string;
+  readonly permissions: string;
+  readonly unattended: string;
+  readonly documentation: string;
 }
 
 export function result(

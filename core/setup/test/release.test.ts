@@ -39,6 +39,8 @@ beforeEach(async () => {
   await mkdir(source);
   await mkdir(home);
   await mkdir(join(source, "fixture"));
+  await mkdir(join(source, "core/setup"), { recursive: true });
+  await writeFile(join(source, "core/setup/run.sh"), "# fixture launcher, never executed\n");
   await writeFile(join(source, "package.json"), JSON.stringify({ name: "release-fixture", version: "1.0.0", private: true, workspaces: ["fixture"],
     scripts: { preinstall: "node -e \"require('fs').writeFileSync('lifecycle-ran', 'unsafe')\"" } }));
   await writeFile(join(source, "fixture", "package.json"), JSON.stringify({ name: "@fixture/empty", version: "1.0.0", private: true }));
@@ -59,8 +61,8 @@ afterEach(async () => {
   await realRm(root, { recursive: true, force: true });
 });
 
-function installer({ realNpm = false, failNpm = false, remoteSha = sha, beforeNpm }: {
-  realNpm?: boolean; failNpm?: boolean; remoteSha?: string; beforeNpm?: (path: string) => Promise<void>;
+function installer({ realNpm = false, failNpm = false, remoteSha = sha, beforeNpm, tag = "v0.7.0" }: {
+  realNpm?: boolean; failNpm?: boolean; remoteSha?: string; beforeNpm?: (path: string) => Promise<void>; tag?: string;
 } = {}) {
   const calls: Array<{ command: string; args: ReadonlyArray<string>; cwd?: string }> = [];
   const run: RunProcess = async (command, args, options) => {
@@ -69,8 +71,8 @@ function installer({ realNpm = false, failNpm = false, remoteSha = sha, beforeNp
       expect(args.slice(0, 5)).toEqual(["api", "--hostname", "github.com", "--method", "GET"]);
       const endpoint = args.at(-1)!;
       const response = endpoint.includes("/releases?")
-        ? [[{ tag_name: "v0.7.0", published_at: "2026-10-17T00:00:00Z", draft: false, prerelease: false, immutable: true }]]
-        : { ref: "refs/tags/v0.7.0", object: { type: "commit", sha: remoteSha } };
+        ? [[{ tag_name: tag, published_at: "2026-10-17T00:00:00Z", draft: false, prerelease: false, immutable: true }]]
+        : { ref: `refs/tags/${tag}`, object: { type: "commit", sha: remoteSha } };
       return { code: 0, stdout: JSON.stringify(response), stderr: "" };
     }
     if (command === "npm") {
@@ -96,6 +98,28 @@ function installer({ realNpm = false, failNpm = false, remoteSha = sha, beforeNp
 }
 
 describe("release installation", () => {
+  it.each(["v0.6.0", "v0.7.0"])("installs %s without a launcher, then reports the found tag blocked with the manual fallback on every reuse path", async (tag) => {
+    await git(source, "rm", "core/setup/run.sh");
+    await git(source, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.com", "commit", "--quiet", "-m", "legacy release");
+    sha = await git(source, "rev-parse", "HEAD");
+    await git(source, "tag", "--force", tag);
+    const { commands, calls } = installer({ tag });
+    for (const reinstall of [false, false, true]) {
+      if (reinstall) await rm(join(releases, tag, "node_modules"), { recursive: true });
+      const value = await installRelease(commands, home);
+      expect(value).toMatchObject({ status: "blocked", data: { tag, sha, path: join(releases, tag) } });
+      expect(value.message).toContain(`Installed ${tag}`);
+      expect(value.message).toContain("v0.7.0 or newer");
+      expect(value.message).toContain("Until such a release is published");
+      expect(value.message).toContain("docs/adopting-tools.md");
+      expect(value.message).not.toContain("select");
+      expect(await git(join(releases, tag), "rev-parse", "HEAD")).toBe(sha);
+    }
+    expect(calls.filter(({ command }) => command === "npm")).toHaveLength(2);
+    // A completed checkout remains usable for the manual/gate-only path.
+    expect((await readInstalledRelease(tag, commands, home)).tag).toBe(tag);
+  });
+
   it("installs and reuses a detached tag-named checkout without rerunning npm", async () => {
     const { commands, calls } = installer();
     const expectedPath = join(releases, "v0.7.0");

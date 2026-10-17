@@ -25,6 +25,8 @@ and what's unreleased. Licensed under Apache-2.0.
 
 ## Adoption and operation
 
+In Claude Code or Codex desktop, ask "install bump-it", "install secure-it", or "add a repository"; see the [guided workflow](core/setup/install.md).
+
 - [Requirements and scenario behavior](docs/requirements.md)
 - [Why this adds value alongside dependency alerts](docs/why.md)
 - [Adopting the gate](core/gate/README.md#adopting-the-gate), including
