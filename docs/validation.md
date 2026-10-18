@@ -372,3 +372,89 @@ its test; the source was restored byte for byte. Astra also found that the link 
 final target, not through an intermediate link: new protection that is incomplete rather than a regression, planned
 for 0.6.0 and listed in [coverage gaps](coverage-gaps.md). Per the [release review rule](releasing.md), the final
 validation earned its cost this time.
+
+## Release candidates of 0.6.0 — 2026-10-16
+
+Each candidate ran a real pass with the fixture repositories (52 commands, 0 failed, apart from npm registry 502s on
+rc.6 that passed on rerun), then two Haiku reviews, Sol unprimed and, on the clean candidate, Astra. Findings blocked
+only when new or worse than v0.5.2.
+
+- **rc.1 and rc.2 (`d1c5f11`, `0fd5e9b`)**: Sol found the Kotlin/Groovy strict-pin parsers could be bypassed or misled
+  (rc.1: parser jars read from a cache the agent's sandbox can write, Groovy parameter defaults, inputs under `/tmp`;
+  rc.2: columns counted in UTF-16 rather than code points, and calls enclosing a pin dropped). The owner chose to stop
+  parsing build scripts: `supply-chain` interprets what Gradle resolves rather than parsing files. rc.3 (`70e1ccd`)
+  was superseded before review.
+- **rc.4 (`f41cefb`)**: strict pins through Gradle's inventory only. Sol found that the inventory didn't export
+  dependency constraints, and that declarations without a version were dropped unnoticed.
+- **rc.5 (`8096ff3`)**: Sol found that a rich strict range lost its `reject` without verification noticing, since the
+  inventory didn't export rejected versions. Every rich-version facet is now compared.
+- **rc.6 (`4499a1e`)**: Sol found two regressions: tightening the GitHub repository matcher lost scp-style SCM URLs
+  without a user, and a project constraint on a root without a group aborted the inventory.
+- **rc.7 and rc.8 (`84c536a`, `a77bdea`)**: further matcher forms v0.5.2 read (`git+ssh` with a colon, surrounding
+  whitespace, numeric scp owners, `ssh.github.com`) were lost by each tightening. The owner kept v0.5.2's matcher
+  instead; its host and port limits are in [coverage gaps](coverage-gaps.md).
+- **rc.9 (`8ed5a32`)**: the matcher is v0.5.2's byte for byte, pinned by a 201-case fixture. Both Haiku reviews were
+  clean; the gap-hunter ran v0.5.2 and rc.9 on 56 repository-lookup inputs with identical results. Sol found no
+  blocker, and two defects v0.5.2 also has, for the next release: an unpinned action moved from an `env` map into a
+  step of the same workflow isn't required to be pinned (the occurrence count is unchanged), and an optional root peer
+  can skip the new npm deprecation check on a bump-it major. Astra, as final validation, confirmed both and their
+  classification by running both versions and found nothing more: this time it confirmed rather than added.
+
+v0.6.0 (`738ec35`) is rc.9 plus its release metadata.
+
+## Maven floor verification in 0.6.1 — 2026-10-18
+
+The final candidate was `v0.6.1-rc.2` (`4a9cbc315311d770890bafc0851364e808ca2bbe`).
+Its tree exactly matched the tested [PR #167](https://github.com/leanish/leanish-development/pull/167)
+head. The release PR changed only root version metadata, the changelog date and
+the README current-release pointer.
+
+The actual candidate's full bump-it `verifyPlan` ran against public
+[sqs-codec PR #163](https://github.com/leanish/sqs-codec/pull/163), base
+`1e30dce09134d87b454df39d3777fd3e0baef9a3` and head
+`b6295fd6a4ec560aaee69733e258aa610fff0e4d`, using independently exported real
+Gradle inventories for base, head and a transformed-base reference, plus a live
+advisory comparison. At `:annotationProcessor`, `:checkstyle` and
+`:testAnnotationProcessor`, base declared Guava `33.7.2-jre` once; head and
+reference each declared it twice and resolved `33.7.2-jre`. Verification returned
+no problems. This was verification of an existing public PR, without publication.
+There was no fresh real-adopter secure-it run in this resumed validation; its
+verification paths were covered by automated checks and independent reviews.
+
+The local release check used `SUPPLY_CHAIN_GRADLE_TESTS=1 npm run check` on
+macOS with Java 25: **1,990 tests passed, zero skipped**, with all workspace
+typechecks passing. The tests cover compatibility floors, duplicate and
+unversioned preservation, below-floor and disappearing resolution, and full
+verification rejecting additions absent from the independent reference.
+
+[Release PR #168](https://github.com/leanish/leanish-development/pull/168) passed
+[CI](https://github.com/leanish/leanish-development/actions/runs/39117953871).
+Default CodeQL did not run on this unprotected maintenance branch, so a separate
+[validation workflow](https://github.com/leanish/leanish-development/actions/runs/39118097210)
+checked out exact release head `6baf1f3ead1242aa7c82e7221daabeac22282190`.
+Both JavaScript/TypeScript and Actions analyses passed with zero SARIF findings;
+the successful result was attached to that release head. The isolated workflow
+was not merged into the release. The exact squash merge commit
+`668b5c4973fc55c9d0f8f341b70cd7889e05b1e9` has the same tree and is tagged
+[`v0.6.1`](https://github.com/leanish/leanish-development/releases/tag/v0.6.1).
+
+Review contributions, compared with deployed v0.6.0:
+
+- Both planned Haiku reviews stopped on the weekly quota and produced no review.
+  Two independent Sol reviews replaced them: a checklist reviewer and an
+  unprimed gap-hunter. Neither found a blocker or a previously missed finding.
+- A fresh unprimed Sol review found no blocker, independently checked the shared
+  reference and gate protections, passed three non-incremental TypeScript
+  checks, and executed ten focused assertions against actual candidate functions.
+- Astra's final review found no blocker. It added a reproduced synthetic
+  Maven/Gradle qualifier-ordering difference: floor `1.0-custom`, unchanged
+  resolution `1.0`; the Maven helper rejects what Gradle's ordering accepts.
+  Maven ordering was the requested contract. This is a visible skipped upgrade,
+  and the unchanged gate still rejects unsafe resolutions. See
+  [coverage gaps](coverage-gaps.md). Exact model token usage and dollar costs
+  were not available in the resumed session; no spend estimate is asserted.
+
+An earlier kryptovero attempt exposed a visible Spotless rewrite of a U+2028 test
+source literal; its rc.2 agent attempt stopped on the Claude weekly quota. Neither
+is claimed as a successful fresh adopter run, and no private tax workspace was
+read for this validation.
