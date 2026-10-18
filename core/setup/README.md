@@ -318,12 +318,16 @@ authentication, like `gate`.
 Without `--apply` nothing is written: each planned close or deletion is a
 `needs-confirmation` row. Rows carry `tool`, `repo`, `kind` (`pull`/`branch`),
 `number`, `branch`, `head`, `classification`, `reason` and `action`; a final
-`summary` row counts them and lists `repinsNeeded`. There is no journal: each run
-recomputes from GitHub, so a rerun finishes what an interrupted one left (a PR
-closed before its branch could be deleted shows up as a leftover branch).
-Truncated or unreadable evidence blocks that repository without closing anything;
-other failures block their repository and the next one continues; GitHub's rate
-limit stops the run with the reset time.
+`summary` row counts them (`changed`, `planned`, `blocked`, `unchanged`) and lists
+`repinsNeeded` and `notRun`. A mixed PR counts in `repinsNeeded` as soon as it's
+classified, so a failure after closing it can't lose that. There is no journal:
+each run recomputes from GitHub, so a rerun finishes what an interrupted one left
+(a PR closed before its branch could be deleted shows up as a leftover branch).
+A failure on one PR or branch, including truncated or unreadable evidence (which
+never closes that PR), blocks that row and the rest continue; a failure reading a
+repository blocks that repository and the next one continues. GitHub's rate limit
+(REST or GraphQL) stops the run with the reset time and lists the repositories
+not run.
 
 The [guided workflow](install.md) is shared by the thin `install-bump-it`,
 `install-secure-it` and `add-repository` entries in `.claude/skills/` and

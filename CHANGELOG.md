@@ -13,7 +13,6 @@
   (`@leanish/tool-runtime`) and `core/gate` (`@leanish/gate`); `bump-it` and `secure-it` live at the root.
   Cross-package imports use explicit package exports, with workspace and dependency boundaries checked at the root.
 
-
 ## 0.6.1 - 2026-10-18
 
 ### Fixed

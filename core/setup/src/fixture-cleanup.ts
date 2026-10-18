@@ -31,7 +31,10 @@ const UPDATE_REFS = "mutation($repositoryId: ID!, $refUpdates: [RefUpdate!]!) { 
 const CLOSE_COMMENT = "Closed by `fixture-cleanup` after a release-candidate pass: fixture repositories keep their seeded dependencies, "
   + "so only gate-only upgrades of the supply-chain workflow stay open.";
 
-class RateLimited extends Error {}
+class RateLimited extends Error {
+  /** Already published on the row of the PR or branch it stopped. */
+  reported = false;
+}
 class IncompleteEvidence extends Error {}
 
 /**
@@ -48,15 +51,22 @@ export async function fixtureCleanup(
   const results: SetupResult[] = [];
   const publish = (entry: SetupResult) => { results.push(entry); emit(entry); };
   const repinsNeeded: string[] = [];
-  for (const fixture of fixtures) {
+  const notRun: string[] = [];
+  for (const [index, fixture] of fixtures.entries()) {
+    const noteRepin = () => { if (!repinsNeeded.includes(fixture.repo)) repinsNeeded.push(fixture.repo); };
     try {
-      if (await cleanRepository(github, fixture, options.apply, publish)) repinsNeeded.push(fixture.repo);
+      await cleanRepository(github, fixture, options.apply, publish, noteRepin);
     } catch (error) {
-      publish(result("fixture-cleanup", "repository", "blocked", `${fixture.repo}: ${(error as Error).message}`, { repo: fixture.repo, reason: reasonOf(error) }));
-      if (error instanceof RateLimited) break;
+      if (!(error instanceof RateLimited && error.reported)) {
+        publish(result("fixture-cleanup", "repository", "blocked", `${fixture.repo}: ${(error as Error).message}`, { repo: fixture.repo, reason: reasonOf(error) }));
+      }
+      if (error instanceof RateLimited) {
+        notRun.push(...fixtures.slice(index + 1).map((entry) => entry.repo));
+        break;
+      }
     }
   }
-  publish(summary(results, repinsNeeded, options.apply));
+  publish(summary(results, repinsNeeded, notRun, options.apply));
   return results;
 }
 
@@ -77,8 +87,10 @@ export async function fixtureScope(
   return selected;
 }
 
-/** Whether a mixed PR was found: its gate repin is dropped with it and still needs a gate-only PR. */
-async function cleanRepository(api: GitHubApi, fixture: ToolRepo, apply: boolean, publish: (entry: SetupResult) => void): Promise<boolean> {
+/** `noteRepin` records a mixed PR: its gate upgrade is dropped with it and still needs a gate-only PR. */
+async function cleanRepository(
+  api: GitHubApi, fixture: ToolRepo, apply: boolean, publish: (entry: SetupResult) => void, noteRepin: () => void,
+): Promise<void> {
   const repo = fixture.repo;
   const metadata = object(await required(api, "GET", `repos/${repo}`));
   const repositoryId = string(metadata["node_id"]);
@@ -86,21 +98,33 @@ async function cleanRepository(api: GitHubApi, fixture: ToolRepo, apply: boolean
   const open = (await list(api, `repos/${repo}/pulls?state=open`)).map(pull);
   const branches = (await list(api, `repos/${repo}/branches`)).map((entry) => ({ name: string(entry["name"]), head: sha(object(entry["commit"])["sha"]) }));
   const openHeads = new Set(open.filter((pr) => pr.headRepo?.toLowerCase() === repo.toLowerCase()).map((pr) => pr.headRef));
-  let mixed = false;
+  // One failing PR or branch (possibly after its PR was closed) is reported on its own row; the rest still run.
+  const each = async (where: Record<string, unknown>, step: "pull" | "branch", clean: () => Promise<SetupResult>) => {
+    try {
+      publish(await clean());
+    } catch (error) {
+      publish(result("fixture-cleanup", step, "blocked", `${repo}: ${(error as Error).message}`, { repo, ...where, reason: reasonOf(error) }));
+      if (error instanceof RateLimited) {
+        error.reported = true;
+        throw error;
+      }
+    }
+  };
   for (const listed of open) {
-    const row = await cleanPull(api, repo, repositoryId, base, listed.number, apply);
-    if (row.data?.["classification"] === "mixed") mixed = true;
-    publish(row);
+    await each({ kind: "pull", number: listed.number, branch: listed.headRef }, "pull",
+      () => cleanPull(api, repo, repositoryId, base, listed.number, apply, noteRepin));
   }
   for (const branch of branches) {
     if (branchTool(branch.name) === undefined || openHeads.has(branch.name)) continue;
-    publish(await cleanBranch(api, repo, repositoryId, base, branch.name, branch.head, apply));
+    await each({ kind: "branch", branch: branch.name, head: branch.head }, "branch",
+      () => cleanBranch(api, repo, repositoryId, base, branch.name, branch.head, apply));
   }
-  return mixed;
 }
 
 /** Classified from a fresh read, right before acting on it. */
-async function cleanPull(api: GitHubApi, repo: string, repositoryId: string, base: string, number: number, apply: boolean): Promise<SetupResult> {
+async function cleanPull(
+  api: GitHubApi, repo: string, repositoryId: string, base: string, number: number, apply: boolean, noteMixed: () => void,
+): Promise<SetupResult> {
   const pr = pull(await required(api, "GET", `repos/${repo}/pulls/${number}`));
   const where = { repo, kind: "pull", number, branch: pr.headRef, head: pr.headSha };
   if (pr.state !== "open") return result("fixture-cleanup", "pull", "already-done", `${repo}#${number} closed meanwhile`, { ...where, reason: "closed", action: "none" });
@@ -108,6 +132,8 @@ async function cleanPull(api: GitHubApi, repo: string, repositoryId: string, bas
   if (tool === undefined) return result("fixture-cleanup", "pull", "already-done", `${repo}#${number} isn't a tool PR; left alone`, { ...where, reason: "not-owned", action: "none" });
   const { classification, reason } = await classify(api, repo, pr);
   const data = { ...where, tool, classification, reason };
+  // Noted before any write, so a failure after closing can't lose the repin it drops.
+  if (classification === "mixed") noteMixed();
   if (classification === "gate-upgrade") return result("fixture-cleanup", "pull", "already-done", `${repo}#${number} only upgrades the gate; kept open`, { ...data, action: "keep" });
   if (!apply) return result("fixture-cleanup", "pull", "needs-confirmation", `${repo}#${number} would be closed and ${pr.headRef} deleted`, { ...data, action: "close" });
   await required(api, "PATCH", `repos/${repo}/pulls/${number}`, { state: "closed" });
@@ -171,9 +197,11 @@ async function deleteBranch(api: GitHubApi, repo: string, repositoryId: string, 
   const refUpdates = [{ name: `refs/heads/${branch}`, beforeOid: expected, afterOid: ZERO, force: true }];
   const reply = object(await required(api, "POST", "graphql", { query: UPDATE_REFS, variables: { repositoryId, refUpdates } }));
   const errors = reply["errors"];
-  if (errors === undefined || errors === null) return "deleted";
   if (Array.isArray(errors) && errors.some((error) => object(error)["type"] === "RATE_LIMITED")) throw new RateLimited("GitHub's GraphQL rate limit was reached; rerun the cleanup later");
-  const response = await api.request("GET", `repos/${repo}/git/ref/heads/${branch}`);
+  const data = reply["data"];
+  // Success only when GitHub says so; anything else is settled by the branch's current head.
+  if ((errors === undefined || errors === null) && data !== null && typeof data === "object" && (data as Record<string, unknown>)["updateRefs"] != null) return "deleted";
+  const response = await api.request("GET", `repos/${repo}/git/ref/heads/${encodeURIComponent(branch)}`);
   if (response.status === 404) return "missing";
   if (response.status !== 200) throw new GitHubHttpError(response.status);
   if (sha(object(object(response.body)["object"])["sha"]) !== expected) return "moved";
@@ -346,11 +374,13 @@ function reasonOf(error: unknown): string {
   return "failed";
 }
 
-function summary(results: ReadonlyArray<SetupResult>, repinsNeeded: ReadonlyArray<string>, apply: boolean): SetupResult {
+function summary(results: ReadonlyArray<SetupResult>, repinsNeeded: ReadonlyArray<string>, notRun: ReadonlyArray<string>, apply: boolean): SetupResult {
   const count = (status: SetupResult["status"]) => results.filter((entry) => entry.status === status).length;
-  const data = { apply, changed: count("changed"), planned: count("needs-confirmation"), blocked: count("blocked"), kept: count("already-done"), repinsNeeded };
+  const data = { apply, changed: count("changed"), planned: count("needs-confirmation"), blocked: count("blocked"), unchanged: count("already-done"), repinsNeeded, notRun };
+  if (notRun.length > 0) return result("fixture-cleanup", "summary", "blocked", `Stopped at GitHub's rate limit; not run: ${notRun.join(", ")}`, data);
   if (repinsNeeded.length > 0) {
-    return result("fixture-cleanup", "summary", "needs-confirmation", `A mixed PR carried the gate upgrade in ${repinsNeeded.join(", ")}; open a gate-only repin there`, data);
+    const what = apply ? "A closed mixed PR carried" : "A mixed PR to close carries";
+    return result("fixture-cleanup", "summary", "needs-confirmation", `${what} the gate upgrade in ${repinsNeeded.join(", ")}; a gate-only repin is needed there`, data);
   }
   if (data.blocked > 0) return result("fixture-cleanup", "summary", "blocked", "Some PRs or branches need a person; see the blocked rows", data);
   if (data.planned > 0) return result("fixture-cleanup", "summary", "needs-confirmation", "Dry run: rerun with --apply to do the planned actions", data);

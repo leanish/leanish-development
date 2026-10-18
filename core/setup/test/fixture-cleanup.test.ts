@@ -48,6 +48,9 @@ class FakeFixtures implements GitHubApi {
   readonly rateLimited = new Set<string>();
   readonly failing = new Set<string>();
   commentStatus = 201;
+  commentRateLimited = false;
+  /** Replaces the GraphQL reply, to model GitHub's other answers. */
+  graphqlReply: GitHubReply | undefined;
   compareFiles: unknown[] | undefined;
   /** Runs right before the PR read that precedes acting, or right before a branch deletion. */
   beforeRead: ((path: string) => void) | undefined;
@@ -127,6 +130,7 @@ class FakeFixtures implements GitHubApi {
     }
     const commented = /^issues\/(\d+)\/comments$/.exec(rest ?? "")?.[1];
     if (method === "POST" && commented !== undefined) {
+      if (this.commentRateLimited) return { status: 403, body: { message: "secondary rate limit" }, headers: { "retry-after": "60" } };
       if (this.commentStatus >= 300) return ok({ message: "no" }, this.commentStatus);
       repo.comments.push({ number: Number(commented), body: String(object(payload)["body"]) });
       return ok({}, 201);
@@ -149,7 +153,8 @@ class FakeFixtures implements GitHubApi {
     }
     const ref = /^git\/ref\/heads\/(.+)$/.exec(rest ?? "")?.[1];
     if (method === "GET" && ref !== undefined) {
-      const head = repo.branches.get(ref);
+      // GitHub takes the branch raw or percent-encoded.
+      const head = repo.branches.get(decodeURIComponent(ref));
       return head === undefined ? ok({ message: "Not Found" }, 404) : ok({ object: { sha: head } });
     }
     throw new Error(`unexpected ${method} ${path}`);
@@ -161,6 +166,7 @@ class FakeFixtures implements GitHubApi {
     const [update] = variables["refUpdates"] as Array<{ name: string; beforeOid: string; afterOid: string; force: boolean }>;
     const branch = update!.name.replace(/^refs\/heads\//, "");
     this.beforeDelete?.(repo, branch);
+    if (this.graphqlReply !== undefined) return this.graphqlReply;
     if (update!.afterOid !== ZERO || repo.branches.get(branch) !== update!.beforeOid) {
       return { status: 200, body: { data: { updateRefs: null }, errors: [{ type: "STALE_DATA", message: "ref moved" }] } };
     }
@@ -382,16 +388,44 @@ describe("fixture cleanup of open PRs", () => {
     expect(fake.calls.filter((call) => call.method === "PATCH")).toEqual([]);
   });
 
-  it("blocks without closing on truncated evidence", async () => {
+  it("blocks a PR without closing it on truncated evidence", async () => {
     const fake = new FakeFixtures();
     const repo = fake.repo(REPO);
     const pr = fake.pull(REPO, "bump-it/2026-10-18-routine", { "package-lock.json": "{}\n" });
     fake.truncated.add(pr.head.sha);
-    expect((await run(fake, { apply: true })).rows).toEqual([expect.objectContaining({ step: "repository", status: "blocked", data: expect.objectContaining({ reason: "incomplete-evidence" }) })]);
+    const blocked = expect.objectContaining({ step: "pull", status: "blocked", data: expect.objectContaining({ number: 1, reason: "incomplete-evidence" }) });
+    expect((await run(fake, { apply: true })).rows).toEqual([blocked]);
     fake.truncated.clear();
     fake.compareFiles = Array.from({ length: 300 }, (_, i) => ({ filename: `f${i}`, status: "modified" }));
-    expect((await run(fake, { apply: true })).rows).toEqual([expect.objectContaining({ step: "repository", status: "blocked", data: expect.objectContaining({ reason: "incomplete-evidence" }) })]);
+    expect((await run(fake, { apply: true })).rows).toEqual([blocked]);
     expect(repo.pulls[0]!.state).toBe("open");
+  });
+
+  it("keeps the repin signal and the next PRs when a later PR fails", async () => {
+    const fake = new FakeFixtures();
+    const repo = fake.repo(REPO);
+    fake.pull(REPO, "bump-it/2026-10-18-routine", { [WORKFLOW]: workflow(NEW, "# v0.7.0"), "package-lock.json": "{}\n" });
+    const broken = fake.pull(REPO, "secure-it/2026-10-18-security", { "package-lock.json": '{"a":1}\n' }, { tool: "secure-it" });
+    fake.pull(REPO, "bump-it/2026-10-18-glob-major", { "package-lock.json": '{"b":1}\n' });
+    fake.truncated.add(broken.head.sha);
+    const { rows, summary, exit } = await run(fake, { apply: true });
+    expect(rows.map((row) => [row.step, row.status, row.data?.["number"]])).toEqual([["pull", "changed", 1], ["pull", "blocked", 2], ["pull", "changed", 3]]);
+    expect(summary.data).toMatchObject({ repinsNeeded: [REPO] });
+    expect(exit).toBe(1);
+    expect(repo.pulls.map((pr) => pr.state)).toEqual(["closed", "open", "closed"]);
+  });
+
+  it("reports a PR closed before a rate limit hit its comment, keeps its repin, and stops", async () => {
+    const fake = new FakeFixtures();
+    const repo = fake.repo(REPO);
+    fake.repo(OTHER);
+    fake.pull(REPO, "bump-it/2026-10-18-routine", { [WORKFLOW]: workflow(NEW, "# v0.7.0"), "package-lock.json": "{}\n" });
+    fake.commentRateLimited = true;
+    const { rows, summary } = await run(fake, { apply: true }, files([REPO, OTHER]));
+    expect(rows).toEqual([expect.objectContaining({ step: "pull", status: "blocked", data: expect.objectContaining({ number: 1, reason: "rate-limited" }) })]);
+    expect(summary.data).toMatchObject({ repinsNeeded: [REPO] });
+    expect(repo.pulls[0]!.state).toBe("closed");
+    expect(fake.calls.some((call) => call.path.startsWith(`repos/${OTHER}`))).toBe(false);
   });
 
   it("is idempotent: a second run finds nothing to clean", async () => {
@@ -471,10 +505,30 @@ describe("fixture cleanup failures", () => {
     fake.repo(REPO);
     fake.repo(OTHER);
     fake.rateLimited.add(REPO);
-    const { rows, exit } = await run(fake, { apply: true }, files([REPO, OTHER]));
+    const { rows, summary, exit } = await run(fake, { apply: true }, files([REPO, OTHER]));
     expect(rows).toEqual([expect.objectContaining({ step: "repository", status: "blocked", message: expect.stringContaining("rate limit"), data: { repo: REPO, reason: "rate-limited" } })]);
+    expect(summary).toMatchObject({ status: "blocked", data: expect.objectContaining({ notRun: [OTHER] }) });
     expect(exit).toBe(1);
     expect(fake.calls.some((call) => call.path.startsWith(`repos/${OTHER}`))).toBe(false);
+  });
+
+  it("stops at GraphQL's rate limit after closing, with the PR reported", async () => {
+    const fake = new FakeFixtures();
+    const repo = fake.repo(REPO);
+    fake.pull(REPO, "bump-it/2026-10-18-routine", { "package-lock.json": "{}\n" });
+    fake.graphqlReply = { status: 200, body: { data: null, errors: [{ type: "RATE_LIMITED", message: "slow down" }] } };
+    const { rows } = await run(fake, { apply: true });
+    expect(rows).toEqual([expect.objectContaining({ step: "pull", status: "blocked", data: expect.objectContaining({ reason: "rate-limited" }) })]);
+    expect(repo.branches.has("bump-it/2026-10-18-routine")).toBe(true);
+  });
+
+  it("doesn't count a GraphQL reply without errors but without an update as a deletion", async () => {
+    const fake = new FakeFixtures();
+    fake.repo(REPO);
+    fake.pull(REPO, "bump-it/2026-10-18-routine", { "package-lock.json": "{}\n" });
+    fake.graphqlReply = { status: 200, body: { data: { updateRefs: null } } };
+    const { rows } = await run(fake, { apply: true });
+    expect(rows).toEqual([expect.objectContaining({ step: "pull", status: "blocked", message: expect.stringContaining("GitHub refused deleting") })]);
   });
 
   it("isolates another failure to its repository", async () => {
