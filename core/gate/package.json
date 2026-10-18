@@ -61,6 +61,7 @@
     "./release-age": "./src/release-age.ts",
     "./repository-advisories": "./src/repository-advisories.ts",
     "./snapshot": "./src/snapshot.ts",
+    "./source-repos": "./src/source-repos.ts",
     "./take-snapshot": "./src/take-snapshot.ts",
     "./test/fake-fetch": "./test/fake-fetch.ts",
     "./test/required-fixture": "./test/required-fixture.ts",
