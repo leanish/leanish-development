@@ -17,9 +17,11 @@ import { basename } from "node:path";
 import { isMap, isScalar, isSeq, parseDocument } from "yaml";
 
 import { commentTag, readActionsInventory } from "../../ci/src/actions-inventory.ts";
+import type { Floor } from "../../ci/src/floors.ts";
 import { gradleLocation, type GradleConfiguration, type GradleInventory } from "../../ci/src/gradle.ts";
 import { directDependencies } from "../../ci/src/npm-lock.ts";
 import type { Tree } from "../../ci/src/tree.ts";
+import { versionScheme } from "../../ci/src/versions.ts";
 
 import { lockfilesOf } from "./inventories.ts";
 
@@ -144,6 +146,39 @@ export function declaredAt(gradle: GradleInventory | undefined, location: string
 export function resolvedAt(gradle: GradleInventory | undefined, location: string, name: string): string | undefined {
   const configuration = configurationAt(gradle, location);
   return configuration?.resolved.find((component) => `${component.group}:${component.name}` === name)?.version;
+}
+
+/** Expected entries absent from actual, counting each occurrence separately. */
+export function missingOccurrences(expected: ReadonlyArray<string>, actual: ReadonlyArray<string>): string[] {
+  const remaining = [...actual];
+  return expected.filter((entry) => {
+    const index = remaining.indexOf(entry);
+    if (index === -1) return true;
+    remaining.splice(index, 1);
+    return false;
+  });
+}
+
+/**
+ * Preserve every base declaration (including unversioned ones), allowing plugin-added declarations without
+ * provenance. Head must resolve at least the recorded floor by Maven ordering; losing a base resolution fails.
+ * The separate Gradle reference comparison still requires any additions to come from the plan.
+ */
+export function preservedMavenFloorProblems(floor: Pick<Floor, "package" | "version" | "locations">,
+  base: GradleInventory | undefined, head: GradleInventory | undefined): string[] {
+  const problems: string[] = [];
+  for (const location of floor.locations) {
+    const missing = missingOccurrences(declaredAt(base, location, floor.package), declaredAt(head, location, floor.package));
+    for (const version of missing) problems.push(`floor declaration for ${floor.package} ${version} was removed or changed at ${location}`);
+    const resolved = resolvedAt(head, location, floor.package);
+    if (resolved === undefined) {
+      const before = resolvedAt(base, location, floor.package);
+      if (before !== undefined) problems.push(`floor resolution for ${floor.package} disappeared at ${location} (base resolved ${before})`);
+    } else if (versionScheme("Maven").compare(resolved, floor.version) < 0) {
+      problems.push(`floor resolution for ${floor.package} at ${location} is ${resolved}, below ${floor.version}`);
+    }
+  }
+  return problems;
 }
 
 /**
