@@ -298,6 +298,7 @@ describe("fixture cleanup of open PRs", () => {
     ["the gate and setup-node in the same workflow", { [WORKFLOW]: workflow(NEW, "# v0.7.0", "v5") }],
     ["the gate and a lockfile", { [WORKFLOW]: workflow(NEW, "# v0.7.0"), "package-lock.json": "{}\n" }],
     ["the gate to a tag instead of a SHA", { [WORKFLOW]: workflow("v0.7.0", "") }],
+    ["the gate and a byte-order mark added to its workflow", { [WORKFLOW]: `\uFEFF${workflow(NEW, "# v0.7.0")}` }],
     ["the gate with its workflow made executable", { [WORKFLOW]: { text: workflow(NEW, "# v0.7.0"), mode: "100755" } }],
     ["the gate and a renamed second workflow", { [WORKFLOW]: workflow(NEW, "# v0.7.0"), "README.md": undefined, ".github/workflows/readme.yml": "fixture\n" }],
   ])("closes a mixed PR moving %s and asks for a gate-only repin", async (_case, changes) => {

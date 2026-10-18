@@ -300,7 +300,7 @@ authentication, like `gate`.
   in place with the same mode, equal to their merge-base versions once the ref and
   `# v…` comment of `uses: leanish/leanish-development/.github/workflows/supply-chain.yml@…`
   are masked, with at least one such ref moved to a full commit SHA. Contents are
-  decoded as strict UTF-8 (invalid bytes block the PR), and a caller whose `@` is
+  decoded as strict UTF-8 keeping any BOM (invalid bytes block the PR), and a caller whose `@` is
   escaped in YAML can't be masked, so its file counts as another change. It stays open
   and is never merged here. A **mixed** PR (a gate upgrade plus anything else) and
   any **other** tool PR are closed with a comment, then their branch is deleted.
@@ -319,8 +319,9 @@ authentication, like `gate`.
 
 Without `--apply` nothing is written: each planned close or deletion is a
 `needs-confirmation` row. Rows carry `tool`, `repo`, `kind` (`pull`/`branch`),
-`number`, `branch`, `head`, `classification`, `reason` and `action`, and a closed
-PR's row also `closed`, `commented` and `deletion`; a row that failed midway keeps
+`number`, `branch`, `head`, `reason` and `action`. PR rows add `classification`
+(leftover branches aren't classified by content), and a closed PR's row also
+`closed`, `commented` and `deletion`; a row that failed midway keeps
 what was read and done before the failure (for example `closed: true` when only
 the comment or the deletion failed). A final
 `summary` row counts them (`changed`, `planned`, `blocked`, `unchanged`) and lists

@@ -326,8 +326,8 @@ async function blob(api: GitHubApi, repo: string, blobSha: string): Promise<stri
   const body = object(await required(api, "GET", `repos/${repo}/git/blobs/${blobSha}`));
   if (body["encoding"] !== "base64") throw new IncompleteEvidence(`blob ${blobSha} isn't base64`);
   try {
-    // Strict: a lenient decode replaces invalid bytes, and two different files could compare equal.
-    return new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(string(body["content"]).replace(/\s/g, ""), "base64"));
+    // Strict and BOM-preserving: a lenient decode replaces invalid bytes or drops a BOM, and two different files could compare equal.
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(Buffer.from(string(body["content"]).replace(/\s/g, ""), "base64"));
   } catch {
     throw new IncompleteEvidence(`blob ${blobSha} isn't valid UTF-8`);
   }
