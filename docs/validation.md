@@ -372,3 +372,32 @@ its test; the source was restored byte for byte. Astra also found that the link 
 final target, not through an intermediate link: new protection that is incomplete rather than a regression, planned
 for 0.6.0 and listed in [coverage gaps](coverage-gaps.md). Per the [release review rule](releasing.md), the final
 validation earned its cost this time.
+
+## Release candidates of 0.6.0 — 2026-10-16
+
+Each candidate ran a real pass with the fixture repositories (52 commands, 0 failed, apart from npm registry 502s on
+rc.6 that passed on rerun), then two Haiku reviews, Sol unprimed and, on the clean candidate, Astra. Findings blocked
+only when new or worse than v0.5.2.
+
+- **rc.1 and rc.2 (`d1c5f11`, `0fd5e9b`)**: Sol found the Kotlin/Groovy strict-pin parsers could be bypassed or misled
+  (rc.1: parser jars read from a cache the agent's sandbox can write, Groovy parameter defaults, inputs under `/tmp`;
+  rc.2: columns counted in UTF-16 rather than code points, and calls enclosing a pin dropped). The owner chose to stop
+  parsing build scripts: `supply-chain` interprets what Gradle resolves rather than parsing files. rc.3 (`70e1ccd`)
+  was superseded before review.
+- **rc.4 (`f41cefb`)**: strict pins through Gradle's inventory only. Sol found that the inventory didn't export
+  dependency constraints, and that declarations without a version were dropped unnoticed.
+- **rc.5 (`8096ff3`)**: Sol found that a rich strict range lost its `reject` without verification noticing, since the
+  inventory didn't export rejected versions. Every rich-version facet is now compared.
+- **rc.6 (`4499a1e`)**: Sol found two regressions: tightening the GitHub repository matcher lost scp-style SCM URLs
+  without a user, and a project constraint on a root without a group aborted the inventory.
+- **rc.7 and rc.8 (`84c536a`, `a77bdea`)**: further matcher forms v0.5.2 read (`git+ssh` with a colon, surrounding
+  whitespace, numeric scp owners, `ssh.github.com`) were lost by each tightening. The owner kept v0.5.2's matcher
+  instead; its host and port limits are in [coverage gaps](coverage-gaps.md).
+- **rc.9 (`8ed5a32`)**: the matcher is v0.5.2's byte for byte, pinned by a 201-case fixture. Both Haiku reviews were
+  clean; the gap-hunter ran v0.5.2 and rc.9 on 56 repository-lookup inputs with identical results. Sol found no
+  blocker, and two defects v0.5.2 also has, for the next release: an unpinned action moved from an `env` map into a
+  step of the same workflow isn't required to be pinned (the occurrence count is unchanged), and an optional root peer
+  can skip the new npm deprecation check on a bump-it major. Astra, as final validation, confirmed both and their
+  classification by running both versions and found nothing more: this time it confirmed rather than added.
+
+v0.6.0 (`738ec35`) is rc.9 plus its release metadata.
