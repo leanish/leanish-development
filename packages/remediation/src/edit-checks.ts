@@ -160,7 +160,7 @@ export function missingOccurrences(expected: ReadonlyArray<string>, actual: Read
 }
 
 /**
- * Preserve every base declaration (including unversioned ones), allowing plugin-added declarations without
+ * For security floors, preserve every base declaration (including unversioned ones), allowing plugin-added declarations without
  * provenance. Head must resolve at least the recorded floor by Maven ordering; losing a base resolution fails.
  * The separate Gradle reference comparison still requires any additions to come from the plan.
  */

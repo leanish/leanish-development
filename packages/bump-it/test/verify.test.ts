@@ -37,7 +37,8 @@ const GUAVA_FLOOR = "33.7.2-jre";
 const FLOOR_LOCATIONS = [":annotationProcessor", ":checkstyle", ":testAnnotationProcessor"];
 
 async function mavenFloorFixture(before: ReadonlyArray<string | undefined>, after: ReadonlyArray<string | undefined>,
-  resolved: { readonly base?: string; readonly head?: string } = { base: GUAVA_FLOOR, head: GUAVA_FLOOR }): Promise<VerifyInputs> {
+  resolved: { readonly base?: string; readonly head?: string } = { base: GUAVA_FLOOR, head: GUAVA_FLOOR },
+  purpose: "security" | "compatibility" = "security"): Promise<VerifyInputs> {
   const plugin = "io.github.leanish.java-conventions";
   const marker = `${plugin}:${plugin}.gradle.plugin`;
   const plan = await planFor(routineUnit([candidate({ ecosystem: "Maven", name: marker, from: "0.6.2",
@@ -54,8 +55,8 @@ async function mavenFloorFixture(before: ReadonlyArray<string | undefined>, afte
   });
   const files = (version: string) => ({
     ".github/dependency-floors.json": JSON.stringify({ floors: [{ ecosystem: "Maven", package: "com.google.guava:guava",
-      version: GUAVA_FLOOR, declaredIn: "build.gradle.kts", selector: FLOOR_LOCATIONS, purpose: "security",
-      advisories: ["CVE-2026-12345"], reason: "security fix", added: "2026-10-01" }] }),
+      version: GUAVA_FLOOR, declaredIn: "build.gradle.kts", selector: FLOOR_LOCATIONS, purpose,
+      advisories: purpose === "security" ? ["CVE-2026-12345"] : [], reason: "recorded floor", added: "2026-10-01" }] }),
     "build.gradle.kts": `plugins { id("${plugin}") version "${version}" }`,
   });
   const head = inventory("0.6.3", after, resolved.head);
@@ -238,10 +239,33 @@ describe("bump verification", () => {
     const floor = JSON.stringify({ floors: [{ ecosystem: "Maven", package: "g:lib", version: "1.0", declaredIn: "build.gradle", selector: [":runtimeClasspath"], purpose: "compatibility", reason: "works", added: "2026-01-01" }] });
     const plan = await planFor(routineUnit([candidate({ ecosystem: "Maven", name: "g:lib", from: "1.0", locations: [":runtimeClasspath"], declarations: [] })]), { files: new Map(), changes: [], notes: [] }, async () => undefined);
     const input: VerifyInputs = { plan, npmFiles: new Map(), base: tree("base", { ".github/dependency-floors.json": floor }), head: tree("head", { ".github/dependency-floors.json": floor }), env, gradle: { base: gradle("1.0"), head: gradle("1.1.0") }, reference: markMoved(gradle("1.1.0"), "g:lib", "1.1.0", [":runtimeClasspath"]), changedFiles: ["build.gradle"] };
-    expect(await verifyPlan(input)).toContain("floor declaration for g:lib 1.0 was removed or changed at :runtimeClasspath");
+    expect(await verifyPlan(input)).toContain("floor declaration for g:lib changed at :runtimeClasspath");
     expect(await verifyPlan({ ...input, head: tree("head", {}) })).toContain("bump-it may not change dependency floors");
   });
   describe("Maven floor preservation during a plugin update", () => {
+    it.each([GUAVA_FLOOR, "33.10.0-jre"])("rejects an added compatibility floor declaration at %s even when the plugin reference includes it", async (version) => {
+      const input = await mavenFloorFixture([GUAVA_FLOOR], [GUAVA_FLOOR, version], undefined, "compatibility");
+      expect(await verifyPlan(input)).toEqual(FLOOR_LOCATIONS.map((location) =>
+        `floor declaration for com.google.guava:guava changed at ${location}`));
+      expect(runCompare).not.toHaveBeenCalled();
+    });
+    it.each([false, true])("rejects additions absent from the reference with a planned plugin move: %s", async (plannedPlugin) => {
+      for (const version of [GUAVA_FLOOR, "33.10.0-jre"]) {
+        const input = await mavenFloorFixture([GUAVA_FLOOR], [GUAVA_FLOOR], { base: "33.10.0-jre", head: "33.10.0-jre" });
+        const reference = plannedPlugin ? input.reference! : input.gradle.base!;
+        const expectedHead = plannedPlugin ? input.gradle.head! : input.gradle.base!;
+        const head: GradleInventory = { ...expectedHead, builds: expectedHead.builds.map((build) => ({ ...build,
+          configurations: build.configurations.map((config) => config.id !== ":checkstyle" ? config : { ...config,
+            declared: [...config.declared, { group: "com.google.guava", name: "guava", version, reason: undefined }] }) })) };
+        const source = plannedPlugin ? input.head : input.base;
+        const headTree: Tree = { ...source, read: async (path) => path === "build.gradle.kts"
+          ? `${await source.read(path)}\ndependencies { add("checkstyle", "com.google.guava:guava:${version}") }` : source.read(path) };
+        expect(await verifyPlan({ ...input, plan: { ...input.plan, moves: plannedPlugin ? input.plan.moves : [] },
+          head: headTree, gradle: { base: input.gradle.base, head }, reference }))
+          .toEqual([`:checkstyle, unlike the plan's reference, also declares com.google.guava:guava ${version}`]);
+        expect(runCompare).not.toHaveBeenCalled();
+      }
+    });
     it("accepts a plugin-added duplicate of the repository's Guava floor at all three selectors", async () => {
       expect(await verifyPlan(await mavenFloorFixture([GUAVA_FLOOR], [GUAVA_FLOOR, GUAVA_FLOOR]))).toEqual([]);
       expect(runCompare).toHaveBeenCalledOnce();
