@@ -33,6 +33,36 @@ function markMoved(inventory: GradleInventory, name: string, version: string, lo
   return { ...inventory, builds: inventory.builds.map((build) => ({ ...build, configurations: build.configurations.map((configuration) => ({ ...configuration,
     declared: configuration.declared.map((entry) => (locations.includes(configuration.id) && `${entry.group}:${entry.name}` === name && entry.version === version ? { ...entry, moved: true as const } : entry)) })) })) };
 }
+const GUAVA_FLOOR = "33.7.2-jre";
+const FLOOR_LOCATIONS = [":annotationProcessor", ":checkstyle", ":testAnnotationProcessor"];
+
+async function mavenFloorFixture(before: ReadonlyArray<string | undefined>, after: ReadonlyArray<string | undefined>,
+  resolved: { readonly base?: string; readonly head?: string } = { base: GUAVA_FLOOR, head: GUAVA_FLOOR }): Promise<VerifyInputs> {
+  const plugin = "io.github.leanish.java-conventions";
+  const marker = `${plugin}:${plugin}.gradle.plugin`;
+  const plan = await planFor(routineUnit([candidate({ ecosystem: "Maven", name: marker, from: "0.6.2",
+    minor: { version: "0.6.3", line: "0" }, major: undefined, locations: [":buildscript.classpath"], declarations: [] })]),
+  { files: new Map(), changes: [], notes: [] }, async () => undefined);
+  const inventory = (version: string, declarations: ReadonlyArray<string | undefined>, resolution: string | undefined): GradleInventory => ({
+    schemaVersion: 1, tree: "fixture", builds: [{ build: ".", configurations: [
+      { id: ":buildscript.classpath", kind: "buildscript", unresolved: [], error: undefined, resolved: [],
+        declared: [{ group: plugin, name: `${plugin}.gradle.plugin`, version, reason: undefined }] },
+      ...FLOOR_LOCATIONS.map((id) => ({ id, kind: "project" as const, unresolved: [], error: undefined,
+        declared: declarations.map((version) => ({ group: "com.google.guava", name: "guava", version, reason: undefined })),
+        resolved: resolution === undefined ? [] : [{ group: "com.google.guava", name: "guava", version: resolution }] })),
+    ] }],
+  });
+  const files = (version: string) => ({
+    ".github/dependency-floors.json": JSON.stringify({ floors: [{ ecosystem: "Maven", package: "com.google.guava:guava",
+      version: GUAVA_FLOOR, declaredIn: "build.gradle.kts", selector: FLOOR_LOCATIONS, purpose: "security",
+      advisories: ["CVE-2026-12345"], reason: "security fix", added: "2026-10-01" }] }),
+    "build.gradle.kts": `plugins { id("${plugin}") version "${version}" }`,
+  });
+  const head = inventory("0.6.3", after, resolved.head);
+  return { plan, npmFiles: new Map(), base: tree("base", files("0.6.2")), head: tree("head", files("0.6.3")), env,
+    gradle: { base: inventory("0.6.2", before, resolved.base), head },
+    reference: markMoved(head, marker, "0.6.3", [":buildscript.classpath"]), changedFiles: ["build.gradle.kts"] };
+}
 beforeEach(() => { vi.mocked(runCompare).mockClear(); vi.mocked(runCompare).mockResolvedValue({ headFindings: [], failures: [], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, group: (id: string) => id, cooldown: { evaluated: true, releaseAgeDays: 7, held: [] } }); });
 describe("bump verification", () => {
   it("verifies official wrapper targets before compare and only permits wrapper files with a planned move", async () => {
@@ -208,8 +238,50 @@ describe("bump verification", () => {
     const floor = JSON.stringify({ floors: [{ ecosystem: "Maven", package: "g:lib", version: "1.0", declaredIn: "build.gradle", selector: [":runtimeClasspath"], purpose: "compatibility", reason: "works", added: "2026-01-01" }] });
     const plan = await planFor(routineUnit([candidate({ ecosystem: "Maven", name: "g:lib", from: "1.0", locations: [":runtimeClasspath"], declarations: [] })]), { files: new Map(), changes: [], notes: [] }, async () => undefined);
     const input: VerifyInputs = { plan, npmFiles: new Map(), base: tree("base", { ".github/dependency-floors.json": floor }), head: tree("head", { ".github/dependency-floors.json": floor }), env, gradle: { base: gradle("1.0"), head: gradle("1.1.0") }, reference: markMoved(gradle("1.1.0"), "g:lib", "1.1.0", [":runtimeClasspath"]), changedFiles: ["build.gradle"] };
-    expect(await verifyPlan(input)).toContain("floor declaration for g:lib changed at :runtimeClasspath");
+    expect(await verifyPlan(input)).toContain("floor declaration for g:lib 1.0 was removed or changed at :runtimeClasspath");
     expect(await verifyPlan({ ...input, head: tree("head", {}) })).toContain("bump-it may not change dependency floors");
+  });
+  describe("Maven floor preservation during a plugin update", () => {
+    it("accepts a plugin-added duplicate of the repository's Guava floor at all three selectors", async () => {
+      expect(await verifyPlan(await mavenFloorFixture([GUAVA_FLOOR], [GUAVA_FLOOR, GUAVA_FLOOR]))).toEqual([]);
+      expect(runCompare).toHaveBeenCalledOnce();
+    });
+    it.each([GUAVA_FLOOR, "33.10.0-jre"])("accepts an added different declaration when resolution is %s", async (head) => {
+      expect(await verifyPlan(await mavenFloorFixture([GUAVA_FLOOR], ["32.0.0-jre", GUAVA_FLOOR], { base: GUAVA_FLOOR, head }))).toEqual([]);
+    });
+    it.each([
+      { before: [GUAVA_FLOOR], after: [] },
+      { before: [GUAVA_FLOOR, GUAVA_FLOOR], after: [GUAVA_FLOOR] },
+      { before: [GUAVA_FLOOR], after: ["33.10.0-jre"] },
+      { before: [GUAVA_FLOOR, "32.0.0-jre"], after: [GUAVA_FLOOR] },
+      { before: [GUAVA_FLOOR, undefined], after: [GUAVA_FLOOR], missing: "(no version)" },
+    ])("rejects removed or changed base declarations: $before -> $after", async ({ before, after, missing }) => {
+      const input = await mavenFloorFixture(before, after);
+      const version = missing ?? (before.includes("32.0.0-jre") ? "32.0.0-jre" : GUAVA_FLOOR);
+      expect(await verifyPlan(input)).toEqual(FLOOR_LOCATIONS.map((location) =>
+        `floor declaration for com.google.guava:guava ${version} was removed or changed at ${location}`));
+      expect(runCompare).not.toHaveBeenCalled();
+    });
+    it("preserves unversioned declarations and ignores declaration order", async () => {
+      expect(await verifyPlan(await mavenFloorFixture([GUAVA_FLOOR, undefined], [undefined, GUAVA_FLOOR, "32.0.0-jre"]))).toEqual([]);
+    });
+    it("rejects resolution below the floor even with every base declaration retained", async () => {
+      const input = await mavenFloorFixture([GUAVA_FLOOR], [GUAVA_FLOOR, GUAVA_FLOOR], { base: GUAVA_FLOOR, head: "33.7.1-jre" });
+      expect(await verifyPlan(input)).toEqual(FLOOR_LOCATIONS.map((location) =>
+        `floor resolution for com.google.guava:guava at ${location} is 33.7.1-jre, below ${GUAVA_FLOOR}`));
+      expect(runCompare).not.toHaveBeenCalled();
+    });
+    it("rejects losing a base resolution", async () => {
+      const input = await mavenFloorFixture([GUAVA_FLOOR], [GUAVA_FLOOR], { base: GUAVA_FLOOR });
+      expect(await verifyPlan(input)).toEqual(FLOOR_LOCATIONS.map((location) =>
+        `floor resolution for com.google.guava:guava disappeared at ${location} (base resolved ${GUAVA_FLOOR})`));
+      expect(runCompare).not.toHaveBeenCalled();
+    });
+    it("allows no resolution only when base did not resolve the package either", async () => {
+      expect(await verifyPlan(await mavenFloorFixture([GUAVA_FLOOR], [GUAVA_FLOOR, GUAVA_FLOOR], {}))).toEqual([]);
+      expect(await verifyPlan(await mavenFloorFixture([GUAVA_FLOOR], [GUAVA_FLOOR], { head: "33.7.1-jre" })))
+        .toContain(`floor resolution for com.google.guava:guava at :checkstyle is 33.7.1-jre, below ${GUAVA_FLOOR}`);
+    });
   });
   it("pins Actions and refuses any other change in a planned workflow", async () => {
     const path = ".github/workflows/ci.yml";

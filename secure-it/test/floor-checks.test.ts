@@ -24,6 +24,36 @@ function gradle(version: string, reason = ID): GradleInventory {
 }
 
 describe("secure-it floor preservation", () => {
+  it.each(["1.0", "1.1"])("accepts a plugin-added duplicate security floor declaration resolving to %s", async (version) => {
+    const base = tree([floor()]);
+    const before = gradle("1.0");
+    const head: GradleInventory = { ...before, builds: before.builds.map((build) => ({ ...build,
+      configurations: build.configurations.map((config) => ({ ...config, declared: [...config.declared, ...config.declared],
+        resolved: [{ group: "g", name: "lib", version }] })) })) };
+    const pluginPlan = { ...plan, moves: plan.moves.map((move) => ({ ...move, name: "g:plugin" })) };
+    expect(await preservedFloors(pluginPlan, base, base, { base: before, head })).toEqual([]);
+  });
+  it("preserves declaration reasons and their multiplicity for unchanged Maven floor records", async () => {
+    const base = tree([floor()]);
+    expect(await preservedFloors(plan, base, base, { base: gradle("1.0"), head: gradle("1.0", "plugin") }))
+      .toEqual([`security floor g:lib in build.gradle.kts: a declaration or its reason was removed or changed at :runtimeClasspath`]);
+    const before = gradle("1.0");
+    const duplicated: GradleInventory = { ...before, builds: before.builds.map((build) => ({ ...build,
+      configurations: build.configurations.map((config) => ({ ...config, declared: [...config.declared, ...config.declared] })) })) };
+    expect(await preservedFloors(plan, base, base, { base: duplicated, head: before }))
+      .toEqual([`security floor g:lib in build.gradle.kts: floor declaration for g:lib 1.0 was removed or changed at :runtimeClasspath`]);
+  });
+  it("rejects resolution below an unchanged Maven floor and the loss of a base resolution", async () => {
+    const base = tree([floor()]);
+    const before = gradle("1.0");
+    const withResolution = (version: string | undefined): GradleInventory => ({ ...before, builds: before.builds.map((build) => ({ ...build,
+      configurations: build.configurations.map((config) => ({ ...config, resolved: version === undefined ? [] : [{ group: "g", name: "lib", version }] })) })) });
+    expect(await preservedFloors(plan, base, base, { base: before, head: withResolution("0.9") }))
+      .toEqual(["security floor g:lib in build.gradle.kts: floor resolution for g:lib at :runtimeClasspath is 0.9, below 1.0"]);
+    expect(await preservedFloors(plan, base, base, { base: before, head: withResolution(undefined) }))
+      .toEqual(["security floor g:lib in build.gradle.kts: floor resolution for g:lib disappeared at :runtimeClasspath (base resolved 1.0)"]);
+    expect(await preservedFloors(plan, base, base, { base: withResolution(undefined), head: withResolution(undefined) })).toEqual([]);
+  });
   it("rejects removed records and changed selectors before compare, even for a major", async () => {
     const base = tree([floor()]);
     expect(await preservedFloors(plan, base, tree([]), {})).toEqual([expect.stringContaining("was removed")]);
@@ -39,6 +69,26 @@ describe("secure-it floor preservation", () => {
     expect(await preservedFloors(plan, base, tree([{ ...compatibility, version: "1.1" }]), {})).toEqual([expect.stringContaining("compatibility floor")]);
     expect(await preservedFloors(plan, base, base, { base: gradle("1.0", "plugin"), head: gradle("1.1", "plugin") })).toEqual([expect.stringContaining("compatibility floor")]);
     expect(await preservedFloors(plan, tree([]), tree([compatibility]), {})).toEqual([expect.stringContaining("added outside the plan")]);
+  });
+
+  it("rejects an identical declaration added to a compatibility Maven floor", async () => {
+    const base = tree([floor({ purpose: "compatibility", advisories: [], reason: "plugin requires it" })]);
+    const before = gradle("1.0", "plugin");
+    const head: GradleInventory = { ...before, builds: before.builds.map((build) => ({ ...build,
+      configurations: build.configurations.map((config) => ({ ...config, declared: [...config.declared, ...config.declared] })) })) };
+    expect(await preservedFloors(plan, base, base, { base: before, head }))
+      .toEqual(["compatibility floor g:lib in build.gradle.kts or its declaration changed outside an explicit security-floor move"]);
+  });
+
+  it.each(["added", "removed"])("distinguishes an empty configuration from a missing one when %s for a compatibility floor", async (change) => {
+    const base = tree([floor({ purpose: "compatibility", advisories: [], reason: "plugin requires it" })]);
+    const inventory = gradle("1.0");
+    const empty: GradleInventory = { ...inventory, builds: inventory.builds.map((build) => ({ ...build,
+      configurations: build.configurations.map((config) => ({ ...config, declared: [], resolved: [] })) })) };
+    const missing: GradleInventory = { ...inventory, builds: inventory.builds.map((build) => ({ ...build, configurations: [] })) };
+    const gradleInputs = change === "added" ? { base: missing, head: empty } : { base: empty, head: missing };
+    expect(await preservedFloors(plan, base, base, gradleInputs))
+      .toEqual(["compatibility floor g:lib in build.gradle.kts or its declaration changed outside an explicit security-floor move"]);
   });
 
   it("preserves npm override declarations independently of the record", async () => {

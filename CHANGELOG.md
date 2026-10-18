@@ -8,6 +8,16 @@
   (`@leanish/tool-runtime`) and `core/gate` (`@leanish/gate`); `bump-it` and `secure-it` live at the root.
   Cross-package imports use explicit package exports, with workspace and dependency boundaries checked at the root.
 
+## 0.6.1 - 2026-10-18
+
+### Fixed
+
+- Both tools accept Maven security floor declarations added by a planned plugin update, including identical duplicates,
+  while preserving every base declaration and checking resolution stays at or above the recorded floor.
+  secure-it also preserves declaration reasons. Compatibility floors retain exact declaration comparison in both tools.
+  Added declarations must match the independent Gradle reference built from base plus the plan, even when a plugin
+  move is planned. Losing a base resolution fails verification. npm overrides are unchanged.
+
 ## 0.6.0 - 2026-10-16
 
 ### Changed
