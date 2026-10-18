@@ -43,4 +43,12 @@ describe("operator GitHub adapter", () => {
     expect(request).toHaveBeenCalledTimes(100);
     await expect(api.request("GET", "https://elsewhere.invalid/user")).rejects.toThrow("Invalid GitHub API path");
   });
+
+  it("allows GitHub's GraphQL endpoint, and only that one outside repos/", async () => {
+    const run = vi.fn<RunProcess>(async () => ({ code: 0, stdout: 'HTTP/2.0 200 OK\n\n{"data":{}}', stderr: "" }));
+    const api = githubApi(new Commands(run, {}));
+    expect(await api.request("POST", "graphql", { query: "{ viewer { login } }" })).toMatchObject({ status: 200, body: { data: {} } });
+    expect(run.mock.calls[0]![1]).toContain("graphql");
+    await expect(api.request("POST", "graphql/extra")).rejects.toThrow("Invalid GitHub API path");
+  });
 });

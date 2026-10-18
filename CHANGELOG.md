@@ -2,11 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- `fixture-cleanup` in `core/setup` closes the tools' PRs on the `supply-chain_TEST_*` fixture repositories after a
+  candidate pass, except gate-only upgrades, and deletes their branches only while they're unchanged (dry run by default).
+
 ### Changed
 
 - Shared packages now live in `core/agent-runtime` (`@leanish/agent-runtime`), `core/tool-runtime`
   (`@leanish/tool-runtime`) and `core/gate` (`@leanish/gate`); `bump-it` and `secure-it` live at the root.
   Cross-package imports use explicit package exports, with workspace and dependency boundaries checked at the root.
+
 
 ## 0.6.1 - 2026-10-18
 

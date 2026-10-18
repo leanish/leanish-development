@@ -19,6 +19,13 @@ unreleased changes collect under its "Unreleased" heading.
      repositories (kept out of regular passes; a candidate pass opts them in).
      A candidate's tool code doesn't change those repositories' gate pins: when
      the candidate changes the gate, get its CI evidence from runs pinned to it.
+   - Once the fixture runs are reviewed and recorded, close what the tools
+     opened there so the fixtures keep their seeded dependencies:
+     `node core/setup/src/cli.ts fixture-cleanup --bump-it-config <path>
+     --secure-it-config <path>` (the two fixture configs) lists what it would do;
+     rerun it with `--apply` to do it. Gate-only upgrades stay open for the usual
+     repin decision. A closed mixed PR (the gate upgrade together with other
+     changes) means a gate-only repin is still needed there, as the summary says.
    - Review the candidate in three steps, each only if the one before found no
      blocker; a blocker is fixed in a new candidate, which starts again at the
      first step:

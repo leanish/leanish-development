@@ -280,6 +280,51 @@ chosen repository and explicit consent; declining leaves the chosen schedule
 installed but untested. This CLI run does not prove unattended app permissions.
 Do not additionally trigger the whole app task without separate consent.
 
+## Fixture cleanup after a candidate pass
+
+`fixture-cleanup --bump-it-config <path> --secure-it-config <path> [--repo <owner/repo>] [--apply]`
+closes what the tools opened on the owner's fixture repositories during a
+release-candidate pass, so the fixtures keep their seeded dependencies. Both
+fixture configs (the operator's `agent-fixtures.yaml` for each tool) are parsed
+strictly and must list the same repositories and branches, all named
+`<owner>/supply-chain_TEST_*`; anything else blocks before any GitHub request.
+`--repo` restricts a run to one of them. GitHub access uses the operator's `gh`
+authentication, like `gate`.
+
+- **Open PRs.** Only a tool's own PRs are touched: a dated `bump-it/` or
+  `secure-it/` branch of the repository itself, into the configured branch,
+  carrying that tool's body marker or label (the tools' own rule; the author is
+  no proof, since tool PRs are published under the owner's login). Each one is
+  read again and classified right before acting, from one snapshot pinned to its
+  base and head SHAs. A **gate upgrade** changes nothing but workflows modified
+  in place with the same mode, equal to their merge-base versions once the ref and
+  `# v…` comment of `uses: leanish/leanish-development/.github/workflows/supply-chain.yml@…`
+  are masked, with at least one such ref moved to a full commit SHA; it stays open
+  and is never merged here. A **mixed** PR (a gate upgrade plus anything else) and
+  any **other** tool PR are closed with a comment, then their branch is deleted.
+  Closing a mixed PR drops its gate upgrade: the summary lists those repositories,
+  which still need a gate-only repin.
+- **Leftover branches.** A tool-named branch without an open PR is deleted only
+  when its latest PR is that tool's, closed unmerged, at the branch's current head,
+  rechecked right before deleting. A merged PR's branch is kept; a branch without
+  a PR, with someone else's latest PR or moved since its PR closed is reported for
+  a person.
+- **Deleting** uses GitHub's GraphQL `updateRefs` with the expected head as
+  `beforeOid`, so GitHub itself refuses a branch that moved; such a branch stays
+  and is reported. Closing a PR isn't conditional on GitHub's side: a push landing
+  between the last read and the close leaves a closed (reopenable) PR whose
+  branch is kept.
+
+Without `--apply` nothing is written: each planned close or deletion is a
+`needs-confirmation` row. Rows carry `tool`, `repo`, `kind` (`pull`/`branch`),
+`number`, `branch`, `head`, `classification`, `reason` and `action`; a final
+`summary` row counts them and lists `repinsNeeded`. There is no journal: each run
+recomputes from GitHub, so a rerun finishes what an interrupted one left (a PR
+closed before its branch could be deleted shows up as a leftover branch).
+Truncated or unreadable evidence blocks that repository without closing anything;
+other failures block their repository and the next one continues; GitHub's rate
+limit stops the run with the reset time.
+
 The [guided workflow](install.md) is shared by the thin `install-bump-it`,
 `install-secure-it` and `add-repository` entries in `.claude/skills/` and
 `.agents/skills/`. It preserves token privacy, confirmation before settings
@@ -296,7 +341,9 @@ phase-specific `reason`, never raw error text. Missing final
 reports and lock refusals count as failures. Batch exits 0 for complete, 1 for
 failure. It does not pretend a failed or unknown run was successful.
 
-`npm run check --workspace @leanish/setup` runs typechecking and tests. GitHub,
+`npm run check --workspace @leanish/setup` runs typechecking and tests. Fixture
+cleanup tests use an offline fake that models commits, trees, branches and
+`updateRefs`'s `beforeOid` check. GitHub,
 agent CLIs, authentication and sandbox probes are faked. Release tests use real
 temporary Git repositories and an offline npm workspace to prove lifecycle
 scripts stay disabled; they never operate on this checkout's Git state. Real
