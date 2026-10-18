@@ -100,6 +100,11 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
    - existing floor records and declarations are preserved before comparison: compatibility floors never change;
      security-floor updates match exact planned moves and retain their scope and history; only planned security
      floors may be added, or removed in an explicit floor-removal plan;
+     for an unchanged Maven security floor record, planned plugins may add declarations while every base version/reason
+     occurrence remains. Head must resolve at or above the floor by Maven ordering; an absent resolution is allowed
+     only if base did not resolve the package at that location either. Compatibility floors require exact declaration comparison.
+     Every added declaration must also appear in the independent Gradle reference built from base plus the plan;
+     a planned plugin move alone does not authorize extra declarations;
    - the gate's own policy (its config, its exceptions, workflows and actions outside planned pins) is untouched,
      major or not;
    - no line with `strictly` in its code (not in a string or a comment) changed in a Gradle build, settings or catalog file (floor removals included),
