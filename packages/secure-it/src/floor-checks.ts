@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 import { type Floor, overrideAt } from "../../ci/src/floors.ts";
 import { gradleLocation, type GradleInventory } from "../../ci/src/gradle.ts";
 import type { Tree } from "../../ci/src/tree.ts";
+import { missingOccurrences, preservedMavenFloorProblems } from "../../remediation/src/edit-checks.ts";
 
 import { floorIdentity, floorsOf } from "./floor-removal.ts";
 import type { ChangePlan, PlannedMove } from "./plan.ts";
@@ -25,6 +26,18 @@ export async function preservedFloors(plan: ChangePlan, base: Tree, head: Tree, 
       continue;
     }
     const changedRecord = !isDeepStrictEqual(normalized(floor), normalized(next));
+    if (!changedRecord && floor.ecosystem === "Maven" && floor.purpose === "security") {
+      const floorProblems = preservedMavenFloorProblems(floor, gradle.base, gradle.head);
+      problems.push(...floorProblems.map((problem) => `${label}: ${problem}`));
+      if (floorProblems.length > 0) continue;
+      // Keep secure-it's reason protection too; extra declarations from a planned plugin are allowed.
+      for (const location of floor.locations) {
+        if (missingOccurrences(mavenDeclarations(floor, gradle.base, location) ?? [], mavenDeclarations(floor, gradle.head, location) ?? []).length > 0) {
+          problems.push(`${label}: a declaration or its reason was removed or changed at ${location}`);
+        }
+      }
+      continue;
+    }
     const changedDeclaration = !isDeepStrictEqual(await declarations(floor, base, gradle.base), await declarations(next, head, gradle.head));
     if (!changedRecord && !changedDeclaration) continue;
     if (floor.purpose === "compatibility" || !plannedUpdate(plan, floor, next)) {
@@ -123,11 +136,13 @@ async function declarations(floor: Floor, tree: Tree, gradle: GradleInventory | 
     const overrides = manifest === undefined ? undefined : (JSON.parse(manifest) as Record<string, unknown>)["overrides"];
     return floor.overridePaths.map((path) => [JSON.stringify(path), overrideAt(overrides, path)]).sort(([a], [b]) => String(a).localeCompare(String(b)));
   }
-  return floor.locations.map((location) => {
-    const configuration = gradle?.builds.flatMap((build) => build.configurations.map((config) => ({ location: gradleLocation(build.build, config.id), config })))
-      .find((candidate) => candidate.location === location)?.config;
-    const declared = configuration?.declared.filter((entry) => `${entry.group}:${entry.name}` === floor.package)
-      .map((entry) => JSON.stringify([entry.version, entry.reason])).sort();
-    return [location, declared];
-  }).sort(([a], [b]) => String(a).localeCompare(String(b)));
+  return floor.locations.map((location) => [location, mavenDeclarations(floor, gradle, location)])
+    .sort(([a], [b]) => String(a).localeCompare(String(b)));
+}
+
+function mavenDeclarations(floor: Floor, gradle: GradleInventory | undefined, location: string): string[] | undefined {
+  const configuration = gradle?.builds.flatMap((build) => build.configurations.map((config) => ({ location: gradleLocation(build.build, config.id), config })))
+    .find((candidate) => candidate.location === location)?.config;
+  return configuration?.declared.filter((entry) => `${entry.group}:${entry.name}` === floor.package)
+    .map((entry) => JSON.stringify([entry.version, entry.reason])).sort();
 }

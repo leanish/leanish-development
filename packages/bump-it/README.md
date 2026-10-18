@@ -96,6 +96,9 @@ packages/remediation/run.sh bump-it review leanish/widget   # every few hours
   planned Gradle declarations, unchanged unplanned declarations and floors, interpreted strict declarations and strict
   constraints matching the Gradle reference, correct action pins, and all generated wrapper bytes/modes plus official checksums. Only after every local check passes does it run
   `compare`, which must also pass. A report of local problems means `compare` has not run.
+  At each Maven floor location, head must retain every base declaration with its original version, counting duplicates
+  and declarations without a version. A planned plugin may add declarations; head must resolve at or above the
+  recorded floor by Maven ordering. An absent head resolution is allowed only if base did not resolve the package there.
 - Open PRs count only when the head matches their body state or the exact tool journal entry. Same plan: leave it to
   review. Changed plan: merge base, revert all old PR edits to base, apply the new plan, verify and push a normal commit.
   A human push is left alone; a separate PR is opened. Other tools' overlapping PRs never suppress work.
