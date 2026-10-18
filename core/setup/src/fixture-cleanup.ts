@@ -98,12 +98,14 @@ async function cleanRepository(
   const open = (await list(api, `repos/${repo}/pulls?state=open`)).map(pull);
   const branches = (await list(api, `repos/${repo}/branches`)).map((entry) => ({ name: string(entry["name"]), head: sha(object(entry["commit"])["sha"]) }));
   const openHeads = new Set(open.filter((pr) => pr.headRepo?.toLowerCase() === repo.toLowerCase()).map((pr) => pr.headRef));
-  // One failing PR or branch (possibly after its PR was closed) is reported on its own row; the rest still run.
-  const each = async (where: Record<string, unknown>, step: "pull" | "branch", clean: () => Promise<SetupResult>) => {
+  // One failing PR or branch (possibly after its PR was closed) is reported on its own row, with what was learned and
+  // done before the failure; the rest still run.
+  const each = async (where: Record<string, unknown>, step: "pull" | "branch", clean: (progress: Progress) => Promise<SetupResult>) => {
+    const progress: Progress = { ...where };
     try {
-      publish(await clean());
+      publish(await clean(progress));
     } catch (error) {
-      publish(result("fixture-cleanup", step, "blocked", `${repo}: ${(error as Error).message}`, { repo, ...where, reason: reasonOf(error) }));
+      publish(result("fixture-cleanup", step, "blocked", `${repo}: ${(error as Error).message}`, { repo, ...progress, reason: reasonOf(error) }));
       if (error instanceof RateLimited) {
         error.reported = true;
         throw error;
@@ -112,31 +114,38 @@ async function cleanRepository(
   };
   for (const listed of open) {
     await each({ kind: "pull", number: listed.number, branch: listed.headRef }, "pull",
-      () => cleanPull(api, repo, repositoryId, base, listed.number, apply, noteRepin));
+      (progress) => cleanPull(api, repo, repositoryId, base, listed.number, apply, noteRepin, progress));
   }
   for (const branch of branches) {
     if (branchTool(branch.name) === undefined || openHeads.has(branch.name)) continue;
-    await each({ kind: "branch", branch: branch.name, head: branch.head }, "branch",
-      () => cleanBranch(api, repo, repositoryId, base, branch.name, branch.head, apply));
+    await each({ kind: "branch", tool: branchTool(branch.name), branch: branch.name, head: branch.head }, "branch",
+      (progress) => cleanBranch(api, repo, repositoryId, base, branch.name, branch.head, apply, progress));
   }
 }
 
+/** What a PR's or branch's row says if it fails midway: what was read and done so far. */
+type Progress = Record<string, unknown>;
+
 /** Classified from a fresh read, right before acting on it. */
 async function cleanPull(
-  api: GitHubApi, repo: string, repositoryId: string, base: string, number: number, apply: boolean, noteMixed: () => void,
+  api: GitHubApi, repo: string, repositoryId: string, base: string, number: number, apply: boolean, noteMixed: () => void, progress: Progress,
 ): Promise<SetupResult> {
   const pr = pull(await required(api, "GET", `repos/${repo}/pulls/${number}`));
   const where = { repo, kind: "pull", number, branch: pr.headRef, head: pr.headSha };
+  Object.assign(progress, where);
   if (pr.state !== "open") return result("fixture-cleanup", "pull", "already-done", `${repo}#${number} closed meanwhile`, { ...where, reason: "closed", action: "none" });
   const tool = openedBy(pr, repo, base);
   if (tool === undefined) return result("fixture-cleanup", "pull", "already-done", `${repo}#${number} isn't a tool PR; left alone`, { ...where, reason: "not-owned", action: "none" });
+  progress["tool"] = tool;
   const { classification, reason } = await classify(api, repo, pr);
   const data = { ...where, tool, classification, reason };
+  Object.assign(progress, { classification, action: apply && classification !== "gate-upgrade" ? "close" : "none", closed: false });
   // Noted before any write, so a failure after closing can't lose the repin it drops.
   if (classification === "mixed") noteMixed();
   if (classification === "gate-upgrade") return result("fixture-cleanup", "pull", "already-done", `${repo}#${number} only upgrades the gate; kept open`, { ...data, action: "keep" });
   if (!apply) return result("fixture-cleanup", "pull", "needs-confirmation", `${repo}#${number} would be closed and ${pr.headRef} deleted`, { ...data, action: "close" });
   await required(api, "PATCH", `repos/${repo}/pulls/${number}`, { state: "closed" });
+  progress["closed"] = true;
   let commented = true;
   try {
     await required(api, "POST", `repos/${repo}/issues/${number}/comments`, { body: CLOSE_COMMENT });
@@ -144,15 +153,18 @@ async function cleanPull(
     if (!(error instanceof GitHubHttpError)) throw error;
     commented = false;
   }
+  progress["commented"] = commented;
   const deletion = await deleteBranch(api, repo, repositoryId, pr.headRef, pr.headSha);
-  const done = { ...data, action: "close", commented, deletion };
+  const done = { ...data, action: "close", closed: true, commented, deletion };
   if (deletion === "moved") return result("fixture-cleanup", "pull", "blocked", `${repo}#${number} closed; ${pr.headRef} moved since it was read, so it stays`, done);
   return result("fixture-cleanup", "pull", "changed", `${repo}#${number} closed; ${pr.headRef} ${deletion === "deleted" ? "deleted" : "was already gone"}`, done);
 }
 
 /** A tool branch without an open PR: deleted only when its latest PR is the tool's, closed unmerged, at the same head. */
-async function cleanBranch(api: GitHubApi, repo: string, repositoryId: string, base: string, branch: string, head: string, apply: boolean): Promise<SetupResult> {
-  const where = { repo, kind: "branch", branch, head };
+async function cleanBranch(
+  api: GitHubApi, repo: string, repositoryId: string, base: string, branch: string, head: string, apply: boolean, progress: Progress,
+): Promise<SetupResult> {
+  const where = { repo, kind: "branch", tool: branchTool(branch), branch, head };
   const decision = orphanDecision(await pullsFrom(api, repo, branch), branch, head, repo, base);
   if (decision.status !== "delete") return result("fixture-cleanup", "branch", decision.status, `${repo}: ${branch} kept (${decision.reason})`, { ...where, reason: decision.reason, action: "none" });
   const data = { ...where, number: decision.number, reason: decision.reason };
@@ -161,6 +173,7 @@ async function cleanBranch(api: GitHubApi, repo: string, repositoryId: string, b
   if (again.status !== "delete" || again.number !== decision.number) {
     return result("fixture-cleanup", "branch", "blocked", `${repo}: ${branch} changed while being checked; kept`, { ...data, reason: "changed", action: "none" });
   }
+  progress["action"] = "delete";
   const deletion = await deleteBranch(api, repo, repositoryId, branch, head);
   if (deletion === "moved") return result("fixture-cleanup", "branch", "blocked", `${repo}: ${branch} moved since it was read; kept`, { ...data, action: "delete", deletion });
   return deletion === "deleted"
@@ -226,7 +239,8 @@ export async function classify(api: GitHubApi, repo: string, pr: Pick<Pull, "bas
   for (const entry of files) {
     const file = object(entry);
     const path = string(file["filename"]);
-    const was = before.get(path);
+    // A renamed file's old content is under its previous name; the rename itself still makes it "other".
+    const was = before.get(typeof file["previous_filename"] === "string" ? file["previous_filename"] : path);
     const now = after.get(path);
     if (!/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path) || was === undefined || now === undefined || was.type !== "blob" || now.type !== "blob") {
       others.push(path);
@@ -255,6 +269,7 @@ export function gateCallers(text: string): { readonly refs: ReadonlyArray<string
   if (doc.errors.length > 0) return undefined;
   const refs: string[] = [];
   const ranges: Array<[number, number]> = [];
+  let unmaskable = false;
   const walk = (node: unknown): void => {
     if (isMap(node)) {
       for (const pair of node.items) {
@@ -263,7 +278,13 @@ export function gateCallers(text: string): { readonly refs: ReadonlyArray<string
           const at = value.value.indexOf("@");
           if (at !== -1 && isGateCaller(value.value.slice(0, at))) {
             refs.push(value.value.slice(at + 1));
-            const start = text.indexOf("@", value.range[0]) + 1;
+            // The mask starts at the literal '@' inside this scalar; an escaped one (`\x40`) can't be masked safely.
+            const literal = text.indexOf("@", value.range[0]);
+            if (literal === -1 || literal >= value.range[1]) {
+              unmaskable = true;
+              return;
+            }
+            const start = literal + 1;
             const lineEnd = text.indexOf("\n", value.range[1]);
             const end = lineEnd === -1 ? text.length : lineEnd;
             ranges.push([start, /^\s*#\s*v\S+\s*$/.test(text.slice(value.range[1], end)) ? end : value.range[1]]);
@@ -276,6 +297,7 @@ export function gateCallers(text: string): { readonly refs: ReadonlyArray<string
     }
   };
   walk(doc.contents);
+  if (unmaskable) return undefined;
   let masked = "";
   let from = 0;
   for (const [start, end] of ranges.sort(([a], [b]) => a - b)) {
@@ -303,7 +325,12 @@ async function tree(api: GitHubApi, repo: string, commit: string): Promise<Reado
 async function blob(api: GitHubApi, repo: string, blobSha: string): Promise<string> {
   const body = object(await required(api, "GET", `repos/${repo}/git/blobs/${blobSha}`));
   if (body["encoding"] !== "base64") throw new IncompleteEvidence(`blob ${blobSha} isn't base64`);
-  return Buffer.from(string(body["content"]).replace(/\s/g, ""), "base64").toString("utf8");
+  try {
+    // Strict: a lenient decode replaces invalid bytes, and two different files could compare equal.
+    return new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(string(body["content"]).replace(/\s/g, ""), "base64"));
+  } catch {
+    throw new IncompleteEvidence(`blob ${blobSha} isn't valid UTF-8`);
+  }
 }
 
 interface Pull {

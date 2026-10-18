@@ -45,6 +45,8 @@ class FakeFixtures implements GitHubApi {
   readonly calls: Array<{ method: string; path: string; body?: unknown }> = [];
   readonly repos = new Map<string, Repo>();
   readonly truncated = new Set<string>();
+  /** Blob SHAs served as invalid UTF-8 bytes. */
+  readonly invalidUtf8 = new Set<string>();
   readonly rateLimited = new Set<string>();
   readonly failing = new Set<string>();
   commentStatus = 201;
@@ -148,6 +150,7 @@ class FakeFixtures implements GitHubApi {
     }
     const blob = /^git\/blobs\/([0-9a-f]{40})$/.exec(rest ?? "")?.[1];
     if (method === "GET" && blob !== undefined) {
+      if (this.invalidUtf8.has(blob)) return ok({ encoding: "base64", content: Buffer.from([0x6f, 0x6e, 0xff, 0xfe]).toString("base64") });
       const text = [...repo.commits.values()].flatMap((files) => [...files.values()]).find((file) => sha1(`blob ${file.text}`) === blob)!.text;
       return ok({ encoding: "base64", content: Buffer.from(text).toString("base64") });
     }
@@ -229,6 +232,10 @@ describe("gate caller masking", () => {
   it("refuses invalid YAML", () => {
     expect(gateCallers("jobs: [\n")).toBeUndefined();
   });
+
+  it("refuses a caller whose '@' is escaped, rather than masking from the wrong place", () => {
+    expect(gateCallers(`permissions: write-all\njobs:\n  x:\n    uses: "leanish/leanish-development/.github/workflows/supply-chain.yml\\x40${NEW}" # v0.7.0\n`)).toBeUndefined();
+  });
 });
 
 describe("fixture scope", () => {
@@ -301,6 +308,36 @@ describe("fixture cleanup of open PRs", () => {
     expect(rows).toEqual([expect.objectContaining({ status: "changed", data: expect.objectContaining({ classification: "mixed" }) })]);
     expect(summary).toMatchObject({ status: "needs-confirmation", data: expect.objectContaining({ repinsNeeded: [REPO] }) });
     expect(exit).toBe(2);
+  });
+
+  it("doesn't let an escaped '@' hide another change behind a repin", async () => {
+    const fake = new FakeFixtures();
+    const escaped = (permissions: string, ref: string) => `permissions: ${permissions}\njobs:\n  x:\n    uses: "leanish/leanish-development/.github/workflows/supply-chain.yml\\x40${ref}" # v0.7.0\n`;
+    fake.repo(REPO, { [WORKFLOW]: escaped("read-all", OLD) });
+    fake.pull(REPO, "bump-it/2026-10-18-routine", { [WORKFLOW]: escaped("write-all", NEW) });
+    const { rows } = await run(fake);
+    expect(rows[0]!.data).toMatchObject({ classification: "other" });
+  });
+
+  it("blocks without closing when a workflow isn't valid UTF-8", async () => {
+    const fake = new FakeFixtures();
+    const repo = fake.repo(REPO);
+    fake.pull(REPO, "bump-it/2026-10-18-leanish-leanish-development-major", { [WORKFLOW]: workflow(NEW, "# v0.7.0") });
+    fake.invalidUtf8.add(sha1(`blob ${workflow(NEW, "# v0.7.0")}`));
+    const { rows } = await run(fake, { apply: true });
+    expect(rows).toEqual([expect.objectContaining({ step: "pull", status: "blocked", data: expect.objectContaining({ reason: "incomplete-evidence" }) })]);
+    expect(rows[0]!.data).not.toHaveProperty("closed");
+    expect(repo.pulls[0]!.state).toBe("open");
+  });
+
+  it("reads a renamed workflow's old content by its previous name, so a renamed repin is mixed", async () => {
+    const fake = new FakeFixtures();
+    fake.repo(REPO);
+    fake.pull(REPO, "bump-it/2026-10-18-routine", { [WORKFLOW]: undefined, ".github/workflows/gate.yml": workflow(NEW, "# v0.7.0") });
+    fake.compareFiles = [{ filename: ".github/workflows/gate.yml", status: "renamed", previous_filename: WORKFLOW }];
+    const { rows, summary } = await run(fake);
+    expect(rows[0]!.data).toMatchObject({ classification: "mixed", reason: expect.stringContaining("renamed") });
+    expect(summary.data).toMatchObject({ repinsNeeded: [REPO] });
   });
 
   it("treats a workflow PR that doesn't move the gate as other, also with invalid YAML", async () => {
@@ -422,7 +459,9 @@ describe("fixture cleanup of open PRs", () => {
     fake.pull(REPO, "bump-it/2026-10-18-routine", { [WORKFLOW]: workflow(NEW, "# v0.7.0"), "package-lock.json": "{}\n" });
     fake.commentRateLimited = true;
     const { rows, summary } = await run(fake, { apply: true }, files([REPO, OTHER]));
-    expect(rows).toEqual([expect.objectContaining({ step: "pull", status: "blocked", data: expect.objectContaining({ number: 1, reason: "rate-limited" }) })]);
+    expect(rows).toEqual([expect.objectContaining({ step: "pull", status: "blocked", data: expect.objectContaining({
+      number: 1, reason: "rate-limited", tool: "bump-it", classification: "mixed", head: repo.pulls[0]!.head.sha, action: "close", closed: true,
+    }) })]);
     expect(summary.data).toMatchObject({ repinsNeeded: [REPO] });
     expect(repo.pulls[0]!.state).toBe("closed");
     expect(fake.calls.some((call) => call.path.startsWith(`repos/${OTHER}`))).toBe(false);
@@ -452,7 +491,7 @@ describe("fixture cleanup of branches left by closed PRs", () => {
     for (let i = 0; i < 120; i++) repo.branches.set(`topic-${i}`, repo.branches.get("main")!);
     closedPull(fake, "secure-it/2026-10-14-security", { tool: "secure-it" });
     const dry = await run(fake);
-    expect(dry.rows).toEqual([expect.objectContaining({ step: "branch", status: "needs-confirmation", data: expect.objectContaining({ action: "delete", number: 1 }) })]);
+    expect(dry.rows).toEqual([expect.objectContaining({ step: "branch", status: "needs-confirmation", data: expect.objectContaining({ tool: "secure-it", action: "delete", number: 1 }) })]);
     expect(fake.writes()).toEqual([]);
     const applied = await run(fake, { apply: true });
     expect(applied.rows).toEqual([expect.objectContaining({ step: "branch", status: "changed", data: expect.objectContaining({ deletion: "deleted" }) })]);
