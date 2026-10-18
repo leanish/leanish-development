@@ -6,7 +6,7 @@ import { type CooldownEvaluation, heldLines } from "../../ci/src/cooldown.ts";
 import { type GateEnvironment, type GradleInputs, readSettings, runCompare, treeSources } from "../../ci/src/gate.ts";
 import type { GradleInventory } from "../../ci/src/gradle.ts";
 import type { Tree } from "../../ci/src/tree.ts";
-import { actionsOutsidePlan, directChangesOutside, directVersions, FLOORS_FILE, isDependencyFile, policyFence, preservedMavenFloorProblems } from "../../remediation/src/edit-checks.ts";
+import { actionsOutsidePlan, declaredAt, directChangesOutside, directVersions, FLOORS_FILE, isDependencyFile, policyFence, preservedMavenFloorProblems } from "../../remediation/src/edit-checks.ts";
 
 import type { WrapperFile } from "./wrapper-generation.ts";
 import { WRAPPER_FILES, type WrapperPlanner } from "./gradle-wrapper.ts";
@@ -168,7 +168,15 @@ async function floorProblems(base: Tree, head: Tree, gradle: GradleInputs): Prom
   const problems: string[] = [];
   for (const floor of (await readSettings(base)).floors) {
     if (floor.ecosystem === "Maven") {
-      problems.push(...preservedMavenFloorProblems(floor, gradle.base, gradle.head));
+      if (floor.purpose === "security") {
+        problems.push(...preservedMavenFloorProblems(floor, gradle.base, gradle.head));
+      } else {
+        for (const location of floor.locations) {
+          if (!isDeepStrictEqual(declaredAt(gradle.base, location, floor.package), declaredAt(gradle.head, location, floor.package))) {
+            problems.push(`floor declaration for ${floor.package} changed at ${location}`);
+          }
+        }
+      }
     } else {
       const overrides = async (tree: Tree) => JSON.parse(await tree.read(floor.declaredIn) ?? "{}").overrides as unknown;
       const at = (value: unknown, path: ReadonlyArray<string>): unknown => path.reduce<unknown>((node, key) => node !== null && typeof node === "object" ? (node as Record<string, unknown>)[key] : undefined, value);

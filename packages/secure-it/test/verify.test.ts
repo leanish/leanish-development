@@ -7,12 +7,13 @@ import type { GradleInventory } from "../../ci/src/gradle.ts";
 import type { GateEnvironment } from "../../ci/src/gate.ts";
 import { runProcess, type RunProcess } from "../../ci/src/process.ts";
 import type { Tree } from "../../ci/src/tree.ts";
-import { fakeFetch } from "../../ci/test/fake-fetch.ts";
+import { fakeFetch, type FakeResponse } from "../../ci/test/fake-fetch.ts";
+import { MAVEN_CENTRAL, pomUrl } from "../../ci/src/source-repos.ts";
 import { archive, manifest, serving } from "../../ci/test/tarballs.ts";
 import type { ChangePlan } from "../src/plan.ts";
 import { STRICT_PIN_SOURCES, strictPinInventory } from "../../remediation/test/strict-pin-inventory.ts";
 import { RICH_VERSION_CHANGES, richVersionInventory } from "../../remediation/test/rich-version-inventory.ts";
-import { referencePlan, verifyPlan } from "../src/verify.ts";
+import { referencePlan, verifyPlan, type VerifyInputs } from "../src/verify.ts";
 
 const NOW = new Date("2026-10-07T12:00:00Z");
 const OLD = "2026-01-01T00:00:00Z";
@@ -30,7 +31,7 @@ function tree(id: string, files: Record<string, string>): Tree {
 }
 
 /** Fake osv-scanner from `affected`, fake npm registry where every version of lib and other is old and published by one maintainer. */
-function environment(affected: Record<string, string[]>, extraRoutes: Record<string, { body: unknown }> = {}): GateEnvironment {
+function environment(affected: Record<string, string[]>, extraRoutes: Record<string, FakeResponse> = {}): GateEnvironment {
   const run: RunProcess = async (command, args, options) => {
     if (command !== "osv-scanner") return runProcess(command, args, options);
     if (args[0] === "--version") return { code: 0, stdout: "osv-scanner version: 2.6.0\n", stderr: "" };
@@ -463,5 +464,70 @@ describe("verifyPlan", () => {
       changedFiles: [".github/workflows/ci.yml"],
     });
     expect(subpath).toEqual(["the edit changed .github/workflows/ci.yml beyond its planned action pins: the gate's own policy, which no plan may change"]);
+  });
+});
+
+describe("full verification of additions at Maven security floors", () => {
+  const plugin = "io.github.leanish.java-conventions";
+  const marker = `${plugin}:${plugin}.gradle.plugin`;
+  const floorVersion = "33.7.2-jre";
+  const locations = [":annotationProcessor", ":checkstyle", ":testAnnotationProcessor"];
+  const advisory = "CVE-2026-12345";
+
+  function inventory(pluginVersion: string, resolved: string, extraVersion?: string): GradleInventory {
+    return { schemaVersion: 3, tree: "fixture", builds: [{ build: ".", configurations: [
+      { id: ":buildscript.classpath", kind: "buildscript", error: undefined, unresolved: [],
+        resolved: [{ group: plugin, name: `${plugin}.gradle.plugin`, version: pluginVersion }],
+        declared: [{ group: plugin, name: `${plugin}.gradle.plugin`, version: pluginVersion, reason: undefined }] },
+      ...locations.map((id) => ({ id, kind: "project" as const, error: undefined, unresolved: [],
+        resolved: [{ group: "com.google.guava", name: "guava", version: resolved }],
+        declared: [{ group: "com.google.guava", name: "guava", version: floorVersion, reason: advisory },
+          ...(extraVersion === undefined ? [] : [{ group: "com.google.guava", name: "guava", version: extraVersion, reason: undefined }])] })),
+    ] }] };
+  }
+
+  function files(pluginVersion: string, extraVersion?: string): Record<string, string> {
+    return {
+      ".github/dependency-floors.json": JSON.stringify({ floors: [{ ecosystem: "Maven", package: "com.google.guava:guava",
+        version: floorVersion, declaredIn: "build.gradle.kts", selector: locations, purpose: "security", advisories: [advisory],
+        reason: "security fix", added: "2026-10-01" }] }),
+      "build.gradle.kts": `plugins { id("${plugin}") version "${pluginVersion}" }\ndependencies {\n` + locations.map((location) =>
+        `add("${location.slice(1)}", "com.google.guava:guava:${floorVersion}") { because("${advisory}") }` +
+        (extraVersion === undefined ? "" : `\nadd("${location.slice(1)}", "com.google.guava:guava:${extraVersion}")`)).join("\n") + "\n}",
+    };
+  }
+
+  function fixture(plannedPlugin: boolean, resolved = floorVersion): VerifyInputs {
+    const target = plannedPlugin ? "0.6.3" : "0.6.2";
+    const plan: ChangePlan = { topic: plugin, malware: false, packages: plannedPlugin ? [`Maven|${marker}`] : [], severity: "HIGH",
+      moves: plannedPlugin ? [{ ecosystem: "Maven", name: marker, from: "0.6.2", to: "0.6.3", mechanism: "gradle-declared",
+        locations: [":buildscript.classpath"], advisories: [], major: false, commitSha: undefined, declaredAs: undefined }] : [] };
+    const expected = inventory(target, resolved);
+    return { plan, base: tree("base", files("0.6.2")), head: tree("worktree", files(target)),
+      gradle: { base: inventory("0.6.2", resolved), head: inventory(target, resolved) },
+      reference: plannedPlugin ? markMoved(expected, marker, target, [":buildscript.classpath"]) : expected,
+      changedFiles: ["build.gradle.kts"], env: environment({}, {
+        [pomUrl(MAVEN_CENTRAL, { ecosystem: "Maven", name: marker, version: "0.6.3" })]: {
+          text: "<project/>", headers: { "last-modified": OLD },
+        },
+      }) };
+  }
+
+  it.each([false, true])("rejects unplanned declarations with a planned plugin move: %s", async (plannedPlugin) => {
+    for (const version of [floorVersion, "33.10.0-jre"]) {
+      const input = fixture(plannedPlugin, "33.10.0-jre");
+      const target = plannedPlugin ? "0.6.3" : "0.6.2";
+      expect(await verifyPlan({ ...input, head: tree("worktree", files(target, version)),
+        gradle: { ...input.gradle, head: inventory(target, "33.10.0-jre", version) } }))
+        .toEqual(locations.map((location) => `${location}, unlike the plan's reference, also declares com.google.guava:guava ${version}`));
+    }
+  });
+
+  it("accepts the Guava duplicate injected by the planned java-conventions 0.6.2 to 0.6.3 move", async () => {
+    const input = fixture(true);
+    // The edited script only moves the plugin; Gradle running that plugin adds Guava in the reference and head.
+    const reference = markMoved(inventory("0.6.3", floorVersion, floorVersion), marker, "0.6.3", [":buildscript.classpath"]);
+    expect(await verifyPlan({ ...input, reference,
+      gradle: { ...input.gradle, head: inventory("0.6.3", floorVersion, floorVersion) } })).toEqual([]);
   });
 });

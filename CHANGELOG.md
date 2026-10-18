@@ -4,10 +4,11 @@
 
 ### Fixed
 
-- bump-it accepts Maven floor declarations added by a planned plugin update, including identical duplicates,
+- Both tools accept Maven security floor declarations added by a planned plugin update, including identical duplicates,
   while preserving every base declaration and checking resolution stays at or above the recorded floor.
-  secure-it permits these additions for security floors only and preserves declaration reasons; compatibility
-  floors retain exact declaration comparison. Losing a base resolution fails verification. npm overrides are unchanged.
+  secure-it also preserves declaration reasons. Compatibility floors retain exact declaration comparison in both tools.
+  Added declarations must match the independent Gradle reference built from base plus the plan, even when a plugin
+  move is planned. Losing a base resolution fails verification. npm overrides are unchanged.
 
 ## 0.6.0 - 2026-10-16
 
