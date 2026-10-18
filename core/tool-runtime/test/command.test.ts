@@ -69,6 +69,7 @@ function machine(overrides: Partial<Machine> & { readonly secretValues?: Record<
   const secretValues = overrides.secretValues ?? { "tool-write": "write-token", "tool-read": "read-token" };
   const requested: string[] = [];
   const fake: Partial<Machine> = {
+    assertAgentWorkspace: async () => {},
     secrets: {
       async get(name) {
         const value = secretValues[name];
@@ -104,6 +105,27 @@ function handlers(run: (context: ToolRunContext) => Promise<Readonly<Record<stri
 }
 
 describe("runToolCommand", () => {
+  it.each(["secure-it", "bump-it"] as const)("guards every %s invocation and never starts the agent on a rejected workspace", async (tool) => {
+    const inputs: unknown[] = [];
+    const restores: unknown[] = [];
+    const restoredFile = { path: "package-lock.json", sha256: null, executable: false, index: "" };
+    const { fake, invocations, finalLine } = machine({ assertAgentWorkspace: async (_wc, input, restoredFiles) => {
+      inputs.push(input);
+      restores.push(restoredFiles);
+      if (inputs.length === 2) throw new Error("agent workspace has undeclared changes against HEAD: README.md");
+    } });
+    const run = async (context: ToolRunContext) => {
+      await context.agent({ entrypoint: "fix", input: { package: "first" }, restoredFiles: [restoredFile] });
+      await context.agent({ entrypoint: "fix", input: { package: "second" } });
+      return {};
+    };
+    expect(await runToolCommand({ ...handlers(run), tool }, ["run", "leanish/widget", "--config", "/config/agent.yaml"], fake)).toBe(1);
+    expect(inputs).toEqual([{ package: "first" }, { package: "second" }]);
+    expect(restores).toEqual([[restoredFile], undefined]);
+    expect(invocations[0]?.renderedArguments).not.toContain("restoredFiles");
+    expect(invocations).toHaveLength(1);
+    expect(finalLine()).toMatchObject({ error: "agent workspace has undeclared changes against HEAD: README.md" });
+  });
   it.each(["secure-it", "bump-it"] as const)("summarizes %s's PR and advisory requests once on success and failure", async (tool) => {
     for (const fail of [false, true]) {
       const { fake, log } = machine({ fetch: async (input) => {

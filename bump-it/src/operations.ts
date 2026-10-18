@@ -8,6 +8,7 @@ import type { GateEnvironment, GradleInputs } from "@leanish/gate/gate";
 import type { NpmPeerPlanner } from "@leanish/gate/npm-peers";
 import type { Tree } from "@leanish/gate/tree";
 import type { ToolRunContext } from "@leanish/tool-runtime/command";
+import type { FileState } from "@leanish/tool-runtime/git-copies";
 import { referenceTransform } from "@leanish/tool-runtime/gradle-reference";
 import { type GradleInventories, lockfilesOf } from "@leanish/tool-runtime/inventories";
 import { freeBranch, ownPullRequests } from "@leanish/tool-runtime/own-pr";
@@ -51,6 +52,13 @@ interface SkillAnswer {
   readonly publication?: PullRequestContent | null;
 }
 
+interface EditContext {
+  readonly failingChecks?: string[];
+  readonly conflicted?: ReadonlyArray<string>;
+  /** Base-side dependency restores, checked by the guard; the agent may reapply the plan over them. */
+  readonly restoredFiles?: ReadonlyArray<FileState>;
+}
+
 export async function compute(execution: Execution, unit: Unit, base: Tree, gradle: GradleInputs["head"], peers?: NpmPeerPlanner, wrapper: WrapperCandidates = {}): Promise<Computed> {
   const coupled = await coupledUnit(unit, peers === undefined ? new Map() : await lockfilesOf(base), peers);
   const bounded = await constrainedUnit(coupled.unit, base);
@@ -86,7 +94,7 @@ async function prepareWrapper(execution: Execution, unit: Unit, baseSha: string)
   }
 }
 
-export async function writeNpm(execution: Execution, files: ReadonlyMap<string, string>, preserveManifestFields = false): Promise<void> {
+export async function writeNpm(execution: Execution, files: ReadonlyMap<string, string>, preserveManifestFields = false, restoredFiles?: Map<string, FileState>): Promise<void> {
   for (const [path, content] of files) {
     let text = content;
     if (preserveManifestFields && path.endsWith("package.json")) {
@@ -106,12 +114,22 @@ export async function writeNpm(execution: Execution, files: ReadonlyMap<string, 
       }
     }
     await execution.deps.writeFile(execution.context.workingCopy, path, text);
+    const restored = restoredFiles?.get(path);
+    if (restoredFiles !== undefined && restored !== undefined) {
+      restoredFiles.set(path, { ...await execution.deps.fileState(execution.context.workingCopy, path), index: restored.index });
+    }
   }
 }
 
-export async function writeWrapper(execution: Execution, computed: Computed): Promise<void> {
+export async function writeWrapper(execution: Execution, computed: Computed, restoredFiles?: Map<string, FileState>): Promise<void> {
   if (computed.wrapperFiles !== undefined && computed.wrapperFiles.length > 0) {
     await execution.deps.writeWrapperFiles(execution.context.workingCopy, computed.wrapperFiles);
+    for (const { path } of computed.wrapperFiles) {
+      const restored = restoredFiles?.get(path);
+      if (restoredFiles !== undefined && restored !== undefined) {
+        restoredFiles.set(path, { ...await execution.deps.fileState(execution.context.workingCopy, path), index: restored.index });
+      }
+    }
   }
 }
 
@@ -147,9 +165,10 @@ export async function verify(execution: Execution, computed: Computed): Promise<
   }
 }
 
-export async function edit(execution: Execution, computed: Computed, mode: "apply" | "adapt" | "resolve", extra: { failingChecks?: string[]; conflicted?: ReadonlyArray<string> } = {}): Promise<PullRequestContent> {
-  await writeNpm(execution, computed.files);
-  await writeWrapper(execution, computed);
+export async function edit(execution: Execution, computed: Computed, mode: "apply" | "adapt" | "resolve", extra: EditContext = {}): Promise<PullRequestContent> {
+  const restoredFiles = new Map((extra.restoredFiles ?? []).map((file) => [file.path, file]));
+  await writeNpm(execution, computed.files, false, restoredFiles);
+  await writeWrapper(execution, computed, restoredFiles);
   const { plan } = computed;
   if (plan.kind === "routine" && plan.moves.every((move) => (move.mechanism === "npm-range" || move.mechanism === "gradle-wrapper"))) {
     return mechanicalContent(plan);
@@ -158,6 +177,7 @@ export async function edit(execution: Execution, computed: Computed, mode: "appl
   const answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({
     entrypoint: "bump-it",
     input: skillInput(context, plan, mode, [...computed.files.keys(), ...(computed.wrapperFiles ?? []).map((file) => file.path)], extra),
+    ...(extra.restoredFiles === undefined ? {} : { restoredFiles: [...restoredFiles.values()] }),
   });
   if (answer.outcome !== "applied" || answer.publication == null) {
     throw new Error(`the agent couldn't apply the plan: ${answer.summary}`);
@@ -166,7 +186,8 @@ export async function edit(execution: Execution, computed: Computed, mode: "appl
   return { ...answer.publication, body: `${answer.publication.body}\n\n${planSection(plan)}` };
 }
 
-function skillInput(context: ToolRunContext, plan: BumpPlan, mode: "apply" | "adapt" | "resolve", toolWritten: string[], extra: { failingChecks?: string[]; conflicted?: ReadonlyArray<string> }) {
+function skillInput(context: ToolRunContext, plan: BumpPlan, mode: "apply" | "adapt" | "resolve", toolWritten: string[], extra: EditContext) {
+  const { restoredFiles: _restoredFiles, ...agentExtra } = extra;
   return {
     repo: context.repo.repo,
     today: context.now.toISOString().slice(0, 10),
@@ -174,7 +195,7 @@ function skillInput(context: ToolRunContext, plan: BumpPlan, mode: "apply" | "ad
     mode,
     moves: plan.moves.map(({ declarations: _declarations, ...move }) => move),
     toolWritten,
-    ...extra,
+    ...agentExtra,
   };
 }
 

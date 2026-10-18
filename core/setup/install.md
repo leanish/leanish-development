@@ -1,0 +1,118 @@
+# Guided installation
+
+Use this workflow from the cloned repository root. Install the named tool only.
+The package [command reference](README.md) defines JSONL results and flags; scripts
+perform the work. Reruns reconcile existing state safely. Do not replace a
+verified release pin, overwrite restored choices or touch unselected repositories.
+
+Read every result: exit 0 means changed/already-done, 1 means blocked, 2 means
+needs-confirmation, and 64 means invalid usage. A blocker wins. Resolve blockers
+before dependent steps; continue independent work when safe. Keep completed items
+and PR URLs after partial failures. Never claim a choice, admin action, permission
+or real run succeeded merely because a spec was generated. Batch/test-run use
+their separate JSONL outcome/summary contract.
+
+## Installing one tool
+
+1. Run `node core/setup/src/cli.ts doctor`. Mac and a Claude Code or Codex desktop
+   app are required for local tools and their schedule; there is no launchd,
+   CLI-only or cloud fallback. **Gate-only adoption** (`add-repository`, gate-only)
+   needs just Node, git and an authenticated gh; use “Adding one repository” below
+   without these local-tool requirements. Use the sole
+   usable agent from `data.agent`; when both work, ask which app/agent to use and
+   rerun doctor with `--agent`. Codex CLI is still required for the sandbox even
+   with Claude. Explain missing prerequisites and offer the documented install
+   steps; do not change logins or bypass sandbox failures. Run `npm ci --ignore-scripts`
+   first only if workspace dependencies are missing.
+2. Run `node core/setup/src/cli.ts release`. Retain its immutable stable release
+   tag, full SHA and installed path for all remaining commands and tasks. Never
+   schedule a source worktree or silently repin an existing task. If that release
+   lacks the setup launcher, report the found tag and stop guided installation:
+   it needs a stable release shipping `core/setup/run.sh` (v0.7.0 or newer).
+   Until one is published, offer the [manual guide](../../docs/adopting-tools.md);
+   do not suggest another existing release or fabricate a successful install.
+3. Ask which repositories to opt in, grouped by GitHub owner. Only these may be
+   configured or adopted. Confirm the commit identity for a new installation;
+   reuse existing choices on a restored Mac. For each owner run
+   `node core/setup/src/cli.ts configure <tool> --owner <owner> --repo <owner/repo> --agent <agent> --name <name> --email <email>`.
+   Repeat `--repo` for selected repos under that owner. Existing config choices
+   win; adding the other tool later repeats only its missing steps.
+4. Run `node core/setup/src/cli.ts enroll <tool> --owner <owner> --login <github-login>`.
+   Show its exact PAT permission table and the [fine-grained PAT creation page](https://github.com/settings/personal-access-tokens/new).
+   The person chooses the resource owner and only selected repositories, creates
+   two distinct PATs with the returned permissions, and obtains organization
+   approval/SSO authorization if required. Show the printed `security` commands;
+   the person runs them in their own Terminal, typing tokens into the private
+   prompts. **Never run those enrollment commands yourself, ask for or accept a
+   token in chat, read Keychain values, put a token in a file/argument, or inspect
+   terminal history.** If a token is pasted, do not echo, store or use it; tell
+   the person to revoke it immediately and create a replacement privately.
+5. Run `node core/setup/src/cli.ts verify-tokens <tool> --owner <owner>` after the
+   person reports enrollment complete. Only this process may read the configured
+   Keychain items internally. A failed permission blocks. An exit-0 result can
+   include unverified write/none/public permissions: explain that the authorized
+   real test run covers these, without calling them proven grants. Existing PATs
+   may need repository selection updated privately when adding a repo.
+6. For each selected repo run
+   `node core/setup/src/cli.ts gate --repo <owner/repo> --release <tag>` (with
+   `--java <major>` if needed, checking doctor for that JDK). Explain that this
+   opens/reconciles a PR pinned to the full release SHA and never merges it. Show
+   proposed Actions, dependency graph/alerts, Dependabot PR and required-check
+   changes. Only after explicit confirmation for this repo rerun with
+   `--confirm-settings`. Installation alone does not authorize settings changes
+   or merging. Hand non-admins the ready admin request; preserve pending PRs,
+   blocked settings and “gate running, not enforced” reasons in the report.
+7. For each owner run
+   `node core/setup/src/cli.ts schedule <tool> --owner <owner> --release <tag> --agent <agent>`.
+   Explain cadence, owner staggering, plan usage and that scheduled executions
+   can publish real PRs. After confirming the schedule, use this session's own
+   app scheduling tool to create/update exactly one task for this tool/owner,
+   covering all its configured repos. Reuse its name/title rather than creating
+   a duplicate. Use the returned prompt unchanged, the local cron (or equivalent
+   daily/weekly RRULE), time zone and folder; keep worktree mode off. Discuss
+   permission requirements from the record without broadening the tools' sandbox.
+   If no scheduling tool is available, give the ready spec and its app control
+   steps to the person. Do not claim a task was created or invent a tool.
+   Never read/edit app databases or app configuration directories.
+8. Read the task back through the app tool/control. Write only its observed
+   fields to a temporary `.json` export outside app storage: `id`, `cron` or
+   `schedule`, `enabled`, `prompt`, `folder`, and time zone if returned. For an
+   opaque native ID also export the exact observed `title`. Do not copy the
+   desired spec and call it readback. Run
+   `node core/setup/src/cli.ts schedule-check <tool> --owner <owner> --release <tag> --agent <agent> --task-file <json>`.
+   Reconcile differences through the app; an unreadable/unavailable readback
+   remains unverified. A match proves task fields only. If unattended command
+   permission, completion notifications or output reading are unavailable,
+   report that the app cannot run this task unattended here; leave it pending.
+9. Ask the person to pick **one** opted-in repository for a real run and consent
+   to possible real PRs. Only after both choices run
+   `node core/setup/src/cli.ts test-run <tool> --owner <owner> --release <tag> --repo <owner/repo>`.
+   This reuses the batch runner's real review→run chain, not a preview or dry run.
+   There is no dry run. Do not also click the app's Run now (that covers all repos)
+   without separate consent. If declined, leave the schedule installed as chosen
+   and label it untested. A successful CLI test does not prove app permissions:
+   unattended execution still needs owner-machine acceptance; never infer it.
+10. Report completed items per tool/owner, task/readback/permission state, test
+    outcomes and PR links, pending adoption PRs, admin requests, blockers,
+    “gate running, not enforced” repos with reasons, and any untested schedule.
+    Do not call unfinished acceptance done. Mention that the other tool exists
+    and offer to install it; do not install it without the person's choice.
+
+## Adding one repository
+
+Ask which single repository and which installed tools/owner to extend, or whether
+the person wants only the CI gate. For local tools, reconcile `configure` with
+only that new opt-in (existing entries remain), explain any private PAT selection
+update and run `verify-tokens`, then `gate` with the same confirmation/admin/merge
+boundaries above. The existing per-owner task already covers all configured
+repos; do not add another task or run a batch as a side effect. Offer the real
+one-repository test with explicit consent. If scheduling was never completed,
+use the install flow's schedule/readback steps.
+
+For gate-only adoption, use `release` and `gate` for the selected repo, with the
+normal GitHub authentication and Node/git prerequisites. Do not require local
+tool config, PATs, Keychain, a coding-agent login or a local task; do not use
+doctor's desktop blockers to prevent CI-only adoption. Keep all writes in the
+adoption PR unless repository settings were explicitly confirmed; never merge
+unless separately asked. The manual [gate adoption reference](../gate/README.md#adopting-the-gate)
+remains available. Report the resulting PR and any ready admin request.

@@ -130,8 +130,10 @@ wrapper files.
 
 ## Resolve and adapt
 
-In `resolve`, resolve the named code conflicts, preserving the base's changes and this major's adaptation; leave no
-conflict markers. The tool has taken the base's side of mechanical dependency files and re-written its npm plan and generated wrapper files.
+In `resolve`, merging the default branch left conflicts. Resolve the named code conflicts, preserving the base's
+changes and this major's adaptation; leave no conflict markers. The list can be empty when only dependency files
+conflicted. Preserve the cleanly merged base changes. The tool has taken the base's side of mechanical dependency
+files and re-written its npm plan and generated wrapper files.
 Then apply the non-npm moves. In `adapt`, investigate `failingChecks` (Actions job names and commit status contexts)
 with `gh run list --commit <head SHA>`, `gh run view --log-failed` or commit status reads. These use Actions and
 Commit statuses permissions, never the Checks API. Fix only what this major broke. If it cannot be fixed within these limits, answer cannot-apply. Routine failures are not adapted.

@@ -9,6 +9,7 @@ import type { WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
 import { defaultDeps } from "../src/deps.ts";
 import { WRAPPER_JAR } from "../src/gradle-wrapper.ts";
 import { SkillLoader } from "@leanish/agent-runtime/skill/skill-loader";
+import { SchemaValidator } from "@leanish/agent-runtime/skill/validator";
 import { filePriority } from "../src/priority.ts";
 import { assertLocalFile, writeLocalFile } from "../src/files.ts";
 
@@ -29,6 +30,13 @@ describe("tool boundaries", () => {
     expect(skill.body).toContain("Do not run the wrapper task");
     expect(skill.outputSchema).toMatchObject({ additionalProperties: false });
     expect(skill.compatibleCodingAgents).toEqual(["codex", "claude-code"]);
+  });
+  it("rejects the removed reconciliation input", async () => {
+    const skill = await new SkillLoader({ skillsDirs: [fileURLToPath(new URL("../skills", import.meta.url))] }).loadEntrypoint("bump-it");
+    const validator = new SchemaValidator();
+    const input = { repo: "acme/widget", mode: "apply", today: "2026-10-16", kind: "major", moves: [], toolWritten: [] };
+    expect(validator.validate(skill.inputSchema!, input)).toEqual([]);
+    expect(validator.validate(skill.inputSchema!, { ...input, reconciliation: { baseSha: "a".repeat(40), revertedFiles: ["README.md"] } })).not.toEqual([]);
   });
   it("reads the wrapper as committed in the snapshot, jar as binary, refusing a linked file; restores from base safely", async () => {
     const root = await temp();

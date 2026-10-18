@@ -1,0 +1,18 @@
+# Installation template. Agent, identity and repos are selected by configure.
+# The runtime's legacy defaults remain ~/.config/leanish/bump-it/agent.yaml
+# and leanish-bump-it-write/read; owner installations override them explicitly.
+repos: []
+agent:
+  codingAgent: claude-code
+  model: claude-haiku-5-5
+  effort: high
+secrets:
+  write: leanish-bump-it-{{owner}}-write
+  read: leanish-bump-it-{{owner}}-read
+commitIdentity: { name: dependency-bot, email: dependency-bot@users.noreply.github.com }
+dirs:
+  state: ~/.local/share/leanish/installations/{{owner}}/bump-it
+  cache: ~/.cache/leanish/installations/{{owner}}/bump-it
+readDeny: []
+maxNewMajorsPerRun: 3
+# Optional: modelPrices: ~/.config/leanish/model-prices.json
