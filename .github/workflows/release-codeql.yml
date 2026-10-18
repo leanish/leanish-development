@@ -1,0 +1,37 @@
+name: Release CodeQL validation
+on:
+  push:
+    branches: [validate/0.6.1-codeql]
+permissions:
+  contents: read
+jobs:
+  analyze:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript, actions]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 6baf1f3ead1242aa7c82e7221daabeac22282190
+          persist-credentials: false
+      - name: Verify exact release source
+        run: test "$(git rev-parse HEAD)" = 6baf1f3ead1242aa7c82e7221daabeac22282190
+      - uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+      - uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee
+        with:
+          output: codeql-results
+          upload: never
+          upload-database: false
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: release-codeql-${{ matrix.language }}
+          path: codeql-results/*.sarif
+          if-no-files-found: error
+          retention-days: 30
