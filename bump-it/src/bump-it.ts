@@ -259,7 +259,8 @@ async function review(context: ToolRunContext, deps: BumpItDeps): Promise<Readon
         if (code.length > 0 && previous.kind === "routine") {
           throw new Error("a routine PR may not resolve code conflicts");
         }
-        ({ content } = await edit(execution, computed, "resolve", { conflicted: code, restoredFiles }));
+        // A routine of tool-written moves resolves without the agent: verification then holds it to what the tool wrote.
+        ({ content, toolWritten } = await edit(execution, computed, "resolve", { conflicted: code, restoredFiles }));
       } else {
         await writeNpm(execution, computed.files, previous.kind === "major");
         await writeWrapper(execution, computed);
