@@ -42,7 +42,9 @@ package is the code around them. Setup and operation are in [Adopting the tools]
   1. Someone else pushed: leave the PR alone.
   2. The base moved: the tool recomputes on the new base, before anything else, with the base merged in or the
      conflicting merge left in progress for it to resolve.
-  3. CI pending: nothing. Green: mark the PR ready. No checks: report. CI comes from the head SHA's Actions workflow
+  3. CI pending: nothing. Green: mark a draft ready, unless a check the base's rulesets require from Actions never
+     started (`waiting-required`, still a draft); requirements the token can't read, or ones another app may report,
+     leave it to the reported checks, with a note. No checks: report. CI comes from the head SHA's Actions workflow
      runs/jobs and commit statuses (Actions and Commit statuses: read; no Checks permission), so Checks-only results
      from other apps are not read.
   4. CI failed: version-fix secure-it units and bump-it majors can adapt, at most twice, each attempt counted before it
