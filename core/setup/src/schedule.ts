@@ -47,7 +47,7 @@ function taskPrompt(command: string, agent: CodingAgent): string {
 ${command}
 
 ${RUN_STEPS[agent]}
-3. Report: first line the verdict (all ok, or not). Then list each problem with repo and PR: failed or interrupted commands, error outcomes, and notes (including note counts). Then give each repo's outcome and PR links, and estimated cost when present; null cost is unknown.
+3. Report: first line the verdict (all ok, or not). Then list each problem with repo and PR: failed or interrupted commands, error outcomes, and notes (including note counts). Then list every PR under "attention" with its outcome, and attentionOmitted when above 0: closed (failing CI), adaptation-unchanged and left-alone need a person; no-checks and held are waiting states, not problems. Then give each repo's outcome and PR links, and estimated cost when present; null cost is unknown.
 4. Do not fix anything yourself, merge, change configs, or run extra commands. If the script is missing or fails before any repo runs, report the exact startup error/reason it returned and stop. Do not weaken the tools' sandbox or token separation to make a run succeed.`;
 }
 

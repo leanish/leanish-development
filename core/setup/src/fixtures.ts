@@ -2,7 +2,7 @@ import { parseToolConfig, type ToolRepo } from "@leanish/tool-runtime/config";
 
 import type { SetupResult } from "./contracts.ts";
 import { isCandidateTag } from "./github-release.ts";
-import type { GitHubApi } from "./github.ts";
+import { object, required, string, type GitHubApi } from "./github.ts";
 
 /**
  * The owner's fixture repositories, `leanish-development[_<tool>]_TEST_<case>` (the tool segment for a case designed
@@ -19,6 +19,17 @@ export function requireFixturesForCandidate(release: string, repos: ReadonlyArra
   if (repos.length === 0 || repos.some((repo) => !FIXTURE.test(repo))) {
     throw new Error(`${release} is a release candidate; it runs only on leanish-development[_<tool>]_TEST_* fixture repositories`);
   }
+}
+
+/**
+ * The repository GitHub answers for a configured fixture. A renamed or transferred repository answers under its old
+ * name through a redirect, so its canonical name must still be this fixture before anything is written to it.
+ */
+export async function fixtureRepository(api: GitHubApi, repo: string): Promise<Record<string, unknown>> {
+  const metadata = object(await required(api, "GET", `repos/${repo}`));
+  const canonical = string(metadata["full_name"]);
+  if (canonical.toLowerCase() !== repo.toLowerCase()) throw new Error(`GitHub answers ${repo} as ${canonical} (renamed or transferred); update the fixture configs`);
+  return metadata;
 }
 
 export interface FixtureScopeOptions {

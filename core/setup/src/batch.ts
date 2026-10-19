@@ -17,6 +17,14 @@ export interface BatchOptions extends InstallationOptions { readonly release: st
 export interface Execution { readonly code: number; readonly report?: Readonly<Record<string, unknown>> }
 type Invoke = (repo: string, action: "review" | "run") => Promise<Execution>;
 const FAILURES = new Set(["error", "failed", "cannot-apply", "verification-failed", "incomplete", "partial-failure"]);
+/**
+ * Review outcomes a person should hear about, kept with their PR: closed after failing CI, an adaptation that changed
+ * nothing, a PR the tool left alone (its body was rewritten, or a person took it over), and the waiting states
+ * no-checks and held. Only these fixed names pass, never the tool's free-text detail. They aren't notes or errors.
+ */
+const ATTENTION = new Set(["closed", "no-checks", "held", "adaptation-unchanged", "left-alone"]);
+const ATTENTION_LIMIT = 100;
+const PULL_REQUEST = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+$/;
 
 /** Inspect bounded structured results only. Raw child output, errors and notes are never forwarded to the agent. */
 function compact(execution: Execution, repo: string) {
@@ -24,6 +32,8 @@ function compact(execution: Execution, repo: string) {
   let errors = execution.code !== 0 || report === undefined || report["status"] !== "ok" ? 1 : 0;
   let notes = 0;
   const prs = new Set<string>();
+  const attention = new Map<string, string>();
+  let attentionOmitted = 0;
   let remaining = 10_000;
   const visit = (value: unknown, depth: number) => {
     if (depth > 20 || remaining-- <= 0) { errors++; return; }
@@ -33,9 +43,13 @@ function compact(execution: Execution, repo: string) {
     if (typeof object["outcome"] === "string" && FAILURES.has(object["outcome"])) errors++;
     for (const key of ["error", "problems", "incomplete", "errors"]) if (object[key] && (!Array.isArray(object[key]) || object[key].length > 0)) errors++;
     for (const key of ["notes", "waiting", "blocked", "leftOut"]) if (object[key] && (!Array.isArray(object[key]) || object[key].length > 0)) notes++;
-    for (const key of ["pullRequest", "url"]) {
-      const url = object[key];
-      if (typeof url === "string" && url.startsWith(`https://github.com/${repo}/pull/`) && /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+$/.test(url)) prs.add(url);
+    // GitHub answers with the repository's canonical case, which a configured name may not share.
+    const ownPullRequest = (url: unknown): url is string => typeof url === "string" && url.toLowerCase().startsWith(`https://github.com/${repo.toLowerCase()}/pull/`) && PULL_REQUEST.test(url);
+    for (const key of ["pullRequest", "url"]) if (ownPullRequest(object[key])) prs.add(object[key]);
+    const outcome = object["outcome"];
+    if (typeof outcome === "string" && ATTENTION.has(outcome) && ownPullRequest(object["url"])) {
+      if (attention.has(object["url"]) || attention.size < ATTENTION_LIMIT) attention.set(object["url"], outcome);
+      else attentionOmitted++;
     }
     for (const nested of Object.values(object)) visit(nested, depth + 1);
   };
@@ -43,7 +57,8 @@ function compact(execution: Execution, repo: string) {
   if (report?.["error"]) errors++;
   const totals = report?.["totals"] as Record<string, unknown> | undefined;
   const cost = totals?.["estimatedApiCostUsd"];
-  return { outcome: errors > 0 ? "error" : "completed", errors, notes, prs: [...prs], exitCode: execution.code,
+  return { outcome: errors > 0 ? "error" : "completed", errors, notes, prs: [...prs],
+    attention: [...attention].map(([pr, outcome]) => ({ pr, outcome })), attentionOmitted, exitCode: execution.code,
     estimatedApiCostUsd: typeof cost === "number" && Number.isFinite(cost) && cost >= 0 ? cost : null };
 }
 
@@ -87,6 +102,8 @@ export async function executeBatch(options: InstallationOptions, repos: Readonly
   let commands = 0;
   let outputFailure: unknown;
   const prs = new Set<string>();
+  const attention = new Map<string, string>(); // by PR: the last outcome reported wins
+  let attentionOmitted = 0;
   const worker = async () => {
     while (next < repos.length && outputFailure === undefined) {
       const repo = repos[next++]!;
@@ -98,13 +115,19 @@ export async function executeBatch(options: InstallationOptions, repos: Readonly
         commands++;
         if (outcome.errors > 0) failed++;
         for (const pr of outcome.prs) prs.add(pr);
+        attentionOmitted += outcome.attentionOmitted;
+        for (const { pr, outcome: state } of outcome.attention) {
+          if (attention.has(pr) || attention.size < ATTENTION_LIMIT * 5) attention.set(pr, state);
+          else attentionOmitted++;
+        }
         try { emit({ schemaVersion: 1, ...options, repo, action, ...outcome }); } catch (error) { outputFailure = error; }
       }
     }
   };
   await Promise.all(Array.from({ length: Math.min(8, repos.length) }, worker));
   if (outputFailure !== undefined) throw new Error("Batch output failed; active commands drained, no further work scheduled");
-  emit({ schemaVersion: 1, ...options, action: "summary", outcome: failed === 0 ? "completed" : "partial-failure", commands, failed, prs: [...prs] });
+  emit({ schemaVersion: 1, ...options, action: "summary", outcome: failed === 0 ? "completed" : "partial-failure", commands, failed, prs: [...prs],
+    attention: [...attention].map(([pr, state]) => ({ pr, outcome: state })), attentionOmitted });
   return failed === 0 ? 0 : 1;
 }
 
