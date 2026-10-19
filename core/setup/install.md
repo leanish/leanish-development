@@ -82,13 +82,17 @@ their separate JSONL outcome/summary contract.
    own sandbox. The only permission change is `commandRule`: show its exact entry
    (a Claude `Bash(...)` allow rule, or a Codex execution rule that lets only
    this launcher out of the automation's sandbox) and the file it goes in. The
-   person adds it, or asks you explicitly to add exactly that entry; it replaces
-   the rule of an earlier release, and Codex loads rules on restart. Without it
-   the task can't run unattended.
+   person adds it, or asks you explicitly to add exactly that entry. It replaces
+   earlier releases' rules (`commandRule.replaces`): for Claude, remove the
+   entries of that form whose `<tag>` is another release, and leave every other
+   entry; for Codex, overwrite the file, or reconcile with the person if it holds
+   anything else. Codex loads rules on restart. Without it the task can't run
+   unattended.
    If no scheduling tool is available, give the ready spec and its app control
    steps to the person. Do not claim a task was created or invent a tool.
    Never read/edit app databases or app configuration directories; the one
-   exception is adding exactly the shown `commandRule` entry when the person asks.
+   exception is adding exactly the shown `commandRule` entry, and removing the
+   entries it replaces, when the person asks.
 8. Read the task back through the app tool/control. Write only its observed
    fields to a temporary `.json` export outside app storage: `id`, `cron` or
    `schedule`, `enabled`, `prompt`, `folder`, and time zone if returned. For an

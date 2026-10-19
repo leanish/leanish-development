@@ -1,6 +1,6 @@
 import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -24,6 +24,8 @@ beforeEach(async () => {
   home = await mkdtemp(join(tmpdir(), "setup-schedule-"));
   await install("acme");
   await mkdir(join(home, ".local/share/leanish/releases/v0.7.0/core/setup"), { recursive: true });
+  // Explicit modes, so the developer's umask (002 makes these group-writable) never decides which test passes.
+  for (const folder of [".local", ".local/share", ".local/share/leanish", ".local/share/leanish/releases"]) await chmod(join(home, folder), 0o755);
   await writeFile(join(home, ".local/share/leanish/releases/v0.7.0/core/setup/run.sh"), "# not executed\n");
   host = { home, timeZone: "Europe/Helsinki", release: vi.fn(async (tag) => ({ tag, sha: "a".repeat(40), path: join(home, ".local/share/leanish/releases", tag) })) };
 });
@@ -48,7 +50,7 @@ describe("local task specifications", () => {
       vi.stubEnv("CODEX_HOME", "/opt/codex-home");
       const value = await schedule(options, { ...host, home: odd, release: async (tag) => ({ tag, sha: "a".repeat(40), path: join(odd, ".local/share/leanish/releases", tag) }) });
       expect(value.data?.command).toBe(`/bin/bash '${launcher.replaceAll("'", "'\\''")}' bump-it --owner acme --release v0.7.0`);
-      expect(value.data?.commandRule).toEqual({ file: "/opt/codex-home/rules/leanish-bump-it-acme.rules", entry: expect.stringContaining(`        ${JSON.stringify(launcher)},\n`) });
+      expect(value.data?.commandRule).toEqual({ file: "/opt/codex-home/rules/leanish-bump-it-acme.rules", entry: expect.stringContaining(`        ${JSON.stringify(launcher)},\n`), replaces: { wholeFile: true } });
       expect(JSON.stringify(launcher)).toContain('\\"é\\\\ ');
     } finally {
       await rm(odd, { recursive: true, force: true });
@@ -78,8 +80,10 @@ describe("local task specifications", () => {
     expect(value.data?.prompt).toContain("Never run another shell command to inspect output");
     const launcher = join(home, ".local/share/leanish/releases/v0.7.0/core/setup/run.sh");
     expect(value.data?.commandRule).toEqual(agent === "claude-code"
-      ? { file: "~/.claude/settings.json (permissions.allow)", entry: `Bash(${value.data?.command})` }
-      : { file: "~/.codex/rules/leanish-bump-it-acme.rules", entry: `prefix_rule(\n    pattern = [\n        "/bin/bash",\n        ${JSON.stringify(launcher)},\n        "bump-it",\n        "--owner",\n        "acme",\n        "--release",\n        "v0.7.0",\n    ],\n    decision = "allow",\n)\n` });
+      ? { file: "~/.claude/settings.json (permissions.allow)", entry: `Bash(${value.data?.command})`,
+        replaces: { entries: `Bash(/bin/bash ${join(home, ".local/share/leanish/releases")}/<tag>/core/setup/run.sh bump-it --owner acme --release <tag>)` } }
+      : { file: "~/.codex/rules/leanish-bump-it-acme.rules", entry: `prefix_rule(\n    pattern = [\n        "/bin/bash",\n        ${JSON.stringify(launcher)},\n        "bump-it",\n        "--owner",\n        "acme",\n        "--release",\n        "v0.7.0",\n    ],\n    decision = "allow",\n)\n`,
+        replaces: { wholeFile: true } });
     expect(value.data?.unattended).toContain("cannot run unattended");
     expect(JSON.stringify(value)).not.toContain("secret-sentinel");
     expect(value.data).not.toHaveProperty("ownerOffsetHours");
@@ -126,6 +130,12 @@ describe("local task specifications", () => {
     await writeFile(join(path, "core/setup/run.sh"), "# not executed\n");
     const spec = await scheduleSpec(options, { ...host, release: async (tag) => ({ tag, sha: "a".repeat(40), path }) });
     expect(spec.command).toBe(`/bin/bash '${path.replaceAll("'", "'\\''")}/core/setup/run.sh' bump-it --owner acme --release v0.7.0`);
+    // Earlier releases' Claude entries for this tool and owner, quoted the same way, with <tag> for any other tag.
+    const claude = await scheduleSpec({ ...options, agent: "claude-code" }, { ...host, release: async (tag) => ({ tag, sha: "a".repeat(40), path }) });
+    const releases = join(home, "a person's releases").replaceAll("'", "'\\''");
+    expect(claude.commandRule.replaces).toEqual({ entries: `Bash(/bin/bash '${releases}/<tag>/core/setup/run.sh' bump-it --owner acme --release <tag>)` });
+    expect(claude.commandRule.entry).toBe(`Bash(${claude.command})`);
+    expect(claude.commandRule.entry.replaceAll("v0.7.0", "<tag>")).toBe((claude.commandRule.replaces as { entries: string }).entries);
     expect(spec.folder).toBe(join(home, ".local/share/leanish/tasks/leanish-bump-it-acme"));
   });
 
@@ -249,6 +259,55 @@ describe("task folder", () => {
     };
     await expect(schedule(options, host)).rejects.toThrow("must be real directories, not symlinks or files");
     expect(await readdir(join(home, "elsewhere"))).toEqual([]);
+  });
+
+  it("accepts a folderless Claude readback without needing the task folder, and keeps checking any folder it returns", async () => {
+    const spec = await scheduleSpec({ ...options, agent: "claude-code" }, host);
+    const file = join(home, "readback.json");
+    await writeFile(file, JSON.stringify({ id: spec.taskId, cron: spec.cron, enabled: true, prompt: spec.prompt }));
+    expect(await scheduleCheck({ ...options, agent: "claude-code", taskFile: file }, host)).toMatchObject({ status: "already-done" });
+    expect(await readdir(join(home, ".local/share/leanish"))).not.toContain("tasks");
+    await writeFile(file, JSON.stringify({ id: spec.taskId, cron: spec.cron, enabled: true, prompt: spec.prompt, folder: spec.folder }));
+    expect(await scheduleCheck({ ...options, agent: "claude-code", taskFile: file }, host)).toMatchObject({ status: "blocked", data: { differences: ["folder"] } });
+  });
+
+  it("works with a HOME that ends in a slash", async () => {
+    const slashed = { ...host, home: `${home}/` };
+    await expect(schedule(options, slashed)).resolves.toMatchObject({ status: "needs-confirmation", data: { folder: folder() } });
+    expect((await stat(folder())).isDirectory()).toBe(true);
+  });
+
+  it("refuses a task folder that is, contains or sits inside the installation config's folder, through an alias", async () => {
+    const config = join(home, ".config/leanish/installations/acme/bump-it");
+    await mkdir(join(home, ".local/share/leanish/tasks"), { recursive: true, mode: 0o700 });
+    for (const target of [config, dirname(config), join(config, "inside")]) {
+      await rm(folder(), { force: true });
+      await symlink(target, folder());
+      await expect(scheduleSpec(options, host)).rejects.toThrow("must not overlap the installation config");
+    }
+    expect(await readdir(config)).toEqual(["agent.yaml"]);
+  });
+
+  it.each([["direct", ["tasks"]], ["several links", ["loop-a", "loop-b", "tasks"]]])("ends a symlink cycle (%s) with an error, creating nothing", async (_name, chain) => {
+    const parent = join(home, ".local/share/leanish");
+    for (let index = 0; index < chain.length; index++) await symlink(join(parent, chain[(index + 1) % chain.length]!), join(parent, chain[index]!));
+    await expect(scheduleSpec(options, host)).rejects.toThrow("Too many symlinks");
+    await expect(schedule(options, host)).rejects.toThrow("Too many symlinks");
+    expect((await readdir(parent)).sort()).toEqual([...chain, "releases"].sort());
+  });
+
+  it.each([["case", (path: string) => path.replace("/tasks/", "/TASKS/")], ["Unicode", (path: string) => path.replace("/tasks/", "/ｔasks/")]])("refuses state named by a %s variant of the task folder", async (_name, variant) => {
+    const config = configPath({ tool: "bump-it", owner: "acme" }, home);
+    const original = await readFile(config, "utf8");
+    await writeFile(config, original.replace(/(\n  state: ).*/, `$1${variant(join(folder(), "state"))}`));
+    await expect(scheduleSpec(options, host)).rejects.toThrow("must not overlap dirs.state");
+  });
+
+  it("refuses a group-writable parent left by a 002 umask, without fixing it", async () => {
+    await chmod(join(home, ".local/share/leanish"), 0o775);
+    await expect(schedule(options, host)).rejects.toThrow(".local/share/leanish must not be writable by group or others");
+    expect((await stat(join(home, ".local/share/leanish"))).mode & 0o777).toBe(0o775);
+    expect(await readdir(join(home, ".local/share/leanish"))).not.toContain("tasks");
   });
 
   it("refuses a parent others can write, without changing it", async () => {

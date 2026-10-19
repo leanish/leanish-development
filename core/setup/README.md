@@ -227,7 +227,10 @@ the command rule runs the launcher outside its sandbox), literal `command`, full
 Claude `Bash(...)` allow rule for `~/.claude/settings.json`, or a Codex execution rule
 for `~/.codex/rules/leanish-<tool>-<owner>.rules` (under `$CODEX_HOME/rules/` when set) whose `allow` runs that launcher
 outside the automation's sandbox, since it sandboxes repository code itself and
-macOS sandboxes don't nest), `unattended` caveat
+macOS sandboxes don't nest; and `replaces`: for Claude, `entries`, the exact form of
+this tool and owner's entries from other releases with `<tag>` for any other release
+tag, quoted as the command is; for Codex, `wholeFile`, since that file holds only this
+rule), `unattended` caveat
 and official `documentation` URL. It neither creates a task nor reads app storage; its
 only writes are that folder and its missing parents, created private (mode 700).
 Each component below home must be a real directory the person owns that nobody else
@@ -366,9 +369,23 @@ review outcomes a person should hear about (`closed` after failing CI, `no-check
 `held`, `adaptation-unchanged`, `left-alone`; the last two are waiting states, not
 problems), at most 100 per command and 500 per summary, with `attentionOmitted`
 counting the rest; only those fixed names pass, never the tool's detail text. Only bounded structured final
-reports are inspected; raw child messages are discarded. The final `action: "summary"`
+reports are inspected; raw child messages never reach this output. `gaps` counts only
+the result's own top-level `gaps`. The final `action: "summary"`
 reports `commands`, `failed`, total `gaps`, unique PR URLs, every `attention` entry and
-`completed`/`partial-failure`. Startup failures produce an error summary with zero
+`completed`/`partial-failure`, plus `logFailed: true` when the person's log below
+couldn't be written.
+
+For the person, every batch also appends to `<dirs.state>/logs/batch-YYYY-MM-DD.jsonl`
+(local date; folder 0700, file 0600, created without following a symlink): one JSON
+line per child output line (`repo`, `action`, `stream`, `line`), each command's end
+(`event: "finished"` with its compact outcome), invocation and startup failures with
+their message, and the summary, all under one `run` id. That's where a failed
+command's reason is. Neither the log nor its path ever appears in the batch output the
+scheduled agent reads. A log that can't be opened or written never stops a batch.
+Lines over 100,000 characters are cut, and daily files older than 30 days are removed
+when a batch opens the log. The log holds what the tools printed, which can include
+repository text: it's private to the user's account, not hidden from the user's own
+processes. Startup failures produce an error summary with zero
 commands, the failed `phase` (`configuration`, `release`, `repository-selection`,
 `candidate-scope` or `scanner`) and a fixed
 phase-specific `reason`, never raw error text. Missing final
