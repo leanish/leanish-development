@@ -292,7 +292,7 @@ async function treeOf(workingCopy: WorkingCopy, revision: string, run: RunProces
 }
 
 /** A name folded more than any filesystem folds it (case, Unicode forms, accents), so a variant is never missed. */
-function loosely(path: string): string {
+export function loosely(path: string): string {
   return path.normalize("NFKD").replace(/\p{M}/gu, "").toUpperCase().toLowerCase();
 }
 
