@@ -325,6 +325,40 @@ describe("bump-it run", () => {
     }
   });
 
+  it("refuses anything else changed in the workspace next to the gate's own workflow major, which no agent checks", async () => {
+    vi.mocked(runCompare).mockReset();
+    const root = await mkdtemp(fileURLToPath(new URL("../../.retarget-test-", import.meta.url)));
+    try {
+      const path = ".github/workflows/supply-chain.yml";
+      const name = "leanish/leanish-development";
+      const workflow = (sha: string, tag: string) => `# The gate (leanish/supply-chain): see packages/ci/README.md.\non: push\njobs:\n  gate:\n    uses: ${name}/.github/workflows/supply-chain.yml@${sha} # ${tag}\n`;
+      const baseFiles = { [path]: workflow("a".repeat(40), "v0.4.0"), "README.md": "base docs\n" };
+      const bump = candidate({ ecosystem: "GitHub Actions", name, from: "v0.4.0", minor: undefined, major: { version: "v0.6.0", line: "0.6" }, declarations: [], locations: [path] });
+      const branch = branchFor(RULES, NOW, major(bump).topic);
+      const fixture = await retargetRepository(root, REPO, branch, baseFiles, { [path]: workflow("b".repeat(40), "v0.5.2"), "README.md": "base docs\n" }, false);
+      const { workingCopy: wc, oldBase, oldHead } = fixture;
+      const pr = await prFor(major({ ...bump, major: { version: "v0.5.2", line: "0.5" } }), {
+        headRef: branch, headSha: oldHead, body: withMarker(RULES, planSection(await planFor(major({ ...bump, major: { version: "v0.5.2", line: "0.5" } }), { files: new Map(), changes: [], notes: [] }, async () => "b".repeat(40))), { head: oldHead, base: oldBase, adaptations: 0 }),
+      });
+      const h = harness({ prs: [pr], bumps: [bump] });
+      h.workspace.prepareBranch = fixture.workspace.prepareBranch.bind(fixture.workspace);
+      h.workspace.publishBranch = fixture.publishBranch;
+      const actual = defaultDeps();
+      vi.mocked(runCompare).mockResolvedValue({ headFindings: [], failures: [], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, group: (id: string) => id, cooldown: { evaluated: true, releaseAgeDays: 7, held: [] } });
+      const deps = { ...h.deps, publicationParent: actual.publicationParent, trees: actual.trees, snapshot: actual.snapshot, candidateTree: actual.candidateTree, changedBetween: actual.changedBetween, linkProblems: actual.linkProblems, writeFile: async (...args: Parameters<typeof actual.writeFile>) => {
+        await actual.writeFile(...args);
+        // A stray process (an earlier agent's, say) changing code while the tool writes the pin.
+        await actual.writeFile(args[0], "README.md", "stray docs\n");
+      }, revert: actual.revert, verify: verifyPlan };
+      const agent: ToolRunContext["agent"] = async () => { throw new Error("the gate's major needs no agent"); };
+      const result = await bumpIt(deps).run({ ...h.context, workingCopy: wc, agent });
+      expect(JSON.stringify(result)).toContain("no agent ran, yet README.md changed besides what the tool wrote");
+      expect(fixture.publications).toHaveLength(0);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("adds wrapper moves to the routine and its own major, sharing the planner and reading the jar before verification", async () => {
     const h = harness({ bumps: [] });
     const planner = { candidates: async () => wrapperCandidates(), verify: async () => [] };
