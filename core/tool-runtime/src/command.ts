@@ -10,7 +10,7 @@
  * interruptions included.
  */
 import { writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Writable } from "node:stream";
@@ -89,6 +89,8 @@ export interface Machine {
   readonly stderr: NodeJS.WritableStream;
   readonly now: () => Date;
   readonly readText: (path: string) => Promise<string>;
+  /** Creates a directory and its parents, private to the user; a no-op when it exists. */
+  readonly ensureDir: (path: string) => Promise<void>;
   readonly workspace: (root: string, token: string, config: ToolConfig) => Workspace;
   readonly runner: (codingAgent: CodingAgent, isolation: CodexRunnerOptions) => CodingAgentRunner;
   /** run.sh's marker file (`TOOL_REPORT_MARKER`): written once the final line is out, so run.sh doesn't write one too. */
@@ -143,6 +145,9 @@ export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray
     const workspace = m.workspace(join(config.dirs.state, "workspaces"), write, config);
     const synced = await workspace.sync([{ id: repo.repo, source: { url: `https://github.com/${repo.repo}.git`, branch: base } }]);
     const workingCopy = synced.workingCopies[0]!;
+    // The sandbox may write inside the cache but can't create it or its parents: a fresh installation's
+    // `dirs.cache` doesn't exist yet, and npm, Gradle or the agent would fail there with EPERM.
+    await m.ensureDir(config.dirs.cache);
     const { config: repoConfig } = await readSettings(workingTree(workingCopy.path));
     const releaseAgeExclude = repoConfig.ownPackages.npmScopes.map((scope) => `${scope}/*`);
     const isolation = codexIsolation({
@@ -254,6 +259,7 @@ function defaultMachine(): Machine {
     stderr: process.stderr,
     now: () => new Date(),
     readText: (path) => readFile(path, "utf8"),
+    ensureDir: async (path) => { await mkdir(path, { recursive: true, mode: 0o700 }); },
     reportMarker: process.env["TOOL_REPORT_MARKER"],
     workspace: (root, token, config) => new LocalGitWorkspace({ workspaceRoot: root, gitAuth: gitCloneAuth(token), commitIdentity: config.commitIdentity }),
     // Both runners get the same isolation: denied paths, the agent's env and its build cache.

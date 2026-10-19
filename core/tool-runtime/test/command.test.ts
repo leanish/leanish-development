@@ -61,6 +61,7 @@ function machine(overrides: Partial<Machine> & { readonly secretValues?: Record<
     log += chunk.toString("utf8");
   });
   const invocations: SkillInvocation[] = [];
+  const ensured: string[] = [];
   const runner = new FakeCodingAgentRunner("codex");
   runner.register("fix", (invocation) => {
     invocations.push(invocation);
@@ -87,12 +88,13 @@ function machine(overrides: Partial<Machine> & { readonly secretValues?: Record<
       if (path === "/config/agent.yaml") return CONFIG;
       throw new Error(`ENOENT: ${path}`);
     },
+    ensureDir: async (path) => { ensured.push(path); },
     workspace: () => new InMemoryWorkspace(),
     runner: () => runner,
     ...overrides,
   };
   const finalLine = () => JSON.parse(log.trim().split("\n").filter((line) => line.includes('"run finished"')).at(-1)!) as Record<string, unknown>;
-  return { fake, finalLine, invocations, requested, log: () => log };
+  return { fake, finalLine, invocations, ensured, requested, log: () => log };
 }
 
 function handlers(run: (context: ToolRunContext) => Promise<Readonly<Record<string, unknown>>>): ToolHandlers {
@@ -105,6 +107,13 @@ function handlers(run: (context: ToolRunContext) => Promise<Readonly<Record<stri
 }
 
 describe("runToolCommand", () => {
+  it("creates the configured cache directory before the tool's work starts, since the sandbox can't create it", async () => {
+    const { fake, ensured } = machine();
+    const seen: string[][] = [];
+    expect(await runToolCommand(handlers(async () => { seen.push([...ensured]); return {}; }), ["run", "leanish/widget", "--config", "/config/agent.yaml"], fake)).toBe(0);
+    expect(seen).toEqual([["/tmp/tool-cache"]]);
+  });
+
   it.each(["secure-it", "bump-it"] as const)("guards every %s invocation and never starts the agent on a rejected workspace", async (tool) => {
     const inputs: unknown[] = [];
     const restores: unknown[] = [];

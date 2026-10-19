@@ -33,6 +33,11 @@
   (`@leanish/tool-runtime`) and `core/gate` (`@leanish/gate`); `bump-it` and `secure-it` live at the root.
   Cross-package imports use explicit package exports, with workspace and dependency boundaries checked at the root.
 
+### Fixed
+
+- Both tools create their cache directory (`dirs.cache`, private to the user) before starting the sandbox, which can
+  write inside it but can't create it: on a fresh installation npm failed there with `EPERM`.
+
 ## 0.6.1 - 2026-10-18
 
 ### Fixed

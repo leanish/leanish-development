@@ -28,6 +28,7 @@ process.exitCode = await runToolCommand(
     fetch: async () => new Response("[]"),
     secrets: { get: async (name) => `${name}-token` },
     readText: async () => CONFIG,
+    ensureDir: async () => {},
     workspace: () => new InMemoryWorkspace(),
     runner: () => new FakeCodingAgentRunner("codex"),
     reportMarker: process.argv[2],
