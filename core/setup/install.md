@@ -88,9 +88,11 @@ their separate JSONL outcome/summary contract.
    desired spec and call it readback. Run
    `node core/setup/src/cli.ts schedule-check <tool> --owner <owner> --release <tag> --agent <agent> --task-file <json>`,
    with the same `--time`/`--day` chosen in step 7.
-   Reconcile differences through the app; an unreadable/unavailable readback
-   remains unverified. A match proves task fields only. If unattended command
-   permission, completion notifications or output reading are unavailable,
+   Reconcile differences through the app. When the app returns no readback,
+   `schedule-check` blocks: ask the person to check the task in the app (name,
+   prompt, schedule, folder, enabled) and report the readback as unverified. A match proves task fields only. If unattended command
+   permission, waiting for the command (Claude's completion notification, Codex's
+   session continuation) or output reading are unavailable,
    report that the app cannot run this task unattended here; leave it pending.
 9. Ask the person to pick **one** opted-in repository for a real run and consent
    to possible real PRs. Only after both choices run
