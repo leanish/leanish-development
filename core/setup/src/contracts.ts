@@ -25,6 +25,8 @@ export interface ScheduleSpec {
   readonly folder: string;
   readonly control: string;
   readonly permissions: string;
+  /** The exact rule the person adds so the app runs `command` unattended: where, and its text. */
+  readonly commandRule: { readonly file: string; readonly entry: string };
   readonly unattended: string;
   readonly documentation: string;
 }
