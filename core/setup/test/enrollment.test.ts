@@ -37,12 +37,38 @@ describe("human-only secret enrollment", () => {
     const value = await enrollment({ ...options, login: "Dev" }, home);
     expect(value.status).toBe("needs-confirmation");
     expect(value.data?.commands).toEqual([
-      { role: "write", command: "security add-generic-password -U -s 'leanish-bump-it-acme-write' -a 'dev' -w" },
-      { role: "read", command: "security add-generic-password -U -s 'leanish-bump-it-acme-read' -a 'dev' -w" },
+      { role: "write", tokenUrl: expect.any(String), command: "security add-generic-password -U -s 'leanish-bump-it-acme-write' -a 'dev' -w" },
+      { role: "read", tokenUrl: expect.any(String), command: "security add-generic-password -U -s 'leanish-bump-it-acme-read' -a 'dev' -w" },
     ]);
     expect(value.data?.permissions).toHaveLength(7);
     expect(JSON.stringify(value)).not.toMatch(/secret-sentinel/);
     await expect(enrollment({ ...options, login: "x; echo bad" }, home)).rejects.toThrow("Invalid GitHub");
+  });
+
+  it.each(["bump-it", "secure-it"] as const)("pre-fills one GitHub token form per role for %s, for the installation owner, not the login", async (tool) => {
+    await configure({ tool, owner: "acme", repos: ["acme/one"], agent: "codex", name: "Dev", email: "dev@example.com" }, home);
+    const value = await enrollment({ tool, owner: "acme", login: "Dev" }, home);
+    const urls = (value.data?.commands as Array<{ role: string; tokenUrl: string }>).map(({ role, tokenUrl }) => ({ role, url: new URL(tokenUrl) }));
+    for (const { role, url } of urls) {
+      expect(`${url.origin}${url.pathname}`).toBe("https://github.com/settings/personal-access-tokens/new");
+      expect(Object.fromEntries(url.searchParams)).toEqual({
+        name: `leanish-${tool}-${role}-acme`, target_name: "acme", expires_in: "90",
+        description: `${tool} ${role} token for acme, stored in Keychain as leanish-${tool}-acme-${role}. Select only the opted-in repositories.`,
+        ...(role === "write"
+          ? { contents: "write", pull_requests: "write", workflows: "write", actions: "read", statuses: "read", metadata: "read" }
+          : { contents: "read", pull_requests: "read", actions: "read", statuses: "read", metadata: "read" }),
+      });
+    }
+    expect(urls.map(({ role }) => role)).toEqual(["write", "read"]);
+  });
+
+  it("cuts long token names to GitHub's 40 characters, keeping tool and role", async () => {
+    const owner = "a".repeat(39);
+    await configure({ tool: "secure-it", owner, repos: [`${owner}/one`], agent: "codex", name: "Dev", email: "dev@example.com" }, home);
+    const value = await enrollment({ tool: "secure-it", owner, login: "dev" }, home);
+    const names = (value.data?.commands as Array<{ tokenUrl: string }>).map(({ tokenUrl }) => new URL(tokenUrl).searchParams.get("name"));
+    expect(names).toEqual([`leanish-secure-it-write-${owner}`.slice(0, 40), `leanish-secure-it-read-${owner}`.slice(0, 40)]);
+    expect(names.every((name) => name!.length === 40)).toBe(true);
   });
 
   it("refuses identical tokens before any GitHub request", async () => {

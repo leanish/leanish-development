@@ -12,8 +12,22 @@ import type { ScheduleOptions } from "./schedule.ts";
 import { ownerName, repositoryName, toolName } from "./tools.ts";
 import { isStableReleaseTag } from "./github-release.ts";
 
-export class InvalidReleaseTag extends Error {
-  constructor() { super("--release must be a stable vX.Y.Z tag; prerelease/rc tags and build metadata are not accepted"); }
+/** A refusal whose message is safe to show next to the usage text. */
+export class InvalidArgument extends Error {}
+
+const WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
+
+function scheduleTime(value: string): { readonly hour: number; readonly minute: number } {
+  const match = /^(\d{2}):(\d{2})$/.exec(value);
+  if (match === null || Number(match[1]) > 23 || Number(match[2]) > 59) throw new InvalidArgument("--time must be HH:MM in 24-hour local time, from 00:00 to 23:59");
+  return { hour: Number(match[1]), minute: Number(match[2]) };
+}
+
+/** Cron weekday number, Sunday 0. */
+function scheduleWeekday(value: string): number {
+  const weekday = (WEEKDAYS as ReadonlyArray<string>).indexOf(value.toLowerCase());
+  if (weekday < 0) throw new InvalidArgument(`--day must be one of ${WEEKDAYS.join(", ")}`);
+  return weekday;
 }
 
 export type SetupCommand =
@@ -38,8 +52,8 @@ export const USAGE = `usage: node core/setup/src/cli.ts
   verify-tokens <tool> --owner <owner>
   gate --repo <owner/repo> --release <tag> [--java <major>] [--confirm-settings]
   batch <tool> --owner <owner> --release <tag> [--repo <owner/repo>]
-  schedule <tool> --owner <owner> --release <tag> --agent codex|claude-code
-  schedule-check <tool> --owner <owner> --release <tag> --agent codex|claude-code --task-file <json>
+  schedule <tool> --owner <owner> --release <tag> --agent codex|claude-code [--time HH:MM] [--day mon|...|sun]
+  schedule-check <tool> --owner <owner> --release <tag> --agent codex|claude-code [--time HH:MM] [--day mon|...|sun] --task-file <json>
   test-run <tool> --owner <owner> --release <tag> --repo <owner/repo>
   fixture-cleanup --bump-it-config <path> --secure-it-config <path> [--repo <owner/repo>] [--apply]
   fixture-repin --bump-it-config <path> --secure-it-config <path> --release <tag> [--repo <owner/repo>] [--apply]`;
@@ -56,6 +70,7 @@ export function setupArguments(argv: ReadonlyArray<string>): SetupCommand {
   if (command === "enroll") flags["login"] = { type: "string" };
   if (["gate", "batch", "test-run", "fixture-repin"].includes(command ?? "") || scheduling) flags["release"] = { type: "string" };
   if (command === "gate") flags["confirm-settings"] = { type: "boolean" };
+  if (scheduling) for (const name of ["time", "day"]) flags[name] = { type: "string" };
   if (command === "schedule-check") flags["task-file"] = { type: "string" };
   if (command === "fixture-cleanup" || command === "fixture-repin") {
     flags["bump-it-config"] = { type: "string" };
@@ -72,7 +87,7 @@ export function setupArguments(argv: ReadonlyArray<string>): SetupCommand {
   const text = (name: string): string | undefined => typeof parsed.values[name] === "string" ? parsed.values[name] as string : undefined;
   const need = (name: string): string => { const value = text(name); if (value === undefined || value === "") throw new Error(); return value; };
   const release = text("release");
-  if (release !== undefined && !isStableReleaseTag(release)) throw new InvalidReleaseTag();
+  if (release !== undefined && !isStableReleaseTag(release)) throw new InvalidArgument("--release must be a stable vX.Y.Z tag; prerelease/rc tags and build metadata are not accepted");
   const agent = text("agent") as CodingAgent | undefined;
   if (agent !== undefined && !CODING_AGENTS.includes(agent)) throw new Error();
   const java = text("java");
@@ -93,7 +108,10 @@ export function setupArguments(argv: ReadonlyArray<string>): SetupCommand {
   const installation = { tool: toolName(parsed.positionals[0]!), owner: ownerName(need("owner")) };
   if (scheduling) {
     if (agent === undefined) throw new Error();
-    const options = { ...installation, release: need("release"), agent };
+    const time = text("time");
+    const day = text("day");
+    const options = { ...installation, release: need("release"), agent,
+      ...(time === undefined ? {} : { time: scheduleTime(time) }), ...(day === undefined ? {} : { weekday: scheduleWeekday(day) }) };
     return command === "schedule" ? { command, options } : { command: "schedule-check", options: { ...options, taskFile: need("task-file") } };
   }
   if (command === "enroll") return { command, options: { ...installation, login: ownerName(need("login")) } };

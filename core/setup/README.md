@@ -79,8 +79,14 @@ node core/setup/src/cli.ts release
   New state/cache directories and `leanish-<tool>-<owner>-write`/`-read` services
   are owner-specific. Results report config path and opted-in repos.
 - **`enroll <tool> --owner <owner> --login <github-login>`** returns the exact
-  permission table and one command per configured service:
-  `security add-generic-password -U -s '<service>' -a '<login>' -w`.
+  permission table and, per configured service (`write`, `read`), a `tokenUrl` and a
+  command: `security add-generic-password -U -s '<service>' -a '<login>' -w`.
+  `tokenUrl` is GitHub's [pre-filled fine-grained PAT form](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#pre-filling-fine-grained-personal-access-token-details-using-url-parameters):
+  name `leanish-<tool>-<role>-<owner>` (cut to GitHub's 40 characters), a
+  description naming the Keychain service, the installation owner as resource
+  owner, a 90-day expiry and that role's permissions (levels `none` are left
+  out). GitHub can't pre-select repositories, so the person picks only the
+  opted-in ones; they can also change the expiry or a name GitHub reports as taken.
   Service and login are single-quoted after validation. `-U` updates an existing
   item for re-enrollment or token rotation.
   The **person** runs these in their own Terminal; bare `-w` comes last and
@@ -197,7 +203,7 @@ its final path until verification and npm succeed.
 
 ## Local app schedules
 
-`schedule <tool> --owner <owner> --release <tag> --agent codex|claude-code`
+`schedule <tool> --owner <owner> --release <tag> --agent codex|claude-code [--time HH:MM] [--day mon|...|sun]`
 reads the strict owner installation and verifies the selected installed release
 offline, refusing a release without `core/setup/run.sh` in v0.7.0 or newer.
 Until a stable release shipping it is published, use
@@ -206,24 +212,16 @@ older release. A supported release emits one
 `needs-confirmation` row (exit 2). Its `data` contains
 `taskId`/`title` (`leanish-<tool>-<owner>`), `agent`, five-field local-time `cron`,
 IANA `timeZone`, `folder` (the verified release checkout), literal `command`, full
-`prompt`, `ownerOffsetHours`, app `control`, `permissions`, `unattended` caveat
+`prompt`, app `control`, `permissions`, `unattended` caveat
 and official `documentation` URL. It neither creates a task nor reads app storage.
 
 Defaults are Wednesday 10:17 for bump-it (`17 10 * * 3`) and daily 09:17 for
-secure-it (`17 9 * * *`). The first `schedule` for an owner reserves the lowest
-unused nonnegative hour offset in
-`~/.config/leanish/installations/<owner>/schedule.json` as `{"offsetHours": n}`.
-This file is written atomically with mode 0600. Both tools share the reservation;
-adding an owner later never changes an existing owner's offset or cron. A shared
-PID lock serializes allocation across owners, including recovery of dead PID
-locks. Persisted slots in all real canonical owner directories remain reserved
-even if their tool configs have been removed. Noncanonical names (including
-uppercase), unrelated names and symlink directories are ignored; malformed saved
-offsets fail clearly rather than being replaced. Each offset shifts the defaults
-by that many hours: GitHub's 5,000/h user limit and agent plan usage are shared
-across owners. Hours wrap at midnight; weekly days advance with the wrap (cron
-Sunday is 0). Generated cadence is the default proposal; deliberate
-custom times need manual review rather than a false default-spec match.
+secure-it (`17 9 * * *`), the same for every owner. `--time HH:MM` (24-hour local
+time) and, for bump-it only, `--day` (three-letter name, any case) place the task
+where the person says; `--day` for a daily tool is refused, not ignored. Nothing
+is saved: pass the same choice to `schedule-check`. GitHub's 5,000 requests/hour
+limit belongs to the authenticated user and the plan usage to the person's agent
+account, so several owners run by the same person may want different times.
 
 The skill's agent uses its own app's scheduling tool, or hands over the ready
 spec and control steps when no tool is exposed. Keep exactly one enabled local
@@ -244,10 +242,9 @@ must not weaken the tools' inner sandbox or reveal tokens to the agent. Spec
 generation does not prove background notification/output facilities or unattended
 permission: if unavailable, report that the task cannot run unattended here.
 
-`schedule-check <tool> --owner <owner> --release <tag> --agent <agent> --task-file <json>`
-compares an **observed** app readback with the current generated spec, using the
-saved owner offset without allocating or changing it. Run `schedule` first if no
-reservation exists. Export this
+`schedule-check <tool> --owner <owner> --release <tag> --agent <agent> [--time HH:MM] [--day ...] --task-file <json>`
+compares an **observed** app readback with the spec `schedule` generated for the
+same choice of time and day. Export this
 shape to a temporary JSON file outside app storage, without manufacturing fields
 the app did not return:
 
