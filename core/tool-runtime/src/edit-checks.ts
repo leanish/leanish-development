@@ -14,9 +14,9 @@
  */
 import { basename } from "node:path";
 
-import { isMap, isScalar, isSeq, parseDocument } from "yaml";
+import { isAlias, isMap, isScalar, isSeq, parseDocument, Scalar } from "yaml";
 
-import { commentTag, readActionsInventory } from "@leanish/gate/actions-inventory";
+import { commentTag, parseUses, readActionsInventory } from "@leanish/gate/actions-inventory";
 import type { Floor } from "@leanish/gate/floors";
 import { gradleLocation, type GradleConfiguration, type GradleInventory } from "@leanish/gate/gradle";
 import { directDependencies } from "@leanish/gate/npm-lock";
@@ -201,9 +201,11 @@ export function pinsMasked(text: string | undefined, actions: ReadonlySet<string
           const action = /^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)/.exec(value.value)?.[1]?.toLowerCase();
           const at = text.indexOf("@", value.range[0]);
           if (action !== undefined && actions.has(action) && at !== -1 && at < value.range[1]) {
-            // From the ref on, then whatever follows the scalar on its line if that's only a comment.
+            // From the ref on, then whatever follows the scalar on its line if that's only a comment. A CRLF line's
+            // `\r` isn't part of it (a regex `.` never matches one), so a CRLF file's comment is masked like an LF one.
             const lineEnd = text.indexOf("\n", value.range[1]);
-            const rest = text.slice(value.range[1], lineEnd === -1 ? text.length : lineEnd);
+            const end = lineEnd === -1 ? text.length : text[lineEnd - 1] === "\r" ? lineEnd - 1 : lineEnd;
+            const rest = text.slice(value.range[1], end);
             ranges.push([at + 1, /^\s*(#.*)?$/.test(rest) ? value.range[1] + rest.length : value.range[1]]);
           }
         }
@@ -217,6 +219,75 @@ export function pinsMasked(text: string | undefined, actions: ReadonlySet<string
   let masked = text;
   for (const [from, to] of ranges.sort((a, b) => b[0] - a[0])) masked = `${masked.slice(0, from)}<pinned>${masked.slice(to)}`;
   return masked;
+}
+
+/** The gate's own reusable workflow, as an adopter's caller names it: `uses: <name>/<path>@<sha> # <tag>`. */
+export const GATE_WORKFLOW = { name: "leanish/leanish-development", path: ".github/workflows/supply-chain.yml" } as const;
+
+/** One planned pin to write: `name`'s uses whose comment names `from` go to `commitSha # to`. */
+export interface PinWrite {
+  readonly name: string;
+  readonly from: string;
+  readonly to: string;
+  readonly commitSha: string;
+}
+
+/** What may follow a pinned `uses:` on its line: a comment naming only its version. */
+const VERSION_TAIL = /^(\s*)#\s*(\S+)\s*$/;
+
+/**
+ * The file with each planned pin written in place: the ref of every `uses:` of `name` (any path under it) whose
+ * comment names `from` becomes `commitSha`, and that comment `# to`; every other byte is kept, other versions of the
+ * same action included. `uses:` keys come from parsing the YAML, so a script's text is never taken for one. Throws
+ * when a planned action's use can't be rewritten in place (an alias, a block scalar, an escaped ref, a comment naming
+ * more than its version), rather than guessing.
+ */
+export function writtenPins(text: string, file: string, pins: ReadonlyArray<PinWrite>): string {
+  const doc = parseDocument(text);
+  if (doc.errors.length > 0) throw new Error(`${file} isn't valid YAML`);
+  const planned = new Set(pins.map((pin) => pin.name.toLowerCase()));
+  const edits: Array<{ readonly start: number; readonly end: number; readonly text: string }> = [];
+  const walk = (node: unknown): void => {
+    if (isMap(node)) {
+      for (const pair of node.items) {
+        const value = pair.value;
+        if (isScalar(pair.key) && pair.key.value === "uses") {
+          const literal = isScalar(value) && typeof value.value === "string" ? value.value : undefined;
+          const action = (literal === undefined ? undefined : /^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)/.exec(literal)?.[1])?.toLowerCase();
+          if (isAlias(value)) {
+            const resolved = value.resolve(doc);
+            const target = isScalar(resolved) && typeof resolved.value === "string" ? /^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)/.exec(resolved.value)?.[1]?.toLowerCase() : undefined;
+            if (target !== undefined && planned.has(target)) throw new Error(`${file}: an aliased \`uses:\` of ${target} can't be rewritten in place`);
+          } else if (action !== undefined && planned.has(action) && isScalar(value) && value.range !== undefined && value.range !== null) {
+            const lineEnd = text.indexOf("\n", value.range[1]);
+            const tailEnd = lineEnd === -1 ? text.length : text[lineEnd - 1] === "\r" ? lineEnd - 1 : lineEnd;
+            const tail = VERSION_TAIL.exec(text.slice(value.range[1], tailEnd));
+            const pin = tail === null ? undefined : pins.find((candidate) => candidate.name.toLowerCase() === action && candidate.from === tail[2]);
+            if (pin !== undefined) {
+              if (value.type !== Scalar.PLAIN && value.type !== Scalar.QUOTE_DOUBLE && value.type !== Scalar.QUOTE_SINGLE) throw new Error(`${file}: a block-scalar \`uses:\` of ${action} can't be rewritten in place`);
+              const at = text.indexOf("@", value.range[0]);
+              const ref = literal!.slice(literal!.indexOf("@") + 1);
+              if (at === -1 || at >= value.range[1] || text.slice(at + 1, at + 1 + ref.length) !== ref) throw new Error(`${file}: a \`uses:\` of ${action} isn't written literally`);
+              edits.push({ start: at + 1, end: at + 1 + ref.length, text: pin.commitSha });
+              edits.push({ start: value.range[1], end: tailEnd, text: `${tail![1] || " "}# ${pin.to}` });
+            }
+          }
+        }
+        walk(value);
+      }
+    } else if (isSeq(node)) {
+      for (const item of node.items) walk(item);
+    }
+  };
+  walk(doc.contents);
+  let written = text;
+  for (const edit of [...edits].sort((a, b) => b.start - a.start)) written = written.slice(0, edit.start) + edit.text + written.slice(edit.end);
+  // Same check the policy fence makes: nothing changed but the planned actions' refs and comments.
+  if (pinsMasked(written, planned) !== pinsMasked(text, planned)) throw new Error(`writing ${file}'s pins would change more than them`);
+  // And every planned use moved: one whose comment names its version among other words was left for the agent.
+  const left = parseUses(written, file).uses.filter((use) => pins.some((pin) => pin.name.toLowerCase() === use.name && commentTag(use) === pin.from));
+  if (left.length > 0) throw new Error(`${file}: a \`uses:\` of ${left[0]!.name} at ${commentTag(left[0]!)} can't be rewritten in place`);
+  return written;
 }
 
 /** The gate's policy: its config and exceptions, and every workflow and action file (only planned pins may change one). */
