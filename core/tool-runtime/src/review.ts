@@ -48,7 +48,7 @@ export type ReviewOutcome =
   | "marked-ready"
   | "already-ready"
   | "no-checks"
-  | "waiting-required"
+  | "ready-missing-required"
   | "adapted"
   | "adaptation-unchanged"
   | "closed"
@@ -184,14 +184,18 @@ async function reviewOne(context: ReviewContext, steps: ReviewSteps, pr: GitHubP
   if (ci === "success") {
     // A person or an earlier tick already made it ready: nothing to decide, and no extra call that could fail it.
     if (!pr.isDraft) return result("already-ready");
-    // Green by what the head reported: a check the base's rulesets require that never started still blocks the
-    // merge, so it isn't ready. Failures already returned above, so a missing check never hides one.
+    // Green by what the head reported, but a check the base's rulesets require may not have started. It's marked
+    // ready anyway: a workflow can start only on `ready_for_review`, and waiting for it would never end. GitHub still
+    // blocks the merge until it passes, and the distinct outcome, reported on this tick, tells the person.
     const required = await context.github.requiredChecks({ repo: context.repo, branch: context.base });
     const unreported = required.known ? unreportedRequired(checks, required.checks) : { missing: [], unobservable: [] };
-    if (unreported.missing.length > 0) return result("waiting-required", `${unreported.missing.join(", ")} required on ${context.base} but not reported on the head`);
     const unseen = !required.known ? `required checks unknown (${required.reason}); readiness used the reported checks`
       : unreported.unobservable.length > 0 ? `${unreported.unobservable.join(", ")} required but not reported, maybe by an app this token can't read` : undefined;
     await markReady(publication, pr.number, pr.headSha);
+    if (unreported.missing.length > 0) {
+      const missing = `${unreported.missing.join(", ")} required on ${context.base} but not reported on the head yet`;
+      return result("ready-missing-required", unseen === undefined ? missing : `${missing}; ${unseen}`);
+    }
     return result("marked-ready", unseen);
   }
   if (state.adaptations >= MAX_ADAPTATIONS) {

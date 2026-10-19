@@ -366,8 +366,10 @@ Batch JSONL uses a separate outcome contract: `schemaVersion`, `tool`, `owner`,
 advisory sources the tool couldn't check, as a count only), `prs`, `attention`,
 `exitCode` and nullable `estimatedApiCostUsd`. `attention` lists `{pr, outcome}` for
 review outcomes a person should hear about (`closed` after failing CI, `no-checks`,
-`waiting-required` (a draft whose required check never started), `held`, `adaptation-unchanged`,
-`left-alone`; `no-checks`, `waiting-required` and `held` are waiting states, not problems), at most 100 per command and 500 per summary, with `attentionOmitted`
+`held`, `adaptation-unchanged`, `left-alone`, and `ready-missing-required`: marked ready
+before a required check reported, listed on that tick only, needing a person if the
+check never starts; `no-checks` and `held` are waiting states, not problems), at most
+100 per command and 500 per summary, with `attentionOmitted`
 counting the rest; only those fixed names pass, never the tool's detail text. Only bounded structured final
 reports are inspected; raw child messages never reach this output. `gaps` counts only
 the result's own top-level `gaps`. The final `action: "summary"`

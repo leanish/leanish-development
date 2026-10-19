@@ -40,9 +40,14 @@ describe("batch runner", () => {
       { number: 2, url: "https://github.com/acme/one/pull/2", outcome: "no-checks", detail: "secret-sentinel" },
       { number: 3, url: "https://github.com/acme/one/pull/3", outcome: "marked-ready", detail: "secret-sentinel" },
       { number: 4, url: "https://github.com/other/repo/pull/4", outcome: "closed" },
+      { number: 5, url: "https://github.com/acme/one/pull/5", outcome: "ready-missing-required", detail: "secret-sentinel" },
     ] } };
     expect(await executeBatch(options, ["acme/one"], async (_repo, action) => action === "review" ? { code: 0, report: reviewed } : ok(), (record) => records.push(record))).toBe(0);
-    const expected = [{ pr: "https://github.com/acme/one/pull/1", outcome: "closed" }, { pr: "https://github.com/acme/one/pull/2", outcome: "no-checks" }];
+    const expected = [
+      { pr: "https://github.com/acme/one/pull/1", outcome: "closed" },
+      { pr: "https://github.com/acme/one/pull/2", outcome: "no-checks" },
+      { pr: "https://github.com/acme/one/pull/5", outcome: "ready-missing-required" },
+    ];
     expect(records[0]).toMatchObject({ action: "review", outcome: "completed", errors: 0, notes: 0, attention: expected, attentionOmitted: 0 });
     expect(records.at(-1)).toMatchObject({ action: "summary", outcome: "completed", attention: expected, attentionOmitted: 0 });
     expect(JSON.stringify(records)).not.toContain("secret-sentinel");
