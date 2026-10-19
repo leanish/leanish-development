@@ -89,7 +89,7 @@ export interface Machine {
   readonly stderr: NodeJS.WritableStream;
   readonly now: () => Date;
   readonly readText: (path: string) => Promise<string>;
-  /** Creates a directory and its parents, private to the user; a no-op when it exists. */
+  /** Creates a directory and its missing parents, private to the user; leaves an existing one as it is. */
   readonly ensureDir: (path: string) => Promise<void>;
   readonly workspace: (root: string, token: string, config: ToolConfig) => Workspace;
   readonly runner: (codingAgent: CodingAgent, isolation: CodexRunnerOptions) => CodingAgentRunner;
@@ -145,8 +145,9 @@ export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray
     const workspace = m.workspace(join(config.dirs.state, "workspaces"), write, config);
     const synced = await workspace.sync([{ id: repo.repo, source: { url: `https://github.com/${repo.repo}.git`, branch: base } }]);
     const workingCopy = synced.workingCopies[0]!;
-    // The sandbox may write inside the cache but can't create it or its parents: a fresh installation's
-    // `dirs.cache` doesn't exist yet, and npm, Gradle or the agent would fail there with EPERM.
+    // The sandbox may write inside the cache but can't create it or its parents. The agent's runner creates its roots
+    // before a call, but sandboxed commands (inventories, npm, Gradle) can run first: on a fresh installation's
+    // missing `dirs.cache` they failed with EPERM.
     await m.ensureDir(config.dirs.cache);
     const { config: repoConfig } = await readSettings(workingTree(workingCopy.path));
     const releaseAgeExclude = repoConfig.ownPackages.npmScopes.map((scope) => `${scope}/*`);
@@ -251,6 +252,10 @@ async function defaultBranch(repo: string, token: string, fetch: typeof globalTh
   return branch;
 }
 
+export async function ensurePrivateDir(path: string): Promise<void> {
+  await mkdir(path, { recursive: true, mode: 0o700 });
+}
+
 function defaultMachine(): Machine {
   return {
     assertAgentWorkspace,
@@ -259,7 +264,7 @@ function defaultMachine(): Machine {
     stderr: process.stderr,
     now: () => new Date(),
     readText: (path) => readFile(path, "utf8"),
-    ensureDir: async (path) => { await mkdir(path, { recursive: true, mode: 0o700 }); },
+    ensureDir: ensurePrivateDir,
     reportMarker: process.env["TOOL_REPORT_MARKER"],
     workspace: (root, token, config) => new LocalGitWorkspace({ workspaceRoot: root, gitAuth: gitCloneAuth(token), commitIdentity: config.commitIdentity }),
     // Both runners get the same isolation: denied paths, the agent's env and its build cache.

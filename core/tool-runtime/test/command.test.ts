@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { FakeCodingAgentRunner } from "@leanish/agent-runtime/skill/fake-runner";
 import type { SkillInvocation } from "@leanish/agent-runtime/skill/runner";
 import { InMemoryWorkspace } from "@leanish/agent-runtime/working-copy/in-memory-workspace";
-import { type Machine, runToolCommand, type ToolHandlers, type ToolRunContext } from "../src/command.ts";
+import { ensurePrivateDir, type Machine, runToolCommand, type ToolHandlers, type ToolRunContext } from "../src/command.ts";
 
 const CONFIG = `
 repos:
@@ -107,6 +107,17 @@ function handlers(run: (context: ToolRunContext) => Promise<Readonly<Record<stri
 }
 
 describe("runToolCommand", () => {
+  it("creates a missing cache directory with its parents, private to the user, and leaves an existing one alone", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tool-cache-"));
+    const cache = join(root, "installations", "acme", "secure-it");
+    await ensurePrivateDir(cache);
+    expect(statSync(cache).isDirectory()).toBe(true);
+    expect(statSync(cache).mode & 0o777).toBe(0o700);
+    await mkdir(join(root, "shared"), { mode: 0o755 });
+    await ensurePrivateDir(join(root, "shared"));
+    expect(statSync(join(root, "shared")).mode & 0o777).toBe(0o755);
+  });
+
   it("creates the configured cache directory before the tool's work starts, since the sandbox can't create it", async () => {
     const { fake, ensured } = machine();
     const seen: string[][] = [];
