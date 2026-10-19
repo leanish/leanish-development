@@ -148,5 +148,13 @@ Covered elsewhere, with the points that matter here:
   placements, baseline overrides and registry manifests instead of trusting secure-it's plan or notes, and a limit hit
   grants nothing ([details](../core/gate/README.md#npm-dependencies-required-by-a-security-fix)). Ordinary bumps and
   other ecosystems get no such exemption.
+- **Scheduled desktop-app tasks** run one exact launcher command. Codex runs it through an execution rule that lets
+  that argv out of the automation's sandbox, and Claude through a `Bash(...)` allow rule; neither checks the code the
+  argv runs. So the task's folder is its own (`~/.local/share/leanish/tasks/<task>`), never the release checkout: the
+  automation can write its project folder (plus temp folders, where the runtime only creates files under random,
+  exclusively created names), and must not be able to change the launcher, its modules or installation state:
+  setup refuses a task folder that overlaps the release, the config or a configured state, cache or prices path,
+  and the launcher starts from the release root so nothing is read relative to the task folder. A
+  Claude task must also not run in a permission mode that approves edits outside its folder.
 - **The skill answer schemas** the copied runtime accepts are in [`core/agent-runtime`](../core/agent-runtime/README.md);
   unknown fields and malformed objects still fail.

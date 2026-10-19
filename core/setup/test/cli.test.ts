@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { statSync } from "node:fs";
+import { chmodSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -246,6 +248,21 @@ describe("setup command contract", () => {
 
   it("ships an executable batch launcher", () => {
     expect(statSync(new URL("../run.sh", import.meta.url)).mode & 0o111).toBe(0o111);
+  });
+
+  it("starts the batch from the release root, never from the caller's writable folder", () => {
+    const caller = mkdtempSync(join(tmpdir(), "setup-caller-"));
+    try {
+      writeFileSync(join(caller, "node"), "#!/bin/bash\npwd -P\nprintf '%s\\n' \"$@\"\n");
+      chmodSync(join(caller, "node"), 0o755);
+      const execution = spawnSync("/bin/bash", [fileURLToPath(new URL("../run.sh", import.meta.url)), "bump-it", "--owner", "acme"],
+        { cwd: caller, encoding: "utf8", env: { ...process.env, PATH: `${caller}:${process.env["PATH"] ?? ""}` } });
+      expect(execution.status).toBe(0);
+      expect(execution.stdout.split("\n").slice(0, 5)).toEqual([realpathSync(fileURLToPath(new URL("../../..", import.meta.url))),
+        realpathSync(fileURLToPath(new URL("../src/cli.ts", import.meta.url))), "batch", "bump-it", "--owner"]);
+    } finally {
+      rmSync(caller, { recursive: true, force: true });
+    }
   });
 
   it("dispatches part 2 commands with explicit repository and settings scope", async () => {
