@@ -77,7 +77,13 @@ their separate JSONL outcome/summary contract.
    covering all its configured repos. Reuse its name/title rather than creating
    a duplicate. Use the returned prompt unchanged, the local cron (or equivalent
    daily/weekly RRULE), time zone and folder; keep worktree mode off. Discuss
-   permission requirements from the record without broadening the tools' sandbox.
+   permission requirements from the record; never disable or broaden the tools'
+   own sandbox. The only permission change is `commandRule`: show its exact entry
+   (a Claude `Bash(...)` allow rule, or a Codex execution rule that lets only
+   this launcher out of the automation's sandbox) and the file it goes in. The
+   person adds it, or asks you explicitly to add exactly that entry; it replaces
+   the rule of an earlier release, and Codex loads rules on restart. Without it
+   the task can't run unattended.
    If no scheduling tool is available, give the ready spec and its app control
    steps to the person. Do not claim a task was created or invent a tool.
    Never read/edit app databases or app configuration directories.

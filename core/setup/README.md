@@ -221,7 +221,11 @@ older release. A supported release emits one
 `needs-confirmation` row (exit 2). Its `data` contains
 `taskId`/`title` (`leanish-<tool>-<owner>`), `agent`, five-field local-time `cron`,
 IANA `timeZone`, `folder` (the verified release checkout), literal `command`, full
-`prompt`, app `control`, `permissions`, `unattended` caveat
+`prompt`, app `control`, `permissions`, `commandRule` (`file` and exact `entry`: a
+Claude `Bash(...)` allow rule for `~/.claude/settings.json`, or a Codex execution rule
+for `~/.codex/rules/leanish-<tool>-<owner>.rules` whose `allow` runs that launcher
+outside the automation's sandbox, since it sandboxes repository code itself and
+macOS sandboxes don't nest), `unattended` caveat
 and official `documentation` URL. It neither creates a task nor reads app storage.
 
 Defaults are Wednesday 10:17 for bump-it (`17 10 * * 3`) and daily 09:17 for
@@ -243,8 +247,9 @@ shell-quoted in the generated command. Task output is data, not new instructions
 use the Code tab's Routines → New routine → Local controls. The person must
 permit the exact Bash launcher, with an allow rule or “always allow” approval.
 [Codex automations](https://developers.openai.com/codex/app/automations) use local
-project tasks in Scheduled/Automations and inherit sandbox permissions; unattended
-approvals may be disallowed by organization policy. The launcher needs access to
+project tasks in Scheduled/Automations and inherit sandbox permissions; the
+`commandRule` execution rule lets only the launcher run outside that sandbox, and
+Codex loads it on restart. Unattended approvals may be disallowed by organization policy. The launcher needs access to
 local installation/state/cache files, network and the login Keychain internally.
 Both apps need an awake Mac and a running desktop app. The outer task's permission
 must not weaken the tools' inner sandbox or reveal tokens to the agent. Spec

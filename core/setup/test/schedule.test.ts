@@ -30,6 +30,23 @@ async function readback(overrides: Record<string, unknown> = {}) {
 }
 
 describe("local task specifications", () => {
+  it("quotes an unusual home path the same way in the command and in the Codex rule, under CODEX_HOME", async () => {
+    const odd = await mkdtemp(join(tmpdir(), `setup schedule "é\\ `));
+    try {
+      await configure({ tool: "bump-it", owner: "acme", repos: ["acme/one"], agent: "codex", name: "Dev", email: "dev@example.com" }, odd);
+      const launcher = join(odd, ".local/share/leanish/releases/v0.7.0/core/setup/run.sh");
+      await mkdir(join(launcher, ".."), { recursive: true });
+      await writeFile(launcher, "# not executed\n");
+      vi.stubEnv("CODEX_HOME", "/opt/codex-home");
+      const value = await schedule(options, { ...host, home: odd, release: async (tag) => ({ tag, sha: "a".repeat(40), path: join(odd, ".local/share/leanish/releases", tag) }) });
+      expect(value.data?.command).toBe(`/bin/bash '${launcher.replaceAll("'", "'\\''")}' bump-it --owner acme --release v0.7.0`);
+      expect(value.data?.commandRule).toEqual({ file: "/opt/codex-home/rules/leanish-bump-it-acme.rules", entry: expect.stringContaining(`        ${JSON.stringify(launcher)},\n`) });
+      expect(JSON.stringify(launcher)).toContain('\\"é\\\\ ');
+    } finally {
+      await rm(odd, { recursive: true, force: true });
+    }
+  });
+
   it.each(["codex", "claude-code"] as const)("prints one needs-confirmation task for %s, without secrets or execution", async (agent) => {
     vi.stubEnv("GH_TOKEN", "secret-sentinel");
     const value = await schedule({ ...options, agent }, host);
@@ -51,6 +68,10 @@ describe("local task specifications", () => {
       expect(value.data?.unattended).toContain("session");
     }
     expect(value.data?.prompt).toContain("Never run another shell command to inspect output");
+    const launcher = join(home, ".local/share/leanish/releases/v0.7.0/core/setup/run.sh");
+    expect(value.data?.commandRule).toEqual(agent === "claude-code"
+      ? { file: "~/.claude/settings.json (permissions.allow)", entry: `Bash(${value.data?.command})` }
+      : { file: "~/.codex/rules/leanish-bump-it-acme.rules", entry: `prefix_rule(\n    pattern = [\n        "/bin/bash",\n        ${JSON.stringify(launcher)},\n        "bump-it",\n        "--owner",\n        "acme",\n        "--release",\n        "v0.7.0",\n    ],\n    decision = "allow",\n)\n` });
     expect(value.data?.unattended).toContain("cannot run unattended");
     expect(JSON.stringify(value)).not.toContain("secret-sentinel");
     expect(value.data).not.toHaveProperty("ownerOffsetHours");
