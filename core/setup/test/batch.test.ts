@@ -89,6 +89,21 @@ describe("batch runner", () => {
     expect(failed.join("")).not.toContain("secret-sentinel");
   });
 
+  it("runs a release candidate only when every selected repository is a fixture", async () => {
+    const config = parseToolConfig("bump-it", "repos: [{repo: acme/leanish-development_TEST_one}, {repo: acme/two}]\nagent: {codingAgent: codex, model: sol, effort: medium}\ncommitIdentity: {name: Dev, email: dev@example.com}\n", "agent.yaml", "/home");
+    const release = { tag: "v0.7.0-rc.1", sha: "a".repeat(40), path: "/release" };
+    const machine = {
+      release: vi.fn(async () => release), installation: vi.fn(async () => ({ path: "/config/acme/bump-it/agent.yaml", config })),
+      preflight: vi.fn(async () => {}), invoke: vi.fn(async () => ok()),
+    };
+    const lines: string[] = [];
+    expect(await batch({ ...options, release: release.tag }, (line) => lines.push(line), machine)).toBe(1);
+    expect(JSON.parse(lines[0]!)).toMatchObject({ action: "summary", outcome: "error", phase: "candidate-scope" });
+    expect(machine.invoke).not.toHaveBeenCalled();
+    expect(await batch({ ...options, release: release.tag, repo: "acme/leanish-development_TEST_one" }, () => {}, machine)).toBe(0);
+    expect(machine.invoke.mock.calls.map((call) => call.slice(3))).toEqual([["acme/leanish-development_TEST_one", "review"], ["acme/leanish-development_TEST_one", "run"]]);
+  });
+
   it("invokes the release launcher with --config, ignores raw output, and strips ambient secrets and TOOL_CLI", async () => {
     root = await mkdtemp(join(tmpdir(), "setup-batch-"));
     await mkdir(join(root, "core/tool-runtime"), { recursive: true });

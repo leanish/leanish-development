@@ -9,6 +9,7 @@ import type { ensureOsvScanner } from "@leanish/tool-runtime/osv-scanner";
 
 import { commandEnvironment } from "./commands.ts";
 import { readInstallation, type InstallationOptions } from "./configuration.ts";
+import { requireFixturesForCandidate } from "./fixtures.ts";
 import { readInstalledRelease, type InstalledRelease } from "./release.ts";
 import { repositoryName } from "./tools.ts";
 
@@ -120,11 +121,12 @@ export async function batch(
   let installation: Awaited<ReturnType<typeof readInstallation>>;
   let release: InstalledRelease;
   let selected: ReadonlyArray<string>;
-  let phase: "configuration" | "release" | "repository-selection" | "scanner" = "configuration";
+  let phase: "configuration" | "release" | "repository-selection" | "candidate-scope" | "scanner" = "configuration";
   const failures = {
     configuration: "configuration: could not read or validate the installation",
     release: "release: could not verify the installed release",
     "repository-selection": "repository-selection: no valid opted-in repository selected",
+    "candidate-scope": "candidate-scope: a release candidate runs only on fixture repositories",
     scanner: "scanner: could not initialize the pinned scanner",
   };
   try {
@@ -136,6 +138,8 @@ export async function batch(
     const selectedRepo = options.repo === undefined ? undefined : repositoryName(options.repo, options.owner);
     selected = selectedRepo === undefined ? repos : repos.filter((repo) => repo.toLowerCase() === selectedRepo.toLowerCase());
     if (selected.length === 0) throw new Error("Selected repository has not opted in");
+    phase = "candidate-scope";
+    requireFixturesForCandidate(release.tag, selected);
     phase = "scanner";
     await machine.preflight(release, installation.config);
   } catch {

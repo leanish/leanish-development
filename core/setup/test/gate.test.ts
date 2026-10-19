@@ -22,6 +22,13 @@ const options = { repo: REPO, release: pin.tag, confirmSettings: false };
 const machine = (api: FakeGateGitHub) => ({ api, release: async () => ({ ...pin, path }) });
 
 describe("gate adoption", () => {
+  it("adopts a release candidate only on fixture repositories, before any GitHub request", async () => {
+    const api = new FakeGateGitHub();
+    const request = vi.spyOn(api, "request");
+    await expect(adoptGate({ ...options, release: "v0.7.0-rc.1" }, machine(api))).rejects.toThrow("runs only on leanish-development[_<tool>]_TEST_* fixture repositories");
+    expect(request).not.toHaveBeenCalled();
+  });
+
   it("opens an explicitly pinned PR with proper triggers, inputs and no settings writes until confirmation", async () => {
     const api = new FakeGateGitHub();
     const results = await adoptGate({ ...options, java: "25" }, machine(api));

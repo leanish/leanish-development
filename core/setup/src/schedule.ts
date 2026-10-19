@@ -7,6 +7,7 @@ import { CODING_AGENTS, type CodingAgent } from "@leanish/tool-runtime/config";
 import { fileEntry, readInstallation, type InstallationOptions } from "./configuration.ts";
 import { result, type ScheduleSpec, type SetupResult } from "./contracts.ts";
 import { GUIDED_SETUP_REQUIREMENT, hasGuidedSetup, readInstalledRelease, type InstalledRelease } from "./release.ts";
+import { requireFixturesForCandidate } from "./fixtures.ts";
 import { descriptor, ownerName } from "./tools.ts";
 
 /** Without `time`/`weekday` the tool's default applies; `weekday` is a cron day (Sunday 0) and only fits weekly tools. */
@@ -55,7 +56,8 @@ export async function scheduleSpec(options: ScheduleOptions, host: ScheduleMachi
   const owner = ownerName(options.owner);
   if (!CODING_AGENTS.includes(options.agent)) throw new Error("Choose codex or claude-code");
   const cron = await scheduleCron(options);
-  await readInstallation(options, host.home);
+  const { config } = await readInstallation(options, host.home);
+  requireFixturesForCandidate(options.release, config.repos.map(({ repo }) => repo));
   const release = await host.release(options.release);
   const launcher = join(release.path, "core", "setup", "run.sh");
   if (!await hasGuidedSetup(release)) throw new Error(`Found ${release.tag}. ${GUIDED_SETUP_REQUIREMENT}`);

@@ -65,7 +65,7 @@ export async function latestRelease(commands: Commands): Promise<VerifiedRelease
 export async function candidateRelease(commands: Commands, tag: string): Promise<VerifiedRelease> {
   if (!isCandidateTag(tag)) throw new Error("A release candidate must be a vX.Y.Z-rc.N tag");
   const release = object(json(await commands.checked("gh", ["api", "--hostname", "github.com", "--method", "GET",
-    `repos/${RELEASE_REPOSITORY}/releases/tags/${tag}`], "Could not read the candidate's GitHub release; publish it as an immutable prerelease")));
+    `repos/${RELEASE_REPOSITORY}/releases/tags/${tag}`], "Could not read the candidate's GitHub release; check gh login and network, and that the candidate is published")));
   if (release["tag_name"] !== tag) throw new Error("GitHub returned a different release");
   if (release["draft"] !== false || release["prerelease"] !== true) throw new Error("The candidate must be a published prerelease");
   if (release["immutable"] !== true) throw new Error("The candidate's prerelease is not immutable");

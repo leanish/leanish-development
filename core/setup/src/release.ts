@@ -81,7 +81,7 @@ async function installed(path: string, release: VerifiedRelease): Promise<boolea
 
 export interface InstalledRelease extends VerifiedRelease { readonly path: string }
 
-export const GUIDED_SETUP_REQUIREMENT = "Guided setup needs a stable release that ships core/setup/run.sh (v0.7.0 or newer). Until such a release is published, use the manual guide: docs/adopting-tools.md.";
+export const GUIDED_SETUP_REQUIREMENT = "Guided setup needs a release that ships core/setup/run.sh (v0.7.0 or newer). Until such a release is published, use the manual guide: docs/adopting-tools.md.";
 
 /** Candidates of 0.7.0 count: they are how guided setup is accepted before its release. */
 export async function hasGuidedSetup(release: InstalledRelease): Promise<boolean> {
