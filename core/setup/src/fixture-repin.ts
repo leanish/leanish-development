@@ -49,23 +49,26 @@ async function repinRepository(api: GitHubApi, fixture: ToolRepo, release: Verif
   const rendered = repinned(current.text, release);
   const branch = `fixture-repin/${release.tag}`;
   const where = { repo, base, branch, release: release.tag, sha: release.sha };
+  if (base === branch) throw new Error(`the configured branch is ${branch} itself; refusing to commit to it`);
   if (rendered === current.text) return result("fixture-repin", "repository", "already-done", `${repo} already pins ${release.tag}`, { ...where, reason: "pinned" });
   if (!apply) return result("fixture-repin", "repository", "needs-confirmation", `${repo}: would open a PR moving ${WORKFLOW} to ${release.tag}`, { ...where, reason: "planned" });
 
-  // One rule covers every state an interrupted run can leave: the branch is the base head, or the base plus exactly this change.
+  // One rule covers every state an interrupted run can leave: the branch is the base head, or the base plus exactly this
+  // change, committed by the operator running this.
+  const operator = string(object(await required(api, "GET", "user"))["login"]);
   let head = await branchHead(api, repo, branch);
   if (head === undefined) {
     await required(api, "POST", `repos/${repo}/git/refs`, { ref: `refs/heads/${branch}`, sha: baseHead });
     head = baseHead;
   }
-  let state = await branchState(api, repo, baseHead, head, rendered);
+  let state = await branchState(api, repo, baseHead, head, rendered, operator);
   if (state === "empty") {
     // The blob SHA makes GitHub refuse the write if the workflow changed since it was read.
     await required(api, "PUT", `repos/${repo}/contents/${WORKFLOW}`, {
       message: `moving the supply-chain gate to ${release.tag}`, content: Buffer.from(rendered, "utf8").toString("base64"), sha: current.sha, branch,
     });
     head = await branchHead(api, repo, branch);
-    state = head === undefined ? "foreign" : await branchState(api, repo, baseHead, head, rendered);
+    state = head === undefined ? "foreign" : await branchState(api, repo, baseHead, head, rendered, operator);
   }
   if (state !== "ours") {
     return result("fixture-repin", "repository", "blocked", `${repo}: ${branch} has other changes or is behind ${base}; delete it and rerun`, { ...where, reason: "foreign-branch" });
@@ -80,11 +83,17 @@ async function repinRepository(api: GitHubApi, fixture: ToolRepo, release: Verif
   return result("fixture-repin", "repository", "changed", `${repo}: ${string(pr["html_url"])}`, { ...where, pr: string(pr["html_url"]), reason: open.length > 0 ? "pr-exists" : "pr-opened" });
 }
 
-async function branchState(api: GitHubApi, repo: string, baseHead: string, head: string, rendered: string): Promise<"empty" | "ours" | "foreign"> {
+async function branchState(
+  api: GitHubApi, repo: string, baseHead: string, head: string, rendered: string, operator: string,
+): Promise<"empty" | "ours" | "foreign"> {
   if (head === baseHead) return "empty";
   const comparison = object(await required(api, "GET", `repos/${repo}/compare/${baseHead}...${head}`));
   const files = comparison["files"];
+  const commits = comparison["commits"];
   if (comparison["behind_by"] !== 0 || comparison["ahead_by"] !== 1 || !Array.isArray(files) || files.length !== 1) return "foreign";
+  // A missing author (an email GitHub can't match to an account) counts as someone else's.
+  const author = Array.isArray(commits) && commits.length === 1 ? object(commits[0])["author"] : undefined;
+  if (author === null || typeof author !== "object" || (author as Record<string, unknown>)["login"] !== operator) return "foreign";
   const file = object(files[0]);
   if (file["filename"] !== WORKFLOW || file["status"] !== "modified") return "foreign";
   return (await workflowAt(api, repo, head)).text === rendered ? "ours" : "foreign";

@@ -319,7 +319,8 @@ strict UTF-8, keeping any BOM. A workflow without a caller, with an escaped,
 block-scalar or aliased `uses:`, or with another comment after a caller blocks. Already at
 that SHA and comment: `already-done`. Otherwise it uses the branch
 `fixture-repin/<tag>`, which must be the base head or the base plus exactly this
-change (any other state blocks; delete it and rerun), commits the file with its
+change in one commit by the `gh` user running it (any other state blocks; delete it
+and rerun; a configured branch with that very name blocks too), commits the file with its
 blob SHA as precondition, and opens the PR or reports the open one. It never merges.
 
 The [guided workflow](install.md) is shared by the thin `install-bump-it`,

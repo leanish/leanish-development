@@ -21,7 +21,7 @@ const workflow = (ref: string, comment?: string) => [
   "name: supply-chain", "on:", "  pull_request:", "permissions:", "  contents: read", "jobs:", "  supply-chain:", caller(ref, comment), "    with:", "      java: '25'", "",
 ].join("\n");
 
-interface Commit { readonly parent: string | undefined; readonly files: ReadonlyMap<string, string> }
+interface Commit { readonly parent: string | undefined; readonly files: ReadonlyMap<string, string>; readonly author: string }
 
 /** No network: commits, branches, contents with blob-SHA preconditions, compare and PRs. */
 class FakeFixture implements GitHubApi {
@@ -37,9 +37,9 @@ class FakeFixture implements GitHubApi {
     this.branches.set("main", this.commit(undefined, new Map([[WORKFLOW, text], ["README.md", "fixture\n"]])));
   }
 
-  commit(parent: string | undefined, files: ReadonlyMap<string, string>): string {
+  commit(parent: string | undefined, files: ReadonlyMap<string, string>, author = "dev"): string {
     const id = sha1(`commit ${this.#clock++}`);
-    this.commits.set(id, { parent, files });
+    this.commits.set(id, { parent, files, author });
     return id;
   }
 
@@ -56,6 +56,7 @@ class FakeFixture implements GitHubApi {
     const ok = (body?: unknown, status = 200): GitHubReply => ({ status, body });
     const [route, query] = path.split("?");
     const params = new URLSearchParams(query);
+    if (method === "GET" && path === "user") return ok({ login: "dev" });
     const [, name, rest] = /^repos\/([^/]+\/[^/]+)(?:\/(.*))?$/.exec(route!)!;
     if (name !== REPO && name !== OTHER) return ok({ message: "Not Found" }, 404);
     const body = payload === undefined ? {} : object(payload);
@@ -98,7 +99,7 @@ class FakeFixture implements GitHubApi {
       const after = this.commits.get(head!)!.files;
       const files = [...new Set([...before.keys(), ...after.keys()])].flatMap((filename) =>
         before.get(filename) === after.get(filename) ? [] : [{ filename, status: before.has(filename) && after.has(filename) ? "modified" : "added" }]);
-      return ok({ ahead_by: chain.length, behind_by: reached ? 0 : 1, files });
+      return ok({ ahead_by: chain.length, behind_by: reached ? 0 : 1, files, commits: chain.reverse().map((id) => ({ sha: id, author: { login: this.commits.get(id)!.author } })) });
     }
     if (rest === "pulls") {
       if (method === "GET") return ok(this.pulls.filter((pr) => `${OWNER}:${pr.head}` === params.get("head")).map((pr) => ({ number: pr.number, base: { ref: pr.base }, html_url: `https://github.com/${REPO}/pull/${pr.number}` })));
@@ -226,6 +227,25 @@ describe("fixture repin", () => {
     expect(rows).toEqual([expect.objectContaining({ status: "blocked", data: expect.objectContaining({ reason: "foreign-branch" }) })]);
     expect(exit).toBe(1);
     expect(fake.pulls).toEqual([]);
+  });
+
+  it("blocks on a repin branch whose single, matching commit is someone else's", async () => {
+    const fake = new FakeFixture(workflow(OLD));
+    const main = fake.branches.get("main")!;
+    fake.branches.set(BRANCH, fake.commit(main, new Map([...fake.commits.get(main)!.files, [WORKFLOW, workflow(NEW, "# v0.7.0")]]), "mallory"));
+    expect((await run(fake, { apply: true })).rows[0]).toMatchObject({ status: "blocked", data: { reason: "foreign-branch" } });
+    expect(fake.pulls).toEqual([]);
+  });
+
+  it("refuses a configured branch named like the repin branch, before writing", async () => {
+    const fake = new FakeFixture(workflow(OLD));
+    fake.branches.set(BRANCH, fake.branches.get("main")!);
+    const named = new Map([...configs].map(([path, text]) => [path, text.replace("branch: main", `branch: ${BRANCH}`)]));
+    const emitted: SetupResult[] = [];
+    await fixtureRepin({ bumpItConfig: "/b.yaml", secureItConfig: "/s.yaml", repo: undefined, release: "v0.7.0", apply: true },
+      (entry) => emitted.push(entry), fake, async (path) => named.get(path)!, "/home/test", async () => RELEASE);
+    expect(emitted[0]).toMatchObject({ status: "blocked", message: expect.stringContaining("refusing to commit to it") });
+    expect(fake.writes()).toEqual([]);
   });
 
   it("blocks without a PR when someone pushes to the branch right after the commit", async () => {
