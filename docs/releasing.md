@@ -12,7 +12,19 @@ unreleased changes collect under its "Unreleased" heading.
 1. Start from the latest reviewed main. Keep PAT mode documented; GitHub App mode
    remains deferred and will be an alternative to PAT mode when implemented.
 2. Tag the candidate commit on main with a lightweight `v<version>-rc.<n>` tag
-   (candidate tags never move either). Before any release PR:
+   (candidate tags never move either) and publish it as a GitHub prerelease
+   (`gh release create v<version>-rc.<n> --prerelease --verify-tag`), so the
+   guided installer can install it by name. The repository's immutable releases
+   setting makes it immutable on publication; `release --candidate` refuses it
+   otherwise. Before any release PR:
+   - When the release changes guided setup, accept it from the candidate: run the
+     guided installation for real with `release --candidate v<version>-rc.<n>` and
+     that tag as `--release`, with the fixture repositories as its opted-in
+     repositories, through gate adoption, a test run, the app's scheduled task,
+     its readback and one unattended run. A candidate only ever touches fixture
+     repositories: `gate`, `batch`, `test-run` and `schedule` refuse anything
+     else. After the stable release, move the acceptance task to the release
+     (`schedule ... --release v<version>`) or delete it.
    - Before the fixture runs, with the tools idle, delete every tool branch on the
      owner's fixture repositories so the runs start clean (GitHub closes their PRs
      with them): `node core/setup/src/cli.ts fixture-cleanup --bump-it-config <path>

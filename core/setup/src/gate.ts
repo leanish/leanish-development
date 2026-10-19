@@ -6,6 +6,7 @@ import { gateSettings } from "./gate-settings.ts";
 import { ADOPTION_FILES, GATE_SOURCE, gateWorkflow, pinnedActions, PR_MARKER, stopVersionUpdates, WORKFLOW } from "./gate-workflow.ts";
 import { githubApi, list, object, required, sha, string, type GitHubApi } from "./github.ts";
 import { readInstalledRelease, type InstalledRelease } from "./release.ts";
+import { requireFixturesForCandidate } from "./fixtures.ts";
 import { repositoryName } from "./tools.ts";
 
 export interface GateOptions {
@@ -72,6 +73,7 @@ export async function adoptGate(
   emit: (entry: SetupResult) => void = () => {},
 ): Promise<ReadonlyArray<SetupResult>> {
   const repo = repositoryName(options.repo);
+  requireFixturesForCandidate(options.release, [repo]);
   if (options.java !== undefined && !/^\d+(?:\.\d+)*$/.test(options.java)) throw new Error("Select a Java version for the gate");
   const release = await machine.release(options.release);
   const source = await readFile(join(release.path, ".github", "workflows", "supply-chain.yml"), "utf8");

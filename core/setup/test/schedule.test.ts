@@ -63,6 +63,15 @@ describe("local task specifications", () => {
     expect(await scheduleSpec({ ...options, tool: "secure-it", time: { hour: 0, minute: 0 } }, host)).toMatchObject({ cron: "0 0 * * *" });
   });
 
+  it("schedules a release candidate only for an installation of fixture repositories", async () => {
+    await mkdir(join(home, ".local/share/leanish/releases/v0.7.0-rc.1/core/setup"), { recursive: true });
+    await writeFile(join(home, ".local/share/leanish/releases/v0.7.0-rc.1/core/setup/run.sh"), "# not executed\n");
+    const candidate = { ...options, release: "v0.7.0-rc.1" };
+    await expect(scheduleSpec(candidate, host)).rejects.toThrow("runs only on leanish-development[_<tool>]_TEST_* fixture repositories");
+    await configure({ tool: "bump-it", owner: "fixtures", repos: ["fixtures/leanish-development_TEST_one"], agent: "codex", name: "Dev", email: "dev@example.com" }, home);
+    expect(await scheduleSpec({ ...candidate, owner: "fixtures" }, host)).toMatchObject({ command: expect.stringContaining("--release v0.7.0-rc.1") });
+  });
+
   it("refuses a weekday for a daily tool instead of ignoring it", async () => {
     await install("acme", "secure-it");
     await expect(scheduleSpec({ ...options, tool: "secure-it", weekday: 1 }, host)).rejects.toThrow("secure-it runs daily; choose only --time");
@@ -91,7 +100,7 @@ describe("local task specifications", () => {
 
   it("reports an installed legacy release with the manual guide, not a suggestion to select another existing release", async () => {
     const value = schedule(options, { ...host, release: async () => ({ tag: "v0.6.0", sha: "a".repeat(40), path: join(home, ".local/share/leanish/releases/v0.7.0") }) });
-    await expect(value).rejects.toThrow("Found v0.6.0. Guided setup needs a stable release that ships core/setup/run.sh (v0.7.0 or newer)");
+    await expect(value).rejects.toThrow("Found v0.6.0. Guided setup needs a release that ships core/setup/run.sh (v0.7.0 or newer)");
     await expect(value).rejects.toThrow("Until such a release is published, use the manual guide: docs/adopting-tools.md");
   });
 

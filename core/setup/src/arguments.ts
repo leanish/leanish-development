@@ -10,7 +10,8 @@ import type { FixtureRepinOptions } from "./fixture-repin.ts";
 import type { GateOptions } from "./gate.ts";
 import type { ScheduleOptions } from "./schedule.ts";
 import { ownerName, repositoryName, toolName } from "./tools.ts";
-import { isStableReleaseTag } from "./github-release.ts";
+import { isCandidateTag, isReleaseTag, isStableReleaseTag } from "./github-release.ts";
+import type { ReleaseOptions } from "./release.ts";
 
 /** A refusal whose message is safe to show next to the usage text. */
 export class InvalidArgument extends Error {}
@@ -32,7 +33,7 @@ function scheduleWeekday(value: string): number {
 
 export type SetupCommand =
   | { readonly command: "doctor"; readonly options: DoctorOptions }
-  | { readonly command: "release" }
+  | { readonly command: "release"; readonly options: ReleaseOptions }
   | { readonly command: "configure"; readonly options: ConfigureOptions }
   | { readonly command: "enroll"; readonly options: InstallationOptions & { readonly login: string } }
   | { readonly command: "verify-tokens"; readonly options: InstallationOptions }
@@ -46,7 +47,7 @@ export type SetupCommand =
 
 export const USAGE = `usage: node core/setup/src/cli.ts
   doctor [--agent codex|claude-code] [--java <major>]
-  release
+  release [--candidate vX.Y.Z-rc.N]
   configure <tool> --owner <owner> --repo <owner/repo> [--repo ...] [--agent ... --name ... --email ... --model ... --effort ...]
   enroll <tool> --owner <owner> --login <github-login>
   verify-tokens <tool> --owner <owner>
@@ -70,6 +71,7 @@ export function setupArguments(argv: ReadonlyArray<string>): SetupCommand {
   if (command === "enroll") flags["login"] = { type: "string" };
   if (["gate", "batch", "test-run", "fixture-repin"].includes(command ?? "") || scheduling) flags["release"] = { type: "string" };
   if (command === "gate") flags["confirm-settings"] = { type: "boolean" };
+  if (command === "release") flags["candidate"] = { type: "string" };
   if (scheduling) for (const name of ["time", "day"]) flags[name] = { type: "string" };
   if (command === "schedule-check") flags["task-file"] = { type: "string" };
   if (command === "fixture-cleanup" || command === "fixture-repin") {
@@ -87,7 +89,11 @@ export function setupArguments(argv: ReadonlyArray<string>): SetupCommand {
   const text = (name: string): string | undefined => typeof parsed.values[name] === "string" ? parsed.values[name] as string : undefined;
   const need = (name: string): string => { const value = text(name); if (value === undefined || value === "") throw new Error(); return value; };
   const release = text("release");
-  if (release !== undefined && !isStableReleaseTag(release)) throw new InvalidArgument("--release must be a stable vX.Y.Z tag; prerelease/rc tags and build metadata are not accepted");
+  // fixture-repin moves fixtures to releases only; the installation commands also run an explicitly installed candidate.
+  if (release !== undefined && command === "fixture-repin" && !isStableReleaseTag(release)) throw new InvalidArgument("--release must be a stable vX.Y.Z tag; prerelease/rc tags and build metadata are not accepted");
+  if (release !== undefined && !isReleaseTag(release)) throw new InvalidArgument("--release must be a stable vX.Y.Z tag or an installed vX.Y.Z-rc.N candidate; other prerelease tags and build metadata are not accepted");
+  const candidate = text("candidate");
+  if (candidate !== undefined && !isCandidateTag(candidate)) throw new InvalidArgument("--candidate must be a vX.Y.Z-rc.N tag");
   const agent = text("agent") as CodingAgent | undefined;
   if (agent !== undefined && !CODING_AGENTS.includes(agent)) throw new Error();
   const java = text("java");
@@ -95,7 +101,7 @@ export function setupArguments(argv: ReadonlyArray<string>): SetupCommand {
   const hasTool = ["configure", "enroll", "verify-tokens", "batch", "test-run"].includes(command ?? "") || scheduling;
   if (parsed.positionals.length !== (hasTool ? 1 : 0)) throw new Error();
   if (command === "doctor") return { command, options: { ...(agent === undefined ? {} : { agent }), ...(java === undefined ? {} : { java: Number(java) }) } };
-  if (command === "release") return { command };
+  if (command === "release") return { command, options: candidate === undefined ? {} : { candidate } };
   if (command === "fixture-cleanup" || command === "fixture-repin") {
     const options = {
       bumpItConfig: need("bump-it-config"), secureItConfig: need("secure-it-config"),

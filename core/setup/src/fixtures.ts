@@ -1,6 +1,7 @@
 import { parseToolConfig, type ToolRepo } from "@leanish/tool-runtime/config";
 
 import type { SetupResult } from "./contracts.ts";
+import { isCandidateTag } from "./github-release.ts";
 import type { GitHubApi } from "./github.ts";
 
 /**
@@ -8,6 +9,17 @@ import type { GitHubApi } from "./github.ts";
  * for one tool): what fixture-cleanup and fixture-repin may write to, and nothing else.
  */
 const FIXTURE = /^[A-Za-z0-9-]+\/leanish-development(?:_(?:bump-it|secure-it))?_TEST_[A-Za-z0-9_.-]+$/;
+
+/**
+ * A release candidate is installed only to accept it before its release, so it may only touch fixture repositories:
+ * never adopt a real repository's gate, run its tools there, or schedule them for an installation that has any.
+ */
+export function requireFixturesForCandidate(release: string, repos: ReadonlyArray<string>): void {
+  if (!isCandidateTag(release)) return;
+  if (repos.length === 0 || repos.some((repo) => !FIXTURE.test(repo))) {
+    throw new Error(`${release} is a release candidate; it runs only on leanish-development[_<tool>]_TEST_* fixture repositories`);
+  }
+}
 
 export interface FixtureScopeOptions {
   readonly bumpItConfig: string;
