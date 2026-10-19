@@ -76,7 +76,8 @@ their separate JSONL outcome/summary contract.
    app scheduling tool to create/update exactly one task for this tool/owner,
    covering all its configured repos. Reuse its name/title rather than creating
    a duplicate. Use the returned prompt unchanged, the local cron (or equivalent
-   daily/weekly RRULE), time zone and folder; keep worktree mode off. Discuss
+   daily/weekly RRULE), time zone and task folder (never the release checkout);
+   keep worktree mode off and add no other writable folders. Discuss
    permission requirements from the record; never disable or broaden the tools'
    own sandbox. The only permission change is `commandRule`: show its exact entry
    (a Claude `Bash(...)` allow rule, or a Codex execution rule that lets only
@@ -97,7 +98,10 @@ their separate JSONL outcome/summary contract.
    with the same `--time`/`--day` chosen in step 7.
    Reconcile differences through the app. When the app returns no readback,
    `schedule-check` blocks: ask the person to check the task in the app (name,
-   prompt, schedule, folder, enabled) and report the readback as unverified. A match proves task fields only. If unattended command
+   prompt, schedule, folder, enabled) and report the readback as unverified. A match proves task fields only.
+   For Claude, whose scheduling tool stores no folder, also check that the task
+   doesn't run in a folder holding the release or installation state, nor in a
+   permission mode that approves edits elsewhere; otherwise report that boundary unverified. If unattended command
    permission, waiting for the command (Claude's completion notification, Codex's
    session continuation) or output reading are unavailable,
    report that the app cannot run this task unattended here; leave it pending.

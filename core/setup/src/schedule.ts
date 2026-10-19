@@ -1,6 +1,6 @@
-import { readFile, realpath } from "node:fs/promises";
+import { mkdir, readFile, readlink, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { CODING_AGENTS, type CodingAgent } from "@leanish/tool-runtime/config";
 
@@ -54,6 +54,94 @@ function commandRule(agent: CodingAgent, tool: string, owner: string, args: Read
   return { file: `${process.env["CODEX_HOME"] ?? "~/.codex"}/rules/leanish-${tool}-${owner}.rules`, entry: `prefix_rule(\n    pattern = [\n${pattern}\n    ],\n    decision = "allow",\n)\n` };
 }
 
+/**
+ * The task's own folder, never the release checkout: an automation can write its project folder, and the command rule
+ * runs the launcher outside that sandbox, so the folder must not hold the launcher, its modules or installation state.
+ */
+function taskFolder(home: string, taskId: string): string {
+  return join(home, ".local", "share", "leanish", "tasks", taskId);
+}
+
+/** The components from just below home down to the task folder; the folder is always built under home. */
+function taskFolderComponents(path: string, home: string): string[] {
+  const root = resolve(home);
+  const components: string[] = [];
+  for (let component = resolve(path); component !== root; component = dirname(component)) {
+    if (component === dirname(component)) throw new Error(`Task folder ${path} must be under ${home}`);
+    components.unshift(component);
+  }
+  return components;
+}
+
+/** Throw unless the entry is a real directory the person owns that nobody else can write (or, for the folder, read). */
+function requireSafeComponent(entry: Awaited<ReturnType<typeof fileEntry>> & object, component: string, path: string): void {
+  const uid = process.getuid?.();
+  if (!entry.isDirectory()) throw new Error(`Task folder ${path} and its parents must be real directories, not symlinks or files`);
+  if (uid !== undefined && entry.uid !== uid) throw new Error(`Task folder ${path} and its parents must belong to the current user`);
+  if ((entry.mode & 0o022) !== 0) throw new Error(`${component} must not be writable by group or others; fix it by hand`);
+  if (component === resolve(path) && (entry.mode & 0o077) !== 0) throw new Error(`Task folder ${path} must be private (no group or other access); fix it by hand`);
+}
+
+/** Read-only: every component below home is safe, or the first missing one ends the walk. */
+async function checkTaskFolder(path: string, home: string): Promise<"missing" | "ready"> {
+  for (const component of taskFolderComponents(path, home)) {
+    const entry = await fileEntry(component);
+    if (entry === undefined) return "missing";
+    requireSafeComponent(entry, component, path);
+  }
+  return "ready";
+}
+
+/**
+ * The path the filesystem reaches, walked one component at a time: each symlink is followed where it's met, also when
+ * its target doesn't exist yet (the tool would create its folder through it), and each `..` climbs from where the walk
+ * really is, never lexically (path.resolve/join would collapse `link/..` before the link is followed).
+ */
+async function canonicalPath(path: string): Promise<string> {
+  if (!isAbsolute(path)) throw new Error(`${path} must be absolute`);
+  let pending = path.split(sep);
+  let current: string = sep;
+  let links = 0;
+  while (pending.length > 0) {
+    const part = pending.shift() as string;
+    if (part === "" || part === ".") continue;
+    if (part === "..") { current = dirname(current); continue; }
+    const next = current === sep ? `${sep}${part}` : `${current}${sep}${part}`;
+    if ((await fileEntry(next))?.isSymbolicLink()) {
+      if (++links > 40) throw new Error(`Too many symlinks resolving ${path}`);
+      const target = await readlink(next);
+      if (isAbsolute(target)) current = sep;
+      pending = [...target.split(sep), ...pending];
+      continue;
+    }
+    current = next;
+  }
+  return current;
+}
+
+/** The automation can write its task folder, so nothing the launcher trusts may live in it, around it or be it. */
+async function requireSeparateTaskFolder(folder: string, trusted: Readonly<Record<string, string>>): Promise<void> {
+  const task = await canonicalPath(folder);
+  for (const [name, path] of Object.entries(trusted)) {
+    const other = await canonicalPath(path);
+    if (within(task, other) || within(other, task)) throw new Error(`Task folder ${folder} must not overlap ${name} (${path}); move it in the installation config`);
+  }
+}
+
+/** Walk down from home, creating each missing component and checking each one before going into it. */
+async function ensureTaskFolder(path: string, home: string): Promise<void> {
+  for (const component of taskFolderComponents(path, home)) {
+    if (await fileEntry(component) === undefined) {
+      try { await mkdir(component, { mode: 0o700 }); } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      }
+    }
+    const entry = await fileEntry(component);
+    if (entry === undefined) throw new Error(`Could not create task folder ${path}`);
+    requireSafeComponent(entry, component, path);
+  }
+}
+
 function taskPrompt(command: string, agent: CodingAgent): string {
   return `Nobody is around to approve commands. Run ONLY this exact command, character for character: no cd, redirections, pipes, variables, &&, tail, jq or wrappers.
 
@@ -80,21 +168,25 @@ export async function scheduleSpec(options: ScheduleOptions, host: ScheduleMachi
   const owner = ownerName(options.owner);
   if (!CODING_AGENTS.includes(options.agent)) throw new Error("Choose codex or claude-code");
   const cron = await scheduleCron(options);
-  const { config } = await readInstallation(options, host.home);
+  const { path: configFile, config } = await readInstallation(options, host.home);
   requireFixturesForCandidate(options.release, config.repos.map(({ repo }) => repo));
   const release = await host.release(options.release);
   const launcher = join(release.path, "core", "setup", "run.sh");
   if (!await hasGuidedSetup(release)) throw new Error(`Found ${release.tag}. ${GUIDED_SETUP_REQUIREMENT}`);
   const command = `/bin/bash ${shellArgument(launcher)} ${options.tool} --owner ${owner} --release ${release.tag}`;
   const claude = options.agent === "claude-code";
+  const taskId = `leanish-${options.tool}-${owner}`;
+  const folder = taskFolder(host.home, taskId);
+  await requireSeparateTaskFolder(folder, { "the release checkout": release.path, "the installation config": dirname(configFile),
+    "dirs.state": config.dirs.state, "dirs.cache": config.dirs.cache, ...(config.modelPrices === undefined ? {} : { modelPrices: config.modelPrices }) });
   return {
-    taskId: `leanish-${options.tool}-${owner}`, title: `leanish-${options.tool}-${owner}`, agent: options.agent,
+    taskId, title: taskId, agent: options.agent,
     cron, timeZone: host.timeZone,
-    command, prompt: taskPrompt(command, options.agent), folder: release.path,
-    control: claude ? "Use the session's desktop scheduling tool (it has no working folder; the command's path is absolute); otherwise Code tab > Routines > New routine > Local. Set Name, Instructions, Schedule and working folder; disable isolated worktree. Reuse/update the existing name, never duplicate it."
-      : "Use the session's app scheduling tool; otherwise Scheduled (Automations) > a standalone local-project task. Set title, prompt, local schedule and project folder; use local mode, not a new worktree or cloud task. Reuse/update the existing title, never duplicate it.",
-    permissions: claude ? `The person must allow this exact Bash command: ${command} (the commandRule entry, or approve once with always allow). It needs local files, network, and the login Keychain through the tool process. Keep the Mac awake and the desktop app open.`
-      : "The person adds the commandRule execution rule, which lets exactly this launcher run outside the automation's sandbox without prompting, then restarts Codex; keep the automation's normal sandbox and never grant it full access. The launcher needs installation/cache/lock writes, network and its own login-Keychain reads; repository code stays inside the tools' own sandbox, which is never disabled. The rule is user-scoped, matches by prefix and names one release: replace that file's rule when the release changes. If policy blocks it, report unattended execution pending; don't broaden permissions. Keep the Mac awake and the desktop app open.",
+    command, prompt: taskPrompt(command, options.agent), folder,
+    control: claude ? "Use the session's desktop scheduling tool, which takes no working folder (the command's path is absolute); otherwise Code tab > Routines > New routine > Local, setting Name, Instructions, Schedule and the task folder as working folder (never the release checkout), with isolated worktree disabled. Reuse/update the existing name, never duplicate it."
+      : "Use the session's app scheduling tool; otherwise Scheduled (Automations) > a standalone local-project task. Set title, prompt, local schedule and the task folder as project folder (never the release checkout); use local mode, not a new worktree or cloud task. Reuse/update the existing title, never duplicate it.",
+    permissions: claude ? `The person must allow this exact Bash command: ${command} (the commandRule entry, or approve once with always allow). That rule doesn't limit Claude's file-edit tools: the task must not run in a folder holding the release or installation state, nor in a permission mode that approves edits elsewhere; check both, or report that boundary unverified. It needs local files, network, and the login Keychain through the tool process. Keep the Mac awake and the desktop app open.`
+      : "The person adds the commandRule execution rule, which lets exactly this launcher run outside the automation's sandbox without prompting, then restarts Codex; keep the automation's normal sandbox and never grant it full access or extra writable folders. The project folder is the task folder, never the release checkout: the automation can write its project folder, and code it could change there would run outside its sandbox. The launcher needs installation/cache/lock writes, network and its own login-Keychain reads; repository code stays inside the tools' own sandbox, which is never disabled. The rule is user-scoped, matches by prefix and names one release: replace that file's rule when the release changes. If policy blocks it, report unattended execution pending; don't broaden permissions. Keep the Mac awake and the desktop app open.",
     commandRule: commandRule(options.agent, options.tool, owner, ["/bin/bash", launcher, options.tool, "--owner", owner, "--release", release.tag], command),
     unattended: `Unverified: spec generation and readback do not prove unattended execution. If command permission, Keychain access, ${claude ? "background completion notifications" : "waiting on the running command's session"} or output reading cannot work unattended in this app/session, this task cannot run unattended here; report it pending. No launchd, CLI scheduler or cloud fallback.`,
     documentation: claude ? "https://code.claude.com/docs/en/desktop-scheduled-tasks" : "https://developers.openai.com/codex/app/automations",
@@ -103,6 +195,7 @@ export async function scheduleSpec(options: ScheduleOptions, host: ScheduleMachi
 
 export async function schedule(options: ScheduleOptions, host: ScheduleMachine = machine()): Promise<SetupResult> {
   const spec = await scheduleSpec(options, host);
+  await ensureTaskFolder(spec.folder, host.home);
   return result("schedule", "task", "needs-confirmation", "Create or reconcile this single local app task; setup never creates it. Confirm permission for real publishing runs first", { ...spec });
 }
 
@@ -164,7 +257,9 @@ export async function scheduleCheck(options: ScheduleOptions & { readonly taskFi
   if (typeof found["prompt"] !== "string" || found["prompt"].trimEnd() !== expected.prompt.trimEnd()) differences.push("prompt");
   // Claude's scheduling tool stores no working folder; its command is an absolute path, so an absent folder is fine there.
   const folderOptional = options.agent === "claude-code" && found["folder"] === undefined;
-  try {
+  // Check the expected folder itself first, so a symlinked or shared task folder can't match by realpath.
+  if (await checkTaskFolder(expected.folder, host.home) !== "ready") differences.push("folder");
+  else try {
     if (!folderOptional && (typeof found["folder"] !== "string" || await realpath(found["folder"]) !== await realpath(expected.folder))) differences.push("folder");
   } catch { differences.push("folder"); }
   return result("schedule-check", "task", differences.length === 0 ? "already-done" : "blocked",

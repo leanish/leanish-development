@@ -1,10 +1,17 @@
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { configure } from "../src/configuration.ts";
+// Lets a test act right before the code under test creates a directory, to replay a swap-in race deterministically.
+const hooks = vi.hoisted(() => ({ beforeMkdir: undefined as undefined | ((path: string) => Promise<void>) }));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, mkdir: async (...args: Parameters<typeof actual.mkdir>) => { await hooks.beforeMkdir?.(String(args[0])); return actual.mkdir(...args); } };
+});
+
+import { configPath, configure } from "../src/configuration.ts";
 import { exitCode } from "../src/contracts.ts";
 import { schedule, scheduleCheck, scheduleSpec, type ScheduleMachine } from "../src/schedule.ts";
 
@@ -20,7 +27,7 @@ beforeEach(async () => {
   await writeFile(join(home, ".local/share/leanish/releases/v0.7.0/core/setup/run.sh"), "# not executed\n");
   host = { home, timeZone: "Europe/Helsinki", release: vi.fn(async (tag) => ({ tag, sha: "a".repeat(40), path: join(home, ".local/share/leanish/releases", tag) })) };
 });
-afterEach(async () => { vi.unstubAllEnvs(); await rm(home, { recursive: true, force: true }); });
+afterEach(async () => { hooks.beforeMkdir = undefined; vi.restoreAllMocks(); vi.unstubAllEnvs(); await rm(home, { recursive: true, force: true }); });
 
 async function readback(overrides: Record<string, unknown> = {}) {
   const spec = await scheduleSpec(options, host);
@@ -119,7 +126,7 @@ describe("local task specifications", () => {
     await writeFile(join(path, "core/setup/run.sh"), "# not executed\n");
     const spec = await scheduleSpec(options, { ...host, release: async (tag) => ({ tag, sha: "a".repeat(40), path }) });
     expect(spec.command).toBe(`/bin/bash '${path.replaceAll("'", "'\\''")}/core/setup/run.sh' bump-it --owner acme --release v0.7.0`);
-    expect(spec.folder).toBe(path);
+    expect(spec.folder).toBe(join(home, ".local/share/leanish/tasks/leanish-bump-it-acme"));
   });
 
   it("requires the selected installation and an offline verified release", async () => {
@@ -139,7 +146,122 @@ describe("local task specifications", () => {
 
 });
 
+describe("task folder", () => {
+  const folder = () => join(home, ".local/share/leanish/tasks/leanish-bump-it-acme");
+  const release = () => join(home, ".local/share/leanish/releases/v0.7.0");
+
+  it("is the task's own folder outside the release, created private by schedule only and kept with its contents", async () => {
+    const spec = await scheduleSpec(options, host);
+    expect(spec.folder).toBe(folder());
+    expect(relative(release(), spec.folder).startsWith("..")).toBe(true);
+    expect(await readdir(join(home, ".local/share/leanish"))).not.toContain("tasks");
+    const file = join(home, "readback.json");
+    await writeFile(file, JSON.stringify({ id: spec.taskId, cron: spec.cron, enabled: true, prompt: spec.prompt, folder: spec.folder }));
+    expect(await scheduleCheck({ ...options, taskFile: file }, host)).toMatchObject({ status: "blocked", data: { differences: ["folder"] } });
+    expect(await readdir(join(home, ".local/share/leanish"))).not.toContain("tasks");
+    await schedule(options, host);
+    expect((await stat(folder())).mode & 0o777).toBe(0o700);
+    await writeFile(join(folder(), "left-by-a-run"), "kept\n");
+    await schedule(options, host);
+    expect(await readdir(folder())).toEqual(["left-by-a-run"]);
+    expect((await scheduleCheck({ ...options, taskFile: file }, host)).status).toBe("already-done");
+  });
+
+  it.each(["claude-code", "codex"] as const)("blocks a %s readback pointing at the release checkout", async (agent) => {
+    await schedule({ ...options, agent }, host);
+    const spec = await scheduleSpec({ ...options, agent }, host);
+    const file = join(home, "readback.json");
+    await writeFile(file, JSON.stringify({ id: spec.taskId, cron: spec.cron, enabled: true, prompt: spec.prompt, folder: release() }));
+    expect(await scheduleCheck({ ...options, agent, taskFile: file }, host)).toMatchObject({ status: "blocked", data: { differences: ["folder"] } });
+  });
+
+  it("refuses a symlinked task folder or ancestor, so a redirect to the release can't pass", async () => {
+    await mkdir(join(home, ".local/share/leanish/tasks"), { recursive: true });
+    await symlink(release(), folder());
+    await expect(schedule(options, host)).rejects.toThrow("must not overlap the release checkout");
+    const file = join(home, "readback.json");
+    await writeFile(file, JSON.stringify({ id: "leanish-bump-it-acme", cron: "17 10 * * 3", enabled: true, prompt: "", folder: release() }));
+    await expect(scheduleCheck({ ...options, taskFile: file }, host)).rejects.toThrow("must not overlap the release checkout");
+    await rm(folder());
+    await mkdir(join(home, "elsewhere-folder"), { mode: 0o700 });
+    await symlink(join(home, "elsewhere-folder"), folder());
+    await expect(schedule(options, host)).rejects.toThrow("must be real directories, not symlinks or files");
+    await rm(join(home, ".local/share/leanish/tasks"), { recursive: true });
+    await mkdir(join(home, "elsewhere"));
+    await symlink(join(home, "elsewhere"), join(home, ".local/share/leanish/tasks"));
+    await expect(schedule(options, host)).rejects.toThrow("must be real directories, not symlinks or files");
+    expect(await readdir(join(home, "elsewhere"))).toEqual([]);
+  });
+
+  it("refuses a file in its place and an existing folder others can read, without changing it", async () => {
+    await mkdir(join(home, ".local/share/leanish/tasks"), { recursive: true });
+    await writeFile(folder(), "not a folder\n");
+    await expect(schedule(options, host)).rejects.toThrow("must be real directories, not symlinks or files");
+    await rm(folder());
+    await mkdir(folder(), { mode: 0o700 });
+    await chmod(folder(), 0o755);
+    await expect(schedule(options, host)).rejects.toThrow("must be private (no group or other access)");
+    expect((await stat(folder())).mode & 0o777).toBe(0o755);
+  });
+
+  it("refuses installation state, cache or prices inside, around or aliased to the task folder", async () => {
+    const config = configPath({ tool: "bump-it", owner: "acme" }, home);
+    const original = await readFile(config, "utf8");
+    const withDir = (key: "state" | "cache", path: string) => writeFile(config, original.replace(new RegExp(`(\\n  ${key}: ).*`), `$1${path}`));
+    for (const [key, path, name] of [["state", folder(), "dirs.state"], ["state", join(folder(), "nested"), "dirs.state"],
+      ["state", join(home, ".local/share/leanish"), "dirs.state"], ["cache", join(folder(), "cache"), "dirs.cache"]] as const) {
+      await withDir(key, path);
+      await expect(scheduleSpec(options, host)).rejects.toThrow(`must not overlap ${name}`);
+      await expect(schedule(options, host)).rejects.toThrow(`must not overlap ${name}`);
+    }
+    await writeFile(config, original);
+    await schedule(options, host);
+    await symlink(join(folder(), "state"), join(home, "state-alias"));
+    await withDir("state", join(home, "state-alias"));
+    await expect(scheduleSpec(options, host)).rejects.toThrow("must not overlap dirs.state");
+    // The filesystem follows jump before its "..": state lands in the task folder, while a lexical resolve says home/state.
+    await mkdir(join(folder(), "child"));
+    await symlink(join(folder(), "child"), join(home, "jump"));
+    await symlink(`${join(home, "jump")}/../state`, join(home, "state-dotdot"));
+    await withDir("state", join(home, "state-dotdot"));
+    await expect(scheduleSpec(options, host)).rejects.toThrow("must not overlap dirs.state");
+    await symlink("jump/../state", join(home, "state-relative"));
+    await withDir("state", join(home, "state-relative"));
+    await expect(scheduleSpec(options, host)).rejects.toThrow("must not overlap dirs.state");
+    await withDir("state", `${join(home, "jump")}/../state`);
+    await expect(scheduleSpec(options, host)).rejects.toThrow("must not overlap dirs.state");
+    await writeFile(config, `${original}modelPrices: ${join(folder(), "prices.json")}\n`);
+    await expect(scheduleSpec(options, host)).rejects.toThrow("must not overlap modelPrices");
+  });
+
+  it("refuses parents or a folder another user owns", async () => {
+    await schedule(options, host);
+    vi.spyOn(process, "getuid").mockReturnValue(4242);
+    await expect(schedule(options, host)).rejects.toThrow("must belong to the current user");
+  });
+
+  it("checks each created folder before going into it, so a symlink swapped in during creation is refused", async () => {
+    await mkdir(join(home, "elsewhere"));
+    hooks.beforeMkdir = async (path) => {
+      if (path !== join(home, ".local/share/leanish/tasks")) return;
+      hooks.beforeMkdir = undefined;
+      await symlink(join(home, "elsewhere"), path);
+    };
+    await expect(schedule(options, host)).rejects.toThrow("must be real directories, not symlinks or files");
+    expect(await readdir(join(home, "elsewhere"))).toEqual([]);
+  });
+
+  it("refuses a parent others can write, without changing it", async () => {
+    await mkdir(join(home, ".local/share/leanish/tasks"), { recursive: true });
+    await chmod(join(home, ".local/share/leanish/tasks"), 0o777);
+    await expect(schedule(options, host)).rejects.toThrow("tasks must not be writable by group or others");
+    expect(await readdir(join(home, ".local/share/leanish/tasks"))).toEqual([]);
+  });
+});
+
 describe("app task readback", () => {
+  beforeEach(async () => { await schedule(options, host); });
+
   it("compares canonical folder paths, including macOS /var and /private/var aliases", async () => {
     const snapshot = await readback();
     const canonical = await realpath(snapshot.spec.folder);
@@ -217,6 +339,7 @@ describe("app task readback", () => {
     await writeFile(snapshot.file, JSON.stringify({ ...snapshot.snapshot, schedule: "RRULE:FREQ=WEEKLY;BYDAY=WE;BYHOUR=10;BYMINUTE=17;COUNT=2" }));
     expect((await snapshot.check()).status).toBe("blocked");
     await install("acme", "secure-it");
+    await schedule({ ...options, tool: "secure-it" }, host);
     const daily = await scheduleSpec({ ...options, tool: "secure-it" }, host);
     await writeFile(snapshot.file, JSON.stringify({ id: daily.taskId, enabled: true, schedule: "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=17", prompt: daily.prompt, folder: daily.folder }));
     expect((await scheduleCheck({ ...options, tool: "secure-it", taskFile: snapshot.file }, host)).status).toBe("already-done");
