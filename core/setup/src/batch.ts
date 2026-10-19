@@ -31,6 +31,8 @@ function compact(execution: Execution, repo: string) {
   const report = execution.report;
   let errors = execution.code !== 0 || report === undefined || report["status"] !== "ok" ? 1 : 0;
   let notes = 0;
+  // Coverage gaps (advisory sources a tool couldn't read): bump-it lists them, secure-it counts them. Only the count passes.
+  let gaps = 0;
   const prs = new Set<string>();
   const attention = new Map<string, string>();
   let attentionOmitted = 0;
@@ -43,6 +45,9 @@ function compact(execution: Execution, repo: string) {
     if (typeof object["outcome"] === "string" && FAILURES.has(object["outcome"])) errors++;
     for (const key of ["error", "problems", "incomplete", "errors"]) if (object[key] && (!Array.isArray(object[key]) || object[key].length > 0)) errors++;
     for (const key of ["notes", "waiting", "blocked", "leftOut"]) if (object[key] && (!Array.isArray(object[key]) || object[key].length > 0)) notes++;
+    const gap = object["gaps"];
+    if (Array.isArray(gap)) gaps += gap.length;
+    else if (typeof gap === "number" && Number.isSafeInteger(gap) && gap > 0) gaps += gap;
     // GitHub answers with the repository's canonical case, which a configured name may not share.
     const ownPullRequest = (url: unknown): url is string => typeof url === "string" && url.toLowerCase().startsWith(`https://github.com/${repo.toLowerCase()}/pull/`) && PULL_REQUEST.test(url);
     for (const key of ["pullRequest", "url"]) if (ownPullRequest(object[key])) prs.add(object[key]);
@@ -57,7 +62,7 @@ function compact(execution: Execution, repo: string) {
   if (report?.["error"]) errors++;
   const totals = report?.["totals"] as Record<string, unknown> | undefined;
   const cost = totals?.["estimatedApiCostUsd"];
-  return { outcome: errors > 0 ? "error" : "completed", errors, notes, prs: [...prs],
+  return { outcome: errors > 0 ? "error" : "completed", errors, notes, gaps, prs: [...prs],
     attention: [...attention].map(([pr, outcome]) => ({ pr, outcome })), attentionOmitted, exitCode: execution.code,
     estimatedApiCostUsd: typeof cost === "number" && Number.isFinite(cost) && cost >= 0 ? cost : null };
 }
@@ -100,6 +105,7 @@ export async function executeBatch(options: InstallationOptions, repos: Readonly
   let next = 0;
   let failed = 0;
   let commands = 0;
+  let gaps = 0;
   let outputFailure: unknown;
   const prs = new Set<string>();
   const attention = new Map<string, string>(); // by PR: the last outcome reported wins
@@ -114,6 +120,7 @@ export async function executeBatch(options: InstallationOptions, repos: Readonly
         const outcome = compact(execution, repo);
         commands++;
         if (outcome.errors > 0) failed++;
+        gaps += outcome.gaps;
         for (const pr of outcome.prs) prs.add(pr);
         attentionOmitted += outcome.attentionOmitted;
         for (const { pr, outcome: state } of outcome.attention) {
@@ -126,7 +133,7 @@ export async function executeBatch(options: InstallationOptions, repos: Readonly
   };
   await Promise.all(Array.from({ length: Math.min(8, repos.length) }, worker));
   if (outputFailure !== undefined) throw new Error("Batch output failed; active commands drained, no further work scheduled");
-  emit({ schemaVersion: 1, ...options, action: "summary", outcome: failed === 0 ? "completed" : "partial-failure", commands, failed, prs: [...prs],
+  emit({ schemaVersion: 1, ...options, action: "summary", outcome: failed === 0 ? "completed" : "partial-failure", commands, failed, gaps, prs: [...prs],
     attention: [...attention].map(([pr, state]) => ({ pr, outcome: state })), attentionOmitted });
   return failed === 0 ? 0 : 1;
 }

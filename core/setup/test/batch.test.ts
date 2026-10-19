@@ -61,6 +61,20 @@ describe("batch runner", () => {
     expect(JSON.stringify(records)).not.toContain("secret-sentinel");
   });
 
+  it("counts coverage gaps, bump-it's listed and secure-it's counted, without their text", async () => {
+    const records: Readonly<Record<string, unknown>>[] = [];
+    expect(await executeBatch(options, ["acme/one", "acme/two"], async (repo, action) => {
+      if (action === "review") return ok();
+      return { code: 0, report: { ...report, totals: { gaps: ["cost-sentinel"] },
+        result: repo === "acme/one" ? { outcome: "completed", gaps: ["secret-sentinel advisories unavailable", "another"] } : { outcome: "completed", gaps: 3 } } };
+    }, (record) => records.push(record))).toBe(0);
+    expect(records.filter((record) => record["action"] === "run").map((record) => [record["repo"], record["outcome"], record["gaps"]]))
+      .toEqual(expect.arrayContaining([["acme/one", "completed", 2], ["acme/two", "completed", 3]]));
+    expect(records.filter((record) => record["action"] === "review").every((record) => record["gaps"] === 0)).toBe(true);
+    expect(records.at(-1)).toMatchObject({ action: "summary", outcome: "completed", gaps: 5 });
+    expect(JSON.stringify(records)).not.toContain("sentinel");
+  });
+
   it("fills, but never exceeds, eight parallel chains", async () => {
     const repos = Array.from({ length: 12 }, (_, index) => `acme/r${index}`);
     let running = 0;
