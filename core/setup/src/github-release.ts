@@ -1,5 +1,5 @@
 import { Commands } from "./commands.ts";
-import { valid } from "semver";
+import { rcompare, valid } from "semver";
 
 export const RELEASE_REPOSITORY = "leanish/leanish-development";
 const SHA = /^[0-9a-f]{40}$/;
@@ -23,7 +23,10 @@ function json(text: string): unknown {
   try { return JSON.parse(text); } catch { throw new Error("GitHub returned invalid JSON"); }
 }
 
-/** Pagination is explicit; ignore rc tags even if a publisher forgot to set prerelease. */
+/**
+ * The highest stable version, not the latest publication: a maintenance release published after a newer line must not
+ * win. Pagination is explicit; rc tags are ignored even if a publisher forgot to set prerelease.
+ */
 export async function latestRelease(commands: Commands): Promise<VerifiedRelease> {
   const pages: unknown = json(await commands.checked("gh", ["api", "--hostname", "github.com", "--method", "GET", "--paginate", "--slurp",
     `repos/${RELEASE_REPOSITORY}/releases?per_page=100`], "Could not read GitHub releases; check gh login and network"));
@@ -37,7 +40,7 @@ export async function latestRelease(commands: Commands): Promise<VerifiedRelease
     const published = typeof entry["published_at"] === "string" ? Date.parse(entry["published_at"]) : NaN;
     if (!Number.isFinite(published)) throw new Error("GitHub returned an invalid release publication date");
     return { tag: entry["tag_name"] as string, immutable: entry["immutable"], published };
-  }).sort((a, b) => b.published - a.published || b.tag.localeCompare(a.tag));
+  }).sort((a, b) => rcompare(a.tag.slice(1), b.tag.slice(1)));
   const latest = releases[0];
   if (latest === undefined) throw new Error("No stable GitHub release is published");
   if (latest.immutable !== true) throw new Error("The newest stable release is not immutable; refusing an older fallback");

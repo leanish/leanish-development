@@ -8,6 +8,7 @@ import { result, exitCode, SETUP_COMMANDS, type SetupResult } from "./contracts.
 import { doctor, type DoctorOptions } from "./doctor.ts";
 import { enrollment, verifyTokens } from "./enrollment.ts";
 import { fixtureCleanup, type FixtureCleanupOptions } from "./fixture-cleanup.ts";
+import { fixtureRepin, type FixtureRepinOptions } from "./fixture-repin.ts";
 import { adoptGate, type GateOptions } from "./gate.ts";
 import { installRelease } from "./release.ts";
 import { schedule, scheduleCheck, type ScheduleOptions } from "./schedule.ts";
@@ -23,12 +24,14 @@ export interface SetupActions {
   readonly schedule: (options: ScheduleOptions) => Promise<SetupResult>;
   readonly scheduleCheck: (options: ScheduleOptions & { readonly taskFile: string }) => Promise<SetupResult>;
   readonly fixtureCleanup: (options: FixtureCleanupOptions, emit: (entry: SetupResult) => void) => Promise<ReadonlyArray<SetupResult>>;
+  readonly fixtureRepin: (options: FixtureRepinOptions, emit: (entry: SetupResult) => void) => Promise<ReadonlyArray<SetupResult>>;
 }
 
 /** Dependency injection keeps command dispatch tests away from the person's machine and GitHub. */
 export async function main(
   argv: ReadonlyArray<string>, emit: (line: string) => void = (line) => process.stdout.write(line + "\n"),
-  actions: SetupActions = { doctor, release: installRelease, configure, enroll: enrollment, verifyTokens, gate: (options, emit) => adoptGate(options, undefined, emit), batch, schedule, scheduleCheck, fixtureCleanup: (options, emit) => fixtureCleanup(options, emit) },
+  actions: SetupActions = { doctor, release: installRelease, configure, enroll: enrollment, verifyTokens, gate: (options, emit) => adoptGate(options, undefined, emit), batch, schedule, scheduleCheck, fixtureCleanup: (options, emit) => fixtureCleanup(options, emit),
+    fixtureRepin: (options, emit) => fixtureRepin(options, emit) },
 ): Promise<number> {
   let parsed: SetupCommand;
   try {
@@ -54,6 +57,7 @@ export async function main(
       case "schedule": results = [await actions.schedule(parsed.options)]; break;
       case "schedule-check": results = [await actions.scheduleCheck(parsed.options)]; break;
       case "fixture-cleanup": results = await actions.fixtureCleanup(parsed.options, publish); break;
+      case "fixture-repin": results = await actions.fixtureRepin(parsed.options, publish); break;
     }
   } catch (error) {
     results = [result(parsed.command, parsed.command, "blocked", (error as Error).message)];

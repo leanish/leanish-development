@@ -21,6 +21,7 @@ function actions(): SetupActions {
     schedule: vi.fn(async () => result("schedule", "task", "needs-confirmation", "Create the app task")),
     scheduleCheck: vi.fn(async () => result("schedule-check", "task", "already-done", "Matches")),
     fixtureCleanup: vi.fn(async () => [result("fixture-cleanup", "summary", "needs-confirmation", "Dry run")]),
+    fixtureRepin: vi.fn(async () => [result("fixture-repin", "summary", "needs-confirmation", "Dry run")]),
   };
 }
 
@@ -88,6 +89,25 @@ describe("setup command contract", () => {
     expect(handlers.fixtureCleanup).toHaveBeenLastCalledWith({ bumpItConfig: "/b.yaml", secureItConfig: "/s.yaml", repo: undefined, apply: false }, expect.any(Function));
     await main(["fixture-cleanup", ...configs, "--repo", "acme/supply-chain_TEST_one", "--apply"], () => {}, handlers);
     expect(handlers.fixtureCleanup).toHaveBeenLastCalledWith({ bumpItConfig: "/b.yaml", secureItConfig: "/s.yaml", repo: "acme/supply-chain_TEST_one", apply: true }, expect.any(Function));
+  });
+
+  it("dispatches fixture-repin with its stable release", async () => {
+    const handlers = actions();
+    const configs = ["--bump-it-config", "/b.yaml", "--secure-it-config", "/s.yaml"];
+    expect(await main(["fixture-repin", ...configs, "--release", "v0.7.0", "--apply"], () => {}, handlers)).toBe(2);
+    expect(handlers.fixtureRepin).toHaveBeenLastCalledWith({ bumpItConfig: "/b.yaml", secureItConfig: "/s.yaml", repo: undefined, apply: true, release: "v0.7.0" }, expect.any(Function));
+    expect(handlers.fixtureCleanup).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["fixture-repin", "--bump-it-config", "/b.yaml", "--secure-it-config", "/s.yaml"],
+    ["fixture-repin", "--bump-it-config", "/b.yaml", "--secure-it-config", "/s.yaml", "--release", "v0.7.0-rc.1"],
+    ["fixture-cleanup", "--bump-it-config", "/b.yaml", "--secure-it-config", "/s.yaml", "--release", "v0.7.0"],
+  ].map((argv) => ({ argv })))("rejects invalid fixture-repin arguments: $argv", async ({ argv }) => {
+    const handlers = actions();
+    expect(await main(argv, () => {}, handlers)).toBe(64);
+    expect(handlers.fixtureRepin).not.toHaveBeenCalled();
+    expect(handlers.fixtureCleanup).not.toHaveBeenCalled();
   });
 
   it.each([

@@ -1,4 +1,4 @@
-export const SETUP_COMMANDS = ["doctor", "release", "configure", "enroll", "verify-tokens", "gate", "batch", "schedule", "schedule-check", "test-run", "fixture-cleanup"] as const;
+export const SETUP_COMMANDS = ["doctor", "release", "configure", "enroll", "verify-tokens", "gate", "batch", "schedule", "schedule-check", "test-run", "fixture-cleanup", "fixture-repin"] as const;
 
 /** One JSON object per stdout line; never include subprocess output or credentials.
  * Exit codes: 0 changed/already-done; 1 blocked; 2 needs-confirmation;
