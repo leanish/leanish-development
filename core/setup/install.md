@@ -86,7 +86,8 @@ their separate JSONL outcome/summary contract.
    the task can't run unattended.
    If no scheduling tool is available, give the ready spec and its app control
    steps to the person. Do not claim a task was created or invent a tool.
-   Never read/edit app databases or app configuration directories.
+   Never read/edit app databases or app configuration directories; the one
+   exception is adding exactly the shown `commandRule` entry when the person asks.
 8. Read the task back through the app tool/control. Write only its observed
    fields to a temporary `.json` export outside app storage: `id`, `cron` or
    `schedule`, `enabled`, `prompt`, `folder`, and time zone if returned. For an

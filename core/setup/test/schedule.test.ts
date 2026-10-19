@@ -13,6 +13,7 @@ let host: ScheduleMachine;
 const options = { tool: "bump-it" as const, owner: "acme", release: "v0.7.0", agent: "codex" as const };
 const install = (owner: string, tool: "bump-it" | "secure-it" = "bump-it") => configure({ tool, owner, repos: [`${owner}/one`], agent: "codex", name: "Dev", email: "dev@example.com" }, home);
 beforeEach(async () => {
+  vi.stubEnv("CODEX_HOME", undefined);
   home = await mkdtemp(join(tmpdir(), "setup-schedule-"));
   await install("acme");
   await mkdir(join(home, ".local/share/leanish/releases/v0.7.0/core/setup"), { recursive: true });

@@ -223,7 +223,7 @@ older release. A supported release emits one
 IANA `timeZone`, `folder` (the verified release checkout), literal `command`, full
 `prompt`, app `control`, `permissions`, `commandRule` (`file` and exact `entry`: a
 Claude `Bash(...)` allow rule for `~/.claude/settings.json`, or a Codex execution rule
-for `~/.codex/rules/leanish-<tool>-<owner>.rules` whose `allow` runs that launcher
+for `~/.codex/rules/leanish-<tool>-<owner>.rules` (under `$CODEX_HOME/rules/` when set) whose `allow` runs that launcher
 outside the automation's sandbox, since it sandboxes repository code itself and
 macOS sandboxes don't nest), `unattended` caveat
 and official `documentation` URL. It neither creates a task nor reads app storage.
