@@ -59,7 +59,9 @@ node core/setup/src/cli.ts release --candidate v0.7.0-rc.1
   guided setup before its release: GitHub must publish it as a non-draft,
   immutable prerelease of exactly that tag, and it installs and verifies like a
   release, at `releases/<candidate>`. Only an explicitly named candidate is ever
-  installed; the automatic pick above never selects one.
+  installed; the automatic pick above never selects one. A candidate runs only on
+  fixture repositories (`leanish-development[_<tool>]_TEST_*`): `gate`, `batch`,
+  `test-run` and `schedule` refuse it for any other repository.
   After installation (including reuse or dependency repair), guided setup checks
   for `core/setup/run.sh` in v0.7.0 or newer (its candidates included). Without it the result is `blocked`
   (exit 1), includes the tag/path found, and keeps the completed checkout available

@@ -12,7 +12,8 @@
   for one repository), and describe the desktop app's scheduled task and check its readback (`schedule`,
   `schedule-check`): tool defaults, or the time and day the person picks. Guided setup needs stable v0.7.0 or
   newer; it never creates the app task itself, never merges and never sees a token. `release --candidate vX.Y.Z-rc.N`
-  installs a candidate published as an immutable GitHub prerelease, so guided setup is accepted before its release.
+  installs a candidate published as an immutable GitHub prerelease, so guided setup is accepted before its release; a
+  candidate runs only on the fixture repositories.
 - `fixture-cleanup` in `core/setup` deletes every `bump-it/` and `secure-it/` branch on the fixture repositories
   before a candidate's fixture runs (their PRs close with them), each only while it's unchanged; `fixture-repin` opens
   one PR per fixture moving only its gate caller to a new stable release. Both dry-run by default.
