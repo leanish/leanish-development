@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { FakeCodingAgentRunner } from "@leanish/agent-runtime/skill/fake-runner";
 import type { SkillInvocation } from "@leanish/agent-runtime/skill/runner";
 import { InMemoryWorkspace } from "@leanish/agent-runtime/working-copy/in-memory-workspace";
-import { type Machine, runToolCommand, type ToolHandlers, type ToolRunContext } from "../src/command.ts";
+import { ensurePrivateDir, type Machine, runToolCommand, type ToolHandlers, type ToolRunContext } from "../src/command.ts";
 
 const CONFIG = `
 repos:
@@ -61,6 +61,7 @@ function machine(overrides: Partial<Machine> & { readonly secretValues?: Record<
     log += chunk.toString("utf8");
   });
   const invocations: SkillInvocation[] = [];
+  const ensured: string[] = [];
   const runner = new FakeCodingAgentRunner("codex");
   runner.register("fix", (invocation) => {
     invocations.push(invocation);
@@ -87,12 +88,13 @@ function machine(overrides: Partial<Machine> & { readonly secretValues?: Record<
       if (path === "/config/agent.yaml") return CONFIG;
       throw new Error(`ENOENT: ${path}`);
     },
+    ensureDir: async (path) => { ensured.push(path); },
     workspace: () => new InMemoryWorkspace(),
     runner: () => runner,
     ...overrides,
   };
   const finalLine = () => JSON.parse(log.trim().split("\n").filter((line) => line.includes('"run finished"')).at(-1)!) as Record<string, unknown>;
-  return { fake, finalLine, invocations, requested, log: () => log };
+  return { fake, finalLine, invocations, ensured, requested, log: () => log };
 }
 
 function handlers(run: (context: ToolRunContext) => Promise<Readonly<Record<string, unknown>>>): ToolHandlers {
@@ -105,6 +107,33 @@ function handlers(run: (context: ToolRunContext) => Promise<Readonly<Record<stri
 }
 
 describe("runToolCommand", () => {
+  it("creates a missing cache directory with its parents, private to the user, and leaves an existing one alone", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tool-cache-"));
+    const cache = join(root, "installations", "acme", "secure-it");
+    await ensurePrivateDir(cache);
+    expect(statSync(cache).isDirectory()).toBe(true);
+    expect(statSync(cache).mode & 0o777).toBe(0o700);
+    await mkdir(join(root, "shared"), { mode: 0o755 });
+    await ensurePrivateDir(join(root, "shared"));
+    expect(statSync(join(root, "shared")).mode & 0o777).toBe(0o755);
+  });
+
+  it("fails the run clearly, before any GitHub request, when the cache directory can't be created", async () => {
+    const { fake, finalLine, requested } = machine({ ensureDir: async () => { throw new Error("EACCES: permission denied, mkdir '/tmp/tool-cache'"); } });
+    const run = vi.fn(async () => ({}));
+    expect(await runToolCommand(handlers(run), ["run", "leanish/widget", "--config", "/config/agent.yaml"], fake)).toBe(1);
+    expect(finalLine()).toMatchObject({ status: "error", error: expect.stringContaining("EACCES") });
+    expect(requested).toHaveLength(0);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("creates the configured cache directory before the tool's work starts, since the sandbox can't create it", async () => {
+    const { fake, ensured } = machine();
+    const seen: string[][] = [];
+    expect(await runToolCommand(handlers(async () => { seen.push([...ensured]); return {}; }), ["run", "leanish/widget", "--config", "/config/agent.yaml"], fake)).toBe(0);
+    expect(seen).toEqual([["/tmp/tool-cache"]]);
+  });
+
   it.each(["secure-it", "bump-it"] as const)("guards every %s invocation and never starts the agent on a rejected workspace", async (tool) => {
     const inputs: unknown[] = [];
     const restores: unknown[] = [];

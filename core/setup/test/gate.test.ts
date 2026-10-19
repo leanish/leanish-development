@@ -114,6 +114,11 @@ describe("gate adoption", () => {
     await expect(adoptGate(options, machine(mismatch))).rejects.toThrow("different repository");
   });
 
+  it("changes only the pin of a complete existing caller, keeping its flow lists as written", () => {
+    const caller = (sha: string, tag: string) => `name: supply-chain\non:\n  pull_request:\n    types: [opened, synchronize, reopened, edited]\n  push:\n    branches: [main]\n  schedule:\n    - cron: "17 5 * * *"\n  workflow_dispatch: {}\npermissions:\n  contents: read\njobs:\n  supply-chain:\n    uses: ${GATE_SOURCE}@${sha} # ${tag}\n`;
+    expect(gateWorkflow(caller("a".repeat(40), "v0.6.1"), pin, "main")).toBe(caller(pin.sha, pin.tag));
+  });
+
   it("patches recognized callers surgically and refuses pull_request_target", () => {
     const original = `# keep note\nname: mine\non: {push: {branches: [trunk]}, pull_request: {}}\npermissions: {contents: read}\njobs:\n  supply-chain:\n    uses: ${GATE_SOURCE}@${"a".repeat(40)} # v0.6.0\n    with: {node-version: '26'}\n`;
     const rendered = gateWorkflow(original, pin, "trunk");

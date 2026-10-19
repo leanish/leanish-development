@@ -10,7 +10,7 @@
  * interruptions included.
  */
 import { writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Writable } from "node:stream";
@@ -89,6 +89,8 @@ export interface Machine {
   readonly stderr: NodeJS.WritableStream;
   readonly now: () => Date;
   readonly readText: (path: string) => Promise<string>;
+  /** Creates a directory and its missing parents, private to the user; leaves an existing one as it is. */
+  readonly ensureDir: (path: string) => Promise<void>;
   readonly workspace: (root: string, token: string, config: ToolConfig) => Workspace;
   readonly runner: (codingAgent: CodingAgent, isolation: CodexRunnerOptions) => CodingAgentRunner;
   /** run.sh's marker file (`TOOL_REPORT_MARKER`): written once the final line is out, so run.sh doesn't write one too. */
@@ -138,6 +140,10 @@ export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray
     const write = await m.secrets.get(config.secrets.write);
     const read = await m.secrets.get(config.secrets.read);
     if (write === read) throw new Error(`${config.secrets.write} and ${config.secrets.read} hold the same token: the agent would get the write one`);
+    // The sandbox may write inside the cache but can't create it or its parents. The agent's runner creates its roots
+    // before a call, but sandboxed commands (inventories, npm, Gradle) can run first: on a fresh installation's
+    // missing `dirs.cache` they failed with EPERM.
+    await m.ensureDir(config.dirs.cache);
     const github = createGitHubClient({ env: { GITHUB_TOKEN: write }, fetch });
     const base = repo.branch ?? (await defaultBranch(repo.repo, write, fetch));
     const workspace = m.workspace(join(config.dirs.state, "workspaces"), write, config);
@@ -246,6 +252,10 @@ async function defaultBranch(repo: string, token: string, fetch: typeof globalTh
   return branch;
 }
 
+export async function ensurePrivateDir(path: string): Promise<void> {
+  await mkdir(path, { recursive: true, mode: 0o700 });
+}
+
 function defaultMachine(): Machine {
   return {
     assertAgentWorkspace,
@@ -254,6 +264,7 @@ function defaultMachine(): Machine {
     stderr: process.stderr,
     now: () => new Date(),
     readText: (path) => readFile(path, "utf8"),
+    ensureDir: ensurePrivateDir,
     reportMarker: process.env["TOOL_REPORT_MARKER"],
     workspace: (root, token, config) => new LocalGitWorkspace({ workspaceRoot: root, gitAuth: gitCloneAuth(token), commitIdentity: config.commitIdentity }),
     // Both runners get the same isolation: denied paths, the agent's env and its build cache.

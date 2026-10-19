@@ -22,6 +22,9 @@ export function pinnedActions(source: string): ReadonlyArray<string> {
 }
 
 /** Existing recognized callers are patched narrowly; unrelated workflows require a person's edit. */
+/** The yaml library pads flow collections (`[ main ]`) by default; keep the person's `[main]` as written. */
+const WRITE = { flowCollectionPadding: false } as const;
+
 export function gateWorkflow(existing: string | undefined, pin: { readonly tag: string; readonly sha: string }, branch: string, java?: string): string {
   const doc = existing === undefined ? new Document({ name: "supply-chain",
     on: { pull_request: { types: ["opened", "synchronize", "reopened", "edited"] }, push: { branches: [branch] }, schedule: [{ cron: "17 5 * * *" }], workflow_dispatch: {} },
@@ -44,7 +47,7 @@ export function gateWorkflow(existing: string | undefined, pin: { readonly tag: 
   for (const [event, value] of Object.entries({ pull_request: { types: ["opened", "synchronize", "reopened", "edited"] }, push: { branches: [branch] }, schedule: [{ cron: "17 5 * * *" }], workflow_dispatch: {} })) {
     if (!doc.hasIn(["on", event])) doc.setIn(["on", event], value);
   }
-  return doc.toString();
+  return doc.toString(WRITE);
 }
 
 export function stopVersionUpdates(existing: string): string {
@@ -56,5 +59,5 @@ export function stopVersionUpdates(existing: string): string {
     if (update === null || typeof update !== "object") throw new Error("Invalid Dependabot update entry");
     doc.setIn(["updates", index, "open-pull-requests-limit"], 0);
   }
-  return doc.toString();
+  return doc.toString(WRITE);
 }
