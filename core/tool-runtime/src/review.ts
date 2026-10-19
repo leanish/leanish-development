@@ -26,7 +26,8 @@
  *
  * Steps 1 and 3 need no model.
  */
-import type { GitHubClient, GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
+import { GitHubApiError } from "@leanish/agent-runtime/github/github-client";
+import type { GitHubClient, GitHubPullRequest, GitHubRequiredChecks } from "@leanish/agent-runtime/types/clients";
 import type { Logger } from "@leanish/agent-runtime/types/logger";
 import type { PreparedBranch, WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
 import type { Workspace } from "@leanish/agent-runtime/working-copy/workspace";
@@ -187,7 +188,7 @@ async function reviewOne(context: ReviewContext, steps: ReviewSteps, pr: GitHubP
     // Green by what the head reported, but a check the base's rulesets require may not have started. It's marked
     // ready anyway: a workflow can start only on `ready_for_review`, and waiting for it would never end. GitHub still
     // blocks the merge until it passes, and the distinct outcome, reported on this tick, tells the person.
-    const required = await context.github.requiredChecks({ repo: context.repo, branch: context.base });
+    const required = await requiredChecksOrUnknown(context, pr.number);
     const unreported = required.known ? unreportedRequired(checks, required.checks) : { missing: [], unobservable: [] };
     const unseen = !required.known ? `required checks unknown (${required.reason}); readiness used the reported checks`
       : unreported.unobservable.length > 0 ? `${unreported.unobservable.join(", ")} required but not reported, maybe by an app this token can't read` : undefined;
@@ -212,4 +213,18 @@ async function reviewOne(context: ReviewContext, steps: ReviewSteps, pr: GitHubP
   await recordState(publication, pr.number, pr.headSha, { ...state, adaptations: attempt });
   const pushed = await steps.adapt(pr, checkedOut.prepared, publication, attempt);
   return result(pushed ? "adapted" : "adaptation-unchanged", `attempt ${attempt} of ${MAX_ADAPTATIONS}`);
+}
+
+/**
+ * The base's required checks, or unknown when GitHub won't answer: readiness doesn't wait for them, so a failed read
+ * (a 5xx, a rate limit, a malformed answer) only turns into the outcome's note, as a refused one does.
+ */
+async function requiredChecksOrUnknown(context: ReviewContext, pr: number): Promise<GitHubRequiredChecks> {
+  try {
+    return await context.github.requiredChecks({ repo: context.repo, branch: context.base });
+  } catch (err) {
+    if (!(err instanceof GitHubApiError)) throw err;
+    context.logger.warn(`${context.rules.tool}: reading the base's required checks failed; marking ready on the reported checks`, { repo: context.repo, number: pr, error: err.message });
+    return { known: false, reason: err.message };
+  }
 }
