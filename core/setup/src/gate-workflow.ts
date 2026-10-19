@@ -1,7 +1,9 @@
 import { Document, isScalar, parseDocument, visit } from "yaml";
 
+import { GATE_WORKFLOW } from "@leanish/tool-runtime/edit-checks";
+
 export const WORKFLOW = ".github/workflows/supply-chain.yml";
-export const GATE_SOURCE = "leanish/leanish-development/.github/workflows/supply-chain.yml";
+export const GATE_SOURCE = `${GATE_WORKFLOW.name}/${GATE_WORKFLOW.path}`;
 export const PR_MARKER = "<!-- leanish:gate-adoption -->";
 export const ADOPTION_FILES = [WORKFLOW, ".github/dependabot.yml", ".github/dependabot.yaml"] as const;
 

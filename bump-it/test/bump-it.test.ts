@@ -157,7 +157,8 @@ describe("bump-it run", () => {
       const actual = defaultDeps();
       let invoked = false;
       const agent: ToolRunContext["agent"] = async (call) => {
-        expect(call.input).toMatchObject({ mode: "resolve", toolWritten: rewritten ? ["package-lock.json"] : [] });
+        // The tool rewrites the pin in the conflicted workflow itself; the agent only resolves code.
+        expect(call.input).toMatchObject({ mode: "resolve", toolWritten: rewritten ? ["package-lock.json", path] : [path] });
         expect(call.restoredFiles).toMatchObject([{ path: "package-lock.json", sha256: expect.any(String), index: expect.any(String) }]);
         expect((call.input as { conflicted?: string[] }).conflicted ?? []).toEqual(codeConflict ? ["app.ts"] : []);
         expect(git("rev-parse", "HEAD")).toBe(oldHead);
@@ -211,7 +212,8 @@ describe("bump-it run", () => {
     const root = await mkdtemp(fileURLToPath(new URL("../../.retarget-test-", import.meta.url)));
     try {
       const path = ".github/workflows/supply-chain.yml";
-      const name = "leanish/leanish-development";
+      // Another reusable workflow than the gate's: its major keeps the agent's pass.
+      const name = "acme/workflows";
       const workflow = (sha: string, tag: string) => `on: push\njobs:\n  gate:\n    uses: ${name}/.github/workflows/supply-chain.yml@${sha} # ${tag}\n`;
       const baseFiles = { [path]: workflow("a".repeat(40), "v0.4.0"), "EXPECTED.md": "base expectations\n", "README.md": "base docs\n" };
       const bump = candidate({ ecosystem: "GitHub Actions", name, from: "v0.4.0", minor: undefined, major: { version: "v0.6.0", line: "0.6" }, declarations: [], locations: [path] });
@@ -236,9 +238,12 @@ describe("bump-it run", () => {
         expect(git("rev-parse", "HEAD")).toBe(baseSha);
         expect(git("show", `HEAD:${path}`)).toContain("v0.4.0");
         expect(git("diff", "--cached", "--name-only")).toBe("");
-        expect(git("diff", "--name-only", baseSha)).toBe("");
-        expect(git("diff", "--name-only")).toBe("");
-        for (const [path, text] of Object.entries(baseFiles)) expect(await readFile(join(wc.path, path), "utf8")).toBe(text);
+        // Only the pin, which the tool wrote and declares, differs from the base.
+        expect(git("diff", "--name-only", baseSha)).toBe(path);
+        expect(git("diff", "--name-only")).toBe(path);
+        expect(input.toolWritten).toEqual([path]);
+        expect(await readFile(join(wc.path, path), "utf8")).toBe(workflow("1".repeat(40), "v0.6.0"));
+        for (const [file, text] of Object.entries(baseFiles)) if (file !== path) expect(await readFile(join(wc.path, file), "utf8")).toBe(text);
         expect(input.moves).toMatchObject([{ from: "v0.4.0", to: "v0.6.0", commitSha: "1".repeat(40) }]);
         expect(input).not.toHaveProperty("reconciliation");
         expect(new SchemaValidator().validate(skill.inputSchema!, input)).toEqual([]);
@@ -247,7 +252,7 @@ describe("bump-it run", () => {
         return h.context.agent(call);
       };
       vi.mocked(runCompare).mockResolvedValue({ headFindings: [], failures: problem === "compare" ? ["new advisory"] : [], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, group: (id: string) => id, cooldown: { evaluated: true, releaseAgeDays: 7, held: [] } });
-      const deps = { ...h.deps, publicationParent: actual.publicationParent, trees: actual.trees, snapshot: actual.snapshot, candidateTree: actual.candidateTree, changedBetween: actual.changedBetween, linkProblems: actual.linkProblems,
+      const deps = { ...h.deps, publicationParent: actual.publicationParent, trees: actual.trees, snapshot: actual.snapshot, candidateTree: actual.candidateTree, changedBetween: actual.changedBetween, linkProblems: actual.linkProblems, writeFile: actual.writeFile,
         revert: async (copy: WorkingCopy, sha: string) => {
           const paths = await actual.revert(copy, sha);
           if (problem === "workspace") await writeFile(join(copy.path, "README.md"), "unexpected before agent\n");
@@ -288,6 +293,38 @@ describe("bump-it run", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+  it("moves the gate's own workflow itself, without the agent, keeping a stale comment the agent would have rewritten", async () => {
+    vi.mocked(runCompare).mockReset();
+    const root = await mkdtemp(fileURLToPath(new URL("../../.retarget-test-", import.meta.url)));
+    try {
+      const path = ".github/workflows/supply-chain.yml";
+      const name = "leanish/leanish-development";
+      const workflow = (sha: string, tag: string) => `# The gate (leanish/supply-chain): see packages/ci/README.md.\non: push\njobs:\n  gate:\n    uses: ${name}/.github/workflows/supply-chain.yml@${sha} # ${tag}\n`;
+      const baseFiles = { [path]: workflow("a".repeat(40), "v0.4.0"), "README.md": "base docs\n" };
+      const bump = candidate({ ecosystem: "GitHub Actions", name, from: "v0.4.0", minor: undefined, major: { version: "v0.6.0", line: "0.6" }, declarations: [], locations: [path] });
+      const branch = branchFor(RULES, NOW, major(bump).topic);
+      const fixture = await retargetRepository(root, REPO, branch, baseFiles, { [path]: workflow("b".repeat(40), "v0.5.2"), "README.md": "base docs\n" }, false);
+      const { workingCopy: wc, oldBase, oldHead } = fixture;
+      const pr = await prFor(major({ ...bump, major: { version: "v0.5.2", line: "0.5" } }), {
+        headRef: branch, headSha: oldHead, body: withMarker(RULES, planSection(await planFor(major({ ...bump, major: { version: "v0.5.2", line: "0.5" } }), { files: new Map(), changes: [], notes: [] }, async () => "b".repeat(40))), { head: oldHead, base: oldBase, adaptations: 0 }),
+      });
+      const h = harness({ prs: [pr], bumps: [bump] });
+      h.workspace.prepareBranch = fixture.workspace.prepareBranch.bind(fixture.workspace);
+      h.workspace.publishBranch = fixture.publishBranch;
+      const actual = defaultDeps();
+      vi.mocked(runCompare).mockResolvedValue({ headFindings: [], failures: [], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, group: (id: string) => id, cooldown: { evaluated: true, releaseAgeDays: 7, held: [] } });
+      const deps = { ...h.deps, publicationParent: actual.publicationParent, trees: actual.trees, snapshot: actual.snapshot, candidateTree: actual.candidateTree, changedBetween: actual.changedBetween, linkProblems: actual.linkProblems, writeFile: actual.writeFile, revert: actual.revert, verify: verifyPlan };
+      const agent: ToolRunContext["agent"] = async () => { throw new Error("the gate's major needs no agent"); };
+      const result = await bumpIt(deps).run({ ...h.context, workingCopy: wc, agent });
+      expect(result, JSON.stringify(result)).toMatchObject({ units: [{ outcome: "nothing-to-move" }, { outcome: "updated" }] });
+      expect(fixture.publications).toHaveLength(1);
+      expect(await readFile(join(wc.path, path), "utf8")).toBe(workflow("1".repeat(40), "v0.6.0"));
+      expect(h.github.prs.get(pr.number)!.title).toBe(`moving ${name} to v0.6.0`);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("adds wrapper moves to the routine and its own major, sharing the planner and reading the jar before verification", async () => {
     const h = harness({ bumps: [] });
     const planner = { candidates: async () => wrapperCandidates(), verify: async () => [] };

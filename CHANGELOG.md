@@ -10,6 +10,15 @@
 - `schedule`'s command rule says what it replaces (`commandRule.replaces`): the exact form of earlier releases' Claude
   entries for that tool and owner, or the whole Codex rule file.
 
+### Changed
+
+- bump-it writes planned action pins itself, as it writes npm files and wrappers, and declares them to the agent as
+  tool-written. A plan the tool writes entirely (a routine, or a major of the gate's own reusable workflow, whose
+  caller verification already lets change only in its pin) no longer runs the agent. On v0.7.0's repin pass an agent
+  asked to move the gate pin also rewrote a stale comment in that workflow, which verification rightly refused. A gate
+  release that changes the caller's inputs still needs a person: its pin PR fails in CI, as the agent's edit failed
+  verification before.
+
 ### Fixed
 
 - A `HOME` ending in a slash no longer makes guided setup climb past it while reading or writing an installation.

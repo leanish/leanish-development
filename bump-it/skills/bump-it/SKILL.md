@@ -1,6 +1,6 @@
 ---
 name: bump-it
-description: Apply bump-it's selected Gradle declarations and action pins, adapting code only for a major. npm and wrapper files are written by the tool and must remain unchanged.
+description: Apply bump-it's selected Gradle declarations, adapting code only for a major. npm files, wrapper files and action pins are written by the tool and must remain unchanged.
 compatibleCodingAgents: [codex, claude-code]
 inputSchema:
   type: object
@@ -98,13 +98,15 @@ or touch git metadata. Leave no temporary files: everything in the working tree 
 - `gradle-wrapper`: already generated and applied by the tool. Never touch wrapper files: gradlew, gradlew.bat,
   gradle/wrapper/gradle-wrapper.properties or gradle/wrapper/gradle-wrapper.jar. Keep their bytes and executable
   modes unchanged in every editing mode. Do not run the wrapper task or download/replace a wrapper yourself.
-- `action-pin`: replace the planned action's uses in the named files with its same owner/repo/path at `commitSha # to`.
-  Preserve the action's path. When a file has several versions, move only the uses at `from` to that move's target.
+- `action-pin`: already written by the tool in each file listed in `toolWritten` (its same owner/repo/path at
+  `commitSha # to`); keep those `uses:` lines and their comments as they are. Only for a file not in `toolWritten`,
+  write it yourself: replace the planned action's uses with its same owner/repo/path at `commitSha # to`, preserving
+  the action's path, and when a file has several versions move only the uses at `from` to that move's target.
 - Never edit a dependency version outside the supplied moves. The tool-written npm graph can already include
   refreshed or induced transitive versions absent from `moves`; preserve them exactly as written, even if another
   open PR picked different versions. Do not revert them for being outside the move list or resolve them yourself.
 - Never change .github/dependency-floors.json, supply-chain.json, supply-chain-exceptions.json, or workflows/actions
-  beyond the supplied pins.
+  beyond the supplied pins, not even a comment there: verification refuses any other change to those files.
 - Code, tests, docs and manifest scripts/config may change only for `kind: major`, to adapt to that major.
 
 ## Code and comments
