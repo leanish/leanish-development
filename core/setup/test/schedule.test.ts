@@ -46,7 +46,7 @@ describe("local task specifications", () => {
       expect(value.data?.unattended).toContain("completion notifications");
     } else {
       expect(value.data?.prompt).toContain("continuation/wait facility for that same session");
-      expect(value.data?.prompt).toContain("do not restart it");
+      expect(value.data?.prompt).toContain("never stop or restart it");
       expect(value.data?.prompt).not.toContain("completion notification");
       expect(value.data?.unattended).toContain("session");
     }
@@ -181,6 +181,9 @@ describe("app task readback", () => {
       expect(value.data?.differences).toEqual(agent === "claude-code" ? [] : ["folder"]);
     }
     const claude = await scheduleSpec({ ...options, agent: "claude-code" }, host);
+    const crossed = join(home, "crossed.json");
+    await writeFile(crossed, JSON.stringify({ id: claude.taskId, cron: claude.cron, enabled: true, prompt: claude.prompt, folder: claude.folder }));
+    expect((await scheduleCheck({ ...options, agent: "codex", taskFile: crossed }, host)).data?.differences).toEqual(["prompt"]);
     const wrong = join(home, "wrong-folder.json");
     await writeFile(wrong, JSON.stringify({ id: claude.taskId, cron: claude.cron, enabled: true, prompt: claude.prompt, folder: "/wrong" }));
     expect((await scheduleCheck({ ...options, agent: "claude-code", taskFile: wrong }, host)).data?.differences).toEqual(["folder"]);

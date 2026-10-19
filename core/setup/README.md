@@ -269,10 +269,10 @@ and internal whitespace still matter. Folders are compared after `realpath` on
 both sides, so macOS `/var` and `/private/var` aliases match. A missing or
 unresolvable folder blocks, except that a Claude readback may omit the folder: Claude's
 scheduling tool stores none, and the command is an absolute path (a folder it does
-return is still compared). Codex's automation tool returned no task fields in the
-0.7.0 acceptance: then the person's visual check of the automation (name, prompt,
-schedule, project folder, enabled) stands in for the readback, which stays
-unverified. An omitted time zone means the app's local schedule; when present
+return is still compared). Codex's automation tool may return no task fields:
+`schedule-check` then blocks, and the person's visual check of the automation
+(name, prompt, schedule, project folder, enabled) is recorded as the evidence,
+with the readback reported unverified. An omitted time zone means the app's local schedule; when present
 it must be `local` or the generated IANA zone. `schedule` may replace `cron` with
 a five-field cron or `RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=17` / a weekly RRULE with
 `BYDAY=WE`. Only daily/weekly rules with optional `INTERVAL=1` and `BYSECOND=0`
