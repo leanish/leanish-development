@@ -10,7 +10,8 @@
   fine-grained PAT forms and the Keychain commands the person runs (`enroll`), check the tokens' reads
   (`verify-tokens`), open the gate adoption PR and propose its settings (`gate`), run the tools (`batch`, `test-run`
   for one repository), and describe the desktop app's scheduled task and check its readback (`schedule`,
-  `schedule-check`): tool defaults, or the time and day the person picks. Guided setup needs stable v0.7.0 or
+  `schedule-check`): tool defaults, or the time and day the person picks, plus the exact rule each app needs to run
+  the launcher unattended (a Claude `Bash(...)` allow rule, or a Codex execution rule). Guided setup needs stable v0.7.0 or
   newer; it never creates the app task itself, never merges and never sees a token. `release --candidate vX.Y.Z-rc.N`
   installs a candidate published as an immutable GitHub prerelease, so guided setup is accepted before its release; a
   candidate runs only on the fixture repositories.
