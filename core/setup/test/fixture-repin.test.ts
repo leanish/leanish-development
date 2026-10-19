@@ -8,8 +8,8 @@ import type { GitHubApi, GitHubReply } from "../src/github.ts";
 import { object } from "../src/github.ts";
 
 const OWNER = "acme";
-const REPO = `${OWNER}/supply-chain_TEST_one`;
-const OTHER = `${OWNER}/supply-chain_TEST_two`;
+const REPO = `${OWNER}/leanish-development_TEST_one`;
+const OTHER = `${OWNER}/leanish-development_TEST_two`;
 const OLD = "1".repeat(40);
 const NEW = "2".repeat(40);
 const RELEASE = { tag: "v0.7.0", sha: NEW };

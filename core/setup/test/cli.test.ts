@@ -87,8 +87,8 @@ describe("setup command contract", () => {
     const configs = ["--bump-it-config", "/b.yaml", "--secure-it-config", "/s.yaml"];
     expect(await main(["fixture-cleanup", ...configs], () => {}, handlers)).toBe(2);
     expect(handlers.fixtureCleanup).toHaveBeenLastCalledWith({ bumpItConfig: "/b.yaml", secureItConfig: "/s.yaml", repo: undefined, apply: false }, expect.any(Function));
-    await main(["fixture-cleanup", ...configs, "--repo", "acme/supply-chain_TEST_one", "--apply"], () => {}, handlers);
-    expect(handlers.fixtureCleanup).toHaveBeenLastCalledWith({ bumpItConfig: "/b.yaml", secureItConfig: "/s.yaml", repo: "acme/supply-chain_TEST_one", apply: true }, expect.any(Function));
+    await main(["fixture-cleanup", ...configs, "--repo", "acme/leanish-development_TEST_one", "--apply"], () => {}, handlers);
+    expect(handlers.fixtureCleanup).toHaveBeenLastCalledWith({ bumpItConfig: "/b.yaml", secureItConfig: "/s.yaml", repo: "acme/leanish-development_TEST_one", apply: true }, expect.any(Function));
   });
 
   it("dispatches fixture-repin with its stable release", async () => {

@@ -4,12 +4,14 @@
 
 ### Added
 
-- `fixture-cleanup` in `core/setup` deletes every `bump-it/` and `secure-it/` branch on the `supply-chain_TEST_*`
-  fixture repositories before a candidate's fixture runs (their PRs close with them), each only while it's unchanged;
-  `fixture-repin` opens one PR per fixture moving only its gate caller to a new stable release. Both dry-run by default.
+- `fixture-cleanup` in `core/setup` deletes every `bump-it/` and `secure-it/` branch on the fixture repositories
+  before a candidate's fixture runs (their PRs close with them), each only while it's unchanged; `fixture-repin` opens
+  one PR per fixture moving only its gate caller to a new stable release. Both dry-run by default.
 
 ### Changed
 
+- The fixture repositories are renamed from `supply-chain_TEST_<case>` to `leanish-development_TEST_<case>`, or
+  `leanish-development_<tool>_TEST_<case>` for a case designed for one tool; both commands accept only these names.
 - `core/setup`'s `release` picks the highest stable version, not the latest publication, so a maintenance release
   published after a newer line isn't installed.
 - Shared packages now live in `core/agent-runtime` (`@leanish/agent-runtime`), `core/tool-runtime`

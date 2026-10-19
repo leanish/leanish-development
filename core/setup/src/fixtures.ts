@@ -3,8 +3,11 @@ import { parseToolConfig, type ToolRepo } from "@leanish/tool-runtime/config";
 import type { SetupResult } from "./contracts.ts";
 import type { GitHubApi } from "./github.ts";
 
-/** The owner's fixture repositories: what fixture-cleanup and fixture-repin may write to, and nothing else. */
-const FIXTURE = /^[A-Za-z0-9-]+\/supply-chain_TEST_[A-Za-z0-9_.-]+$/;
+/**
+ * The owner's fixture repositories, `leanish-development[_<tool>]_TEST_<case>` (the tool segment for a case designed
+ * for one tool): what fixture-cleanup and fixture-repin may write to, and nothing else.
+ */
+const FIXTURE = /^[A-Za-z0-9-]+\/leanish-development(?:_(?:bump-it|secure-it))?_TEST_[A-Za-z0-9_.-]+$/;
 
 export interface FixtureScopeOptions {
   readonly bumpItConfig: string;
@@ -21,14 +24,14 @@ export class RateLimited extends Error {
 /** Evidence GitHub didn't return completely or readably; nothing is written on it. */
 export class IncompleteEvidence extends Error {}
 
-/** Both tools' fixture configs, which must list the same repositories and branches, all of them `supply-chain_TEST_*`. */
+/** Both tools' fixture configs, which must list the same repositories and branches, all of them fixtures. */
 export async function fixtureScope(options: FixtureScopeOptions, read: (path: string) => Promise<string>, home: string): Promise<ReadonlyArray<ToolRepo>> {
   const bumpIt = parseToolConfig("bump-it", await read(options.bumpItConfig), options.bumpItConfig, home).repos;
   const secureIt = parseToolConfig("secure-it", await read(options.secureItConfig), options.secureItConfig, home).repos;
   const key = (repos: ReadonlyArray<ToolRepo>) => repos.map((entry) => `${entry.repo.toLowerCase()} ${entry.branch ?? ""}`).sort().join("\n");
   if (key(bumpIt) !== key(secureIt)) throw new Error("The bump-it and secure-it fixture configs must list the same repositories and branches");
   const outside = bumpIt.find((entry) => !FIXTURE.test(entry.repo));
-  if (outside !== undefined) throw new Error(`${outside.repo} isn't a supply-chain_TEST_* fixture repository; refusing to touch it`);
+  if (outside !== undefined) throw new Error(`${outside.repo} isn't a leanish-development[_<tool>]_TEST_* fixture repository; refusing to touch it`);
   if (options.repo === undefined) return bumpIt;
   const selected = bumpIt.filter((entry) => entry.repo.toLowerCase() === options.repo!.toLowerCase());
   if (selected.length === 0) throw new Error("--repo must be one of the fixture configs' repositories");
