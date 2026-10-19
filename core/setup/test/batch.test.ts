@@ -16,6 +16,22 @@ let root: string | undefined;
 afterEach(async () => { vi.unstubAllEnvs(); if (root !== undefined) await rm(root, { recursive: true, force: true }); root = undefined; });
 
 describe("batch runner", () => {
+  it("matches PRs whatever the configured name's case, and lists a PR reported twice once", async () => {
+    const records: Readonly<Record<string, unknown>>[] = [];
+    const reviewed = { ...report, result: { reviewed: [{ number: 1, url: "https://github.com/acme/one/pull/1", outcome: "closed" }] } };
+    await executeBatch(options, ["Acme/One"], async () => ({ code: 0, report: reviewed }), (record) => records.push(record));
+    expect(records.at(-1)).toMatchObject({ prs: ["https://github.com/acme/one/pull/1"], attention: [{ pr: "https://github.com/acme/one/pull/1", outcome: "closed" }] });
+  });
+
+  it("counts attention entries past its limit instead of dropping them silently", async () => {
+    const records: Readonly<Record<string, unknown>>[] = [];
+    const reviewed = Array.from({ length: 102 }, (_, index) => ({ number: index, url: `https://github.com/acme/one/pull/${index}`, outcome: "held" }));
+    await executeBatch(options, ["acme/one"], async (_repo, action) => action === "review" ? { code: 0, report: { ...report, result: { reviewed } } } : ok(), (record) => records.push(record));
+    expect(records[0]).toMatchObject({ attentionOmitted: 2 });
+    expect((records[0]!["attention"] as unknown[]).length).toBe(100);
+    expect(records.at(-1)).toMatchObject({ attentionOmitted: 2 });
+  });
+
   it("keeps review outcomes a person should hear about, with their PR, and never the tool's free text", async () => {
     const records: Readonly<Record<string, unknown>>[] = [];
     const reviewed = { ...report, result: { reviewed: [
@@ -26,8 +42,8 @@ describe("batch runner", () => {
     ] } };
     expect(await executeBatch(options, ["acme/one"], async (_repo, action) => action === "review" ? { code: 0, report: reviewed } : ok(), (record) => records.push(record))).toBe(0);
     const expected = [{ pr: "https://github.com/acme/one/pull/1", outcome: "closed" }, { pr: "https://github.com/acme/one/pull/2", outcome: "no-checks" }];
-    expect(records[0]).toMatchObject({ action: "review", outcome: "completed", errors: 0, notes: 2, attention: expected });
-    expect(records.at(-1)).toMatchObject({ action: "summary", outcome: "completed", attention: expected });
+    expect(records[0]).toMatchObject({ action: "review", outcome: "completed", errors: 0, notes: 0, attention: expected, attentionOmitted: 0 });
+    expect(records.at(-1)).toMatchObject({ action: "summary", outcome: "completed", attention: expected, attentionOmitted: 0 });
     expect(JSON.stringify(records)).not.toContain("secret-sentinel");
   });
 

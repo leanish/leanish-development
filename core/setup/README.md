@@ -299,8 +299,11 @@ Two commands maintain the owner's fixture repositories, whose seeded old or
 vulnerable dependencies must stay as they are. Both take both tools' fixture
 configs (the operator's `agent-fixtures.yaml` for each tool), which must list the
 same repositories and branches, all named `<owner>/leanish-development_TEST_<case>`
-or, for a case designed for one tool, `<owner>/leanish-development_<tool>_TEST_<case>`; anything
-else blocks before any GitHub request. `--repo` restricts a run to one of them.
+or, for a case designed for one tool, `<owner>/leanish-development_<tool>_TEST_<case>`;
+anything else blocks before any GitHub request. Before writing to a fixture, both
+check that GitHub answers it under the configured name: a renamed or transferred
+repository answers its old name through a redirect, and is refused until the
+configs name it again. `--repo` restricts a run to one of them.
 Both are dry runs unless `--apply` (planned writes are `needs-confirmation`
 rows, exit 2), use the operator's `gh` authentication like `gate`, and stop at
 GitHub's rate limit (REST or GraphQL), listing the repositories not run. A final
@@ -344,8 +347,9 @@ Batch JSONL uses a separate outcome contract: `schemaVersion`, `tool`, `owner`,
 `repo`, `action` (`review`/`run`), `outcome`, `errors`, `notes`, `prs`, `attention`,
 `exitCode` and nullable `estimatedApiCostUsd`. `attention` lists `{pr, outcome}` for
 review outcomes a person should hear about (`closed` after failing CI, `no-checks`,
-`held`, `adaptation-unchanged`, `left-alone`), each also counted as a note; only
-those fixed names pass, never the tool's detail text. Only bounded structured final
+`held`, `adaptation-unchanged`, `left-alone`; the last two are waiting states, not
+problems), at most 100 per command and 500 per summary, with `attentionOmitted`
+counting the rest; only those fixed names pass, never the tool's detail text. Only bounded structured final
 reports are inspected; raw child messages are discarded. The final `action: "summary"`
 reports `commands`, `failed`, unique PR URLs, every `attention` entry and
 `completed`/`partial-failure`. Startup failures produce an error summary with zero
