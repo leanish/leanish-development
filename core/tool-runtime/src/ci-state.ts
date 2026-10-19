@@ -31,7 +31,7 @@ const RUNNING_RUN_STATUSES: ReadonlySet<string> = new Set(["queued", "in_progres
  *
  * "All observed checks passed", not "all required checks passed": a required
  * check that never started is invisible here — the same blind spot as
- * `gh pr checks`. `unreportedRequired` covers it before a draft is marked ready.
+ * `gh pr checks`. `unreportedRequired` names such checks when a draft is marked ready.
  */
 export function classifyCi(checks: GitHubHeadChecks): CiConclusion {
   const { checkRuns, statuses } = checks;
@@ -60,9 +60,9 @@ export const ACTIONS_APP_ID = 15368;
 
 /**
  * The required checks the head hasn't reported. `missing`: bound to Actions, whose jobs `headChecks` reads, so one
- * that never started means the head isn't ready however green the rest is. `unobservable`: bound to another app or to
- * any source, which another app's check run can satisfy and `headChecks` can't read without the Checks permission;
- * blocking on those could keep a ready PR a draft forever. A commit status of that name still counts as reported.
+ * that hasn't started is known not to have run on the head. `unobservable`: bound to another app or to any source,
+ * which another app's check run can satisfy and `headChecks` can't read without the Checks permission. A commit
+ * status of that name still counts as reported.
  */
 export function unreportedRequired(checks: GitHubHeadChecks, required: ReadonlyArray<GitHubRequiredCheck>): { readonly missing: string[]; readonly unobservable: string[] } {
   const reported = new Set([...checks.checkRuns.map((run) => run.name), ...checks.statuses.map((status) => status.context)]);

@@ -63,6 +63,14 @@ describe("reviewOpenPullRequests", () => {
     expect(github.calls.filter((call) => call.startsWith("requiredChecks"))).toEqual(["requiredChecks leanish/widget main"]);
   });
 
+  it("marks a draft ready once, never waiting on a required check that only starts when the PR is ready", async () => {
+    const github = new FakeGitHub(ownPr());
+    github.required = { known: true, checks: [{ context: "release-gate", integrationId: 15368 }] };
+    expect((await reviewOpenPullRequests(context(github), steps()))[0]?.outcome).toBe("ready-missing-required");
+    expect(github.prs.get(7)?.isDraft).toBe(false);
+    expect((await reviewOpenPullRequests(context(github), steps()))[0]?.outcome).toBe("already-ready");
+  });
+
   it("leaves a PR a person made ready alone even when a required check is missing", async () => {
     const github = new FakeGitHub(ownPr({ isDraft: false }));
     github.required = { known: true, checks: [{ context: "supply-chain / cooldown", integrationId: 15368 }] };
@@ -79,21 +87,23 @@ describe("reviewOpenPullRequests", () => {
 
   it.each([
     ["a required check that never started", [{ name: "supply-chain / supply-chain", conclusion: "success" }], [], [{ context: "supply-chain / supply-chain", integrationId: 15368 }, { context: "supply-chain / cooldown", integrationId: 15368 }],
-      { outcome: "waiting-required", detail: "supply-chain / cooldown required on main but not reported on the head" }],
+      { outcome: "ready-missing-required", detail: "supply-chain / cooldown required on main but not reported on the head yet" }, false],
     ["a reported failure next to a missing required check", [{ name: "supply-chain / supply-chain", conclusion: "failure" }], [], [{ context: "supply-chain / cooldown", integrationId: 15368 }],
-      { outcome: "adapted" }],
+      { outcome: "adapted" }, true],
     ["a required check another app reports", [{ name: "supply-chain / supply-chain", conclusion: "success" }], [{ context: "supply-chain / cooldown", state: "success" }], [{ context: "supply-chain / cooldown", integrationId: 15368 }, { context: "CodeQL", integrationId: 57789 }],
-      { outcome: "marked-ready", detail: "CodeQL required but not reported, maybe by an app this token can't read" }],
+      { outcome: "marked-ready", detail: "CodeQL required but not reported, maybe by an app this token can't read" }, false],
     ["a required check any source can report", [{ name: "check", conclusion: "success" }], [], [{ context: "Analyze", integrationId: undefined }],
-      { outcome: "marked-ready", detail: "Analyze required but not reported, maybe by an app this token can't read" }],
+      { outcome: "marked-ready", detail: "Analyze required but not reported, maybe by an app this token can't read" }, false],
+    ["a missing Actions check next to one another app may report", [{ name: "check", conclusion: "success" }], [], [{ context: "gate / cooldown", integrationId: 15368 }, { context: "CodeQL", integrationId: 57789 }],
+      { outcome: "ready-missing-required", detail: "gate / cooldown required on main but not reported on the head yet; CodeQL required but not reported, maybe by an app this token can't read" }, false],
     ["requirements it can't read", [{ name: "check", conclusion: "success" }], [], undefined,
-      { outcome: "marked-ready", detail: "required checks unknown (rules unreadable (HTTP 403)); readiness used the reported checks" }],
-  ] as const)("readiness with %s", async (_name, runs, statuses, required, expected) => {
+      { outcome: "marked-ready", detail: "required checks unknown (rules unreadable (HTTP 403)); readiness used the reported checks" }, false],
+  ] as const)("readiness with %s", async (_name, runs, statuses, required, expected, draft) => {
     const github = new FakeGitHub(ownPr());
     github.checks = { source: "actions-jobs", checkRuns: runs.map((run) => ({ ...run, status: "completed" })), statuses };
     github.required = required === undefined ? { known: false, reason: "rules unreadable (HTTP 403)" } : { known: true, checks: required };
     expect((await reviewOpenPullRequests(context(github), steps()))[0]).toMatchObject(expected);
-    expect(github.prs.get(7)?.isDraft).toBe(expected.outcome !== "marked-ready");
+    expect(github.prs.get(7)?.isDraft).toBe(draft);
   });
 
   it("leaves a PR someone else pushed to, or whose state someone removed, without touching it", async () => {

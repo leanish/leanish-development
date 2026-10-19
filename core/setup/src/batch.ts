@@ -21,9 +21,9 @@ const FAILURES = new Set(["error", "failed", "cannot-apply", "verification-faile
 /**
  * Review outcomes a person should hear about, kept with their PR: closed after failing CI, an adaptation that changed
  * nothing, a PR the tool left alone (its body was rewritten, or a person took it over), and the waiting states
- * no-checks, waiting-required and held. Only these fixed names pass, never the tool's free-text detail. They aren't notes or errors.
+ * no-checks and held, and a PR marked ready while a required check hadn't reported (ready-missing-required). Only these fixed names pass, never the tool's free-text detail. They aren't notes or errors.
  */
-const ATTENTION = new Set(["closed", "no-checks", "waiting-required", "held", "adaptation-unchanged", "left-alone"]);
+const ATTENTION = new Set(["closed", "no-checks", "ready-missing-required", "held", "adaptation-unchanged", "left-alone"]);
 const ATTENTION_LIMIT = 100;
 const PULL_REQUEST = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+$/;
 
