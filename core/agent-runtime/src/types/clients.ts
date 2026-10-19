@@ -1,5 +1,5 @@
 // Copied from leanish/leanish-development core/runtime/src/types/clients.ts at c6282df; see PROVENANCE.md.
-// Local changes: only the GitHub client's types; headChecks uses Actions jobs and commit statuses, with an actions-jobs source; a job's steps.
+// Local changes: only the GitHub client's types; headChecks uses Actions jobs and commit statuses, with an actions-jobs source; a job's steps; requiredChecks reads the branch's ruleset status checks.
 /**
  * Narrow GitHub REST/GraphQL client for handler-side, model-free work (see
  * `github/github-client.ts`): the decisions a handler settles without a skill,
@@ -20,6 +20,12 @@ export interface GitHubClient {
    * apps are visible only if they publish commit statuses.
    */
   headChecks(args: { readonly repo: string; readonly sha: string }): Promise<GitHubHeadChecks>;
+  /**
+   * The status checks the branch's rulesets require (`rules/branches/{branch}`, all pages; Metadata read is enough).
+   * `known: false` only when GitHub refuses the read (403, 404); any other failure throws, so an unreadable answer is
+   * never taken for "nothing required". Classic branch protection isn't read: it needs administration access.
+   */
+  requiredChecks(args: { readonly repo: string; readonly branch: string }): Promise<GitHubRequiredChecks>;
   /** GraphQL `markPullRequestReadyForReview`; resolves only once GitHub reports the PR no longer draft. */
   markReadyForReview(args: { readonly nodeId: string }): Promise<void>;
   /** GraphQL `convertPullRequestToDraft`; resolves only once GitHub reports the PR draft. */
@@ -68,6 +74,16 @@ export interface GitHubPullRequest {
   /** `owner/name` of the head repository; `null` when it was deleted. */
   readonly headRepo: string | null;
 }
+
+/** A check a ruleset requires: its context, and the app it must come from (`undefined`: any source). */
+export interface GitHubRequiredCheck {
+  readonly context: string;
+  readonly integrationId: number | undefined;
+}
+
+export type GitHubRequiredChecks =
+  | { readonly known: true; readonly checks: ReadonlyArray<GitHubRequiredCheck> }
+  | { readonly known: false; readonly reason: string };
 
 export interface GitHubHeadChecks {
   /** Where `checkRuns` came from. */

@@ -1,5 +1,5 @@
 // Copied from leanish/leanish-development core/runtime/src/needs/github-client.ts at c6282df; see PROVENANCE.md.
-// Local changes: `GitHubApiError`'s parameter properties written as fields; headChecks reads Actions runs/jobs and commit statuses directly (no Checks API), paginates and retains latest jobs per workflow/event/name, pending runs, and jobless runs only when no newer run in their workflow/event group supersedes them; keeps each job's steps.
+// Local changes: `GitHubApiError`'s parameter properties written as fields; headChecks reads Actions runs/jobs and commit statuses directly (no Checks API), paginates and retains latest jobs per workflow/event/name, pending runs, and jobless runs only when no newer run in their workflow/event group supersedes them; keeps each job's steps; requiredChecks reads the branch's ruleset status checks, unknown (not empty) when refused.
 import { RuntimeError } from "../errors.ts";
 import type {
   GitHubCheckRun,
@@ -7,6 +7,8 @@ import type {
   GitHubClient,
   GitHubCommitStatus,
   GitHubHeadChecks,
+  GitHubRequiredCheck,
+  GitHubRequiredChecks,
   GitHubPullRequest,
 } from "../types/clients.ts";
 
@@ -163,6 +165,42 @@ export function createGitHubClient(options: CreateGitHubClientOptions): GitHubCl
       // The combined status already keeps only the latest status per context.
       const statuses = await paged(operation, `/repos/${repo}/commits/${sha}/status`, "statuses", (value) => toStatus(operation, value));
       return { source, checkRuns, statuses } satisfies GitHubHeadChecks;
+    },
+
+    async requiredChecks({ repo, branch }) {
+      const operation = "requiredChecks";
+      splitRepo(operation, repo);
+      if (branch.length === 0) throw new GitHubApiError(operation, "empty branch");
+      const checks = new Map<string, GitHubRequiredCheck>();
+      for (let page = 1; ; page++) {
+        guardPage(operation, page);
+        let body: unknown;
+        try {
+          body = await request(operation, `/repos/${repo}/rules/branches/${encodeURIComponent(branch)}?per_page=${PAGE_SIZE}&page=${page}`);
+        } catch (err) {
+          // Refused, not failed: the token can't read the rules, so what they require is unknown, not empty.
+          if (err instanceof GitHubApiError && (err.status === 403 || err.status === 404)) return { known: false, reason: `rules unreadable (HTTP ${err.status})` };
+          throw err;
+        }
+        if (!Array.isArray(body)) throw new GitHubApiError(operation, "malformed response");
+        for (const rule of body) {
+          const value = record(operation, rule);
+          if (value["type"] !== "required_status_checks") continue;
+          const listed = record(operation, value["parameters"])["required_status_checks"];
+          if (!Array.isArray(listed)) throw new GitHubApiError(operation, "malformed required_status_checks");
+          for (const item of listed) {
+            const check = record(operation, item);
+            const context = check["context"];
+            const integration = check["integration_id"];
+            if (typeof context !== "string" || context.length === 0 || (integration !== undefined && integration !== null && typeof integration !== "number")) {
+              throw new GitHubApiError(operation, "malformed required status check");
+            }
+            const integrationId = typeof integration === "number" ? integration : undefined;
+            checks.set(`${context}\u0000${integrationId ?? ""}`, { context, integrationId });
+          }
+        }
+        if (body.length < PAGE_SIZE) return { known: true, checks: [...checks.values()] } satisfies GitHubRequiredChecks;
+      }
     },
 
     async listOpenPullRequests({ repo }) {

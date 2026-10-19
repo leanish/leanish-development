@@ -1,10 +1,10 @@
 // Copied from leanish/leanish-development agents/bump-it/test/ci-state.test.ts at c6282df.
-// Local changes: imports; uses actions-jobs source; failingCheckNames regression for Actions job and commit status failures; onlyCooldownHolds.
+// Local changes: imports; uses actions-jobs source; failingCheckNames regression for Actions job and commit status failures; onlyCooldownHolds; unreportedRequired.
 import { describe, expect, it } from "vitest";
 
 import type { GitHubCheckRun, GitHubCommitStatus } from "@leanish/agent-runtime/types/clients";
 
-import { classifyCi, COOLDOWN_STEPS, failingCheckNames, onlyCooldownHolds } from "../src/ci-state.ts";
+import { ACTIONS_APP_ID, classifyCi, COOLDOWN_STEPS, failingCheckNames, onlyCooldownHolds, unreportedRequired } from "../src/ci-state.ts";
 
 function run(status: string, conclusion: string | null, name = "check"): GitHubCheckRun {
   return { name, status, conclusion };
@@ -89,5 +89,20 @@ describe("onlyCooldownHolds", () => {
     ["a status merely named like it", checks([verdict], [status("failure", "cooldown-ish")])],
   ])("isn't a hold when %s", (_name, value) => {
     expect(onlyCooldownHolds(value)).toBe(false);
+  });
+});
+
+describe("unreportedRequired", () => {
+  const checks = { source: "actions-jobs" as const, checkRuns: [{ name: "build", status: "completed", conclusion: "success" }], statuses: [{ context: "legacy/ci", state: "success" }] };
+  it("names required Actions checks the head never reported, apart from those another app could report", () => {
+    expect(unreportedRequired(checks, [
+      { context: "build", integrationId: ACTIONS_APP_ID },
+      { context: "legacy/ci", integrationId: 99 },
+      { context: "cooldown", integrationId: ACTIONS_APP_ID },
+      { context: "any-source", integrationId: undefined },
+      { context: "CodeQL", integrationId: 57789 },
+      { context: "cooldown", integrationId: ACTIONS_APP_ID },
+    ])).toEqual({ missing: ["cooldown"], unobservable: ["CodeQL", "any-source"] });
+    expect(unreportedRequired(checks, [])).toEqual({ missing: [], unobservable: [] });
   });
 });
