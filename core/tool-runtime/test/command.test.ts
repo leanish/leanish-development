@@ -118,6 +118,15 @@ describe("runToolCommand", () => {
     expect(statSync(join(root, "shared")).mode & 0o777).toBe(0o755);
   });
 
+  it("fails the run clearly, before any GitHub request, when the cache directory can't be created", async () => {
+    const { fake, finalLine, requested } = machine({ ensureDir: async () => { throw new Error("EACCES: permission denied, mkdir '/tmp/tool-cache'"); } });
+    const run = vi.fn(async () => ({}));
+    expect(await runToolCommand(handlers(run), ["run", "leanish/widget", "--config", "/config/agent.yaml"], fake)).toBe(1);
+    expect(finalLine()).toMatchObject({ status: "error", error: expect.stringContaining("EACCES") });
+    expect(requested).toHaveLength(0);
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("creates the configured cache directory before the tool's work starts, since the sandbox can't create it", async () => {
     const { fake, ensured } = machine();
     const seen: string[][] = [];

@@ -35,8 +35,8 @@
 
 ### Fixed
 
-- Both tools create their cache directory (`dirs.cache`, private to the user) before starting the sandbox, which can
-  write inside it but can't create it: on a fresh installation npm failed there with `EPERM`.
+- Both tools create a missing cache directory (`dirs.cache`, private to the user) before any sandboxed command, since
+  the sandbox can write inside it but can't create it: on a fresh installation npm failed there with `EPERM`.
 
 ## 0.6.1 - 2026-10-18
 
