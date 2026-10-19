@@ -8,8 +8,8 @@
   Claude Code and Codex, all following `core/setup/install.md`. Its commands check the Mac (`doctor`), install a
   verified stable release (`release`), write one installation per GitHub owner (`configure`), print GitHub's pre-filled
   fine-grained PAT forms and the Keychain commands the person runs (`enroll`), check the tokens' reads
-  (`verify-tokens`), open the gate adoption PR and propose its settings (`gate`), run the tools (`batch`, `test-run`
-  for one repository), and describe the desktop app's scheduled task and check its readback (`schedule`,
+  (`verify-tokens`), open the gate adoption PR and propose its settings (`gate`), run the tools (`batch`, and `test-run`
+  for one repository, reporting errors, notes and coverage gaps as counts and the PRs that need a person), and describe the desktop app's scheduled task and check its readback (`schedule`,
   `schedule-check`): tool defaults, or the time and day the person picks, plus the exact rule each app needs to run
   the launcher unattended (a Claude `Bash(...)` allow rule, or a Codex execution rule) and a private task folder of
   its own as the task's working folder, so a Codex automation can't change the launcher that rule lets out of its
