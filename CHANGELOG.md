@@ -4,12 +4,25 @@
 
 ### Added
 
+- A guided installer, `core/setup`, with the skills `install-bump-it`, `install-secure-it` and `add-repository` for
+  Claude Code and Codex, all following `core/setup/install.md`. Its commands check the Mac (`doctor`), install a
+  verified stable release (`release`), write one installation per GitHub owner (`configure`), print GitHub's pre-filled
+  fine-grained PAT forms and the Keychain commands the person runs (`enroll`), check the tokens' reads
+  (`verify-tokens`), open the gate adoption PR and propose its settings (`gate`), run the tools (`batch`, `test-run`
+  for one repository), and describe the desktop app's scheduled task and check its readback (`schedule`,
+  `schedule-check`): tool defaults, or the time and day the person picks. Guided setup needs stable v0.7.0 or
+  newer; it never creates the app task itself, never merges and never sees a token.
 - `fixture-cleanup` in `core/setup` deletes every `bump-it/` and `secure-it/` branch on the `supply-chain_TEST_*`
   fixture repositories before a candidate's fixture runs (their PRs close with them), each only while it's unchanged;
   `fixture-repin` opens one PR per fixture moving only its gate caller to a new stable release. Both dry-run by default.
 
 ### Changed
 
+- The repository is now `leanish/leanish-development` (formerly `leanish/supply-chain`). GitHub's redirect doesn't
+  cover reusable workflows, so a caller's `uses:` must name `leanish/leanish-development`.
+- When bump-it or secure-it redoes one of its open PRs from the default branch, the agent now starts from the exact
+  base, like a new PR, and the published commit keeps the PR's history as its parent. Before every agent call a guard
+  refuses changes the input doesn't declare. This needs git 2.42 or newer.
 - `core/setup`'s `release` picks the highest stable version, not the latest publication, so a maintenance release
   published after a newer line isn't installed.
 - Shared packages now live in `core/agent-runtime` (`@leanish/agent-runtime`), `core/tool-runtime`

@@ -8,9 +8,14 @@ import { fileEntry, readInstallation, type InstallationOptions } from "./configu
 import { result, type ScheduleSpec, type SetupResult } from "./contracts.ts";
 import { GUIDED_SETUP_REQUIREMENT, hasGuidedSetup, readInstalledRelease, type InstalledRelease } from "./release.ts";
 import { descriptor, ownerName } from "./tools.ts";
-import { scheduleOffset } from "./schedule-offset.ts";
 
-export interface ScheduleOptions extends InstallationOptions { readonly release: string; readonly agent: CodingAgent }
+/** Without `time`/`weekday` the tool's default applies; `weekday` is a cron day (Sunday 0) and only fits weekly tools. */
+export interface ScheduleOptions extends InstallationOptions {
+  readonly release: string;
+  readonly agent: CodingAgent;
+  readonly time?: { readonly hour: number; readonly minute: number };
+  readonly weekday?: number;
+}
 export interface ScheduleMachine {
   readonly home: string;
   readonly timeZone: string;
@@ -34,22 +39,31 @@ ${command}
 4. Do not fix anything yourself, merge, change configs, or run extra commands. If the script is missing or fails before any repo runs, report the exact startup error/reason it returned and stop. Do not weaken the tools' sandbox or token separation to make a run succeed.`;
 }
 
-export async function scheduleSpec(options: ScheduleOptions, host: ScheduleMachine = machine(), offsetMode: "reserve" | "existing" = "reserve"): Promise<ScheduleSpec> {
+async function scheduleCron(options: ScheduleOptions): Promise<string> {
+  const defaults = (await descriptor(options.tool)).descriptor.schedule;
+  const { hour, minute } = options.time ?? defaults;
+  if (defaults.frequency === "daily") {
+    if (options.weekday !== undefined) throw new Error(`${options.tool} runs daily; choose only --time`);
+    return `${minute} ${hour} * * *`;
+  }
+  const weekday = options.weekday ?? defaults.day;
+  if (weekday === undefined) throw new Error("Invalid tool setup descriptor: a weekly schedule needs a day");
+  return `${minute} ${hour} * * ${weekday}`;
+}
+
+export async function scheduleSpec(options: ScheduleOptions, host: ScheduleMachine = machine()): Promise<ScheduleSpec> {
   const owner = ownerName(options.owner);
   if (!CODING_AGENTS.includes(options.agent)) throw new Error("Choose codex or claude-code");
+  const cron = await scheduleCron(options);
   await readInstallation(options, host.home);
   const release = await host.release(options.release);
   const launcher = join(release.path, "core", "setup", "run.sh");
   if (!await hasGuidedSetup(release)) throw new Error(`Found ${release.tag}. ${GUIDED_SETUP_REQUIREMENT}`);
-  const offset = await scheduleOffset(owner, host.home, offsetMode);
-  const defaults = (await descriptor(options.tool)).descriptor.schedule;
-  const hour = defaults.hour + offset;
-  const day = defaults.frequency === "daily" ? "*" : String(((defaults.day! % 7) + Math.floor(hour / 24)) % 7);
   const command = `/bin/bash ${shellArgument(launcher)} ${options.tool} --owner ${owner} --release ${release.tag}`;
   const claude = options.agent === "claude-code";
   return {
     taskId: `leanish-${options.tool}-${owner}`, title: `leanish-${options.tool}-${owner}`, agent: options.agent,
-    cron: `${defaults.minute} ${hour % 24} * * ${day}`, timeZone: host.timeZone, ownerOffsetHours: offset,
+    cron, timeZone: host.timeZone,
     command, prompt: taskPrompt(command), folder: release.path,
     control: claude ? "Use the session's desktop scheduling tool; otherwise Code tab > Routines > New routine > Local. Set Name, Instructions, Schedule and working folder; disable isolated worktree. Reuse/update the existing name, never duplicate it."
       : "Use the session's app scheduling tool; otherwise Scheduled (Automations) > a standalone local-project task. Set title, prompt, local schedule and project folder; use local mode, not a new worktree or cloud task. Reuse/update the existing title, never duplicate it.",
@@ -107,7 +121,7 @@ async function taskSnapshot(path: string, home: string): Promise<Record<string, 
 }
 
 export async function scheduleCheck(options: ScheduleOptions & { readonly taskFile: string }, host: ScheduleMachine = machine()): Promise<SetupResult> {
-  const expected = await scheduleSpec(options, host, "existing");
+  const expected = await scheduleSpec(options, host);
   let found: Record<string, unknown>;
   try { found = await taskSnapshot(options.taskFile, host.home); } catch {
     return result("schedule-check", "task", "blocked", "Readback must be an exported regular JSON object outside app storage, at most 1 MB; no file contents are returned");

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { pathToFileURL } from "node:url";
 
-import { InvalidReleaseTag, setupArguments, USAGE, type SetupCommand } from "./arguments.ts";
+import { InvalidArgument, setupArguments, USAGE, type SetupCommand } from "./arguments.ts";
 import { batch, type BatchOptions } from "./batch.ts";
 import { configure, type ConfigureOptions, type InstallationOptions } from "./configuration.ts";
 import { result, exitCode, SETUP_COMMANDS, type SetupResult } from "./contracts.ts";
@@ -38,7 +38,7 @@ export async function main(
     parsed = setupArguments(argv);
   } catch (error) {
     const command = SETUP_COMMANDS.find((command) => command === argv[0]) ?? "setup";
-    emit(JSON.stringify(result(command, "arguments", "blocked", error instanceof InvalidReleaseTag ? `${error.message}\n${USAGE}` : USAGE)));
+    emit(JSON.stringify(result(command, "arguments", "blocked", error instanceof InvalidArgument ? `${error.message}\n${USAGE}` : USAGE)));
     return 64;
   }
   let results: ReadonlyArray<SetupResult>;

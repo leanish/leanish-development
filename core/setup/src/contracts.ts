@@ -23,7 +23,6 @@ export interface ScheduleSpec {
   readonly command: string;
   readonly prompt: string;
   readonly folder: string;
-  readonly ownerOffsetHours: number;
   readonly control: string;
   readonly permissions: string;
   readonly unattended: string;

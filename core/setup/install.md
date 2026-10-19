@@ -38,10 +38,12 @@ their separate JSONL outcome/summary contract.
    Repeat `--repo` for selected repos under that owner. Existing config choices
    win; adding the other tool later repeats only its missing steps.
 4. Run `node core/setup/src/cli.ts enroll <tool> --owner <owner> --login <github-login>`.
-   Show its exact PAT permission table and the [fine-grained PAT creation page](https://github.com/settings/personal-access-tokens/new).
-   The person chooses the resource owner and only selected repositories, creates
-   two distinct PATs with the returned permissions, and obtains organization
-   approval/SSO authorization if required. Show the printed `security` commands;
+   Show its exact PAT permission table and each role's `tokenUrl`: GitHub's form
+   pre-filled with name, description, resource owner, 90-day expiry and that
+   role's permissions. In each form the person selects only the opted-in
+   repositories (GitHub can't pre-fill them), may adjust the expiry, generates
+   the token, and obtains organization approval/SSO authorization if required.
+   Show the printed `security` commands;
    the person runs them in their own Terminal, typing tokens into the private
    prompts. **Never run those enrollment commands yourself, ask for or accept a
    token in chat, read Keychain values, put a token in a file/argument, or inspect
@@ -64,8 +66,13 @@ their separate JSONL outcome/summary contract.
    blocked settings and “gate running, not enforced” reasons in the report.
 7. For each owner run
    `node core/setup/src/cli.ts schedule <tool> --owner <owner> --release <tag> --agent <agent>`.
-   Explain cadence, owner staggering, plan usage and that scheduled executions
-   can publish real PRs. After confirming the schedule, use this session's own
+   Explain the default cadence and offer another time (`--time HH:MM`) or, for
+   bump-it, day (`--day mon|...|sun`); rerun with the person's choice. Nothing
+   remembers that choice: when this tool/owner's task already exists, read its
+   time and day from the app and pass them again, unless the person asks to move it. Mention
+   that GitHub's hourly limit and plan usage are the person's own, shared across
+   owners, so several owners may want different times, and that scheduled
+   executions can publish real PRs. After confirming the schedule, use this session's own
    app scheduling tool to create/update exactly one task for this tool/owner,
    covering all its configured repos. Reuse its name/title rather than creating
    a duplicate. Use the returned prompt unchanged, the local cron (or equivalent
@@ -79,7 +86,8 @@ their separate JSONL outcome/summary contract.
    `schedule`, `enabled`, `prompt`, `folder`, and time zone if returned. For an
    opaque native ID also export the exact observed `title`. Do not copy the
    desired spec and call it readback. Run
-   `node core/setup/src/cli.ts schedule-check <tool> --owner <owner> --release <tag> --agent <agent> --task-file <json>`.
+   `node core/setup/src/cli.ts schedule-check <tool> --owner <owner> --release <tag> --agent <agent> --task-file <json>`,
+   with the same `--time`/`--day` chosen in step 7.
    Reconcile differences through the app; an unreadable/unavailable readback
    remains unverified. A match proves task fields only. If unattended command
    permission, completion notifications or output reading are unavailable,
