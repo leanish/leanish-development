@@ -21,6 +21,10 @@
 
 ### Fixed
 
+- Both tools read the checks the base branch's rulesets require: a draft whose reported checks all pass, but where a
+  required Actions check never started, stays a draft as `waiting-required` instead of being marked ready. When the
+  rules can't be read, or a required check may come from an app the token can't see, readiness uses the reported
+  checks as before and the review says so. Classic branch protection isn't read.
 - A `HOME` ending in a slash no longer makes guided setup climb past it while reading or writing an installation.
 - The task folder overlap check also refuses a case or Unicode variant of a trusted path, which a case-insensitive
   volume (APFS's default) reaches as the same folder.

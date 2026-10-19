@@ -1,5 +1,5 @@
 // Copied from leanish/leanish-development core/runtime/test/unit/github-client.test.ts at c6282df; see PROVENANCE.md.
-// Local changes: imports this package's modules from `../src/` instead of `../../src/`, the GitHub client from its module instead of the runtime's package barrel; CI tests use Actions runs/jobs and commit statuses without Checks, including pagination, reruns, separate workflow/event groups, pending/jobless runs (with older jobless failures superseded by newer runs in the same group), skipped jobs and continue-on-error failures, and job steps.
+// Local changes: imports this package's modules from `../src/` instead of `../../src/`, the GitHub client from its module instead of the runtime's package barrel; CI tests use Actions runs/jobs and commit statuses without Checks, including pagination, reruns, separate workflow/event groups, pending/jobless runs (with older jobless failures superseded by newer runs in the same group), skipped jobs and continue-on-error failures, and job steps; requiredChecks pages, refusals and malformed answers.
 import { describe, expect, it } from "vitest";
 
 import { createGitHubClient, GitHubApiError } from "../src/github/github-client.ts";
@@ -331,5 +331,42 @@ describe("createGitHubClient", () => {
     ["a non-sha ref", () => client(scripted().fetch).headChecks({ repo: "leanish/widget", sha: "main" })],
   ])("rejects %s before any request", async (_name, call) => {
     await expect(call()).rejects.toThrow(GitHubApiError);
+  });
+});
+
+describe("requiredChecks", () => {
+  const rules = (checks: ReadonlyArray<Record<string, unknown>>) => [
+    { type: "deletion", ruleset_id: 1 },
+    { type: "required_status_checks", ruleset_id: 2, parameters: { strict_required_status_checks_policy: false, required_status_checks: checks } },
+  ];
+
+  it("reads every ruleset's required status checks for the branch, with their app", async () => {
+    const { fetch, calls } = scripted(json(rules([{ context: "supply-chain / supply-chain", integration_id: 15368 }, { context: "ci/legacy" }])));
+    expect(await client(fetch).requiredChecks({ repo: "leanish/widget", branch: "release/1.x" })).toEqual({ known: true, checks: [
+      { context: "supply-chain / supply-chain", integrationId: 15368 }, { context: "ci/legacy", integrationId: undefined },
+    ] });
+    expect(calls[0]!.url).toBe("https://api.github.com/repos/leanish/widget/rules/branches/release%2F1.x?per_page=100&page=1");
+  });
+
+  it("reads all pages and keeps each check once", async () => {
+    const page = Array.from({ length: 100 }, () => ({ type: "required_status_checks", parameters: { required_status_checks: [{ context: "a", integration_id: 1 }] } }));
+    const { fetch, calls } = scripted(json(page), json(rules([{ context: "b" }])));
+    expect(await client(fetch).requiredChecks({ repo: "leanish/widget", branch: "main" })).toEqual({ known: true, checks: [{ context: "a", integrationId: 1 }, { context: "b", integrationId: undefined }] });
+    expect(calls).toHaveLength(2);
+  });
+
+  it.each([403, 404])("says the requirements are unknown, not empty, when GitHub refuses the read (%i)", async (status) => {
+    const { fetch } = scripted(json({ message: "nope" }, status));
+    expect(await client(fetch).requiredChecks({ repo: "leanish/widget", branch: "main" })).toEqual({ known: false, reason: `rules unreadable (HTTP ${status})` });
+  });
+
+  it.each([
+    ["a server error", json({}, 502)],
+    ["a network failure", new TypeError("fetch failed")],
+    ["a malformed body", json({ rules: [] })],
+    ["a malformed check", json(rules([{ context: 7 }]))],
+  ])("throws on %s, never reading it as no requirements", async (_name, response) => {
+    const { fetch } = scripted(response);
+    await expect(client(fetch).requiredChecks({ repo: "leanish/widget", branch: "main" })).rejects.toBeInstanceOf(GitHubApiError);
   });
 });

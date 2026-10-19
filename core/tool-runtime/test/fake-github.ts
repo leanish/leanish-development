@@ -1,7 +1,7 @@
 // Adapted from leanish/leanish-development agents/bump-it/test/fake-github.ts at c6282df: secure-it's rules and PR state
 // instead of bump-it's constants; the Dependabot PR factory is left out; CI fixtures use actions-jobs source.
 import { GitHubApiError } from "@leanish/agent-runtime/github/github-client";
-import type { GitHubClient, GitHubHeadChecks, GitHubNewPullRequest, GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
+import type { GitHubClient, GitHubHeadChecks, GitHubNewPullRequest, GitHubPullRequest, GitHubRequiredChecks } from "@leanish/agent-runtime/types/clients";
 
 import { ownPullRequests, withMarker } from "../src/own-pr.ts";
 
@@ -62,6 +62,8 @@ export class FakeGitHub implements GitHubClient {
   readonly prs = new Map<number, GitHubPullRequest>();
   pullRequests: ReadonlyArray<Step<ReadonlyArray<GitHubPullRequest>>> | undefined;
   checks: Step<GitHubHeadChecks> = GREEN;
+  /** What the base's rulesets require; nothing by default. */
+  required: GitHubRequiredChecks = { known: true, checks: [] };
   /** Branches `deleteBranch` finds (others answer 422, like GitHub for a missing ref). */
   readonly branches = new Set<string>();
   readonly #failures = new Map<string, GitHubApiError>();
@@ -100,6 +102,11 @@ export class FakeGitHub implements GitHubClient {
   async headChecks(args: { readonly repo: string; readonly sha: string }): Promise<GitHubHeadChecks> {
     this.#record("headChecks", `${args.repo} ${args.sha}`);
     return unwrap(this.checks);
+  }
+
+  async requiredChecks(args: { readonly repo: string; readonly branch: string }): Promise<GitHubRequiredChecks> {
+    this.#record("requiredChecks", `${args.repo} ${args.branch}`);
+    return this.required;
   }
 
   async markReadyForReview(args: { readonly nodeId: string }): Promise<void> {

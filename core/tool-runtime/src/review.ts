@@ -31,7 +31,7 @@ import type { Logger } from "@leanish/agent-runtime/types/logger";
 import type { PreparedBranch, WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
 import type { Workspace } from "@leanish/agent-runtime/working-copy/workspace";
 
-import { classifyCi, onlyCooldownHolds } from "./ci-state.ts";
+import { classifyCi, onlyCooldownHolds, unreportedRequired } from "./ci-state.ts";
 import type { PublicationJournal } from "./journal.ts";
 import { type OwnPullRequests, type PullRequestState, stateOf } from "./own-pr.ts";
 import { closeAndDelete, markReady, ownOpenPullRequests, type PublicationContext, recordState, recoverPublication } from "./publication.ts";
@@ -48,6 +48,7 @@ export type ReviewOutcome =
   | "marked-ready"
   | "already-ready"
   | "no-checks"
+  | "waiting-required"
   | "adapted"
   | "adaptation-unchanged"
   | "closed"
@@ -181,9 +182,17 @@ async function reviewOne(context: ReviewContext, steps: ReviewSteps, pr: GitHubP
   // Held by the gate although it took nothing young itself: the base's wait grew past one of its versions.
   if (onlyCooldownHolds(checks)) return result("held", "by the gate's cooldown under the base's current wait");
   if (ci === "success") {
+    // A person or an earlier tick already made it ready: nothing to decide, and no extra call that could fail it.
     if (!pr.isDraft) return result("already-ready");
+    // Green by what the head reported: a check the base's rulesets require that never started still blocks the
+    // merge, so it isn't ready. Failures already returned above, so a missing check never hides one.
+    const required = await context.github.requiredChecks({ repo: context.repo, branch: context.base });
+    const unreported = required.known ? unreportedRequired(checks, required.checks) : { missing: [], unobservable: [] };
+    if (unreported.missing.length > 0) return result("waiting-required", `${unreported.missing.join(", ")} required on ${context.base} but not reported on the head`);
+    const unseen = !required.known ? `required checks unknown (${required.reason}); readiness used the reported checks`
+      : unreported.unobservable.length > 0 ? `${unreported.unobservable.join(", ")} required but not reported, maybe by an app this token can't read` : undefined;
     await markReady(publication, pr.number, pr.headSha);
-    return result("marked-ready");
+    return result("marked-ready", unseen);
   }
   if (state.adaptations >= MAX_ADAPTATIONS) {
     await closeAndDelete(
