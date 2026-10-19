@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Tree } from "@leanish/gate/tree";
 import { plannedPinsLanded } from "../src/action-pins.ts";
+import { writePins } from "../src/operations.ts";
 import type { PlannedMove } from "../src/plan.ts";
 const file = ".github/workflows/ci.yml";
 const tree = (text: string): Tree => ({ id: "tree", read: async (path) => path === file ? text : undefined, list: async (dir) => file.startsWith(`${dir}/`) ? [file] : [] });
@@ -15,5 +16,29 @@ describe("action source versions", () => {
     const planned = [move("v1.0.0", "v1.1.0", "a")];
     expect(await plannedPinsLanded(planned, before, tree(workflow([["a", "v1.1.0"], ["1", "v2.0.0"]])))).toEqual([]);
     expect(await plannedPinsLanded(planned, before, tree(workflow([["a", "v1.1.0"], ["b", "v2.1.0"]])))).toContain(`${file}: actions/checkout at v2.0.0 changed outside its planned source version`);
+  });
+});
+
+describe("tool-written pins", () => {
+  it("writes each file it can rewrite in place and leaves the rest, untouched, to the agent", async () => {
+    const plain = ".github/workflows/ci.yml";
+    const aliased = ".github/workflows/release.yml";
+    const files: Record<string, string> = {
+      [plain]: `jobs:\n  j:\n    steps:\n      - uses: actions/checkout@${"0".repeat(40)} # v1.0.0\n`,
+      [aliased]: `x: &a actions/checkout@${"0".repeat(40)}\njobs:\n  j:\n    steps:\n      - uses: *a # v1.0.0\n`,
+    };
+    const before = { ...files };
+    const execution = {
+      context: { workingCopy: { path: "/wc" } },
+      deps: {
+        trees: { working: () => ({ read: async (path: string) => files[path] }) },
+        writeFile: async (_wc: unknown, path: string, text: string) => { files[path] = text; },
+        fileState: async () => { throw new Error("no restored files here"); },
+      },
+    } as unknown as Parameters<typeof writePins>[0];
+    const computed = { plan: { moves: [{ ...move("v1.0.0", "v1.1.0", "a"), locations: [plain, aliased] }] } } as unknown as Parameters<typeof writePins>[1];
+    expect(await writePins(execution, computed)).toEqual({ written: [plain], complete: false });
+    expect(files[plain]).toBe(before[plain]!.replace(`${"0".repeat(40)} # v1.0.0`, `${"a".repeat(40)} # v1.1.0`));
+    expect(files[aliased]).toBe(before[aliased]);
   });
 });

@@ -201,9 +201,11 @@ export function pinsMasked(text: string | undefined, actions: ReadonlySet<string
           const action = /^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)/.exec(value.value)?.[1]?.toLowerCase();
           const at = text.indexOf("@", value.range[0]);
           if (action !== undefined && actions.has(action) && at !== -1 && at < value.range[1]) {
-            // From the ref on, then whatever follows the scalar on its line if that's only a comment.
+            // From the ref on, then whatever follows the scalar on its line if that's only a comment. A CRLF line's
+            // `\r` isn't part of it (a regex `.` never matches one), so a CRLF file's comment is masked like an LF one.
             const lineEnd = text.indexOf("\n", value.range[1]);
-            const rest = text.slice(value.range[1], lineEnd === -1 ? text.length : lineEnd);
+            const end = lineEnd === -1 ? text.length : text[lineEnd - 1] === "\r" ? lineEnd - 1 : lineEnd;
+            const rest = text.slice(value.range[1], end);
             ranges.push([at + 1, /^\s*(#.*)?$/.test(rest) ? value.range[1] + rest.length : value.range[1]]);
           }
         }
@@ -284,7 +286,7 @@ export function writtenPins(text: string, file: string, pins: ReadonlyArray<PinW
   if (pinsMasked(written, planned) !== pinsMasked(text, planned)) throw new Error(`writing ${file}'s pins would change more than them`);
   // And every planned use moved: one whose comment names its version among other words was left for the agent.
   const left = parseUses(written, file).uses.filter((use) => pins.some((pin) => pin.name.toLowerCase() === use.name && commentTag(use) === pin.from));
-  if (left.length > 0) throw new Error(`${file}: a \`uses:\` of ${left[0]!.name} at ${pins.find((pin) => pin.name.toLowerCase() === left[0]!.name)!.from} can't be rewritten in place`);
+  if (left.length > 0) throw new Error(`${file}: a \`uses:\` of ${left[0]!.name} at ${commentTag(left[0]!)} can't be rewritten in place`);
   return written;
 }
 

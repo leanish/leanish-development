@@ -41,6 +41,11 @@ describe("writtenPins", () => {
     expect(writtenPins(written, "ci.yml", [pin])).toBe(written);
   });
 
+  it("writes a CRLF file's pins, keeping its line endings", () => {
+    const text = `jobs:\r\n  j:\r\n    steps:\r\n      - uses: acme/setup@${OLD} # v4.0.0\r\n      - run: echo\r\n`;
+    expect(writtenPins(text, "ci.yml", [pin])).toBe(text.replace(`acme/setup@${OLD} # v4.0.0`, `acme/setup@${NEW} # v5.0.0`));
+  });
+
   it("adds no comment where there was none to match, and writes the gate's own caller", () => {
     const gate = `jobs:\n  gate:\n    uses: ${GATE_WORKFLOW.name}/${GATE_WORKFLOW.path}@${OLD} # v0.6.1\n`;
     expect(writtenPins(gate, GATE_WORKFLOW.path, [{ name: GATE_WORKFLOW.name, from: "v0.6.1", to: "v0.7.0", commitSha: NEW }]))
