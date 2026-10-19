@@ -248,7 +248,8 @@ approvals may be disallowed by organization policy. The launcher needs access to
 local installation/state/cache files, network and the login Keychain internally.
 Both apps need an awake Mac and a running desktop app. The outer task's permission
 must not weaken the tools' inner sandbox or reveal tokens to the agent. Spec
-generation does not prove background notification/output facilities or unattended
+generation does not prove the app can wait for the command (Claude's completion
+notification, Codex's session continuation), read its output, or run with unattended
 permission: if unavailable, report that the task cannot run unattended here.
 
 `schedule-check <tool> --owner <owner> --release <tag> --agent <agent> [--time HH:MM] [--day ...] --task-file <json>`
@@ -265,9 +266,13 @@ Apps with opaque native IDs may export that `id` plus the exact observed `title`
 to identify the logical task. Identity/title, cron/schedule and enabled state
 must match. Prompt comparison ignores trailing whitespace/newlines only; leading
 and internal whitespace still matter. Folders are compared after `realpath` on
-both sides, so macOS `/var` and `/private/var` aliases match. Both local apps use
-a folder, so missing or unresolvable folder
-evidence blocks. An omitted time zone means the app's local schedule; when present
+both sides, so macOS `/var` and `/private/var` aliases match. A missing or
+unresolvable folder blocks, except that a Claude readback may omit the folder: Claude's
+scheduling tool stores none, and the command is an absolute path (a folder it does
+return is still compared). Codex's automation tool returned no task fields in the
+0.7.0 acceptance: then the person's visual check of the automation (name, prompt,
+schedule, project folder, enabled) stands in for the readback, which stays
+unverified. An omitted time zone means the app's local schedule; when present
 it must be `local` or the generated IANA zone. `schedule` may replace `cron` with
 a five-field cron or `RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=17` / a weekly RRULE with
 `BYDAY=WE`. Only daily/weekly rules with optional `INTERVAL=1` and `BYSECOND=0`

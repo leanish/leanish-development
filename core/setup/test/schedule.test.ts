@@ -39,7 +39,18 @@ describe("local task specifications", () => {
     expect(exitCode([value])).toBe(2);
     expect(value.data?.command).toBe(`/bin/bash ${join(home, ".local/share/leanish/releases/v0.7.0/core/setup/run.sh")} bump-it --owner acme --release v0.7.0`);
     expect(value.data?.prompt).toContain(value.data?.command);
-    expect(value.data?.prompt).toContain("do not poll");
+    // Each app's own way to wait for one long command, with no other command started to inspect it.
+    if (agent === "claude-code") {
+      expect(value.data?.prompt).toContain("run_in_background: true");
+      expect(value.data?.prompt).toContain("do not poll");
+      expect(value.data?.unattended).toContain("completion notifications");
+    } else {
+      expect(value.data?.prompt).toContain("continuation/wait facility for that same session");
+      expect(value.data?.prompt).toContain("do not restart it");
+      expect(value.data?.prompt).not.toContain("completion notification");
+      expect(value.data?.unattended).toContain("session");
+    }
+    expect(value.data?.prompt).toContain("Never run another shell command to inspect output");
     expect(value.data?.unattended).toContain("cannot run unattended");
     expect(JSON.stringify(value)).not.toContain("secret-sentinel");
     expect(value.data).not.toHaveProperty("ownerOffsetHours");
@@ -159,6 +170,20 @@ describe("app task readback", () => {
     expect(spec.cron).toBe("30 6 * * 1");
     expect((await scheduleCheck({ ...chosen, taskFile: file }, host)).status).toBe("already-done");
     expect(await scheduleCheck({ ...options, taskFile: file }, host)).toMatchObject({ status: "blocked", data: { differences: ["cron/schedule"] } });
+  });
+
+  it("accepts a Claude readback without a folder, since its scheduling tool stores none, but never a Codex one", async () => {
+    for (const agent of ["claude-code", "codex"] as const) {
+      const spec = await scheduleSpec({ ...options, agent }, host);
+      const file = join(home, `${agent}.json`);
+      await writeFile(file, JSON.stringify({ id: spec.taskId, title: spec.title, cron: spec.cron, enabled: true, prompt: spec.prompt }));
+      const value = await scheduleCheck({ ...options, agent, taskFile: file }, host);
+      expect(value.data?.differences).toEqual(agent === "claude-code" ? [] : ["folder"]);
+    }
+    const claude = await scheduleSpec({ ...options, agent: "claude-code" }, host);
+    const wrong = join(home, "wrong-folder.json");
+    await writeFile(wrong, JSON.stringify({ id: claude.taskId, cron: claude.cron, enabled: true, prompt: claude.prompt, folder: "/wrong" }));
+    expect((await scheduleCheck({ ...options, agent: "claude-code", taskFile: wrong }, host)).data?.differences).toEqual(["folder"]);
   });
 
   it("compares the supported weekly and daily RRULEs without ignoring extra constraints", async () => {

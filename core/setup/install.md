@@ -90,7 +90,8 @@ their separate JSONL outcome/summary contract.
    with the same `--time`/`--day` chosen in step 7.
    Reconcile differences through the app; an unreadable/unavailable readback
    remains unverified. A match proves task fields only. If unattended command
-   permission, completion notifications or output reading are unavailable,
+   permission, waiting for the command (Claude's completion notification, Codex's
+   session continuation) or output reading are unavailable,
    report that the app cannot run this task unattended here; leave it pending.
 9. Ask the person to pick **one** opted-in repository for a real run and consent
    to possible real PRs. Only after both choices run
