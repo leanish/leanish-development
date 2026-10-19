@@ -181,7 +181,8 @@ async function onlyGateWorkflow(computed: Computed): Promise<boolean> {
   return uses.length > 0 && uses.every((use) => use.path === GATE_WORKFLOW.path);
 }
 
-export async function verify(execution: Execution, computed: Computed): Promise<void> {
+/** `toolWritten`: what `edit` wrote when it wrote this pass without the agent, else `undefined` (see `Edited`). */
+export async function verify(execution: Execution, computed: Computed, toolWritten: ReadonlyArray<string> | undefined): Promise<void> {
   const { context, deps, env, inventories } = execution;
   // Everything below reads this snapshot, never the live working tree, and publication commits exactly its tree.
   const candidate = await deps.snapshot(context.workingCopy);
@@ -206,6 +207,7 @@ export async function verify(execution: Execution, computed: Computed): Promise<
     gradle,
     reference,
     changedFiles,
+    toolWritten,
   });
   const links = await deps.linkProblems(context.workingCopy, computed.base.id, candidate);
   if (problems.length > 0 || links.length > 0) {
@@ -213,28 +215,35 @@ export async function verify(execution: Execution, computed: Computed): Promise<
   }
 }
 
-export async function edit(execution: Execution, computed: Computed, mode: "apply" | "adapt" | "resolve", extra: EditContext = {}): Promise<PullRequestContent> {
+/** What `edit` publishes, and the files the tool wrote when it wrote the pass alone (`undefined` when the agent ran). */
+export interface Edited {
+  readonly content: PullRequestContent;
+  readonly toolWritten: ReadonlyArray<string> | undefined;
+}
+
+export async function edit(execution: Execution, computed: Computed, mode: "apply" | "adapt" | "resolve", extra: EditContext = {}): Promise<Edited> {
   const restoredFiles = new Map((extra.restoredFiles ?? []).map((file) => [file.path, file]));
   await writeNpm(execution, computed.files, false, restoredFiles);
   await writeWrapper(execution, computed, restoredFiles);
   const pins = await writePins(execution, computed, restoredFiles);
   const { plan } = computed;
+  const toolWritten = [...computed.files.keys(), ...(computed.wrapperFiles ?? []).map((file) => file.path), ...pins.written];
   const toolWrites = plan.moves.every((move) => move.mechanism === "npm-range" || move.mechanism === "gradle-wrapper" || move.mechanism === "action-pin");
   // A major other than the gate's workflow keeps its agent pass, and so does adapting or resolving one.
   if (pins.complete && toolWrites && (plan.kind === "routine" || (mode === "apply" && await onlyGateWorkflow(computed)))) {
-    return mechanicalContent(plan);
+    return { content: mechanicalContent(plan), toolWritten };
   }
   const { context } = execution;
   const answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({
     entrypoint: "bump-it",
-    input: skillInput(context, plan, mode, [...computed.files.keys(), ...(computed.wrapperFiles ?? []).map((file) => file.path), ...pins.written], extra),
+    input: skillInput(context, plan, mode, toolWritten, extra),
     ...(extra.restoredFiles === undefined ? {} : { restoredFiles: [...restoredFiles.values()] }),
   });
   if (answer.outcome !== "applied" || answer.publication == null) {
     throw new Error(`the agent couldn't apply the plan: ${answer.summary}`);
   }
   assertNoPlanMarker(answer.publication.body);
-  return { ...answer.publication, body: `${answer.publication.body}\n\n${planSection(plan)}` };
+  return { content: { ...answer.publication, body: `${answer.publication.body}\n\n${planSection(plan)}` }, toolWritten: undefined };
 }
 
 function skillInput(context: ToolRunContext, plan: BumpPlan, mode: "apply" | "adapt" | "resolve", toolWritten: string[], extra: EditContext) {
