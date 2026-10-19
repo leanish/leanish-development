@@ -7,7 +7,7 @@ import type { ToolRepo } from "@leanish/tool-runtime/config";
 
 import { Commands } from "./commands.ts";
 import { result, type SetupResult } from "./contracts.ts";
-import { fixtureScope, IncompleteEvidence, perFixture, rateLimitAware, reasonOf, type FixtureScopeOptions } from "./fixtures.ts";
+import { fixtureRepository, fixtureScope, IncompleteEvidence, perFixture, rateLimitAware, reasonOf, type FixtureScopeOptions } from "./fixtures.ts";
 import { GATE_SOURCE, WORKFLOW } from "./gate-workflow.ts";
 import { latestRelease, type VerifiedRelease } from "./github-release.ts";
 import { githubApi, list, object, required, sha, string, type GitHubApi } from "./github.ts";
@@ -42,7 +42,8 @@ export async function fixtureRepin(
 
 async function repinRepository(api: GitHubApi, fixture: ToolRepo, release: VerifiedRelease, apply: boolean): Promise<SetupResult> {
   const repo = fixture.repo;
-  const base = fixture.branch ?? string(object(await required(api, "GET", `repos/${repo}`))["default_branch"]);
+  const metadata = await fixtureRepository(api, repo);
+  const base = fixture.branch ?? string(metadata["default_branch"]);
   const baseHead = await branchHead(api, repo, base);
   if (baseHead === undefined) throw new Error(`branch ${base} doesn't exist`);
   const current = await workflowAt(api, repo, baseHead);

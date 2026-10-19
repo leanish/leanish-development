@@ -341,12 +341,16 @@ The [guided workflow](install.md) is shared by the thin `install-bump-it`,
 changes, pending PRs/admin requests and the separate real-run acceptance step.
 
 Batch JSONL uses a separate outcome contract: `schemaVersion`, `tool`, `owner`,
-`repo`, `action` (`review`/`run`), `outcome`, `errors`, `notes`, `prs`, `exitCode`
-and nullable `estimatedApiCostUsd`. Only bounded structured final reports are
-inspected; raw child messages are discarded. The final `action: "summary"`
-reports `commands`, `failed`, unique PR URLs and `completed`/`partial-failure`.
-Startup failures produce an error summary with zero commands, the failed `phase`
-(`configuration`, `release`, `repository-selection` or `scanner`) and a fixed
+`repo`, `action` (`review`/`run`), `outcome`, `errors`, `notes`, `prs`, `attention`,
+`exitCode` and nullable `estimatedApiCostUsd`. `attention` lists `{pr, outcome}` for
+review outcomes a person should hear about (`closed` after failing CI, `no-checks`,
+`held`, `adaptation-unchanged`, `left-alone`), each also counted as a note; only
+those fixed names pass, never the tool's detail text. Only bounded structured final
+reports are inspected; raw child messages are discarded. The final `action: "summary"`
+reports `commands`, `failed`, unique PR URLs, every `attention` entry and
+`completed`/`partial-failure`. Startup failures produce an error summary with zero
+commands, the failed `phase` (`configuration`, `release`, `repository-selection`,
+`candidate-scope` or `scanner`) and a fixed
 phase-specific `reason`, never raw error text. Missing final
 reports and lock refusals count as failures. Batch exits 0 for complete, 1 for
 failure. It does not pretend a failed or unknown run was successful.

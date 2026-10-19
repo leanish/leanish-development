@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 
 import { result, type SetupResult } from "./contracts.ts";
-import { fixtureScope, perFixture, rateLimitAware, RateLimited, reasonOf, type FixtureScopeOptions } from "./fixtures.ts";
+import { fixtureRepository, fixtureScope, perFixture, rateLimitAware, RateLimited, reasonOf, type FixtureScopeOptions } from "./fixtures.ts";
 import { GitHubHttpError, githubApi, list, object, required, sha, string, type GitHubApi } from "./github.ts";
 
 export interface FixtureCleanupOptions extends FixtureScopeOptions {
@@ -42,7 +42,7 @@ export async function fixtureCleanup(
 async function cleanRepository(
   api: GitHubApi, repo: string, configured: string | undefined, apply: boolean, publish: (entry: SetupResult) => void,
 ): Promise<void> {
-  const metadata = object(await required(api, "GET", `repos/${repo}`));
+  const metadata = await fixtureRepository(api, repo);
   const repositoryId = string(metadata["node_id"]);
   // The branch the tools target is never deleted, even if it were named like one of theirs.
   const base = configured ?? string(metadata["default_branch"]);

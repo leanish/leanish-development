@@ -18,6 +18,8 @@ class FakeBranches implements GitHubApi {
   readonly repos = new Map<string, { nodeId: string; branches: Map<string, string> }>();
   readonly rateLimited = new Set<string>();
   readonly failing = new Set<string>();
+  /** A configured name GitHub now answers as another repository (renamed or transferred). */
+  readonly renamed = new Map<string, string>();
   /** Replaces the GraphQL reply; `lose` applies the deletion, then answers 502. */
   graphql: "ok" | "rate-limited" | "lose" | "forbidden" = "ok";
   /** Runs right before GitHub applies a deletion call. */
@@ -44,7 +46,7 @@ class FakeBranches implements GitHubApi {
     if (this.rateLimited.has(name!)) return { status: 403, body: { message: "rate limit" }, headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1790000000" } };
     if (this.failing.has(name!)) return ok({ message: "boom" }, 500);
     const repo = this.repos.get(name!)!;
-    if (method === "GET" && rest === undefined) return ok({ node_id: repo.nodeId, default_branch: "main" });
+    if (method === "GET" && rest === undefined) return ok({ node_id: repo.nodeId, default_branch: "main", full_name: this.renamed.get(name!) ?? name });
     if (method === "GET" && rest === "branches") {
       const page = Number(params.get("page") ?? "1");
       const size = Number(params.get("per_page") ?? "30");
@@ -236,6 +238,16 @@ describe("fixture cleanup", () => {
     expect(rows).toEqual([expect.objectContaining({ step: "repository", status: "blocked", message: expect.stringContaining("HTTP 403") })]);
     expect(exit).toBe(1);
     expect(branches.size).toBe(4);
+  });
+
+  it("refuses a fixture GitHub answers as another repository, before listing or deleting anything", async () => {
+    const fake = new FakeBranches();
+    const branches = fake.repo(REPO, ["main", "bump-it/2026-10-01-x"]);
+    fake.renamed.set(REPO, "acme/production");
+    const { rows } = await run(fake, { apply: true });
+    expect(rows).toEqual([expect.objectContaining({ status: "blocked", message: expect.stringContaining(`answers ${REPO} as acme/production (renamed or transferred)`) })]);
+    expect(fake.calls.filter(({ method, path }) => method !== "GET" || path.endsWith("/branches"))).toEqual([]);
+    expect(branches.size).toBe(2);
   });
 
   it("never deletes the configured base branch, even with a tool-like name", async () => {

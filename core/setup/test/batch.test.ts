@@ -16,6 +16,21 @@ let root: string | undefined;
 afterEach(async () => { vi.unstubAllEnvs(); if (root !== undefined) await rm(root, { recursive: true, force: true }); root = undefined; });
 
 describe("batch runner", () => {
+  it("keeps review outcomes a person should hear about, with their PR, and never the tool's free text", async () => {
+    const records: Readonly<Record<string, unknown>>[] = [];
+    const reviewed = { ...report, result: { reviewed: [
+      { number: 1, url: "https://github.com/acme/one/pull/1", outcome: "closed", detail: "secret-sentinel" },
+      { number: 2, url: "https://github.com/acme/one/pull/2", outcome: "no-checks", detail: "secret-sentinel" },
+      { number: 3, url: "https://github.com/acme/one/pull/3", outcome: "marked-ready", detail: "secret-sentinel" },
+      { number: 4, url: "https://github.com/other/repo/pull/4", outcome: "closed" },
+    ] } };
+    expect(await executeBatch(options, ["acme/one"], async (_repo, action) => action === "review" ? { code: 0, report: reviewed } : ok(), (record) => records.push(record))).toBe(0);
+    const expected = [{ pr: "https://github.com/acme/one/pull/1", outcome: "closed" }, { pr: "https://github.com/acme/one/pull/2", outcome: "no-checks" }];
+    expect(records[0]).toMatchObject({ action: "review", outcome: "completed", errors: 0, notes: 2, attention: expected });
+    expect(records.at(-1)).toMatchObject({ action: "summary", outcome: "completed", attention: expected });
+    expect(JSON.stringify(records)).not.toContain("secret-sentinel");
+  });
+
   it("runs one review then run chain per repository, keeping failures isolated and reporting PRs", async () => {
     const calls = new Map<string, string[]>();
     const records: Readonly<Record<string, unknown>>[] = [];

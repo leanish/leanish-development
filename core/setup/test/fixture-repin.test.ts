@@ -26,6 +26,8 @@ interface Commit { readonly parent: string | undefined; readonly files: Readonly
 /** No network: commits, branches, contents with blob-SHA preconditions, compare and PRs. */
 class FakeFixture implements GitHubApi {
   readonly calls: Array<{ method: string; path: string; body?: unknown }> = [];
+  /** The canonical name GitHub answers with when the configured fixture was renamed or transferred. */
+  renamed: string | undefined;
   readonly commits = new Map<string, Commit>();
   readonly branches = new Map<string, string>();
   readonly pulls: Array<{ number: number; head: string; base: string; title: string; body: string }> = [];
@@ -60,7 +62,7 @@ class FakeFixture implements GitHubApi {
     const [, name, rest] = /^repos\/([^/]+\/[^/]+)(?:\/(.*))?$/.exec(route!)!;
     if (name !== REPO && name !== OTHER) return ok({ message: "Not Found" }, 404);
     const body = payload === undefined ? {} : object(payload);
-    if (method === "GET" && rest === undefined) return ok({ default_branch: "main" });
+    if (method === "GET" && rest === undefined) return ok({ default_branch: "main", full_name: this.renamed ?? name });
     const ref = /^git\/ref\/heads\/(.+)$/.exec(rest ?? "")?.[1];
     if (method === "GET" && ref !== undefined) {
       const head = this.branches.get(decodeURIComponent(ref));
@@ -165,6 +167,14 @@ describe("gate caller rewrite", () => {
 });
 
 describe("fixture repin", () => {
+  it("refuses a fixture GitHub answers as another repository, before writing anything", async () => {
+    const fake = new FakeFixture(workflow(OLD));
+    fake.renamed = "acme/production";
+    const { rows } = await run(fake, { apply: true });
+    expect(rows).toEqual([expect.objectContaining({ status: "blocked", message: expect.stringContaining("as acme/production (renamed or transferred)") })]);
+    expect(fake.calls.filter(({ method }) => method !== "GET")).toEqual([]);
+  });
+
   it("refuses any release but the highest stable one", async () => {
     await expect(run(new FakeFixture(workflow(OLD)), { release: "v0.6.2" })).rejects.toThrow("--release must be the highest stable release, v0.7.0");
   });
