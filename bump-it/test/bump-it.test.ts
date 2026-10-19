@@ -200,6 +200,46 @@ describe("bump-it run", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+  it.each([false, true])("resolves a routine pin conflict without the agent, refusing a stray edit beside it: stray=%s", async (stray) => {
+    vi.mocked(runCompare).mockReset();
+    vi.mocked(runCompare).mockResolvedValue({ headFindings: [], failures: [], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, group: (id: string) => id, cooldown: { evaluated: true, releaseAgeDays: 7, held: [] } });
+    const root = await mkdtemp(fileURLToPath(new URL("../../.resolve-test-", import.meta.url)));
+    try {
+      const path = ".github/workflows/ci.yml";
+      const workflow = (step: string, sha: string, tag: string) => `on: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - name: ${step}\n        uses: acme/setup@${sha} # ${tag}\n`;
+      const bump = candidate({ ecosystem: "GitHub Actions", name: "acme/setup", from: "v1.0.0", minor: { version: "v1.1.0", line: "1" }, major: undefined, declarations: [], locations: [path] });
+      const unit = routine(bump);
+      const branch = branchFor(RULES, NOW, unit.topic);
+      // The base renamed the step right above the pin: the PR's pin line conflicts with it.
+      const fixture = await retargetRepository(root, REPO, branch, { [path]: workflow("setup", "a".repeat(40), "v1.0.0"), "README.md": "original\n" },
+        { [path]: workflow("setup", "1".repeat(40), "v1.1.0") }, { [path]: workflow("set up the toolchain", "a".repeat(40), "v1.0.0") });
+      const { workingCopy: wc, oldHead, oldBase } = fixture;
+      const previous = await planFor(unit, { files: new Map(), changes: [], notes: [] }, async () => "1".repeat(40));
+      const pr = ownPr({ headRef: branch, labels: [RULES.label], headSha: oldHead, body: withMarker(RULES, planSection(previous), { head: oldHead, base: oldBase, adaptations: 0 }) });
+      const h = harness({ prs: [pr], bumps: [bump] });
+      h.workspace.prepareBranch = fixture.workspace.prepareBranch.bind(fixture.workspace);
+      h.workspace.publishBranch = fixture.publishBranch;
+      const actual = defaultDeps();
+      const agent: ToolRunContext["agent"] = async () => { throw new Error("a routine of tool-written moves needs no agent"); };
+      const writeFile: typeof actual.writeFile = async (...args) => {
+        await actual.writeFile(...args);
+        // A stray process (an earlier agent's, say) changing another file while the tool writes the pin.
+        if (stray && args[1] === path) await actual.writeFile(args[0], "README.md", "stray\n");
+      };
+      const result = await bumpIt({ ...h.deps, trees: actual.trees, writeFile, fileState: actual.fileState, publicationParent: actual.publicationParent,
+        snapshot: actual.snapshot, candidateTree: actual.candidateTree, changedBetween: actual.changedBetween, linkProblems: actual.linkProblems, verify: verifyPlan,
+      }).review({ ...h.context, workingCopy: wc, agent });
+      if (stray) {
+        expect(result, JSON.stringify(result)).toMatchObject({ reviewed: [{ outcome: "error", detail: expect.stringContaining("no agent ran, yet README.md changed besides what the tool wrote") }] });
+        expect(fixture.publications).toEqual([]);
+      } else {
+        expect(result, JSON.stringify(result)).toMatchObject({ reviewed: [{ outcome: "rebased" }] });
+        expect(await readFile(join(wc.path, path), "utf8")).toBe(workflow("set up the toolchain", "1".repeat(40), "v1.1.0"));
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it.each([
     { command: "run", problem: undefined },
     { command: "review", problem: undefined },
