@@ -12,14 +12,16 @@
   for one repository), and describe the desktop app's scheduled task and check its readback (`schedule`,
   `schedule-check`): tool defaults, or the time and day the person picks. Guided setup needs stable v0.7.0 or
   newer; it never creates the app task itself, never merges and never sees a token.
-- `fixture-cleanup` in `core/setup` deletes every `bump-it/` and `secure-it/` branch on the `supply-chain_TEST_*`
-  fixture repositories before a candidate's fixture runs (their PRs close with them), each only while it's unchanged;
-  `fixture-repin` opens one PR per fixture moving only its gate caller to a new stable release. Both dry-run by default.
+- `fixture-cleanup` in `core/setup` deletes every `bump-it/` and `secure-it/` branch on the fixture repositories
+  before a candidate's fixture runs (their PRs close with them), each only while it's unchanged; `fixture-repin` opens
+  one PR per fixture moving only its gate caller to a new stable release. Both dry-run by default.
 
 ### Changed
 
 - The repository is now `leanish/leanish-development` (formerly `leanish/supply-chain`). GitHub's redirect doesn't
   cover reusable workflows, so a caller's `uses:` must name `leanish/leanish-development`.
+- The fixture repositories are renamed from `supply-chain_TEST_<case>` to `leanish-development_TEST_<case>`, or
+  `leanish-development_<tool>_TEST_<case>` for a case designed for one tool; both commands accept only these names.
 - When bump-it or secure-it redoes one of its open PRs from the default branch, the agent now starts from the exact
   base, like a new PR, and the published commit keeps the PR's history as its parent. Before every agent call a guard
   refuses changes the input doesn't declare. This needs git 2.42 or newer.

@@ -7,8 +7,8 @@ import type { GitHubApi, GitHubReply } from "../src/github.ts";
 import { object } from "../src/github.ts";
 
 const OWNER = "acme";
-const REPO = `${OWNER}/supply-chain_TEST_one`;
-const OTHER = `${OWNER}/supply-chain_TEST_two`;
+const REPO = `${OWNER}/leanish-development_TEST_one`;
+const OTHER = `${OWNER}/leanish-development_TEST_two`;
 const ZERO = "0".repeat(40);
 const sha = (n: number) => n.toString(16).padStart(40, "a");
 
@@ -99,15 +99,21 @@ describe("fixture scope", () => {
       .rejects.toThrow("must list the same repositories and branches");
   });
 
-  it("refuses repositories that aren't supply-chain_TEST_ fixtures", async () => {
-    await expect(fixtureScope({ bumpItConfig: "/b.yaml", secureItConfig: "/s.yaml", repo: undefined }, read(files(["acme/widget"])), "/h"))
-      .rejects.toThrow("isn't a supply-chain_TEST_* fixture repository");
+  it.each(["acme/widget", "acme/supply-chain_TEST_one", "acme/other_TEST_one", "acme/leanish-development_other_TEST_one", "acme/leanish-development-TEST_one"])("refuses %s, which isn't a fixture", async (repo) => {
+    await expect(fixtureScope({ bumpItConfig: "/b.yaml", secureItConfig: "/s.yaml", repo: undefined }, read(files([repo])), "/h"))
+      .rejects.toThrow("isn't a leanish-development[_<tool>]_TEST_* fixture repository");
+  });
+
+  it("accepts a fixture designed for one tool", async () => {
+    const wrapper = `${OWNER}/leanish-development_bump-it_TEST_gradle-wrapper`;
+    expect(await fixtureScope({ bumpItConfig: "/b.yaml", secureItConfig: "/s.yaml", repo: undefined }, read(files([REPO, wrapper])), "/h"))
+      .toEqual([{ repo: REPO, branch: "main" }, { repo: wrapper, branch: "main" }]);
   });
 
   it("restricts to a listed --repo and refuses an unlisted one", async () => {
     const both = files([REPO, OTHER]);
     expect(await fixtureScope({ bumpItConfig: "/b.yaml", secureItConfig: "/s.yaml", repo: OTHER.toUpperCase() }, read(both), "/h")).toEqual([{ repo: OTHER, branch: "main" }]);
-    await expect(fixtureScope({ bumpItConfig: "/b.yaml", secureItConfig: "/s.yaml", repo: `${OWNER}/supply-chain_TEST_three` }, read(both), "/h"))
+    await expect(fixtureScope({ bumpItConfig: "/b.yaml", secureItConfig: "/s.yaml", repo: `${OWNER}/leanish-development_TEST_three` }, read(both), "/h"))
       .rejects.toThrow("--repo must be one of");
   });
 });

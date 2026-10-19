@@ -284,7 +284,8 @@ Do not additionally trigger the whole app task without separate consent.
 Two commands maintain the owner's fixture repositories, whose seeded old or
 vulnerable dependencies must stay as they are. Both take both tools' fixture
 configs (the operator's `agent-fixtures.yaml` for each tool), which must list the
-same repositories and branches, all named `<owner>/supply-chain_TEST_*`; anything
+same repositories and branches, all named `<owner>/leanish-development_TEST_<case>`
+or, for a case designed for one tool, `<owner>/leanish-development_<tool>_TEST_<case>`; anything
 else blocks before any GitHub request. `--repo` restricts a run to one of them.
 Both are dry runs unless `--apply` (planned writes are `needs-confirmation`
 rows, exit 2), use the operator's `gh` authentication like `gate`, and stop at
