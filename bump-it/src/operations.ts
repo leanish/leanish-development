@@ -9,7 +9,7 @@ import type { GateEnvironment, GradleInputs } from "@leanish/gate/gate";
 import type { NpmPeerPlanner } from "@leanish/gate/npm-peers";
 import type { Tree } from "@leanish/gate/tree";
 import type { ToolRunContext } from "@leanish/tool-runtime/command";
-import { GATE_WORKFLOW, writtenPins } from "@leanish/tool-runtime/edit-checks";
+import { GATE_WORKFLOW, isPolicyFile, writtenPins } from "@leanish/tool-runtime/edit-checks";
 import type { FileState } from "@leanish/tool-runtime/git-copies";
 import { referenceTransform } from "@leanish/tool-runtime/gradle-reference";
 import { type GradleInventories, lockfilesOf } from "@leanish/tool-runtime/inventories";
@@ -20,6 +20,7 @@ import type { WrapperArtifact } from "./wrapper-generation.ts";
 import type { WrapperCandidates, WrapperPlanner } from "./gradle-wrapper.ts";
 import { constrainedUnit } from "./constraints.ts";
 import type { BumpItDeps } from "./deps.ts";
+import { assertLocalFile } from "./files.ts";
 import { formatManifest } from "./manifest-format.ts";
 import { coupledUnit, constrainedPeers } from "./peers.ts";
 import { assertNoPlanMarker } from "@leanish/tool-runtime/plan-blocks";
@@ -145,6 +146,9 @@ export async function writePins(execution: Execution, computed: Computed, restor
   const written: string[] = [];
   let complete = true;
   for (const path of [...new Set(pins.flatMap((move) => move.locations))].sort()) {
+    // Locations can come from a PR body's plan: only an in-repository workflow or action file that's a regular file
+    // is read here, so a crafted path never reaches a device, a pipe or a file outside the working copy.
+    if (!isPolicyFile(path) || !await localFile(execution.context.workingCopy.path, path)) { complete = false; continue; }
     const current = await execution.deps.trees.working(execution.context.workingCopy).read(path);
     const planned = pins.filter((move) => move.locations.includes(path));
     if (current === undefined || planned.some((move) => move.commitSha === undefined)) { complete = false; continue; }
@@ -163,6 +167,10 @@ export async function writePins(execution: Execution, computed: Computed, restor
     }
   }
   return { written, complete };
+}
+
+async function localFile(root: string, path: string): Promise<boolean> {
+  try { await assertLocalFile(root, path); return true; } catch { return false; }
 }
 
 /** Whether every planned pin is the gate's own reusable workflow, the only major that needs no agent: nothing but its pin may change there. */

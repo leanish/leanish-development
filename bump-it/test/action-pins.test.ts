@@ -1,3 +1,7 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 import type { Tree } from "@leanish/gate/tree";
 import { plannedPinsLanded } from "../src/action-pins.ts";
@@ -28,8 +32,11 @@ describe("tool-written pins", () => {
       [aliased]: `x: &a actions/checkout@${"0".repeat(40)}\njobs:\n  j:\n    steps:\n      - uses: *a # v1.0.0\n`,
     };
     const before = { ...files };
+    const root = await mkdtemp(join(tmpdir(), "bump-it-pins-"));
+    await mkdir(join(root, ".github/workflows"), { recursive: true });
+    for (const [path, text] of Object.entries(files)) await writeFile(join(root, path), text);
     const execution = {
-      context: { workingCopy: { path: "/wc" } },
+      context: { workingCopy: { path: root } },
       deps: {
         trees: { working: () => ({ read: async (path: string) => files[path] }) },
         writeFile: async (_wc: unknown, path: string, text: string) => { files[path] = text; },
@@ -40,5 +47,28 @@ describe("tool-written pins", () => {
     expect(await writePins(execution, computed)).toEqual({ written: [plain], complete: false });
     expect(files[plain]).toBe(before[plain]!.replace(`${"0".repeat(40)} # v1.0.0`, `${"a".repeat(40)} # v1.1.0`));
     expect(files[aliased]).toBe(before[aliased]);
+    await rm(root, { recursive: true, force: true });
+  });
+});
+
+describe("tool-written pin locations", () => {
+  it("never reads a location outside the working copy, or one that isn't a workflow or action file", async () => {
+    const root = await mkdtemp(join(tmpdir(), "bump-it-pins-"));
+    try {
+      await mkdir(join(root, ".github/workflows"), { recursive: true });
+      await writeFile(join(root, "outside.yml"), "x");
+      const reads: string[] = [];
+      const execution = {
+        context: { workingCopy: { path: join(root, "repo") } },
+        deps: { trees: { working: () => ({ read: async (path: string) => { reads.push(path); return undefined; } }) }, writeFile: async () => {}, fileState: async () => { throw new Error("unused"); } },
+      } as unknown as Parameters<typeof writePins>[0];
+      await mkdir(join(root, "repo/.github/workflows"), { recursive: true });
+      const locations = [".github/workflows/../../../outside.yml", "../outside.yml", "README.md", "/dev/zero"];
+      const computed = { plan: { moves: [{ ...move("v1.0.0", "v1.1.0", "a"), locations }] } } as unknown as Parameters<typeof writePins>[1];
+      expect(await writePins(execution, computed)).toEqual({ written: [], complete: false });
+      expect(reads).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
