@@ -10,6 +10,7 @@ repository root:
 node core/setup/src/cli.ts doctor
 node core/setup/src/cli.ts doctor --agent claude-code --java 25
 node core/setup/src/cli.ts release
+node core/setup/src/cli.ts release --candidate v0.7.0-rc.1
 ```
 
 - **`doctor [--agent codex|claude-code] [--java <major>]`** checks native Apple
@@ -54,8 +55,13 @@ node core/setup/src/cli.ts release
   releases stay available for rollback.
   This explicit command resolves the latest release on each invocation; there
   is no automatic upgrade or schedule repinning.
+  **`release --candidate vX.Y.Z-rc.N`** installs that candidate instead, to accept
+  guided setup before its release: GitHub must publish it as a non-draft,
+  immutable prerelease of exactly that tag, and it installs and verifies like a
+  release, at `releases/<candidate>`. Only an explicitly named candidate is ever
+  installed; the automatic pick above never selects one.
   After installation (including reuse or dependency repair), guided setup checks
-  for `core/setup/run.sh` in v0.7.0 or newer. Without it the result is `blocked`
+  for `core/setup/run.sh` in v0.7.0 or newer (its candidates included). Without it the result is `blocked`
   (exit 1), includes the tag/path found, and keeps the completed checkout available
   for manual use. Until a stable release shipping guided setup is published,
   use [the manual guide](../../docs/adopting-tools.md); choosing another existing
@@ -184,7 +190,8 @@ Only `gh` probes additionally inherit `GH_TOKEN`, `GITHUB_TOKEN`, `GH_HOST`, and
 credentials in results or passing them to other commands.
 
 For `gate`, `batch`, `schedule`, `schedule-check` and `test-run`, `--release`
-must be a stable `vX.Y.Z` semantic-version tag. Prerelease/rc tags, build metadata,
+must be a stable `vX.Y.Z` semantic-version tag or an installed `vX.Y.Z-rc.N`
+candidate; `fixture-repin` takes stable tags only. Other prerelease tags, build metadata,
 missing `v`, leading zeroes and malformed versions are usage errors (exit 64),
 rejected before any command action with a fixed explanation that does not echo
 the supplied value.

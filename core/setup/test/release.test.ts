@@ -61,8 +61,9 @@ afterEach(async () => {
   await realRm(root, { recursive: true, force: true });
 });
 
-function installer({ realNpm = false, failNpm = false, remoteSha = sha, beforeNpm, tag = "v0.7.0" }: {
+function installer({ realNpm = false, failNpm = false, remoteSha = sha, beforeNpm, tag = "v0.7.0", candidate = {} }: {
   realNpm?: boolean; failNpm?: boolean; remoteSha?: string; beforeNpm?: (path: string) => Promise<void>; tag?: string;
+  candidate?: Readonly<Record<string, unknown>>;
 } = {}) {
   const calls: Array<{ command: string; args: ReadonlyArray<string>; cwd?: string }> = [];
   const run: RunProcess = async (command, args, options) => {
@@ -72,7 +73,9 @@ function installer({ realNpm = false, failNpm = false, remoteSha = sha, beforeNp
       const endpoint = args.at(-1)!;
       const response = endpoint.includes("/releases?")
         ? [[{ tag_name: tag, published_at: "2026-10-17T00:00:00Z", draft: false, prerelease: false, immutable: true }]]
-        : { ref: `refs/tags/${tag}`, object: { type: "commit", sha: remoteSha } };
+        : endpoint.includes("/releases/tags/")
+          ? { tag_name: tag, draft: false, prerelease: true, immutable: true, ...candidate }
+          : { ref: `refs/tags/${tag}`, object: { type: "commit", sha: remoteSha } };
       return { code: 0, stdout: JSON.stringify(response), stderr: "" };
     }
     if (command === "npm") {
@@ -106,7 +109,7 @@ describe("release installation", () => {
     const { commands, calls } = installer({ tag });
     for (const reinstall of [false, false, true]) {
       if (reinstall) await rm(join(releases, tag, "node_modules"), { recursive: true });
-      const value = await installRelease(commands, home);
+      const value = await installRelease({}, commands, home);
       expect(value).toMatchObject({ status: "blocked", data: { tag, sha, path: join(releases, tag) } });
       expect(value.message).toContain(`Installed ${tag}`);
       expect(value.message).toContain("v0.7.0 or newer");
@@ -123,34 +126,59 @@ describe("release installation", () => {
   it("installs and reuses a detached tag-named checkout without rerunning npm", async () => {
     const { commands, calls } = installer();
     const expectedPath = join(releases, "v0.7.0");
-    expect(await installRelease(commands, home)).toMatchObject({ status: "changed", data: { tag: "v0.7.0", sha, path: expectedPath } });
+    expect(await installRelease({}, commands, home)).toMatchObject({ status: "changed", data: { tag: "v0.7.0", sha, path: expectedPath } });
     expect(await git(expectedPath, "rev-parse", "HEAD")).toBe(sha);
     expect(await git(expectedPath, "rev-parse", "--abbrev-ref", "HEAD")).toBe("HEAD");
     expect(await git(expectedPath, "status", "--porcelain")).toBe("");
     expect(await git(expectedPath, "remote", "get-url", "origin")).toBe(`https://github.com/${RELEASE_REPOSITORY}.git`);
     expect(JSON.parse(await readFile(join(expectedPath, ".git", "leanish-setup.json"), "utf8"))).toEqual({ schemaVersion: 1, tag: "v0.7.0", sha });
     expect((await stat(join(expectedPath, ".git", "leanish-setup.json"))).mode & 0o777).toBe(0o600);
-    expect((await installRelease(commands, home)).status).toBe("already-done");
+    expect((await installRelease({}, commands, home)).status).toBe("already-done");
     expect(calls.filter(({ command }) => command === "npm")).toHaveLength(1);
     expect(await readdir(releases)).toEqual(["v0.7.0"]);
     expect(await git(source, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
   });
 
+  it("installs a named candidate published as an immutable prerelease, with guided setup, and reuses it offline", async () => {
+    await git(source, "tag", "v0.7.0-rc.1");
+    const { commands, calls } = installer({ tag: "v0.7.0-rc.1" });
+    const path = join(releases, "v0.7.0-rc.1");
+    expect(await installRelease({ candidate: "v0.7.0-rc.1" }, commands, home)).toMatchObject({
+      status: "changed", message: "Installed immutable release candidate", data: { tag: "v0.7.0-rc.1", sha, path },
+    });
+    expect(calls.filter(({ command }) => command === "gh").map(({ args }) => args.at(-1))).toEqual([
+      `repos/${RELEASE_REPOSITORY}/releases/tags/v0.7.0-rc.1`, `repos/${RELEASE_REPOSITORY}/git/ref/tags/v0.7.0-rc.1`,
+    ]);
+    expect((await installRelease({ candidate: "v0.7.0-rc.1" }, commands, home)).status).toBe("already-done");
+    expect(await readInstalledRelease("v0.7.0-rc.1", commands, home)).toEqual({ tag: "v0.7.0-rc.1", sha, path });
+  });
+
+  it.each([
+    [{ prerelease: false }, "published prerelease"], [{ draft: true }, "published prerelease"],
+    [{ immutable: false }, "not immutable"], [{ immutable: undefined }, "not immutable"], [{ tag_name: "v0.7.0-rc.2" }, "different release"],
+  ] as const)("refuses a candidate GitHub doesn't publish as an immutable prerelease of that tag: %j", async (candidate, message) => {
+    await git(source, "tag", "v0.7.0-rc.1");
+    const { commands } = installer({ tag: "v0.7.0-rc.1", candidate });
+    await expect(installRelease({ candidate: "v0.7.0-rc.1" }, commands, home)).rejects.toThrow(message);
+    await expect(stat(join(releases, "v0.7.0-rc.1"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("runs a real offline npm ci and suppresses lifecycle scripts", async () => {
     const { commands } = installer({ realNpm: true });
-    expect((await installRelease(commands, home)).status).toBe("changed");
+    expect((await installRelease({}, commands, home)).status).toBe("changed");
     const path = join(releases, "v0.7.0");
     await expect(stat(join(path, "lifecycle-ran"))).rejects.toMatchObject({ code: "ENOENT" });
-    expect((await installRelease(commands, home)).status).toBe("already-done");
+    expect((await installRelease({}, commands, home)).status).toBe("already-done");
   });
 
   it("reuses an explicitly selected installed release offline without selecting a new version", async () => {
     const { commands, calls } = installer();
-    await installRelease(commands, home);
+    await installRelease({}, commands, home);
     calls.length = 0;
     expect(await readInstalledRelease("v0.7.0", commands, home)).toEqual({ tag: "v0.7.0", sha, path: join(releases, "v0.7.0") });
     expect(calls.every(({ command }) => command === "git")).toBe(true);
-    await expect(readInstalledRelease("../escape", commands, home)).rejects.toThrow("stable vX.Y.Z");
+    await expect(readInstalledRelease("../escape", commands, home)).rejects.toThrow("vX.Y.Z release or vX.Y.Z-rc.N candidate");
+    await expect(readInstalledRelease("v0.7.0-beta.1", commands, home)).rejects.toThrow("vX.Y.Z release or vX.Y.Z-rc.N candidate");
     await rm(join(releases, "v0.7.0/node_modules"), { recursive: true });
     await expect(readInstalledRelease("v0.7.0", commands, home)).rejects.toThrow("dependencies are incomplete");
   });
@@ -159,92 +187,92 @@ describe("release installation", () => {
     await git(source, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.com", "tag", "--force", "--annotate", "v0.7.0", "--message", "fixture release");
     expect(await git(source, "rev-parse", "refs/tags/v0.7.0")).not.toBe(sha);
     const { commands } = installer();
-    expect((await installRelease(commands, home)).data?.sha).toBe(sha);
+    expect((await installRelease({}, commands, home)).data?.sha).toBe(sha);
     expect(await git(join(releases, "v0.7.0"), "rev-parse", "HEAD")).toBe(sha);
   });
 
   it("verifies the fetched tag before checkout or npm and cleans failed staging", async () => {
     const { commands, calls } = installer({ remoteSha: "a".repeat(40) });
-    await expect(installRelease(commands, home)).rejects.toThrow("differs from GitHub");
+    await expect(installRelease({}, commands, home)).rejects.toThrow("differs from GitHub");
     expect(calls.some(({ args }) => args.includes("checkout"))).toBe(false);
     expect(calls.some(({ command }) => command === "npm")).toBe(false);
     expect(await readdir(releases)).toEqual([]);
   });
 
   it("cleans a failed dependency install and permits a successful retry", async () => {
-    await expect(installRelease(installer({ failNpm: true }).commands, home)).rejects.toThrow(/^Release npm ci failed/);
+    await expect(installRelease({}, installer({ failNpm: true }).commands, home)).rejects.toThrow(/^Release npm ci failed/);
     expect(await readdir(releases)).toEqual([]);
-    expect((await installRelease(installer().commands, home)).status).toBe("changed");
+    expect((await installRelease({}, installer().commands, home)).status).toBe("changed");
   });
 
   it("refuses an existing checkout with a different SHA without repairing it", async () => {
     const { commands } = installer();
-    await installRelease(commands, home);
+    await installRelease({}, commands, home);
     const { commands: mismatch, calls } = installer({ remoteSha: "a".repeat(40) });
-    await expect(installRelease(mismatch, home)).rejects.toThrow("different SHA");
+    await expect(installRelease({}, mismatch, home)).rejects.toThrow("different SHA");
     expect(await git(join(releases, "v0.7.0"), "rev-parse", "HEAD")).toBe(sha);
     expect(calls.some(({ command, args }) => command === "npm" || args.includes("checkout") || args.includes("fetch"))).toBe(false);
   });
 
   it("refuses attached HEAD even at the correct SHA, leaving the branch alone", async () => {
     const { commands, calls } = installer();
-    await installRelease(commands, home);
+    await installRelease({}, commands, home);
     const path = join(releases, "v0.7.0");
     await git(path, "checkout", "-qb", "keep-me");
     calls.length = 0;
-    await expect(installRelease(commands, home)).rejects.toThrow("detached HEAD");
+    await expect(installRelease({}, commands, home)).rejects.toThrow("detached HEAD");
     expect(await git(path, "rev-parse", "--abbrev-ref", "HEAD")).toBe("keep-me");
     expect(calls.some(({ command, args }) => command === "npm" || args.includes("checkout"))).toBe(false);
   });
 
   it.each(["package.json", "untracked.txt"])("refuses dirty checkouts (%s), preserving bytes", async (file) => {
     const { commands, calls } = installer();
-    await installRelease(commands, home);
+    await installRelease({}, commands, home);
     const path = join(releases, "v0.7.0");
     await writeFile(join(path, file), "keep me");
     calls.length = 0;
-    await expect(installRelease(commands, home)).rejects.toThrow("dirty");
+    await expect(installRelease({}, commands, home)).rejects.toThrow("dirty");
     expect(await readFile(join(path, file), "utf8")).toBe("keep me");
     expect(calls.some(({ command }) => command === "npm")).toBe(false);
   });
 
   it("completes a clean checkout whose dependency installation was not recorded", async () => {
     const { commands, calls } = installer();
-    await installRelease(commands, home);
+    await installRelease({}, commands, home);
     const path = join(releases, "v0.7.0");
     await rm(join(path, ".git", "leanish-setup.json"));
-    expect((await installRelease(commands, home)).status).toBe("changed");
+    expect((await installRelease({}, commands, home)).status).toBe("changed");
     expect(calls.filter(({ command }) => command === "npm")).toHaveLength(2);
   });
 
   it("reinstalls missing dependencies without moving the checkout", async () => {
     const { commands } = installer();
-    await installRelease(commands, home);
+    await installRelease({}, commands, home);
     const path = join(releases, "v0.7.0");
     await rm(join(path, "node_modules"), { recursive: true });
-    expect((await installRelease(commands, home)).status).toBe("changed");
+    expect((await installRelease({}, commands, home)).status).toBe("changed");
     expect(await git(path, "rev-parse", "HEAD")).toBe(sha);
   });
 
   it("invalidates the old receipt before reinstalling, even if npm partially succeeds then fails", async () => {
     const { commands } = installer();
-    await installRelease(commands, home);
+    await installRelease({}, commands, home);
     const path = join(releases, "v0.7.0");
     await rm(join(path, "node_modules", ".package-lock.json"));
     const failed = installer({ failNpm: true, beforeNpm: async (checkout) => {
       await expect(stat(join(checkout, ".git", "leanish-setup.json"))).rejects.toMatchObject({ code: "ENOENT" });
       await writeFile(join(checkout, "node_modules", ".package-lock.json"), "{}");
     } });
-    await expect(installRelease(failed.commands, home)).rejects.toThrow("npm ci failed");
+    await expect(installRelease({}, failed.commands, home)).rejects.toThrow("npm ci failed");
     await expect(stat(join(path, ".git", "leanish-setup.json"))).rejects.toMatchObject({ code: "ENOENT" });
-    expect((await installRelease(commands, home)).status).toBe("changed");
+    expect((await installRelease({}, commands, home)).status).toBe("changed");
   });
 
   it("does not mask a failed install when the lock has already disappeared", async () => {
     const { commands } = installer({ failNpm: true, beforeNpm: async () => {
       await rm(join(releases, ".setup-lock"), { recursive: true });
     } });
-    await expect(installRelease(commands, home)).rejects.toThrow("npm ci failed");
+    await expect(installRelease({}, commands, home)).rejects.toThrow("npm ci failed");
     expect(await readdir(releases)).toEqual([]);
   });
 
@@ -254,7 +282,7 @@ describe("release installation", () => {
       if (path === join(releases, ".setup-lock")) throw cleanupError;
       return realRm(path, options);
     });
-    await expect(installRelease(installer({ failNpm: true }).commands, home)).rejects.toThrow("npm ci failed");
+    await expect(installRelease({}, installer({ failNpm: true }).commands, home)).rejects.toThrow("npm ci failed");
     expect(rm).toHaveBeenCalledWith(join(releases, ".setup-lock"), { recursive: true, force: true });
   });
 
@@ -264,7 +292,7 @@ describe("release installation", () => {
       if (path === join(releases, ".setup-lock")) throw cleanupError;
       return realRm(path, options);
     });
-    await expect(installRelease(installer().commands, home)).rejects.toBe(cleanupError);
+    await expect(installRelease({}, installer().commands, home)).rejects.toBe(cleanupError);
   });
 
   it("cleans only owned stale staging directories, leaving unmarked paths and symlinks alone", async () => {
@@ -291,7 +319,7 @@ describe("release installation", () => {
     const otherName = join(releases, ".install-other-name");
     await mkdir(otherName);
     await writeFile(join(otherName, marker), owner);
-    expect((await installRelease(installer().commands, home)).status).toBe("changed");
+    expect((await installRelease({}, installer().commands, home)).status).toBe("changed");
     await expect(stat(owned)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(join(unmarked, "keep"), "utf8")).toBe("unrelated");
     expect(await readFile(join(wrong, marker), "utf8")).toBe(owner.replace(" v1", " v2"));
@@ -304,7 +332,7 @@ describe("release installation", () => {
     const { commands } = installer({ beforeNpm: async (checkout) => {
       expect(await readFile(join(checkout, "..", ".leanish-setup-staging"), "utf8")).toBe(`${RELEASE_REPOSITORY} setup staging v1\n`);
     } });
-    await installRelease(commands, home);
+    await installRelease({}, commands, home);
     expect(await readdir(releases)).toEqual(["v0.7.0"]);
   });
 
@@ -312,7 +340,7 @@ describe("release installation", () => {
     const { commands } = installer();
     await mkdir(releases, { recursive: true });
     await symlink(source, join(releases, "v0.7.0"));
-    await expect(installRelease(commands, home)).rejects.toThrow("real directories");
+    await expect(installRelease({}, commands, home)).rejects.toThrow("real directories");
     await expect(stat(join(source, "node_modules"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -320,22 +348,22 @@ describe("release installation", () => {
     const { commands } = installer();
     await mkdir(join(home, ".local", "share", "leanish"), { recursive: true });
     await symlink(source, releases);
-    await expect(installRelease(commands, home)).rejects.toThrow("real directories");
+    await expect(installRelease({}, commands, home)).rejects.toThrow("real directories");
     await expect(stat(join(source, ".setup-lock"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("refuses node_modules symlinks and mismatched receipts without running npm", async () => {
     const { commands, calls } = installer();
-    await installRelease(commands, home);
+    await installRelease({}, commands, home);
     const path = join(releases, "v0.7.0");
     await rm(join(path, "node_modules"), { recursive: true });
     await symlink(source, join(path, "node_modules"));
     calls.length = 0;
-    await expect(installRelease(commands, home)).rejects.toThrow(/dirty|real directory/);
+    await expect(installRelease({}, commands, home)).rejects.toThrow(/dirty|real directory/);
     expect(calls.some(({ command }) => command === "npm")).toBe(false);
     await rm(join(path, "node_modules"));
     await writeFile(join(path, ".git", "leanish-setup.json"), JSON.stringify({ schemaVersion: 1, tag: "v0.7.0", sha: "a".repeat(40) }));
-    await expect(installRelease(commands, home)).rejects.toThrow("receipt does not match");
+    await expect(installRelease({}, commands, home)).rejects.toThrow("receipt does not match");
     expect(calls.some(({ command }) => command === "npm")).toBe(false);
   });
 
@@ -345,7 +373,7 @@ describe("release installation", () => {
     const staging = join(releases, ".install-active");
     await mkdir(staging);
     await writeFile(join(staging, ".leanish-setup-staging"), `${RELEASE_REPOSITORY} setup staging v1\n`);
-    await expect(installRelease(commands, home)).rejects.toThrow("locked");
+    await expect(installRelease({}, commands, home)).rejects.toThrow("locked");
     expect(calls.every(({ command }) => command === "gh")).toBe(true);
     expect((await stat(join(releases, ".setup-lock"))).isDirectory()).toBe(true);
     expect((await stat(staging)).isDirectory()).toBe(true);
@@ -354,7 +382,7 @@ describe("release installation", () => {
   it("retains older releases", async () => {
     await mkdir(join(releases, "v0.6.0"), { recursive: true });
     await writeFile(join(releases, "v0.6.0", "keep"), "rollback");
-    await installRelease(installer().commands, home);
+    await installRelease({}, installer().commands, home);
     expect(await readFile(join(releases, "v0.6.0", "keep"), "utf8")).toBe("rollback");
   });
 });

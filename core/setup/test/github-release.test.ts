@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { RunProcess } from "@leanish/gate/process";
 
 import { Commands } from "../src/commands.ts";
-import { latestRelease, RELEASE_REPOSITORY } from "../src/github-release.ts";
+import { candidateRelease, isCandidateTag, latestRelease, RELEASE_REPOSITORY } from "../src/github-release.ts";
 
 const SHA = "a".repeat(40);
 const TAG_SHA = "b".repeat(40);
@@ -73,6 +73,23 @@ describe("stable release resolution", () => {
     await expect(latestRelease(commands)).rejects.toThrow("cyclic");
     responses.set(TAG, { sha: SHA, object: { type: "commit", sha: SHA } });
     await expect(latestRelease(commands)).rejects.toThrow("different annotated tag");
+  });
+
+  it("resolves a named candidate only through its own release, never through the stable pick", async () => {
+    const { commands, responses, run } = github([[stable(), stable({ tag_name: "v0.8.0-rc.1", prerelease: true })]]);
+    responses.set(`repos/${RELEASE_REPOSITORY}/releases/tags/v0.8.0-rc.1`, { tag_name: "v0.8.0-rc.1", draft: false, prerelease: true, immutable: true });
+    responses.set(`repos/${RELEASE_REPOSITORY}/git/ref/tags/v0.8.0-rc.1`, { ref: "refs/tags/v0.8.0-rc.1", object: { type: "commit", sha: SHA } });
+    expect(await latestRelease(commands)).toEqual({ tag: "v0.7.0", sha: SHA });
+    run.mockClear();
+    expect(await candidateRelease(commands, "v0.8.0-rc.1")).toEqual({ tag: "v0.8.0-rc.1", sha: SHA });
+    expect(run.mock.calls.map(([, args]) => args.at(-1))).not.toContain(RELEASES);
+  });
+
+  it.each(["v0.7.0", "v0.7.0-rc.0", "v0.7.0-rc.01", "v0.7.0-beta.1", "v0.7.0-rc.1+build", "../escape"])("refuses %s as a candidate before any request", async (tag) => {
+    expect(isCandidateTag(tag)).toBe(false);
+    const { commands, run } = github();
+    await expect(candidateRelease(commands, tag)).rejects.toThrow("vX.Y.Z-rc.N");
+    expect(run).not.toHaveBeenCalled();
   });
 
   it("sanitizes transport errors and non-JSON responses", async () => {

@@ -10,12 +10,12 @@ import { enrollment, verifyTokens } from "./enrollment.ts";
 import { fixtureCleanup, type FixtureCleanupOptions } from "./fixture-cleanup.ts";
 import { fixtureRepin, type FixtureRepinOptions } from "./fixture-repin.ts";
 import { adoptGate, type GateOptions } from "./gate.ts";
-import { installRelease } from "./release.ts";
+import { installRelease, type ReleaseOptions } from "./release.ts";
 import { schedule, scheduleCheck, type ScheduleOptions } from "./schedule.ts";
 
 export interface SetupActions {
   readonly doctor: (options: DoctorOptions) => Promise<ReadonlyArray<SetupResult>>;
-  readonly release: () => Promise<SetupResult>;
+  readonly release: (options: ReleaseOptions) => Promise<SetupResult>;
   readonly configure: (options: ConfigureOptions) => Promise<SetupResult>;
   readonly enroll: (options: InstallationOptions & { readonly login: string }) => Promise<SetupResult>;
   readonly verifyTokens: (options: InstallationOptions) => Promise<SetupResult>;
@@ -30,7 +30,7 @@ export interface SetupActions {
 /** Dependency injection keeps command dispatch tests away from the person's machine and GitHub. */
 export async function main(
   argv: ReadonlyArray<string>, emit: (line: string) => void = (line) => process.stdout.write(line + "\n"),
-  actions: SetupActions = { doctor, release: installRelease, configure, enroll: enrollment, verifyTokens, gate: (options, emit) => adoptGate(options, undefined, emit), batch, schedule, scheduleCheck, fixtureCleanup: (options, emit) => fixtureCleanup(options, emit),
+  actions: SetupActions = { doctor, release: (options) => installRelease(options), configure, enroll: enrollment, verifyTokens, gate: (options, emit) => adoptGate(options, undefined, emit), batch, schedule, scheduleCheck, fixtureCleanup: (options, emit) => fixtureCleanup(options, emit),
     fixtureRepin: (options, emit) => fixtureRepin(options, emit) },
 ): Promise<number> {
   let parsed: SetupCommand;
@@ -47,7 +47,7 @@ export async function main(
   try {
     switch (parsed.command) {
       case "doctor": results = await actions.doctor(parsed.options); break;
-      case "release": results = [await actions.release()]; break;
+      case "release": results = [await actions.release(parsed.options)]; break;
       case "configure": results = [await actions.configure(parsed.options)]; break;
       case "enroll": results = [await actions.enroll(parsed.options)]; break;
       case "verify-tokens": results = [await actions.verifyTokens(parsed.options)]; break;

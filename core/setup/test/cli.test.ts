@@ -34,17 +34,31 @@ describe("setup command contract", () => {
     { command: "test-run", args: ["bump-it", "--owner", "acme", "--repo", "acme/one"] },
   ];
 
-  it.each(releaseCommands.flatMap((entry) => ["v0.7.0-rc.1", "v0.7.0+build", "0.7.0", "v01.7.0", "v1.2", "../escape", "secret-sentinel"].map((tag) => ({ ...entry, tag }))))("rejects unstable or malformed release tags for $command: $tag", async ({ command, args, tag }) => {
+  it.each(releaseCommands.flatMap((entry) => ["v0.7.0-beta.1", "v0.7.0-rc.0", "v0.7.0+build", "0.7.0", "v01.7.0", "v1.2", "../escape", "secret-sentinel"].map((tag) => ({ ...entry, tag }))))("rejects other prerelease or malformed release tags for $command: $tag", async ({ command, args, tag }) => {
     const handlers = actions();
     const emit = vi.fn();
     expect(await main([command, ...args, "--release", tag], emit, handlers)).toBe(64);
-    expect(JSON.parse(emit.mock.calls[0]![0])).toMatchObject({ command, step: "arguments", status: "blocked", message: expect.stringContaining("--release must be a stable vX.Y.Z tag; prerelease/rc tags") });
+    expect(JSON.parse(emit.mock.calls[0]![0])).toMatchObject({ command, step: "arguments", status: "blocked", message: expect.stringContaining("--release must be a stable vX.Y.Z tag or an installed vX.Y.Z-rc.N candidate") });
     expect(JSON.stringify(emit.mock.calls)).not.toContain("secret-sentinel");
     for (const action of Object.values(handlers)) expect(action).not.toHaveBeenCalled();
   });
 
-  it.each(releaseCommands)("accepts stable release tags for $command", async ({ command, args }) => {
+  it.each(releaseCommands)("accepts stable release tags and installed candidates for $command", async ({ command, args }) => {
     expect(await main([command, ...args, "--release", "v1.2.3"], () => {}, actions())).not.toBe(64);
+    expect(await main([command, ...args, "--release", "v1.2.3-rc.4"], () => {}, actions())).not.toBe(64);
+  });
+
+  it("installs a named candidate only through release --candidate", async () => {
+    const handlers = actions();
+    expect(await main(["release", "--candidate", "v0.7.0-rc.1"], () => {}, handlers)).toBe(0);
+    expect(handlers.release).toHaveBeenLastCalledWith({ candidate: "v0.7.0-rc.1" });
+    expect(await main(["release"], () => {}, handlers)).toBe(0);
+    expect(handlers.release).toHaveBeenLastCalledWith({});
+    for (const tag of ["v0.7.0", "v0.7.0-beta.1"]) {
+      const emit = vi.fn();
+      expect(await main(["release", "--candidate", tag], emit, handlers)).toBe(64);
+      expect(JSON.parse(emit.mock.calls[0]![0])).toMatchObject({ command: "release", status: "blocked", message: expect.stringContaining("--candidate must be a vX.Y.Z-rc.N tag") });
+    }
   });
 
   it("dispatches doctor arguments and emits versioned JSONL only", async () => {
@@ -56,11 +70,11 @@ describe("setup command contract", () => {
     expect(lines.map((line) => JSON.parse(line))).toEqual([{ schemaVersion: 1, command: "doctor", step: "agent", status: "already-done", message: "Ready", data: { agent: "codex" } }]);
   });
 
-  it("dispatches release without options", async () => {
+  it("dispatches release without a candidate", async () => {
     const handlers = actions();
     const emit = vi.fn();
     expect(await main(["release"], emit, handlers)).toBe(0);
-    expect(handlers.release).toHaveBeenCalledWith();
+    expect(handlers.release).toHaveBeenCalledWith({});
     expect(handlers.doctor).not.toHaveBeenCalled();
     expect(JSON.parse(emit.mock.calls[0]![0])).toMatchObject({ command: "release", status: "changed" });
   });
