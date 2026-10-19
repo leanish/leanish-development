@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Every `batch` and `test-run` also writes a full log for the person, `<dirs.state>/logs/batch-YYYY-MM-DD.jsonl`, with
+  each tool's output and how each command ended, so a failed command's reason can be found. The scheduled agent never
+  sees it or its path; its summary only says `logFailed: true` when the log couldn't be written.
+- `schedule`'s command rule says what it replaces (`commandRule.replaces`): the exact form of earlier releases' Claude
+  entries for that tool and owner, or the whole Codex rule file.
+
+### Fixed
+
+- A `HOME` ending in a slash no longer makes guided setup climb past it while reading or writing an installation.
+- The task folder overlap check also refuses a case or Unicode variant of a trusted path, which a case-insensitive
+  volume (APFS's default) reaches as the same folder.
+- `schedule-check` no longer needs the task folder for a Claude readback without a folder, which Claude's scheduling
+  tool never stores.
+- The batch counts only each result's own coverage gaps, so a nested breakdown next to a total isn't counted twice.
+
 ## 0.7.0 - 2026-10-19
 
 ### Added

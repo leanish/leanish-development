@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import { main, type SetupActions } from "../src/cli.ts";
 import { result } from "../src/contracts.ts";
 import { batch } from "../src/batch.ts";
+import { memoryLog } from "./memory-batch-log.ts";
 import { parseToolConfig } from "@leanish/tool-runtime/config";
 
 function actions(): SetupActions {
@@ -153,11 +154,11 @@ describe("setup command contract", () => {
   it("test-run executes only one opted-in review/run chain through the batch implementation", async () => {
     const config = parseToolConfig("bump-it", "repos: [{repo: acme/one}, {repo: acme/two}]\nagent: {codingAgent: codex, model: sol, effort: medium}\ncommitIdentity: {name: Dev, email: dev@example.com}\n", "agent.yaml", "/home");
     const invoke = vi.fn(async () => ({ code: 0, report: { status: "ok", result: { outcome: "completed" } } }));
-    const machine = { release: async () => ({ tag: "v0.7.0", sha: "a".repeat(40), path: "/release" }), installation: async () => ({ path: "/config", config }), preflight: async () => {}, invoke };
+    const machine = { release: async () => ({ tag: "v0.7.0", sha: "a".repeat(40), path: "/release" }), installation: async () => ({ path: "/config", config }), preflight: async () => {}, log: async () => memoryLog(), invoke };
     const handlers = { ...actions(), batch: (options: Parameters<typeof batch>[0], emit: (line: string) => void) => batch(options, emit, machine) };
     const argv = ["test-run", "bump-it", "--owner", "acme", "--release", "v0.7.0", "--repo"];
     expect(await main([...argv, "acme/one"], () => {}, handlers)).toBe(0);
-    expect(invoke.mock.calls.map((args) => args.slice(2))).toEqual([["bump-it", "acme/one", "review"], ["bump-it", "acme/one", "run"]]);
+    expect(invoke.mock.calls.map((args) => args.slice(2, 5))).toEqual([["bump-it", "acme/one", "review"], ["bump-it", "acme/one", "run"]]);
     invoke.mockClear();
     expect(await main([...argv, "acme/unselected"], () => {}, handlers)).toBe(1);
     expect(invoke).not.toHaveBeenCalled();

@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseToolConfig } from "@leanish/tool-runtime/config";
 
 import { batch, executeBatch, invokeTool } from "../src/batch.ts";
+import { memoryLog } from "./memory-batch-log.ts";
 
 const options = { tool: "bump-it" as const, owner: "acme" };
 const report = { msg: "run finished", tool: "bump-it", repo: "acme/one", status: "ok", result: { outcome: "completed" }, totals: { estimatedApiCostUsd: 0.01 } };
@@ -75,6 +76,34 @@ describe("batch runner", () => {
     expect(JSON.stringify(records)).not.toContain("sentinel");
   });
 
+  it("counts only the result's own gaps, not a nested breakdown next to the total", async () => {
+    const records: Readonly<Record<string, unknown>>[] = [];
+    await executeBatch(options, ["acme/one"], async (_repo, action) => action === "review" ? ok()
+      : { code: 0, report: { ...report, result: { outcome: "completed", gaps: 3, units: [{ topic: "routine", gaps: ["a", "b", "c"] }] } } },
+    (record) => records.push(record));
+    expect(records.find((record) => record["action"] === "run")).toMatchObject({ gaps: 3 });
+    expect(records.at(-1)).toMatchObject({ action: "summary", gaps: 3 });
+  });
+
+  it("logs startup and invocation failures with their message for the person, never in the agent's output", async () => {
+    const config = parseToolConfig("bump-it", "repos: [{repo: acme/one}]\nagent: {codingAgent: codex, model: sol, effort: medium}\ncommitIdentity: {name: Dev, email: dev@example.com}\n", "agent.yaml", "/home");
+    const log = memoryLog();
+    const lines: string[] = [];
+    const machine = {
+      release: vi.fn(async () => ({ tag: "v0.7.0", sha: "a".repeat(40), path: "/release" })), installation: vi.fn(async () => ({ path: "/config", config })),
+      preflight: vi.fn(async () => { throw new Error("scanner-sentinel"); }), log: async () => log, invoke: vi.fn(async () => ok()),
+    };
+    expect(await batch({ ...options, release: "v0.7.0" }, (line) => lines.push(line), machine)).toBe(1);
+    expect(log.entries).toEqual([{ event: "startup-failed", phase: "scanner", message: "scanner-sentinel" }]);
+    expect(lines.join("")).not.toContain("scanner-sentinel");
+    const invoked = memoryLog();
+    const records: Readonly<Record<string, unknown>>[] = [];
+    await executeBatch(options, ["acme/one"], async () => { throw new Error("spawn-sentinel"); }, (record) => records.push(record), invoked);
+    expect(invoked.entries.filter((entry) => entry["event"] === "invoke-failed").map((entry) => entry["message"])).toEqual(["spawn-sentinel", "spawn-sentinel"]);
+    expect(JSON.stringify(records)).not.toContain("spawn-sentinel");
+    expect(records.at(-1)).not.toHaveProperty("logFailed");
+  });
+
   it("fills, but never exceeds, eight parallel chains", async () => {
     const repos = Array.from({ length: 12 }, (_, index) => `acme/r${index}`);
     let running = 0;
@@ -115,14 +144,14 @@ describe("batch runner", () => {
     const release = { tag: "v0.7.0", sha: "a".repeat(40), path: "/release" };
     const machine = {
       release: vi.fn(async () => release), installation: vi.fn(async () => ({ path: "/config/acme/bump-it/agent.yaml", config })),
-      preflight: vi.fn(async () => {}), invoke: vi.fn(async () => ok()),
+      preflight: vi.fn(async () => {}), log: async () => memoryLog(), invoke: vi.fn(async () => ok()),
     };
     const lines: string[] = [];
     expect(await batch({ ...options, release: release.tag, repo: "acme/one" }, (line) => lines.push(line), machine)).toBe(0);
     expect(machine.preflight).toHaveBeenCalledOnce();
     expect(machine.invoke.mock.calls).toEqual([
-      [release, "/config/acme/bump-it/agent.yaml", "bump-it", "acme/one", "review"],
-      [release, "/config/acme/bump-it/agent.yaml", "bump-it", "acme/one", "run"],
+      [release, "/config/acme/bump-it/agent.yaml", "bump-it", "acme/one", "review", expect.any(Function)],
+      [release, "/config/acme/bump-it/agent.yaml", "bump-it", "acme/one", "run", expect.any(Function)],
     ]);
     machine.invoke.mockClear();
     expect(await batch({ ...options, release: release.tag, repo: "acme/unselected" }, () => {}, machine)).toBe(1);
@@ -139,14 +168,14 @@ describe("batch runner", () => {
     const release = { tag: "v0.7.0-rc.1", sha: "a".repeat(40), path: "/release" };
     const machine = {
       release: vi.fn(async () => release), installation: vi.fn(async () => ({ path: "/config/acme/bump-it/agent.yaml", config })),
-      preflight: vi.fn(async () => {}), invoke: vi.fn(async () => ok()),
+      preflight: vi.fn(async () => {}), log: async () => memoryLog(), invoke: vi.fn(async () => ok()),
     };
     const lines: string[] = [];
     expect(await batch({ ...options, release: release.tag }, (line) => lines.push(line), machine)).toBe(1);
     expect(JSON.parse(lines[0]!)).toMatchObject({ action: "summary", outcome: "error", phase: "candidate-scope" });
     expect(machine.invoke).not.toHaveBeenCalled();
     expect(await batch({ ...options, release: release.tag, repo: "acme/leanish-development_TEST_one" }, () => {}, machine)).toBe(0);
-    expect(machine.invoke.mock.calls.map((call) => call.slice(3))).toEqual([["acme/leanish-development_TEST_one", "review"], ["acme/leanish-development_TEST_one", "run"]]);
+    expect(machine.invoke.mock.calls.map((call) => call.slice(3, 5))).toEqual([["acme/leanish-development_TEST_one", "review"], ["acme/leanish-development_TEST_one", "run"]]);
   });
 
   it("invokes the release launcher with --config, ignores raw output, and strips ambient secrets and TOOL_CLI", async () => {
@@ -157,10 +186,30 @@ describe("batch runner", () => {
     vi.stubEnv("GH_TOKEN", "secret-sentinel");
     vi.stubEnv("GITHUB_TOKEN", "secret-sentinel");
     vi.stubEnv("TOOL_CLI", "/not/the/installed/tool");
-    const execution = await invokeTool({ tag: "v0.7.0", sha: "a".repeat(40), path: root }, "/a config/agent.yaml", "bump-it", "acme/one", "review");
+    const recorded: [string, string][] = [];
+    const execution = await invokeTool({ tag: "v0.7.0", sha: "a".repeat(40), path: root }, "/a config/agent.yaml", "bump-it", "acme/one", "review", (stream, line) => recorded.push([stream, line]));
     expect(execution.code).toBe(0);
     expect(execution.report).toEqual(report);
     expect(JSON.stringify(execution)).not.toContain("secret-sentinel");
+    // The person's log gets every line, raw output included.
+    expect(recorded).toEqual([["stderr", "secret-sentinel"], ["stderr", JSON.stringify(report)]]);
+  });
+
+  it("logs a missing launcher's own error, while the command just fails", async () => {
+    const recorded: string[] = [];
+    const execution = await invokeTool({ tag: "v0.7.0", sha: "a".repeat(40), path: "/nonexistent-release" }, "/config", "bump-it", "acme/one", "run", (_stream, line) => recorded.push(line));
+    expect(execution.code).not.toBe(0);
+    expect(execution.report).toBeUndefined();
+    expect(recorded.join("\n")).toMatch(/run\.sh|No such file/);
+  });
+
+  it("logs a very long child line cut to 100,000 characters, with how many it left out", async () => {
+    root = await mkdtemp(join(tmpdir(), "setup-batch-"));
+    await mkdir(join(root, "core/tool-runtime"), { recursive: true });
+    await writeFile(join(root, "core/tool-runtime/run.sh"), `#!/bin/bash\nprintf 'x%.0s' $(seq 1 150000)\necho\n`);
+    const recorded: string[] = [];
+    await invokeTool({ tag: "v0.7.0", sha: "a".repeat(40), path: root }, "/config", "bump-it", "acme/one", "run", (_stream, line) => recorded.push(line));
+    expect(recorded).toEqual([`${"x".repeat(100_000)} [50000 more characters not logged]`]);
   });
 
   it.each([
@@ -173,7 +222,7 @@ describe("batch runner", () => {
     const machine = {
       release: vi.fn(async () => ({ tag: "v0.7.0", sha: "a".repeat(40), path: "/release" })),
       installation: vi.fn(async () => ({ path: "/config", config })),
-      preflight: vi.fn(async () => {}), invoke: vi.fn(async () => ok()),
+      preflight: vi.fn(async () => {}), log: async () => memoryLog(), invoke: vi.fn(async () => ok()),
     };
     if (phase === "configuration") machine.installation.mockRejectedValue(new Error("secret-sentinel"));
     if (phase === "release") machine.release.mockRejectedValue(new Error("secret-sentinel"));

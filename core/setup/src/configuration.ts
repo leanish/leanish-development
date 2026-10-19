@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { chmod, link, lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import { parseDocument } from "yaml";
 
@@ -34,16 +34,31 @@ export async function fileEntry(path: string) {
   }
 }
 
+/**
+ * The components from just below home down to `path`, home first. Both are resolved, so a HOME with a trailing slash
+ * still matches; a path outside home fails instead of walking past the root.
+ */
+export function componentsBelow(path: string, home: string): string[] {
+  const root = resolve(home);
+  const components: string[] = [];
+  for (let component = resolve(path); component !== root; component = dirname(component)) {
+    if (component === dirname(component)) throw new Error(`${path} must be under ${home}`);
+    components.unshift(component);
+  }
+  return components;
+}
+
 /** Do not let a restored or repository-controlled symlink redirect configuration writes. */
 async function ensureDirectory(path: string, home: string): Promise<void> {
-  if (path !== home) await ensureDirectory(dirname(path), home);
-  const entry = await fileEntry(path);
-  if (entry !== undefined) {
-    if (!entry.isDirectory()) throw new Error("Installation directories must not be symlinks or files");
-    return;
-  }
-  try { await mkdir(path, { mode: 0o700 }); } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST" || !(await fileEntry(path))?.isDirectory()) throw error;
+  for (const component of componentsBelow(path, home)) {
+    const entry = await fileEntry(component);
+    if (entry !== undefined) {
+      if (!entry.isDirectory()) throw new Error("Installation directories must not be symlinks or files");
+      continue;
+    }
+    try { await mkdir(component, { mode: 0o700 }); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST" || !(await fileEntry(component))?.isDirectory()) throw error;
+    }
   }
 }
 
@@ -61,7 +76,7 @@ export function validateConfig(options: InstallationOptions, text: string, path:
 
 export async function readInstallation(options: InstallationOptions, home = homedir()): Promise<{ path: string; config: ToolConfig }> {
   const path = configPath(options, home);
-  for (let parent = dirname(path); parent !== home; parent = dirname(parent)) {
+  for (const parent of componentsBelow(dirname(path), home)) {
     if (!(await fileEntry(parent))?.isDirectory()) throw new Error("Installation parents must be real directories");
   }
   const entry = await fileEntry(path);

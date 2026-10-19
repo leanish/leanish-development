@@ -26,7 +26,16 @@ export interface ScheduleSpec {
   readonly control: string;
   readonly permissions: string;
   /** The exact rule the person adds so the app runs `command` unattended: where, and its text. */
-  readonly commandRule: { readonly file: string; readonly entry: string };
+  /**
+   * The rule the person adds, and what it replaces: for Claude, `entries` is the exact form of this tool and owner's
+   * entries from other releases, with `<tag>` standing for any release tag but this one; for Codex the file holds only
+   * this rule, so it's overwritten whole.
+   */
+  readonly commandRule: {
+    readonly file: string;
+    readonly entry: string;
+    readonly replaces: { readonly entries: string } | { readonly wholeFile: true };
+  };
   readonly unattended: string;
   readonly documentation: string;
 }
