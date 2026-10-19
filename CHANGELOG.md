@@ -25,8 +25,8 @@
 - Both tools read the checks the base branch's rulesets require: a draft whose reported checks all pass, but where a
   required Actions check hasn't reported, is marked ready (a workflow can start only on `ready_for_review`) with the
   outcome `ready-missing-required`, which that tick's batch lists under attention, instead of a plain `marked-ready`. When the
-  rules can't be read, or a required check may come from an app the token can't see, readiness uses the reported
-  checks as before and the review says so. Classic branch protection isn't read.
+  rules can't be read (refused or failed), or a required check may come from an app the token can't see, readiness
+  uses the reported checks as before and the review says so. Classic branch protection isn't read.
 - A `HOME` ending in a slash no longer makes guided setup climb past it while reading or writing an installation.
 - The task folder overlap check also refuses a case or Unicode variant of a trusted path, which a case-insensitive
   volume (APFS's default) reaches as the same folder.

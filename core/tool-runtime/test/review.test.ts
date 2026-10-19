@@ -78,10 +78,20 @@ describe("reviewOpenPullRequests", () => {
     expect((await reviewOpenPullRequests(context(github), steps()))[0]).toMatchObject({ outcome: "already-ready" });
   });
 
-  it("reports an error, leaving the draft, when the rules read fails other than by refusal", async () => {
+  it("marks a green draft ready with a note when the rules read fails, as readiness doesn't wait for them", async () => {
     const github = new FakeGitHub(ownPr());
     github.fail("requiredChecks");
-    expect((await reviewOpenPullRequests(context(github), steps()))[0]?.outcome).toBe("error");
+    expect((await reviewOpenPullRequests(context(github), steps()))[0]).toMatchObject({
+      outcome: "marked-ready",
+      detail: "required checks unknown (GitHub requiredChecks failed: unexpected response (HTTP 502)); readiness used the reported checks",
+    });
+    expect(github.prs.get(7)?.isDraft).toBe(false);
+  });
+
+  it("lets a programming error in the rules read fail the PR's review, leaving the draft", async () => {
+    const github = new FakeGitHub(ownPr());
+    github.fail("requiredChecks", new TypeError("not a GitHub failure") as unknown as Parameters<FakeGitHub["fail"]>[1]);
+    expect((await reviewOpenPullRequests(context(github), steps()))[0]).toMatchObject({ outcome: "error", detail: "not a GitHub failure" });
     expect(github.prs.get(7)?.isDraft).toBe(true);
   });
 
