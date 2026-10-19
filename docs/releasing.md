@@ -13,10 +13,17 @@ unreleased changes collect under its "Unreleased" heading.
    remains deferred and will be an alternative to PAT mode when implemented.
 2. Tag the candidate commit on main with a lightweight `v<version>-rc.<n>` tag
    (candidate tags never move either). Before any release PR:
+   - Before the fixture runs, with the tools idle, delete every tool branch on the
+     owner's fixture repositories so the runs start clean (GitHub closes their PRs
+     with them): `node core/setup/src/cli.ts fixture-cleanup --bump-it-config <path>
+     --secure-it-config <path>` (the two fixture configs) lists the branches; rerun
+     it with `--apply` to delete them. Don't start the runs while a branch is
+     reported blocked. Record the previous candidate's run evidence before
+     cleaning: closed PRs stay readable, their branches don't.
    - Run the tools for real from a checkout of the candidate, as the
      [adoption guide](adopting-tools.md) describes, on adopting repositories
      where the release's changes apply, including the owner's fixture
-     repositories (kept out of regular passes; a candidate pass opts them in).
+     repositories (never in regular passes; only a candidate pass opts them in).
      A candidate's tool code doesn't change those repositories' gate pins: when
      the candidate changes the gate, get its CI evidence from runs pinned to it.
    - Review the candidate in three steps, each only if the one before found no
@@ -78,7 +85,12 @@ unreleased changes collect under its "Unreleased" heading.
    SHA and repin adopting workflows to
    `leanish/leanish-development/.github/workflows/supply-chain.yml@<full-sha> # v<version>`.
    Require green adoption PR checks before merging. Tool-only releases do not
-   require gate repins.
+   require gate repins. The owner's fixture repositories follow every stable
+   release instead, through `node core/setup/src/cli.ts fixture-repin
+   --bump-it-config <path> --secure-it-config <path> --release v<version>` (dry
+   run, then `--apply`): one PR per fixture changing only the gate caller's ref
+   and `# v<version>` comment, merged by hand once green. Their docs point at the
+   workflow instead of repeating the version, so nothing else needs updating.
 7. Install tools from that release commit in a stable checkout outside `/tmp`,
    following the [adoption guide](adopting-tools.md). Preserve the owner's configs
    and secret-service overrides when switching the scheduled runner. Do not put

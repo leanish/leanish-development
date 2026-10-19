@@ -25,8 +25,8 @@ function github(pages: unknown = [[stable()]]) {
 }
 
 describe("stable release resolution", () => {
-  it("chooses newest publication across pages, excluding candidates even when mislabeled", async () => {
-    const { commands, run } = github([[stable({ tag_name: "v99.0.0", published_at: "2026-01-01T00:00:00Z" }), stable({ tag_name: "v0.8.0-rc.1" })],
+  it("chooses the highest stable version across pages, not the latest publication, excluding candidates even when mislabeled", async () => {
+    const { commands, run } = github([[stable({ tag_name: "v0.6.2", published_at: "2026-12-01T00:00:00Z" }), stable({ tag_name: "v0.8.0-rc.1" })],
       [stable({ tag_name: "v0.8.0", draft: true }), stable({ tag_name: "v0.9.0", prerelease: true }), stable()]]);
     expect(await latestRelease(commands)).toEqual({ tag: "v0.7.0", sha: SHA });
     expect(run.mock.calls[0]![1]).toContain("--paginate");

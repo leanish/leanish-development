@@ -37,9 +37,11 @@ node core/setup/src/cli.ts release
   presence is checked here; scheduling availability/permissions require later
   desktop acceptance.
 - **`release`** uses read-only `gh api` GETs against
-  `leanish/leanish-development`. It selects the newest published stable `vX.Y.Z`
-  across all pages, excluding drafts, prereleases and candidate tags. The newest
-  must be immutable; a mutable release does not trigger an older fallback. It
+  `leanish/leanish-development`. It selects the highest stable `vX.Y.Z` by
+  version across all pages (not the latest publication, so a maintenance release
+  published after a newer line doesn't win), excluding drafts, prereleases and
+  candidate tags. That release must be immutable; a mutable one does not trigger
+  an older fallback. It
   peels lightweight/annotated tags to a full SHA, fetches the tag, and compares
   that SHA before checkout or npm. The detached, clean checkout lives at
   `~/.local/share/leanish/releases/<tag>`; dependencies install with
@@ -280,6 +282,47 @@ chosen repository and explicit consent; declining leaves the chosen schedule
 installed but untested. This CLI run does not prove unattended app permissions.
 Do not additionally trigger the whole app task without separate consent.
 
+## Fixture repositories
+
+Two commands maintain the owner's fixture repositories, whose seeded old or
+vulnerable dependencies must stay as they are. Both take both tools' fixture
+configs (the operator's `agent-fixtures.yaml` for each tool), which must list the
+same repositories and branches, all named `<owner>/supply-chain_TEST_*`; anything
+else blocks before any GitHub request. `--repo` restricts a run to one of them.
+Both are dry runs unless `--apply` (planned writes are `needs-confirmation`
+rows, exit 2), use the operator's `gh` authentication like `gate`, and stop at
+GitHub's rate limit (REST or GraphQL), listing the repositories not run. A final
+`summary` row counts the rows. There is no journal: a rerun recomputes from GitHub.
+
+**`fixture-cleanup --bump-it-config <path> --secure-it-config <path> [--repo <owner/repo>] [--apply]`**
+runs before a candidate's fixture runs, with the tools idle. It deletes every
+`bump-it/…` and `secure-it/…` branch (whatever its name after the prefix), and
+GitHub closes their open PRs with them. Deletion uses GraphQL `updateRefs` in calls
+of 25 branches, each only while it's still at the head that was listed: GitHub
+applies a call atomically, so one moved branch keeps its whole call. After a
+refused or unanswered call, each branch's current head says what happened: gone
+(`already-done`), moved (a tool may be running; `blocked`) or still there
+(`blocked`, rerun; the row quotes GitHub's refusal). A branch GitHub always refuses
+(a protected one, say) keeps its whole call refused on every rerun: delete it by
+hand. A 4xx answer such as 401/403 blocks the repository with its status. The
+configured branch is never deleted. Rows carry `repo`, `branch`, `head` and `reason`.
+
+**`fixture-repin --bump-it-config <path> --secure-it-config <path> --release <tag> [--repo <owner/repo>] [--apply]`**
+runs after a stable release. `--release` must be the highest stable release
+(resolved like `release` above, peeled to a full SHA); anything else blocks. In each
+fixture's `.github/workflows/supply-chain.yml` it finds the gate callers (`uses:`
+of exactly `leanish/leanish-development/.github/workflows/supply-chain.yml`,
+written literally as a plain or quoted scalar) and rewrites only their ref to the
+release's SHA and their trailing comment to `# <tag>` (keeping the spacing before
+it), checked by comparing the file with those parts masked. The file is read as
+strict UTF-8, keeping any BOM. A workflow without a caller, with an escaped,
+block-scalar or aliased `uses:`, or with another comment after a caller blocks. Already at
+that SHA and comment: `already-done`. Otherwise it uses the branch
+`fixture-repin/<tag>`, which must be the base head or the base plus exactly this
+change in one commit by the `gh` user running it (any other state blocks; delete it
+and rerun; a configured branch with that very name blocks too), commits the file with its
+blob SHA as precondition, and opens the PR or reports the open one. It never merges.
+
 The [guided workflow](install.md) is shared by the thin `install-bump-it`,
 `install-secure-it` and `add-repository` entries in `.claude/skills/` and
 `.agents/skills/`. It preserves token privacy, confirmation before settings
@@ -296,7 +339,9 @@ phase-specific `reason`, never raw error text. Missing final
 reports and lock refusals count as failures. Batch exits 0 for complete, 1 for
 failure. It does not pretend a failed or unknown run was successful.
 
-`npm run check --workspace @leanish/setup` runs typechecking and tests. GitHub,
+`npm run check --workspace @leanish/setup` runs typechecking and tests. Fixture
+tests use offline fakes that model branches with `updateRefs`'s atomic `beforeOid`
+check, and commits, contents preconditions, compare and PRs for the repin. GitHub,
 agent CLIs, authentication and sandbox probes are faked. Release tests use real
 temporary Git repositories and an offline npm workspace to prove lifecycle
 scripts stay disabled; they never operate on this checkout's Git state. Real

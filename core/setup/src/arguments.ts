@@ -5,6 +5,8 @@ import { CODING_AGENTS, type CodingAgent } from "@leanish/tool-runtime/config";
 import type { BatchOptions } from "./batch.ts";
 import type { ConfigureOptions, InstallationOptions } from "./configuration.ts";
 import type { DoctorOptions } from "./doctor.ts";
+import type { FixtureCleanupOptions } from "./fixture-cleanup.ts";
+import type { FixtureRepinOptions } from "./fixture-repin.ts";
 import type { GateOptions } from "./gate.ts";
 import type { ScheduleOptions } from "./schedule.ts";
 import { ownerName, repositoryName, toolName } from "./tools.ts";
@@ -24,7 +26,9 @@ export type SetupCommand =
   | { readonly command: "batch"; readonly options: BatchOptions }
   | { readonly command: "test-run"; readonly options: BatchOptions & { readonly repo: string } }
   | { readonly command: "schedule"; readonly options: ScheduleOptions }
-  | { readonly command: "schedule-check"; readonly options: ScheduleOptions & { readonly taskFile: string } };
+  | { readonly command: "schedule-check"; readonly options: ScheduleOptions & { readonly taskFile: string } }
+  | { readonly command: "fixture-cleanup"; readonly options: FixtureCleanupOptions }
+  | { readonly command: "fixture-repin"; readonly options: FixtureRepinOptions };
 
 export const USAGE = `usage: node core/setup/src/cli.ts
   doctor [--agent codex|claude-code] [--java <major>]
@@ -36,7 +40,9 @@ export const USAGE = `usage: node core/setup/src/cli.ts
   batch <tool> --owner <owner> --release <tag> [--repo <owner/repo>]
   schedule <tool> --owner <owner> --release <tag> --agent codex|claude-code
   schedule-check <tool> --owner <owner> --release <tag> --agent codex|claude-code --task-file <json>
-  test-run <tool> --owner <owner> --release <tag> --repo <owner/repo>`;
+  test-run <tool> --owner <owner> --release <tag> --repo <owner/repo>
+  fixture-cleanup --bump-it-config <path> --secure-it-config <path> [--repo <owner/repo>] [--apply]
+  fixture-repin --bump-it-config <path> --secure-it-config <path> --release <tag> [--repo <owner/repo>] [--apply]`;
 
 export function setupArguments(argv: ReadonlyArray<string>): SetupCommand {
   const [command, ...args] = argv;
@@ -45,12 +51,17 @@ export function setupArguments(argv: ReadonlyArray<string>): SetupCommand {
   if (["doctor", "configure"].includes(command ?? "") || scheduling) flags["agent"] = { type: "string" };
   if (["doctor", "gate"].includes(command ?? "")) flags["java"] = { type: "string" };
   if (["configure", "enroll", "verify-tokens", "batch", "test-run"].includes(command ?? "") || scheduling) flags["owner"] = { type: "string" };
-  if (["configure", "gate", "batch", "test-run"].includes(command ?? "")) flags["repo"] = { type: "string", multiple: command === "configure" };
+  if (["configure", "gate", "batch", "test-run", "fixture-cleanup", "fixture-repin"].includes(command ?? "")) flags["repo"] = { type: "string", multiple: command === "configure" };
   if (command === "configure") for (const name of ["name", "email", "model", "effort"]) flags[name] = { type: "string" };
   if (command === "enroll") flags["login"] = { type: "string" };
-  if (["gate", "batch", "test-run"].includes(command ?? "") || scheduling) flags["release"] = { type: "string" };
+  if (["gate", "batch", "test-run", "fixture-repin"].includes(command ?? "") || scheduling) flags["release"] = { type: "string" };
   if (command === "gate") flags["confirm-settings"] = { type: "boolean" };
   if (command === "schedule-check") flags["task-file"] = { type: "string" };
+  if (command === "fixture-cleanup" || command === "fixture-repin") {
+    flags["bump-it-config"] = { type: "string" };
+    flags["secure-it-config"] = { type: "string" };
+    flags["apply"] = { type: "boolean" };
+  }
   const parsed = parseArgs({ args, options: flags, allowPositionals: true, strict: true, tokens: true });
   const seen = new Set<string>();
   for (const token of parsed.tokens) {
@@ -70,6 +81,13 @@ export function setupArguments(argv: ReadonlyArray<string>): SetupCommand {
   if (parsed.positionals.length !== (hasTool ? 1 : 0)) throw new Error();
   if (command === "doctor") return { command, options: { ...(agent === undefined ? {} : { agent }), ...(java === undefined ? {} : { java: Number(java) }) } };
   if (command === "release") return { command };
+  if (command === "fixture-cleanup" || command === "fixture-repin") {
+    const options = {
+      bumpItConfig: need("bump-it-config"), secureItConfig: need("secure-it-config"),
+      repo: text("repo") === undefined ? undefined : repositoryName(need("repo")), apply: parsed.values["apply"] === true,
+    };
+    return command === "fixture-cleanup" ? { command, options } : { command, options: { ...options, release: need("release") } };
+  }
   if (command === "gate") return { command, options: { repo: repositoryName(need("repo")), release: need("release"), java, confirmSettings: parsed.values["confirm-settings"] === true } };
   if (!hasTool) throw new Error();
   const installation = { tool: toolName(parsed.positionals[0]!), owner: ownerName(need("owner")) };

@@ -38,7 +38,7 @@ export async function required(api: GitHubApi, method: Parameters<GitHubApi["req
 /** Operator gh authentication is separate from tool PATs. Bodies contain no credentials; child diagnostics never escape. */
 export function githubApi(commands = new Commands()): GitHubApi {
   return { async request(method, path, body) {
-    if (!/^(?:repos\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?.*|user|apps\/github-actions)$/.test(path) || /[\r\n]/.test(path)) throw new Error("Invalid GitHub API path");
+    if (!/^(?:repos\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?.*|user|apps\/github-actions|graphql)$/.test(path) || /[\r\n]/.test(path)) throw new Error("Invalid GitHub API path");
     let temporary: string | undefined;
     try {
       const args = ["api", "--hostname", "github.com", "--method", method, "--include", "-H", "Accept: application/vnd.github+json", "-H", "X-GitHub-Api-Version: 2022-11-28", path];

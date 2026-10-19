@@ -2,8 +2,16 @@
 
 ## Unreleased
 
+### Added
+
+- `fixture-cleanup` in `core/setup` deletes every `bump-it/` and `secure-it/` branch on the `supply-chain_TEST_*`
+  fixture repositories before a candidate's fixture runs (their PRs close with them), each only while it's unchanged;
+  `fixture-repin` opens one PR per fixture moving only its gate caller to a new stable release. Both dry-run by default.
+
 ### Changed
 
+- `core/setup`'s `release` picks the highest stable version, not the latest publication, so a maintenance release
+  published after a newer line isn't installed.
 - Shared packages now live in `core/agent-runtime` (`@leanish/agent-runtime`), `core/tool-runtime`
   (`@leanish/tool-runtime`) and `core/gate` (`@leanish/gate`); `bump-it` and `secure-it` live at the root.
   Cross-package imports use explicit package exports, with workspace and dependency boundaries checked at the root.
