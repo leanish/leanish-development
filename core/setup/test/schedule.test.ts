@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -34,7 +34,7 @@ describe("local task specifications", () => {
     vi.stubEnv("GH_TOKEN", "secret-sentinel");
     const value = await schedule({ ...options, agent }, host);
     expect(value).toMatchObject({ command: "schedule", status: "needs-confirmation", data: {
-      taskId: "leanish-bump-it-acme", title: "leanish-bump-it-acme", cron: "17 10 * * 3", timeZone: "Europe/Helsinki", ownerOffsetHours: 0, agent,
+      taskId: "leanish-bump-it-acme", title: "leanish-bump-it-acme", cron: "17 10 * * 3", timeZone: "Europe/Helsinki", agent,
     } });
     expect(exitCode([value])).toBe(2);
     expect(value.data?.command).toBe(`/bin/bash ${join(home, ".local/share/leanish/releases/v0.7.0/core/setup/run.sh")} bump-it --owner acme --release v0.7.0`);
@@ -42,26 +42,33 @@ describe("local task specifications", () => {
     expect(value.data?.prompt).toContain("do not poll");
     expect(value.data?.unattended).toContain("cannot run unattended");
     expect(JSON.stringify(value)).not.toContain("secret-sentinel");
+    expect(value.data).not.toHaveProperty("ownerOffsetHours");
   });
 
-  it("uses the secure-it daily default and counts each owner once across both tools", async () => {
+  it("uses each tool's default for every owner, writing no schedule state", async () => {
     await install("acme", "secure-it");
-    await install("zebra", "secure-it");
     await install("alpha");
-    await mkdir(join(home, ".config/leanish/installations/empty"));
-    await symlink(join(home, ".config/leanish/installations/alpha"), join(home, ".config/leanish/installations/linked"));
-    expect(await scheduleSpec({ ...options, tool: "secure-it" }, host)).toMatchObject({ cron: "17 9 * * *", ownerOffsetHours: 0 });
-    expect(await scheduleSpec({ ...options, owner: "alpha" }, host)).toMatchObject({ cron: "17 11 * * 3", ownerOffsetHours: 1 });
-    expect(await scheduleSpec({ ...options, tool: "secure-it", owner: "zebra" }, host)).toMatchObject({ cron: "17 11 * * *", ownerOffsetHours: 2 });
+    expect(await scheduleSpec({ ...options, tool: "secure-it" }, host)).toMatchObject({ cron: "17 9 * * *" });
+    expect(await scheduleSpec({ ...options, owner: "alpha" }, host)).toMatchObject({ cron: "17 10 * * 3" });
+    expect(await scheduleSpec(options, host)).toMatchObject({ cron: "17 10 * * 3" });
+    expect(await readdir(join(home, ".config/leanish/installations/acme"))).not.toContain("schedule.json");
+    expect(await readdir(join(home, ".config/leanish/installations"))).not.toContain(".schedule-lock");
   });
 
-  it("rolls weekly cron to the following day after an hour shift crosses midnight", async () => {
-    for (let index = 0; index < 15; index++) {
-      const owner = `a${String(index).padStart(2, "0")}`;
-      await install(owner);
-      await scheduleSpec({ ...options, owner }, host);
-    }
-    expect(await scheduleSpec(options, host)).toMatchObject({ cron: "17 1 * * 4", ownerOffsetHours: 15 });
+  it("places the task where the person says: time and weekday independently or together", async () => {
+    expect(await scheduleSpec({ ...options, time: { hour: 7, minute: 5 } }, host)).toMatchObject({ cron: "5 7 * * 3" });
+    expect(await scheduleSpec({ ...options, weekday: 0 }, host)).toMatchObject({ cron: "17 10 * * 0" });
+    expect(await scheduleSpec({ ...options, time: { hour: 23, minute: 59 }, weekday: 6 }, host)).toMatchObject({ cron: "59 23 * * 6" });
+    await install("acme", "secure-it");
+    expect(await scheduleSpec({ ...options, tool: "secure-it", time: { hour: 0, minute: 0 } }, host)).toMatchObject({ cron: "0 0 * * *" });
+  });
+
+  it("refuses a weekday for a daily tool instead of ignoring it", async () => {
+    await install("acme", "secure-it");
+    await expect(scheduleSpec({ ...options, tool: "secure-it", weekday: 1 }, host)).rejects.toThrow("secure-it runs daily; choose only --time");
+    const release = vi.fn(host.release);
+    await expect(scheduleSpec({ ...options, tool: "secure-it", weekday: 1 }, { ...host, release })).rejects.toThrow("runs daily");
+    expect(release).not.toHaveBeenCalled();
   });
 
   it("quotes release paths with spaces and apostrophes for the literal shell command", async () => {
@@ -82,83 +89,12 @@ describe("local task specifications", () => {
     await expect(scheduleSpec(options, host)).rejects.toThrow("Until such a release is published, use the manual guide: docs/adopting-tools.md");
   });
 
-  it("persists an owner's offset across earlier-sorting additions and shares it across tools", async () => {
-    const first = await schedule(options, host);
-    const path = join(home, ".config/leanish/installations/acme/schedule.json");
-    expect(JSON.parse(await readFile(path, "utf8"))).toEqual({ offsetHours: 0 });
-    expect((await stat(path)).mode & 0o777).toBe(0o600);
-    await install("aaa");
-    expect((await schedule({ ...options, owner: "aaa" }, host)).data).toMatchObject({ ownerOffsetHours: 1, cron: "17 11 * * 3" });
-    expect((await schedule(options, host)).data?.cron).toBe(first.data?.cron);
-    await install("acme", "secure-it");
-    expect((await schedule({ ...options, tool: "secure-it" }, host)).data).toMatchObject({ ownerOffsetHours: 0, cron: "17 9 * * *" });
-    expect(await readdir(join(home, ".config/leanish/installations/acme"))).toEqual(expect.arrayContaining(["schedule.json"]));
-    expect((await readdir(join(home, ".config/leanish/installations"))).some((name) => name === ".schedule-lock")).toBe(false);
-  });
-
   it("reports an installed legacy release with the manual guide, not a suggestion to select another existing release", async () => {
     const value = schedule(options, { ...host, release: async () => ({ tag: "v0.6.0", sha: "a".repeat(40), path: join(home, ".local/share/leanish/releases/v0.7.0") }) });
     await expect(value).rejects.toThrow("Found v0.6.0. Guided setup needs a stable release that ships core/setup/run.sh (v0.7.0 or newer)");
     await expect(value).rejects.toThrow("Until such a release is published, use the manual guide: docs/adopting-tools.md");
-    await expect(stat(join(home, ".config/leanish/installations/acme/schedule.json"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("uses the lowest free persisted slot, including reservations whose tool configs were removed", async () => {
-    await mkdir(join(home, ".config/leanish/installations/retired"));
-    await writeFile(join(home, ".config/leanish/installations/retired/schedule.json"), '{"offsetHours":0}');
-    await install("alpha");
-    await writeFile(join(home, ".config/leanish/installations/alpha/schedule.json"), '{"offsetHours":2}');
-    expect((await schedule(options, host)).data).toMatchObject({ ownerOffsetHours: 1, cron: "17 11 * * 3" });
-  });
-
-  it("does not allocate the same slot to concurrently scheduled owners", async () => {
-    await install("alpha");
-    // A contending caller may be blocked by the shared lock; retrying must retain distinct slots.
-    await Promise.allSettled([schedule(options, host), schedule({ ...options, owner: "alpha" }, host)]);
-    const first = await schedule(options, host);
-    const second = await schedule({ ...options, owner: "alpha" }, host);
-    expect([first.data?.ownerOffsetHours, second.data?.ownerOffsetHours].sort()).toEqual([0, 1]);
-  });
-
-  it("releases the allocation lock after a malformed reservation blocks a new owner", async () => {
-    await install("alpha");
-    const existing = join(home, ".config/leanish/installations/alpha/schedule.json");
-    await writeFile(existing, "invalid-sentinel");
-    await expect(schedule(options, host)).rejects.toThrow(/^Invalid saved schedule offset;/);
-    await expect(stat(join(home, ".config/leanish/installations/acme/schedule.json"))).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(stat(join(home, ".config/leanish/installations/.schedule-lock"))).rejects.toMatchObject({ code: "ENOENT" });
-    await writeFile(existing, '{"offsetHours":0}');
-    expect((await schedule(options, host)).data?.ownerOffsetHours).toBe(1);
-  });
-
-  it("ignores noncanonical and unrelated owner directories without reading their offsets", async () => {
-    for (const name of ["Nosto", "not_an_owner", ".unrelated"]) {
-      const path = join(home, ".config/leanish/installations", name);
-      await mkdir(path);
-      await writeFile(join(path, "schedule.json"), "invalid-sentinel");
-    }
-    expect((await schedule(options, host)).data?.ownerOffsetHours).toBe(0);
-  });
-
-  it("keeps schedule-check read-only when no offset has been reserved", async () => {
-    await expect(scheduleCheck({ ...options, taskFile: join(home, "unused.json") }, host)).rejects.toThrow("run schedule before checking");
-    await expect(stat(join(home, ".config/leanish/installations/acme/schedule.json"))).rejects.toMatchObject({ code: "ENOENT" });
-  });
-
-  it.each(['{"offsetHours":-1}', '{"offsetHours":1.5}', '{"offsetHours":"invalid-sentinel"}', '{"offsetHours":0,"extra":true}', "invalid-sentinel"])("refuses invalid saved offsets without replacing or echoing them: %s", async (text) => {
-    const path = join(home, ".config/leanish/installations/acme/schedule.json");
-    await writeFile(path, text);
-    await expect(schedule(options, host)).rejects.toThrow(/^Invalid saved schedule offset;/);
-    expect(await readFile(path, "utf8")).toBe(text);
-  });
-
-  it("refuses symlink offset files without changing their targets", async () => {
-    const target = join(home, "outside.json");
-    await writeFile(target, '{"offsetHours":0}');
-    await symlink(target, join(home, ".config/leanish/installations/acme/schedule.json"));
-    await expect(schedule(options, host)).rejects.toThrow("regular schedule.json");
-    expect(await readFile(target, "utf8")).toBe('{"offsetHours":0}');
-  });
 });
 
 describe("app task readback", () => {
@@ -204,6 +140,16 @@ describe("app task readback", () => {
     expect(value.data?.differences).toContain(field);
     expect(exitCode([value])).toBe(1);
     expect(JSON.stringify(value)).not.toContain("secret-sentinel");
+  });
+
+  it("compares against the schedule chosen at schedule time, passed again to schedule-check", async () => {
+    const chosen = { ...options, time: { hour: 6, minute: 30 }, weekday: 1 };
+    const spec = await scheduleSpec(chosen, host);
+    const file = join(home, "chosen.json");
+    await writeFile(file, JSON.stringify({ id: spec.taskId, cron: spec.cron, enabled: true, prompt: spec.prompt, folder: spec.folder }));
+    expect(spec.cron).toBe("30 6 * * 1");
+    expect((await scheduleCheck({ ...chosen, taskFile: file }, host)).status).toBe("already-done");
+    expect(await scheduleCheck({ ...options, taskFile: file }, host)).toMatchObject({ status: "blocked", data: { differences: ["cron/schedule"] } });
   });
 
   it("compares the supported weekly and daily RRULEs without ignoring extra constraints", async () => {

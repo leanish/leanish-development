@@ -165,6 +165,26 @@ describe("setup command contract", () => {
   });
 
   it.each([
+    [["--time", "7:05"], "--time must be HH:MM"], [["--time", "24:00"], "--time must be HH:MM"], [["--time", "10:60"], "--time must be HH:MM"],
+    [["--day", "wednesday"], "--day must be one of sun, mon, tue, wed, thu, fri, sat"], [["--day", "3"], "--day must be one of"],
+  ] as const)("explains a refused schedule choice %j", async (choice, message) => {
+    const handlers = actions();
+    const emit = vi.fn();
+    expect(await main(["schedule", "bump-it", "--owner", "acme", "--release", "v0.7.0", "--agent", "codex", ...choice], emit, handlers)).toBe(64);
+    expect(JSON.parse(emit.mock.calls[0]![0])).toMatchObject({ command: "schedule", step: "arguments", status: "blocked", message: expect.stringContaining(message) });
+    expect(handlers.schedule).not.toHaveBeenCalled();
+  });
+
+  it("passes the chosen time and case-insensitive weekday to schedule and schedule-check", async () => {
+    const handlers = actions();
+    const base = ["bump-it", "--owner", "acme", "--release", "v0.7.0", "--agent", "codex", "--time", "06:30", "--day", "MON"];
+    await main(["schedule", ...base], () => {}, handlers);
+    expect(handlers.schedule).toHaveBeenCalledWith({ tool: "bump-it", owner: "acme", release: "v0.7.0", agent: "codex", time: { hour: 6, minute: 30 }, weekday: 1 });
+    await main(["schedule-check", ...base, "--task-file", "/tmp/readback.json"], () => {}, handlers);
+    expect(handlers.scheduleCheck).toHaveBeenCalledWith({ tool: "bump-it", owner: "acme", release: "v0.7.0", agent: "codex", time: { hour: 6, minute: 30 }, weekday: 1, taskFile: "/tmp/readback.json" });
+  });
+
+  it.each([
     ["gate", "--repo", "acme/one", "--release", "v0.7.0", "--release", "v0.8.0"],
     ["enroll", "bump-it", "--owner", "acme", "--owner", "other", "--login", "dev"],
     ["enroll", "bump-it", "--owner", "acme", "--login=dev", "--login=dev"],
@@ -172,6 +192,8 @@ describe("setup command contract", () => {
     ["configure", "bump-it", "--owner", "acme", "--repo", "acme/one", "--name", "Dev", "--name", "Other"],
     ["batch", "bump-it", "--owner", "acme", "--release", "v0.7.0", "--repo", "acme/one", "--repo", "acme/two"],
     ["gate", "--repo", "acme/one", "--release", "v0.7.0", "--confirm-settings", "--confirm-settings"],
+    ["schedule", "bump-it", "--owner", "acme", "--release", "v0.7.0", "--agent", "codex", "--time", "06:30", "--time", "06:30"],
+    ["schedule-check", "bump-it", "--owner", "acme", "--release", "v0.7.0", "--agent", "codex", "--day", "mon", "--day", "tue", "--task-file", "/tmp/x.json"],
   ].map((argv) => ({ argv })))("rejects repeated single-valued flags and reports the command: $argv", async ({ argv }) => {
     const handlers = actions();
     const emit = vi.fn();

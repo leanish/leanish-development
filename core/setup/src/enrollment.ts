@@ -2,7 +2,26 @@ import { KeychainStore, type SecretStore } from "@leanish/tool-runtime/secrets";
 
 import { readInstallation, type InstallationOptions } from "./configuration.ts";
 import { result, type SetupResult } from "./contracts.ts";
-import { descriptor, ownerName, type PermissionLevel } from "./tools.ts";
+import { descriptor, ownerName, type PermissionLevel, type Tool, type ToolDescriptor } from "./tools.ts";
+
+const TOKEN_EXPIRY_DAYS = 90;
+const TOKEN_NAME_LIMIT = 40;
+
+/**
+ * GitHub's pre-filled fine-grained PAT form. Repository selection can't be pre-filled, so the person still picks
+ * the opted-in repositories. Tool and role come first so the 40-character name limit only cuts the owner.
+ */
+function tokenUrl(tool: Tool, owner: string, role: string, service: string, permissions: ToolDescriptor["permissions"]): string {
+  if (role !== "write" && role !== "read") throw new Error(`Unknown token role ${role}`);
+  const query = new URLSearchParams({
+    name: `leanish-${tool}-${role}-${owner}`.slice(0, TOKEN_NAME_LIMIT),
+    description: `${tool} ${role} token for ${owner}, stored in Keychain as ${service}. Select only the opted-in repositories.`,
+    target_name: owner,
+    expires_in: String(TOKEN_EXPIRY_DAYS),
+  });
+  for (const permission of permissions) if (permission[role] !== "none") query.set(permission.name, permission[role]);
+  return `https://github.com/settings/personal-access-tokens/new?${query}`;
+}
 
 /** The person runs these commands in their own Terminal. No password argument, shell expansion, or secret read. */
 export async function enrollment(options: InstallationOptions & { readonly login: string }, home?: string): Promise<SetupResult> {
@@ -10,9 +29,10 @@ export async function enrollment(options: InstallationOptions & { readonly login
   const { config } = await readInstallation(options, home);
   const { descriptor: contribution } = await descriptor(options.tool);
   const commands = Object.entries(config.secrets).map(([role, service]) => ({ role,
+    tokenUrl: tokenUrl(options.tool, ownerName(options.owner), role, service, contribution.permissions),
     command: `security add-generic-password -U -s '${service}' -a '${login}' -w`,
   }));
-  return result("enroll", "keychain", "needs-confirmation", "Create fine-grained PATs for only the opted-in repositories, obtain organization approval/SSO as needed, then run these prompts in your own Terminal; never paste tokens into chat", {
+  return result("enroll", "keychain", "needs-confirmation", "For each role, open its tokenUrl, select only the opted-in repositories, generate the token, obtain organization approval/SSO as needed, then run its command in your own Terminal; never paste tokens into chat", {
     repos: config.repos.map(({ repo }) => repo), permissions: contribution.permissions, commands,
   });
 }
