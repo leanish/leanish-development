@@ -147,6 +147,17 @@ describe("gate caller rewrite", () => {
     expect(() => repinned(text, RELEASE)).toThrow(message);
   });
 
+  it("keeps the spacing before an existing comment", () => {
+    expect(repinned(workflow(OLD, "    # v0.6.1"), RELEASE)).toBe(workflow(NEW, "    # v0.7.0"));
+  });
+
+  it.each([
+    ["a block-scalar caller", `jobs:\n  x:\n    uses: >-\n      leanish/leanish-development/.github/workflows/supply-chain.yml@${OLD}\n\n`],
+    ["an aliased caller next to a plain one", `refs:\n  g: &g leanish/leanish-development/.github/workflows/supply-chain.yml@${OLD}\njobs:\n  a:\n${caller(OLD)}\n  b:\n    uses: *g\n`],
+  ])("refuses %s rather than rewriting part of it", (_case, text) => {
+    expect(() => repinned(text, RELEASE)).toThrow("can't be edited in place");
+  });
+
   it("doesn't count a `uses:` inside a script as a caller", () => {
     expect(gateCallers("jobs:\n  x:\n    steps:\n      - run: |\n          echo uses: leanish/leanish-development/.github/workflows/supply-chain.yml@abc\n")!.callers).toEqual([]);
   });

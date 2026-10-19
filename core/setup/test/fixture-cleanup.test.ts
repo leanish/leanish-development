@@ -19,7 +19,7 @@ class FakeBranches implements GitHubApi {
   readonly rateLimited = new Set<string>();
   readonly failing = new Set<string>();
   /** Replaces the GraphQL reply; `lose` applies the deletion, then answers 502. */
-  graphql: "ok" | "rate-limited" | "lose" = "ok";
+  graphql: "ok" | "rate-limited" | "lose" | "forbidden" = "ok";
   /** Runs right before GitHub applies a deletion call. */
   beforeDelete: ((branches: Map<string, string>) => void) | undefined;
   #next = 1;
@@ -59,6 +59,7 @@ class FakeBranches implements GitHubApi {
   }
 
   #updateRefs(payload: Record<string, unknown>): GitHubReply {
+    if (this.graphql === "forbidden") return { status: 403, body: { message: "Resource not accessible by integration" } };
     if (this.graphql === "rate-limited") return { status: 200, body: { data: null, errors: [{ type: "RATE_LIMITED", message: "slow down" }] } };
     const variables = object(payload["variables"]);
     const repo = [...this.repos.values()].find((entry) => entry.nodeId === variables["repositoryId"])!;
@@ -150,6 +151,7 @@ describe("fixture cleanup", () => {
     fake.beforeDelete = (current) => current.set(TOOL_BRANCHES[0]!, sha(999));
     const first = await run(fake, { apply: true });
     expect(first.rows.map((row) => row.data?.["reason"])).toEqual(["moved", "refused", "refused", "refused"]);
+    expect(first.rows[1]!.message).toContain("GitHub refused its batch: ref moved");
     expect(first.rows.every((row) => row.status === "blocked")).toBe(true);
     expect(first.exit).toBe(1);
     expect(branches.size).toBe(4);
@@ -218,6 +220,25 @@ describe("fixture cleanup", () => {
     restricted.repo(OTHER, ["bump-it/x"]);
     await run(restricted, { repo: OTHER }, files([REPO, OTHER]));
     expect(restricted.calls.every((call) => call.path.startsWith(`repos/${OTHER}`))).toBe(true);
+  });
+
+  it("blocks the repository with GitHub's status when the deletion is forbidden, rather than guessing", async () => {
+    const fake = new FakeBranches();
+    const branches = fake.repo(REPO, TOOL_BRANCHES);
+    fake.graphql = "forbidden";
+    const { rows, exit } = await run(fake, { apply: true });
+    expect(rows).toEqual([expect.objectContaining({ step: "repository", status: "blocked", message: expect.stringContaining("HTTP 403") })]);
+    expect(exit).toBe(1);
+    expect(branches.size).toBe(4);
+  });
+
+  it("never deletes the configured base branch, even with a tool-like name", async () => {
+    const fake = new FakeBranches();
+    const branches = fake.repo(REPO, ["bump-it/base", "bump-it/x"]);
+    const configs = new Map([["/b.yaml", config([REPO]).replace("branch: main", "branch: bump-it/base")], ["/s.yaml", config([REPO]).replace("branch: main", "branch: bump-it/base")]]);
+    const { rows } = await run(fake, { apply: true }, configs);
+    expect(rows.map((row) => row.data?.["branch"])).toEqual(["bump-it/x"]);
+    expect([...branches.keys()]).toEqual(["bump-it/base"]);
   });
 
   it("finds nothing to clean in a clean fixture", async () => {

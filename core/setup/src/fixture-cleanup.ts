@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 
 import { result, type SetupResult } from "./contracts.ts";
 import { fixtureScope, perFixture, rateLimitAware, RateLimited, reasonOf, type FixtureScopeOptions } from "./fixtures.ts";
-import { githubApi, list, object, required, sha, string, type GitHubApi } from "./github.ts";
+import { GitHubHttpError, githubApi, list, object, required, sha, string, type GitHubApi } from "./github.ts";
 
 export interface FixtureCleanupOptions extends FixtureScopeOptions {
   readonly apply: boolean;
@@ -33,17 +33,22 @@ export async function fixtureCleanup(
   const github = rateLimitAware(api);
   const results: SetupResult[] = [];
   const publish = (entry: SetupResult) => { results.push(entry); emit(entry); };
-  const notRun = await perFixture(fixtures, publish, (fixture) => cleanRepository(github, fixture.repo, options.apply, publish),
+  const notRun = await perFixture(fixtures, publish, (fixture) => cleanRepository(github, fixture.repo, fixture.branch, options.apply, publish),
     (repo, error) => result("fixture-cleanup", "repository", "blocked", `${repo}: ${(error as Error).message}`, { repo, reason: reasonOf(error) }));
   publish(summary(results, notRun));
   return results;
 }
 
-async function cleanRepository(api: GitHubApi, repo: string, apply: boolean, publish: (entry: SetupResult) => void): Promise<void> {
-  const repositoryId = string(object(await required(api, "GET", `repos/${repo}`))["node_id"]);
+async function cleanRepository(
+  api: GitHubApi, repo: string, configured: string | undefined, apply: boolean, publish: (entry: SetupResult) => void,
+): Promise<void> {
+  const metadata = object(await required(api, "GET", `repos/${repo}`));
+  const repositoryId = string(metadata["node_id"]);
+  // The branch the tools target is never deleted, even if it were named like one of theirs.
+  const base = configured ?? string(metadata["default_branch"]);
   const branches = (await list(api, `repos/${repo}/branches`))
     .map((entry) => ({ name: string(entry["name"]), head: sha(object(entry["commit"])["sha"]) }))
-    .filter((branch) => TOOL_BRANCH.test(branch.name));
+    .filter((branch) => TOOL_BRANCH.test(branch.name) && branch.name !== base);
   const row: Row = (status, branch, message, reason) =>
     result("fixture-cleanup", "branch", status, `${repo}: ${branch.name} ${message}`, { repo, branch: branch.name, head: branch.head, reason });
   if (!apply) {
@@ -54,14 +59,15 @@ async function cleanRepository(api: GitHubApi, repo: string, apply: boolean, pub
   try {
     for (let start = 0; start < branches.length; start += CHUNK) {
       const chunk = branches.slice(start, start + CHUNK);
-      if (await deleteChunk(api, repositoryId, chunk)) {
+      const outcome = await deleteChunk(api, repositoryId, chunk);
+      if (outcome === "deleted") {
         for (const branch of chunk) publish(row("changed", branch, "deleted", "deleted"));
         next += chunk.length;
         continue;
       }
       // Refused, or the answer was lost: what each branch is now says what happened to it.
       for (const branch of chunk) {
-        publish(await settle(api, repo, branch, row));
+        publish(await settle(api, repo, branch, outcome.refusal, row));
         next++;
       }
     }
@@ -73,8 +79,8 @@ async function cleanRepository(api: GitHubApi, repo: string, apply: boolean, pub
   }
 }
 
-/** Whether GitHub deleted the whole chunk; false when it refused it or its answer was lost. */
-async function deleteChunk(api: GitHubApi, repositoryId: string, chunk: ReadonlyArray<Branch>): Promise<boolean> {
+/** "deleted" when GitHub deleted the whole chunk; otherwise why not, when GitHub said (it refused it, or its answer was lost). */
+async function deleteChunk(api: GitHubApi, repositoryId: string, chunk: ReadonlyArray<Branch>): Promise<"deleted" | { readonly refusal: string }> {
   // force: a deletion is never a fast-forward; beforeOid is the guard.
   const refUpdates = chunk.map((branch) => ({ name: `refs/heads/${branch.name}`, beforeOid: branch.head, afterOid: ZERO, force: true }));
   let reply: Record<string, unknown>;
@@ -82,22 +88,26 @@ async function deleteChunk(api: GitHubApi, repositoryId: string, chunk: Readonly
     reply = object(await required(api, "POST", "graphql", { query: UPDATE_REFS, variables: { repositoryId, refUpdates } }));
   } catch (error) {
     if (error instanceof RateLimited) throw error;
-    return false;
+    // Only a lost answer (no reply, or a server error) leaves the outcome open; a refusal like 401/403 is reported as is.
+    if (error instanceof GitHubHttpError && error.status < 500) throw error;
+    return { refusal: "GitHub's answer was lost" };
   }
   const errors = reply["errors"];
   if (Array.isArray(errors) && errors.some((error) => object(error)["type"] === "RATE_LIMITED")) throw new RateLimited("GitHub's GraphQL rate limit was reached; rerun later");
   const data = reply["data"];
-  return (errors === undefined || errors === null) && data !== null && typeof data === "object" && (data as Record<string, unknown>)["updateRefs"] != null;
+  if ((errors === undefined || errors === null) && data !== null && typeof data === "object" && (data as Record<string, unknown>)["updateRefs"] != null) return "deleted";
+  const message = Array.isArray(errors) && errors.length > 0 && typeof object(errors[0])["message"] === "string" ? String(object(errors[0])["message"]) : "no update reported";
+  return { refusal: `GitHub refused its batch: ${message.slice(0, 200)}` };
 }
 
-async function settle(api: GitHubApi, repo: string, branch: Branch, row: Row): Promise<SetupResult> {
+async function settle(api: GitHubApi, repo: string, branch: Branch, refusal: string, row: Row): Promise<SetupResult> {
   const response = await api.request("GET", `repos/${repo}/git/ref/heads/${encodeURIComponent(branch.name)}`);
   if (response.status === 404) return row("already-done", branch, "is gone", "gone");
   if (response.status !== 200) return row("blocked", branch, `couldn't be checked (HTTP ${response.status})`, "failed");
   if (sha(object(object(response.body)["object"])["sha"]) !== branch.head) {
     return row("blocked", branch, "moved since it was listed: a tool may be running; rerun when they're idle", "moved");
   }
-  return row("blocked", branch, "wasn't deleted: GitHub refused its batch (another branch in it moved?); rerun", "refused");
+  return row("blocked", branch, `wasn't deleted (${refusal}); rerun, or delete it by hand if GitHub keeps refusing it`, "refused");
 }
 
 function summary(results: ReadonlyArray<SetupResult>, notRun: ReadonlyArray<string>): SetupResult {

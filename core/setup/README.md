@@ -302,17 +302,21 @@ of 25 branches, each only while it's still at the head that was listed: GitHub
 applies a call atomically, so one moved branch keeps its whole call. After a
 refused or unanswered call, each branch's current head says what happened: gone
 (`already-done`), moved (a tool may be running; `blocked`) or still there
-(`blocked`, rerun). Rows carry `repo`, `branch`, `head` and `reason`.
+(`blocked`, rerun; the row quotes GitHub's refusal). A branch GitHub always refuses
+(a protected one, say) keeps its whole call refused on every rerun: delete it by
+hand. A 4xx answer such as 401/403 blocks the repository with its status. The
+configured branch is never deleted. Rows carry `repo`, `branch`, `head` and `reason`.
 
 **`fixture-repin --bump-it-config <path> --secure-it-config <path> --release <tag> [--repo <owner/repo>] [--apply]`**
 runs after a stable release. `--release` must be the highest stable release
 (resolved like `release` above, peeled to a full SHA); anything else blocks. In each
 fixture's `.github/workflows/supply-chain.yml` it finds the gate callers (`uses:`
 of exactly `leanish/leanish-development/.github/workflows/supply-chain.yml`,
-written literally) and rewrites only their ref to the release's SHA and their
-trailing comment to `# <tag>`, checked by comparing the file with those parts
-masked. The file is read as strict UTF-8, keeping any BOM. A workflow without a
-caller, with an escaped one, or with another comment after it blocks. Already at
+written literally as a plain or quoted scalar) and rewrites only their ref to the
+release's SHA and their trailing comment to `# <tag>` (keeping the spacing before
+it), checked by comparing the file with those parts masked. The file is read as
+strict UTF-8, keeping any BOM. A workflow without a caller, with an escaped,
+block-scalar or aliased `uses:`, or with another comment after a caller blocks. Already at
 that SHA and comment: `already-done`. Otherwise it uses the branch
 `fixture-repin/<tag>`, which must be the base head or the base plus exactly this
 change (any other state blocks; delete it and rerun), commits the file with its

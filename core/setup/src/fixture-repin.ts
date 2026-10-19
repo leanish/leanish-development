@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 
-import { isMap, isScalar, isSeq, parseDocument } from "yaml";
+import { isAlias, isMap, isScalar, isSeq, parseDocument, Scalar } from "yaml";
 
 import type { ToolRepo } from "@leanish/tool-runtime/config";
 
@@ -121,7 +121,9 @@ export function repinned(text: string, release: VerifiedRelease): string {
   let rendered = text;
   for (const caller of [...found.callers].sort((a, b) => b.refStart - a.refStart)) {
     if (!versionTail(text.slice(caller.tailStart, caller.tailEnd))) throw new Error(`a gate caller in ${WORKFLOW} has a comment other than its version`);
-    rendered = rendered.slice(0, caller.refStart) + release.sha + rendered.slice(caller.refEnd, caller.tailStart) + ` # ${release.tag}` + rendered.slice(caller.tailEnd);
+    // Keeps the spacing before an existing comment; a missing comment gets one space.
+    const spacing = /^\s*(?=#)/.exec(text.slice(caller.tailStart, caller.tailEnd))?.[0] || " ";
+    rendered = rendered.slice(0, caller.refStart) + release.sha + rendered.slice(caller.refEnd, caller.tailStart) + `${spacing}# ${release.tag}` + rendered.slice(caller.tailEnd);
   }
   const check = gateCallers(rendered);
   if (check === undefined || check.masked !== found.masked || check.callers.some((caller) => caller.ref !== release.sha)) {
@@ -152,10 +154,14 @@ export function gateCallers(text: string): { readonly callers: ReadonlyArray<Cal
     if (isMap(node)) {
       for (const pair of node.items) {
         const value = pair.value;
+        // An alias could hide a caller from the rewrite, so any aliased `uses:` makes the file not editable in place.
+        if (isScalar(pair.key) && pair.key.value === "uses" && isAlias(value)) editable = false;
         if (isScalar(pair.key) && pair.key.value === "uses" && isScalar(value) && typeof value.value === "string" && value.range !== undefined && value.range !== null) {
           const at = value.value.indexOf("@");
           if (at !== -1 && isGateCaller(value.value.slice(0, at))) {
             const ref = value.value.slice(at + 1);
+            // Block scalars end past their line, so their tail isn't the caller's comment.
+            if (value.type !== Scalar.PLAIN && value.type !== Scalar.QUOTE_DOUBLE && value.type !== Scalar.QUOTE_SINGLE) editable = false;
             const literal = text.indexOf("@", value.range[0]);
             if (literal === -1 || literal >= value.range[1] || text.slice(literal + 1, literal + 1 + ref.length) !== ref) {
               editable = false;
