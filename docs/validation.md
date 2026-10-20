@@ -401,3 +401,48 @@ only when new or worse than v0.5.2.
   classification by running both versions and found nothing more: this time it confirmed rather than added.
 
 v0.6.0 (`738ec35`) is rc.9 plus its release metadata.
+
+## Release candidates of 0.7.0 — 2026-10-19
+
+0.7.0 adds guided setup, so each candidate was accepted by installing it for real with `release --candidate` on the
+fixture repositories: configure, enroll (existing tokens), verify-tokens, gate adoption (the fixture gate PR), test
+runs, the app's scheduled task with its readback, and unattended runs from a Claude scheduled task (bump-it) and a
+Codex automation (secure-it). Reviews followed the three steps; findings blocked only when new or worse than v0.6.1.
+
+- **rc.1 (`c2739ec`)**: acceptance found that a fresh installation's sandboxed npm failed with `EPERM` (the cache
+  directory didn't exist yet, and the sandbox can write inside it but not create it), and that `gate` rewrote the
+  workflow's flow collections with extra padding. Fixed in #177.
+- **rc.2 (`83131e5`)**: the Claude task ran unattended (12 commands, 0 failed, 18 PRs on GitHub). The Codex
+  automation refused the prompt's completion-notification step, which Codex doesn't have: the prompt now says how
+  each app waits for one long command (#178).
+- **rc.3 (`467101c`)**: both Haiku reviews found nothing blocking. Sol, unprimed, found two blockers: fixture cleanup
+  trusted a redirected repository (a renamed fixture could have had another repository's tool branches deleted),
+  and batch summaries dropped review outcomes a person must see (closed after failing CI, held, no checks). Fixed in
+  #179.
+- **rc.4 (`ed6e0a3`)**: the Codex automation couldn't run the launcher: its sandbox blocks it (macOS sandboxes don't
+  nest, and the launcher sandboxes repository code itself). `schedule` now prints each app's exact command rule (#180,
+  #181). The Haiku reviews raised one point a real run overturned: a repeated `--owner` is already refused.
+- **rc.5 (`f9a2cde`)**: both apps ran unattended (Claude 11 of 12, one transient failure that passed when rerun;
+  Codex 12 of 12). Astra, as the final step, found what every earlier review missed: the task's folder was the
+  release checkout, which a Codex automation can write, while the command rule runs that launcher outside its
+  sandbox. Confirmed with `codex sandbox -P :workspace`. The fix (#182) gives each task its own private folder; on
+  its PR the Haiku reviews added the creation race and the launcher reading its configuration from the caller's
+  folder, and Sol added overlap with configured state paths and `link/..` paths resolved lexically.
+- **rc.6 (`b2b934e`)**: the same sandbox probe denied every write to the release, its modules, the installation
+  state and config. Haiku found nothing blocking; Sol, unprimed on a fresh thread, found that batch summaries hid
+  coverage gaps that v0.6.1's reports showed. Fixed in #183.
+- **rc.7 (`1d0da9e`)**: both apps ran unattended (12 of 12 each) and reported coverage gaps (31 and 30, matching the
+  tools' reports); the Codex task folder stayed empty and the release checkout clean. Astra found no blocker and
+  corrected one classification: a `HOME` with a trailing slash hanging guided setup is new in 0.7.0, not older.
+
+Known limitations, for 0.7.1: that trailing-slash `HOME`; the task-folder overlap check doesn't catch a case variant
+on case-insensitive APFS (in a config the person writes); a raw `ENOTDIR` when a task folder's parent is a file;
+`core/setup` tests that assume a umask of 022; a batch error reaches the scheduled agent without its reason, by design.
+
+What each step added: Haiku, cheap and fast, caught local defects in each fix (creation race, launcher cwd, a
+contradiction in install.md, `CODEX_HOME`) and once was rightly overturned. Sol, unprimed, found the three
+correctness blockers (rc.3's two, rc.6's gaps) and, on the fix PRs, the overlap and `..` cases. Astra was decisive
+once: on rc.5 it found the sandbox escalation the others missed, by looking at the folder and the command rule
+together; on rc.7 it confirmed.
+
+v0.7.0 (`ec5d884`) is rc.7 plus its release metadata.

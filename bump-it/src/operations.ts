@@ -4,10 +4,12 @@ import { isDeepStrictEqual } from "node:util";
 import type { GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
 import type { PreparedBranch } from "@leanish/agent-runtime/types/working-copy";
 import { ActionsGitHub } from "@leanish/gate/actions-github";
+import { readActionsInventory } from "@leanish/gate/actions-inventory";
 import type { GateEnvironment, GradleInputs } from "@leanish/gate/gate";
 import type { NpmPeerPlanner } from "@leanish/gate/npm-peers";
 import type { Tree } from "@leanish/gate/tree";
 import type { ToolRunContext } from "@leanish/tool-runtime/command";
+import { GATE_WORKFLOW, isPolicyFile, writtenPins } from "@leanish/tool-runtime/edit-checks";
 import type { FileState } from "@leanish/tool-runtime/git-copies";
 import { referenceTransform } from "@leanish/tool-runtime/gradle-reference";
 import { type GradleInventories, lockfilesOf } from "@leanish/tool-runtime/inventories";
@@ -18,6 +20,7 @@ import type { WrapperArtifact } from "./wrapper-generation.ts";
 import type { WrapperCandidates, WrapperPlanner } from "./gradle-wrapper.ts";
 import { constrainedUnit } from "./constraints.ts";
 import type { BumpItDeps } from "./deps.ts";
+import { assertLocalFile } from "./files.ts";
 import { formatManifest } from "./manifest-format.ts";
 import { coupledUnit, constrainedPeers } from "./peers.ts";
 import { assertNoPlanMarker } from "@leanish/tool-runtime/plan-blocks";
@@ -133,7 +136,53 @@ export async function writeWrapper(execution: Execution, computed: Computed, res
   }
 }
 
-export async function verify(execution: Execution, computed: Computed): Promise<void> {
+/**
+ * Writes the plan's action pins itself, like npm files and wrappers: a pin move is deterministic, and an agent asked
+ * to make it may change more (a stale comment in the gate's own workflow, which verification rightly refuses). A file
+ * whose pins can't be rewritten in place is left to the agent; `complete` says whether every pin file was written.
+ */
+export async function writePins(execution: Execution, computed: Computed, restoredFiles?: Map<string, FileState>): Promise<{ readonly written: string[]; readonly complete: boolean }> {
+  const pins = computed.plan.moves.filter((move) => move.mechanism === "action-pin");
+  const written: string[] = [];
+  let complete = true;
+  for (const path of [...new Set(pins.flatMap((move) => move.locations))].sort()) {
+    // Locations can come from a PR body's plan: only an in-repository workflow or action file that's a regular file
+    // is read here, so a crafted path never reaches a device, a pipe or a file outside the working copy.
+    if (!isPolicyFile(path) || !await localFile(execution.context.workingCopy.path, path)) { complete = false; continue; }
+    const current = await execution.deps.trees.working(execution.context.workingCopy).read(path);
+    const planned = pins.filter((move) => move.locations.includes(path));
+    if (current === undefined || planned.some((move) => move.commitSha === undefined)) { complete = false; continue; }
+    let text: string;
+    try {
+      text = writtenPins(current, path, planned.map((move) => ({ name: move.name, from: move.from, to: move.to, commitSha: move.commitSha! })));
+    } catch {
+      complete = false;
+      continue;
+    }
+    if (text !== current) await execution.deps.writeFile(execution.context.workingCopy, path, text);
+    written.push(path);
+    const restored = restoredFiles?.get(path);
+    if (restoredFiles !== undefined && restored !== undefined) {
+      restoredFiles.set(path, { ...await execution.deps.fileState(execution.context.workingCopy, path), index: restored.index });
+    }
+  }
+  return { written, complete };
+}
+
+async function localFile(root: string, path: string): Promise<boolean> {
+  try { await assertLocalFile(root, path); return true; } catch { return false; }
+}
+
+/** Whether every planned pin is the gate's own reusable workflow, the only major that needs no agent: nothing but its pin may change there. */
+async function onlyGateWorkflow(computed: Computed): Promise<boolean> {
+  const moves = computed.plan.moves;
+  if (moves.length === 0 || moves.some((move) => move.mechanism !== "action-pin" || move.name.toLowerCase() !== GATE_WORKFLOW.name)) return false;
+  const uses = (await readActionsInventory(computed.base)).uses.filter((use) => use.name === GATE_WORKFLOW.name);
+  return uses.length > 0 && uses.every((use) => use.path === GATE_WORKFLOW.path);
+}
+
+/** `toolWritten`: what `edit` wrote when it wrote this pass without the agent, else `undefined` (see `Edited`). */
+export async function verify(execution: Execution, computed: Computed, toolWritten: ReadonlyArray<string> | undefined): Promise<void> {
   const { context, deps, env, inventories } = execution;
   // Everything below reads this snapshot, never the live working tree, and publication commits exactly its tree.
   const candidate = await deps.snapshot(context.workingCopy);
@@ -158,6 +207,7 @@ export async function verify(execution: Execution, computed: Computed): Promise<
     gradle,
     reference,
     changedFiles,
+    toolWritten,
   });
   const links = await deps.linkProblems(context.workingCopy, computed.base.id, candidate);
   if (problems.length > 0 || links.length > 0) {
@@ -165,25 +215,35 @@ export async function verify(execution: Execution, computed: Computed): Promise<
   }
 }
 
-export async function edit(execution: Execution, computed: Computed, mode: "apply" | "adapt" | "resolve", extra: EditContext = {}): Promise<PullRequestContent> {
+/** What `edit` publishes, and the files the tool wrote when it wrote the pass alone (`undefined` when the agent ran). */
+export interface Edited {
+  readonly content: PullRequestContent;
+  readonly toolWritten: ReadonlyArray<string> | undefined;
+}
+
+export async function edit(execution: Execution, computed: Computed, mode: "apply" | "adapt" | "resolve", extra: EditContext = {}): Promise<Edited> {
   const restoredFiles = new Map((extra.restoredFiles ?? []).map((file) => [file.path, file]));
   await writeNpm(execution, computed.files, false, restoredFiles);
   await writeWrapper(execution, computed, restoredFiles);
+  const pins = await writePins(execution, computed, restoredFiles);
   const { plan } = computed;
-  if (plan.kind === "routine" && plan.moves.every((move) => (move.mechanism === "npm-range" || move.mechanism === "gradle-wrapper"))) {
-    return mechanicalContent(plan);
+  const toolWritten = [...computed.files.keys(), ...(computed.wrapperFiles ?? []).map((file) => file.path), ...pins.written];
+  const toolWrites = plan.moves.every((move) => move.mechanism === "npm-range" || move.mechanism === "gradle-wrapper" || move.mechanism === "action-pin");
+  // A major other than the gate's workflow keeps its agent pass, and so does adapting or resolving one.
+  if (pins.complete && toolWrites && (plan.kind === "routine" || (mode === "apply" && await onlyGateWorkflow(computed)))) {
+    return { content: mechanicalContent(plan), toolWritten };
   }
   const { context } = execution;
   const answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({
     entrypoint: "bump-it",
-    input: skillInput(context, plan, mode, [...computed.files.keys(), ...(computed.wrapperFiles ?? []).map((file) => file.path)], extra),
+    input: skillInput(context, plan, mode, toolWritten, extra),
     ...(extra.restoredFiles === undefined ? {} : { restoredFiles: [...restoredFiles.values()] }),
   });
   if (answer.outcome !== "applied" || answer.publication == null) {
     throw new Error(`the agent couldn't apply the plan: ${answer.summary}`);
   }
   assertNoPlanMarker(answer.publication.body);
-  return { ...answer.publication, body: `${answer.publication.body}\n\n${planSection(plan)}` };
+  return { content: { ...answer.publication, body: `${answer.publication.body}\n\n${planSection(plan)}` }, toolWritten: undefined };
 }
 
 function skillInput(context: ToolRunContext, plan: BumpPlan, mode: "apply" | "adapt" | "resolve", toolWritten: string[], extra: EditContext) {
@@ -200,7 +260,8 @@ function skillInput(context: ToolRunContext, plan: BumpPlan, mode: "apply" | "ad
 }
 
 export function mechanicalContent(plan: BumpPlan): PullRequestContent {
-  const title = plan.kind === "routine" ? "refreshing dependencies" : `upgrading ${plan.moves[0]?.name ?? "dependency"}`;
+  const move = plan.moves[0];
+  const title = plan.kind === "routine" ? "refreshing dependencies" : move === undefined ? "upgrading a dependency" : `moving ${move.name} to ${move.to}`;
   return { title, body: `Updates selected by the supply-chain version rule and verified before publication.\n\n${planSection(plan)}`, commitMessage: title };
 }
 

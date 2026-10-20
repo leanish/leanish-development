@@ -1,6 +1,6 @@
 // Copied from leanish/leanish-development agents/bump-it/src/ci-state.ts at c6282df; see PROVENANCE.md.
-// Local changes: `CiConclusion` defined here instead of bump-it's handler type; failingCheckNames supplies both failed Actions jobs and commit status contexts to adaptations; onlyCooldownHolds tells the gate's cooldown hold (its job's hold step, or the `failure` cooldown status older gates' daily rescan posted) from a failure.
-import type { GitHubCheckRun, GitHubCommitStatus, GitHubHeadChecks } from "@leanish/agent-runtime/types/clients";
+// Local changes: unreportedRequired names required checks the head never reported; `CiConclusion` defined here instead of bump-it's handler type; failingCheckNames supplies both failed Actions jobs and commit status contexts to adaptations; onlyCooldownHolds tells the gate's cooldown hold (its job's hold step, or the `failure` cooldown status older gates' daily rescan posted) from a failure.
+import type { GitHubCheckRun, GitHubCommitStatus, GitHubHeadChecks, GitHubRequiredCheck } from "@leanish/agent-runtime/types/clients";
 
 /** What a PR head's CI says. */
 export type CiConclusion = "success" | "failure" | "pending" | "none";
@@ -29,9 +29,9 @@ const RUNNING_RUN_STATUSES: ReadonlySet<string> = new Set(["queued", "in_progres
  *   - `none` — nothing to go on: no checks, all skipped or neutral, or a
  *     value this function doesn't know (never read as success).
  *
- * "All observed checks passed", not "all required checks passed": GitHub's
- * required-check list isn't read, so a required check that never started
- * is invisible here — the same blind spot as `gh pr checks`.
+ * "All observed checks passed", not "all required checks passed": a required
+ * check that never started is invisible here — the same blind spot as
+ * `gh pr checks`. `unreportedRequired` names such checks when a draft is marked ready.
  */
 export function classifyCi(checks: GitHubHeadChecks): CiConclusion {
   const { checkRuns, statuses } = checks;
@@ -53,6 +53,25 @@ export function classifyCi(checks: GitHubHeadChecks): CiConclusion {
   const anySucceeded =
     checkRuns.some((run) => run.conclusion === "success") || statuses.some((status) => status.state === "success");
   return allPassing && anySucceeded ? "success" : "none";
+}
+
+/** GitHub Actions' app: a required check bound to it is an Actions job, which `headChecks` reads. */
+export const ACTIONS_APP_ID = 15368;
+
+/**
+ * The required checks the head hasn't reported. `missing`: bound to Actions, whose jobs `headChecks` reads, so one
+ * that hasn't started is known not to have run on the head. `unobservable`: bound to another app or to any source,
+ * which another app's check run can satisfy and `headChecks` can't read without the Checks permission. A commit
+ * status of that name still counts as reported.
+ */
+export function unreportedRequired(checks: GitHubHeadChecks, required: ReadonlyArray<GitHubRequiredCheck>): { readonly missing: string[]; readonly unobservable: string[] } {
+  const reported = new Set([...checks.checkRuns.map((run) => run.name), ...checks.statuses.map((status) => status.context)]);
+  const unreported = required.filter((check) => !reported.has(check.context));
+  const observable = (check: GitHubRequiredCheck) => check.integrationId === ACTIONS_APP_ID;
+  return {
+    missing: [...new Set(unreported.filter(observable).map((check) => check.context))].sort(),
+    unobservable: [...new Set(unreported.filter((check) => !observable(check)).map((check) => check.context))].sort(),
+  };
 }
 
 /** Failure names from the same jobs and statuses used to classify CI. */

@@ -387,7 +387,9 @@ BeanUtils. It can go after that dependency is removed or naturally resolves safe
   Linux/Windows launchers are deferred.
 - Candidate preview is read-only, but is not a full dry run. `run` and `review`
   can publish changes. The tools read Actions jobs and commit statuses, not another
-  app's Checks-only results or GitHub's list of required checks.
+  app's Checks-only results. Of the checks GitHub requires, they see only the
+  rulesets' Actions-bound ones (a draft marked ready before one reported is flagged), not
+  classic branch protection's.
 - Schedules can be delayed, skipped or disabled after 60 days of public-repository
   inactivity. There is no separate watchdog.
 - Open PRs aren't rescanned daily. An advisory published after a PR's last check

@@ -26,12 +26,13 @@
  *
  * Steps 1 and 3 need no model.
  */
-import type { GitHubClient, GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
+import { GitHubApiError } from "@leanish/agent-runtime/github/github-client";
+import type { GitHubClient, GitHubPullRequest, GitHubRequiredChecks } from "@leanish/agent-runtime/types/clients";
 import type { Logger } from "@leanish/agent-runtime/types/logger";
 import type { PreparedBranch, WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
 import type { Workspace } from "@leanish/agent-runtime/working-copy/workspace";
 
-import { classifyCi, onlyCooldownHolds } from "./ci-state.ts";
+import { classifyCi, onlyCooldownHolds, unreportedRequired } from "./ci-state.ts";
 import type { PublicationJournal } from "./journal.ts";
 import { type OwnPullRequests, type PullRequestState, stateOf } from "./own-pr.ts";
 import { closeAndDelete, markReady, ownOpenPullRequests, type PublicationContext, recordState, recoverPublication } from "./publication.ts";
@@ -48,6 +49,7 @@ export type ReviewOutcome =
   | "marked-ready"
   | "already-ready"
   | "no-checks"
+  | "ready-missing-required"
   | "adapted"
   | "adaptation-unchanged"
   | "closed"
@@ -181,9 +183,21 @@ async function reviewOne(context: ReviewContext, steps: ReviewSteps, pr: GitHubP
   // Held by the gate although it took nothing young itself: the base's wait grew past one of its versions.
   if (onlyCooldownHolds(checks)) return result("held", "by the gate's cooldown under the base's current wait");
   if (ci === "success") {
+    // A person or an earlier tick already made it ready: nothing to decide, and no extra call that could fail it.
     if (!pr.isDraft) return result("already-ready");
+    // Green by what the head reported, but a check the base's rulesets require may not have started. It's marked
+    // ready anyway: a workflow can start only on `ready_for_review`, and waiting for it would never end. GitHub still
+    // blocks the merge until it passes, and the distinct outcome, reported on this tick, tells the person.
+    const required = await requiredChecksOrUnknown(context, pr.number);
+    const unreported = required.known ? unreportedRequired(checks, required.checks) : { missing: [], unobservable: [] };
+    const unseen = !required.known ? `required checks unknown (${required.reason}); readiness used the reported checks`
+      : unreported.unobservable.length > 0 ? `${unreported.unobservable.join(", ")} required but not reported, maybe by an app this token can't read` : undefined;
     await markReady(publication, pr.number, pr.headSha);
-    return result("marked-ready");
+    if (unreported.missing.length > 0) {
+      const missing = `${unreported.missing.join(", ")} required on ${context.base} but not reported on the head yet`;
+      return result("ready-missing-required", unseen === undefined ? missing : `${missing}; ${unseen}`);
+    }
+    return result("marked-ready", unseen);
   }
   if (state.adaptations >= MAX_ADAPTATIONS) {
     await closeAndDelete(
@@ -199,4 +213,18 @@ async function reviewOne(context: ReviewContext, steps: ReviewSteps, pr: GitHubP
   await recordState(publication, pr.number, pr.headSha, { ...state, adaptations: attempt });
   const pushed = await steps.adapt(pr, checkedOut.prepared, publication, attempt);
   return result(pushed ? "adapted" : "adaptation-unchanged", `attempt ${attempt} of ${MAX_ADAPTATIONS}`);
+}
+
+/**
+ * The base's required checks, or unknown when GitHub won't answer: readiness doesn't wait for them, so a failed read
+ * (a 5xx, a rate limit, a malformed answer) only turns into the outcome's note, as a refused one does.
+ */
+async function requiredChecksOrUnknown(context: ReviewContext, pr: number): Promise<GitHubRequiredChecks> {
+  try {
+    return await context.github.requiredChecks({ repo: context.repo, branch: context.base });
+  } catch (err) {
+    if (!(err instanceof GitHubApiError)) throw err;
+    context.logger.warn(`${context.rules.tool}: reading the base's required checks failed; marking ready on the reported checks`, { repo: context.repo, number: pr, error: err.message });
+    return { known: false, reason: err.message };
+  }
 }

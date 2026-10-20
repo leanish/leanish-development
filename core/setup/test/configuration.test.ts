@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse, stringify } from "yaml";
 
-import { configure, configPath, readInstallation, type ConfigureOptions } from "../src/configuration.ts";
+import { componentsBelow, configure, configPath, readInstallation, type ConfigureOptions } from "../src/configuration.ts";
 import { descriptor, type Tool } from "../src/tools.ts";
 
 let home: string;
@@ -15,6 +15,14 @@ beforeEach(async () => { home = await mkdtemp(join(tmpdir(), "setup-config-")); 
 afterEach(async () => { await rm(home, { recursive: true, force: true }); });
 
 describe("owner installations", () => {
+  it("writes and reads with a HOME that ends in a slash, and never walks a path outside home", async () => {
+    // Before 0.7.1 the walk compared against home verbatim: with a trailing slash it never met it and kept climbing.
+    expect((await configure(options, `${home}/`)).status).toBe("changed");
+    expect((await readInstallation(options, `${home}/`)).path).toBe(join(home, ".config/leanish/installations/acme/bump-it/agent.yaml"));
+    expect(componentsBelow(join(home, "a", "b"), `${home}/`)).toEqual([join(home, "a"), join(home, "a", "b")]);
+    expect(() => componentsBelow("/elsewhere/a", home)).toThrow(`/elsewhere/a must be under ${home}`);
+  });
+
   it.each(["bump-it", "secure-it"] as const)("reads %s contribution as data and writes a strict owner-scoped config", async (tool) => {
     const selected = { ...options, tool };
     const first = await configure(selected, home);

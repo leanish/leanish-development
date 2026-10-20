@@ -3,8 +3,9 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { CODING_AGENTS, type CodingAgent } from "@leanish/tool-runtime/config";
+import { loosely } from "@leanish/tool-runtime/git-copies";
 
-import { fileEntry, readInstallation, type InstallationOptions } from "./configuration.ts";
+import { componentsBelow, fileEntry, readInstallation, type InstallationOptions } from "./configuration.ts";
 import { result, type ScheduleSpec, type SetupResult } from "./contracts.ts";
 import { GUIDED_SETUP_REQUIREMENT, hasGuidedSetup, readInstalledRelease, type InstalledRelease } from "./release.ts";
 import { requireFixturesForCandidate } from "./fixtures.ts";
@@ -48,10 +49,18 @@ const RUN_STEPS: Readonly<Record<CodingAgent, string>> = {
  * by prefix, so trailing arguments still match; batch parsing rejects repeated flags and stray positionals, which
  * leaves only --repo, and that can only narrow the run to repositories this owner opted in.
  */
-function commandRule(agent: CodingAgent, tool: string, owner: string, args: ReadonlyArray<string>, command: string): ScheduleSpec["commandRule"] {
-  if (agent === "claude-code") return { file: "~/.claude/settings.json (permissions.allow)", entry: `Bash(${command})` };
-  const pattern = args.map((arg) => `        ${JSON.stringify(arg)},`).join("\n");
-  return { file: `${process.env["CODEX_HOME"] ?? "~/.codex"}/rules/leanish-${tool}-${owner}.rules`, entry: `prefix_rule(\n    pattern = [\n${pattern}\n    ],\n    decision = "allow",\n)\n` };
+function commandRule(agent: CodingAgent, tool: string, owner: string, launcher: string, tag: string, command: string): ScheduleSpec["commandRule"] {
+  if (agent === "claude-code") {
+    // Other releases differ only in the tag, which never needs quoting: this launcher, quoted as the command quotes
+    // it, with `<tag>` for its release folder.
+    const quoted = shellArgument(launcher);
+    const at = quoted.lastIndexOf(`/${tag}/`);
+    const anyLauncher = `${quoted.slice(0, at)}/<tag>/${quoted.slice(at + tag.length + 2)}`;
+    return { file: "~/.claude/settings.json (permissions.allow)", entry: `Bash(${command})`,
+      replaces: { entries: `Bash(/bin/bash ${anyLauncher} ${tool} --owner ${owner} --release <tag>)` } };
+  }
+  const pattern = ["/bin/bash", launcher, tool, "--owner", owner, "--release", tag].map((arg) => `        ${JSON.stringify(arg)},`).join("\n");
+  return { file: `${process.env["CODEX_HOME"] ?? "~/.codex"}/rules/leanish-${tool}-${owner}.rules`, entry: `prefix_rule(\n    pattern = [\n${pattern}\n    ],\n    decision = "allow",\n)\n`, replaces: { wholeFile: true } };
 }
 
 /**
@@ -60,17 +69,6 @@ function commandRule(agent: CodingAgent, tool: string, owner: string, args: Read
  */
 function taskFolder(home: string, taskId: string): string {
   return join(home, ".local", "share", "leanish", "tasks", taskId);
-}
-
-/** The components from just below home down to the task folder; the folder is always built under home. */
-function taskFolderComponents(path: string, home: string): string[] {
-  const root = resolve(home);
-  const components: string[] = [];
-  for (let component = resolve(path); component !== root; component = dirname(component)) {
-    if (component === dirname(component)) throw new Error(`Task folder ${path} must be under ${home}`);
-    components.unshift(component);
-  }
-  return components;
 }
 
 /** Throw unless the entry is a real directory the person owns that nobody else can write (or, for the folder, read). */
@@ -84,7 +82,7 @@ function requireSafeComponent(entry: Awaited<ReturnType<typeof fileEntry>> & obj
 
 /** Read-only: every component below home is safe, or the first missing one ends the walk. */
 async function checkTaskFolder(path: string, home: string): Promise<"missing" | "ready"> {
-  for (const component of taskFolderComponents(path, home)) {
+  for (const component of componentsBelow(path, home)) {
     const entry = await fileEntry(component);
     if (entry === undefined) return "missing";
     requireSafeComponent(entry, component, path);
@@ -121,16 +119,18 @@ async function canonicalPath(path: string): Promise<string> {
 
 /** The automation can write its task folder, so nothing the launcher trusts may live in it, around it or be it. */
 async function requireSeparateTaskFolder(folder: string, trusted: Readonly<Record<string, string>>): Promise<void> {
-  const task = await canonicalPath(folder);
+  // Folded more than any filesystem folds names: on a case-insensitive volume (APFS's default) a case or Unicode
+  // variant reaches the same folder. On a case-sensitive one this can only refuse more, never less.
+  const task = loosely(await canonicalPath(folder));
   for (const [name, path] of Object.entries(trusted)) {
-    const other = await canonicalPath(path);
+    const other = loosely(await canonicalPath(path));
     if (within(task, other) || within(other, task)) throw new Error(`Task folder ${folder} must not overlap ${name} (${path}); move it in the installation config`);
   }
 }
 
 /** Walk down from home, creating each missing component and checking each one before going into it. */
 async function ensureTaskFolder(path: string, home: string): Promise<void> {
-  for (const component of taskFolderComponents(path, home)) {
+  for (const component of componentsBelow(path, home)) {
     if (await fileEntry(component) === undefined) {
       try { await mkdir(component, { mode: 0o700 }); } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -148,7 +148,7 @@ function taskPrompt(command: string, agent: CodingAgent): string {
 ${command}
 
 ${RUN_STEPS[agent]}
-3. Report: first line the verdict: all ok only when nothing failed and gaps is 0, otherwise not. Then list each problem with repo and PR: failed or interrupted commands, error outcomes, and notes (including note counts). If gaps is above 0 anywhere, say per repo that coverage was incomplete: that many advisory sources couldn't be checked. Then list every PR under "attention" with its outcome, and attentionOmitted when above 0: closed (failing CI), adaptation-unchanged and left-alone need a person; no-checks and held are waiting states, not problems. Then give each repo's outcome and PR links, and estimated cost when present; null cost is unknown.
+3. Report: first line the verdict: all ok only when nothing failed and gaps is 0, otherwise not. Then list each problem with repo and PR: failed or interrupted commands, error outcomes, and notes (including note counts). If gaps is above 0 anywhere, say per repo that coverage was incomplete: that many advisory sources couldn't be checked. If the summary has logFailed, say the person's batch log couldn't be written. Then list every PR under "attention" with its outcome, and attentionOmitted when above 0: closed (failing CI), adaptation-unchanged and left-alone need a person; no-checks and held are waiting states, not problems; ready-missing-required was marked ready before a required check reported, and needs a person only if that check never starts. Then give each repo's outcome and PR links, and estimated cost when present; null cost is unknown.
 4. Do not fix anything yourself, merge, change configs, or run extra commands. If the script is missing or fails before any repo runs, report the exact startup error/reason it returned and stop. Do not weaken the tools' sandbox or token separation to make a run succeed.`;
 }
 
@@ -187,7 +187,7 @@ export async function scheduleSpec(options: ScheduleOptions, host: ScheduleMachi
       : "Use the session's app scheduling tool; otherwise Scheduled (Automations) > a standalone local-project task. Set title, prompt, local schedule and the task folder as project folder (never the release checkout); use local mode, not a new worktree or cloud task. Reuse/update the existing title, never duplicate it.",
     permissions: claude ? `The person must allow this exact Bash command: ${command} (the commandRule entry, or approve once with always allow). That rule doesn't limit Claude's file-edit tools: the task must not run in a folder holding the release or installation state, nor in a permission mode that approves edits elsewhere; check both, or report that boundary unverified. It needs local files, network, and the login Keychain through the tool process. Keep the Mac awake and the desktop app open.`
       : "The person adds the commandRule execution rule, which lets exactly this launcher run outside the automation's sandbox without prompting, then restarts Codex; keep the automation's normal sandbox and never grant it full access or extra writable folders. The project folder is the task folder, never the release checkout: the automation can write its project folder, and code it could change there would run outside its sandbox. The launcher needs installation/cache/lock writes, network and its own login-Keychain reads; repository code stays inside the tools' own sandbox, which is never disabled. The rule is user-scoped, matches by prefix and names one release: replace that file's rule when the release changes. If policy blocks it, report unattended execution pending; don't broaden permissions. Keep the Mac awake and the desktop app open.",
-    commandRule: commandRule(options.agent, options.tool, owner, ["/bin/bash", launcher, options.tool, "--owner", owner, "--release", release.tag], command),
+    commandRule: commandRule(options.agent, options.tool, owner, launcher, release.tag, command),
     unattended: `Unverified: spec generation and readback do not prove unattended execution. If command permission, Keychain access, ${claude ? "background completion notifications" : "waiting on the running command's session"} or output reading cannot work unattended in this app/session, this task cannot run unattended here; report it pending. No launchd, CLI scheduler or cloud fallback.`,
     documentation: claude ? "https://code.claude.com/docs/en/desktop-scheduled-tasks" : "https://developers.openai.com/codex/app/automations",
   };
@@ -255,13 +255,15 @@ export async function scheduleCheck(options: ScheduleOptions & { readonly taskFi
   if (found["timeZone"] !== undefined && found["timeZone"] !== "local" && found["timeZone"] !== expected.timeZone) differences.push("timeZone");
   if (found["enabled"] !== true) differences.push("enabled");
   if (typeof found["prompt"] !== "string" || found["prompt"].trimEnd() !== expected.prompt.trimEnd()) differences.push("prompt");
-  // Claude's scheduling tool stores no working folder; its command is an absolute path, so an absent folder is fine there.
-  const folderOptional = options.agent === "claude-code" && found["folder"] === undefined;
-  // Check the expected folder itself first, so a symlinked or shared task folder can't match by realpath.
-  if (await checkTaskFolder(expected.folder, host.home) !== "ready") differences.push("folder");
-  else try {
-    if (!folderOptional && (typeof found["folder"] !== "string" || await realpath(found["folder"]) !== await realpath(expected.folder))) differences.push("folder");
-  } catch { differences.push("folder"); }
+  // Claude's scheduling tool stores no working folder; its command is an absolute path, so an absent folder is fine
+  // there, and the task folder (which only an app's project folder uses) needn't exist.
+  if (!(options.agent === "claude-code" && found["folder"] === undefined)) {
+    // Check the expected folder itself first, so a symlinked or shared task folder can't match by realpath.
+    if (await checkTaskFolder(expected.folder, host.home) !== "ready") differences.push("folder");
+    else try {
+      if (typeof found["folder"] !== "string" || await realpath(found["folder"]) !== await realpath(expected.folder)) differences.push("folder");
+    } catch { differences.push("folder"); }
+  }
   return result("schedule-check", "task", differences.length === 0 ? "already-done" : "blocked",
     differences.length === 0 ? "App readback matches the expected task; unattended permission and a real test run remain separate acceptance checks" : "App readback differs; reconcile through the app and export again",
     { taskId: expected.taskId, differences });

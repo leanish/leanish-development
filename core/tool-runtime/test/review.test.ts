@@ -59,6 +59,61 @@ describe("reviewOpenPullRequests", () => {
     expect((await reviewOpenPullRequests(context(github), steps()))[0]?.outcome).toBe("pending");
     github.checks = { source: "actions-jobs", checkRuns: [], statuses: [] };
     expect((await reviewOpenPullRequests(context(github), steps()))[0]?.outcome).toBe("no-checks");
+    // Only the draft's readiness read the rules: never for a PR already ready, pending or without checks.
+    expect(github.calls.filter((call) => call.startsWith("requiredChecks"))).toEqual(["requiredChecks leanish/widget main"]);
+  });
+
+  it("marks a draft ready once, never waiting on a required check that only starts when the PR is ready", async () => {
+    const github = new FakeGitHub(ownPr());
+    github.required = { known: true, checks: [{ context: "release-gate", integrationId: 15368 }] };
+    expect((await reviewOpenPullRequests(context(github), steps()))[0]?.outcome).toBe("ready-missing-required");
+    expect(github.prs.get(7)?.isDraft).toBe(false);
+    expect((await reviewOpenPullRequests(context(github), steps()))[0]?.outcome).toBe("already-ready");
+  });
+
+  it("leaves a PR a person made ready alone even when a required check is missing", async () => {
+    const github = new FakeGitHub(ownPr({ isDraft: false }));
+    github.required = { known: true, checks: [{ context: "supply-chain / cooldown", integrationId: 15368 }] };
+    github.fail("requiredChecks");
+    expect((await reviewOpenPullRequests(context(github), steps()))[0]).toMatchObject({ outcome: "already-ready" });
+  });
+
+  it("marks a green draft ready with a note when the rules read fails, as readiness doesn't wait for them", async () => {
+    const github = new FakeGitHub(ownPr());
+    github.fail("requiredChecks");
+    expect((await reviewOpenPullRequests(context(github), steps()))[0]).toMatchObject({
+      outcome: "marked-ready",
+      detail: "required checks unknown (GitHub requiredChecks failed: unexpected response (HTTP 502)); readiness used the reported checks",
+    });
+    expect(github.prs.get(7)?.isDraft).toBe(false);
+  });
+
+  it("lets a programming error in the rules read fail the PR's review, leaving the draft", async () => {
+    const github = new FakeGitHub(ownPr());
+    github.fail("requiredChecks", new TypeError("not a GitHub failure") as unknown as Parameters<FakeGitHub["fail"]>[1]);
+    expect((await reviewOpenPullRequests(context(github), steps()))[0]).toMatchObject({ outcome: "error", detail: "not a GitHub failure" });
+    expect(github.prs.get(7)?.isDraft).toBe(true);
+  });
+
+  it.each([
+    ["a required check that never started", [{ name: "supply-chain / supply-chain", conclusion: "success" }], [], [{ context: "supply-chain / supply-chain", integrationId: 15368 }, { context: "supply-chain / cooldown", integrationId: 15368 }],
+      { outcome: "ready-missing-required", detail: "supply-chain / cooldown required on main but not reported on the head yet" }, false],
+    ["a reported failure next to a missing required check", [{ name: "supply-chain / supply-chain", conclusion: "failure" }], [], [{ context: "supply-chain / cooldown", integrationId: 15368 }],
+      { outcome: "adapted" }, true],
+    ["a required check another app reports", [{ name: "supply-chain / supply-chain", conclusion: "success" }], [{ context: "supply-chain / cooldown", state: "success" }], [{ context: "supply-chain / cooldown", integrationId: 15368 }, { context: "CodeQL", integrationId: 57789 }],
+      { outcome: "marked-ready", detail: "CodeQL required but not reported, maybe by an app this token can't read" }, false],
+    ["a required check any source can report", [{ name: "check", conclusion: "success" }], [], [{ context: "Analyze", integrationId: undefined }],
+      { outcome: "marked-ready", detail: "Analyze required but not reported, maybe by an app this token can't read" }, false],
+    ["a missing Actions check next to one another app may report", [{ name: "check", conclusion: "success" }], [], [{ context: "gate / cooldown", integrationId: 15368 }, { context: "CodeQL", integrationId: 57789 }],
+      { outcome: "ready-missing-required", detail: "gate / cooldown required on main but not reported on the head yet; CodeQL required but not reported, maybe by an app this token can't read" }, false],
+    ["requirements it can't read", [{ name: "check", conclusion: "success" }], [], undefined,
+      { outcome: "marked-ready", detail: "required checks unknown (rules unreadable (HTTP 403)); readiness used the reported checks" }, false],
+  ] as const)("readiness with %s", async (_name, runs, statuses, required, expected, draft) => {
+    const github = new FakeGitHub(ownPr());
+    github.checks = { source: "actions-jobs", checkRuns: runs.map((run) => ({ ...run, status: "completed" })), statuses };
+    github.required = required === undefined ? { known: false, reason: "rules unreadable (HTTP 403)" } : { known: true, checks: required };
+    expect((await reviewOpenPullRequests(context(github), steps()))[0]).toMatchObject(expected);
+    expect(github.prs.get(7)?.isDraft).toBe(draft);
   });
 
   it("leaves a PR someone else pushed to, or whose state someone removed, without touching it", async () => {

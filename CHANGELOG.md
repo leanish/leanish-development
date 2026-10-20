@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.7.1 - 2026-10-20
+
+### Added
+
+- Every `batch` and `test-run` also writes a full log for the person, `<dirs.state>/logs/batch-YYYY-MM-DD.jsonl`, with
+  each tool's output and how each command ended, so a failed command's reason can be found. The scheduled agent never
+  sees it or its path; its summary only says `logFailed: true` when the log couldn't be written.
+- `schedule`'s command rule says what it replaces (`commandRule.replaces`): the exact form of earlier releases' Claude
+  entries for that tool and owner, or the whole Codex rule file.
+
+### Changed
+
+- bump-it writes planned action pins itself, as it writes npm files and wrappers, and declares them to the agent as
+  tool-written. A plan the tool writes entirely (a routine, or a major of the gate's own reusable workflow, whose
+  caller verification already lets change only in its pin) no longer runs the agent; such a pass may change only the
+  files the tool wrote, as the agent's workspace guard required. On v0.7.0's repin pass an agent
+  asked to move the gate pin also rewrote a stale comment in that workflow, which verification rightly refused. A gate
+  release that changes the caller's inputs still needs a person: its pin PR fails in CI, as the agent's edit failed
+  verification before.
+
+### Fixed
+
+- Both tools read the checks the base branch's rulesets require: a draft whose reported checks all pass, but where a
+  required Actions check hasn't reported, is marked ready (a workflow can start only on `ready_for_review`) with the
+  outcome `ready-missing-required`, which that tick's batch lists under attention, instead of a plain `marked-ready`. When the
+  rules can't be read (refused or failed), or a required check may come from an app the token can't see, readiness
+  uses the reported checks as before and the review says so. Classic branch protection isn't read.
+- A `HOME` ending in a slash no longer makes guided setup climb past it while reading or writing an installation.
+- The task folder overlap check also refuses a case or Unicode variant of a trusted path, which a case-insensitive
+  volume (APFS's default) reaches as the same folder.
+- `schedule-check` no longer needs the task folder for a Claude readback without a folder, which Claude's scheduling
+  tool never stores.
+- The batch counts only each result's own coverage gaps, so a nested breakdown next to a total isn't counted twice.
+
 ## 0.7.0 - 2026-10-19
 
 ### Added

@@ -27,6 +27,12 @@ export interface VerifyInputs {
   /** The base's inventory with the plan's Gradle moves (and wrapper) applied by Gradle: what head's must be. */
   readonly reference: GradleInventory | undefined;
   readonly changedFiles: ReadonlyArray<string>;
+  /**
+   * The files the tool wrote when it wrote this pass alone, with no agent (a routine, or a major of the gate's own
+   * reusable workflow); `undefined` when an agent ran. A tool-only pass may change only those files, as the agent's
+   * workspace guard would have required: no agent was there to change anything else.
+   */
+  readonly toolWritten: ReadonlyArray<string> | undefined;
 }
 
 /** The plan's declaration moves, for its reference. */
@@ -66,6 +72,13 @@ export async function verifyPlan(inputs: VerifyInputs): Promise<string[]> {
     const outside = inputs.changedFiles.filter((path) => !isDependencyFile(path, pins.length > 0) && !(wrapperMoves.length > 0 && WRAPPER_FILES.includes(path)));
     if (outside.length > 0) {
       problems.push(`only a major may change ${outside.join(", ")}`);
+    }
+  }
+  if (inputs.toolWritten !== undefined) {
+    const written = new Set(inputs.toolWritten);
+    const unwritten = inputs.changedFiles.filter((path) => !written.has(path));
+    if (unwritten.length > 0) {
+      problems.push(`no agent ran, yet ${unwritten.join(", ")} changed besides what the tool wrote`);
     }
   }
   // A malformed plan or modified lockfile need not execute the gate at all.

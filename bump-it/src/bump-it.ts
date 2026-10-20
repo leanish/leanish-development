@@ -155,8 +155,8 @@ async function runUnit(execution: Execution, computed: Computed, unit: Unit, own
   }
   const reusable = owned[0];
   const prepared = await prepare(execution, unit, own, reusable, computed.base.id);
-  const content = await edit(execution, computed, "apply");
-  await verify(execution, computed);
+  const { content, toolWritten } = await edit(execution, computed, "apply");
+  await verify(execution, computed, toolWritten);
   if (reusable !== undefined) {
     const { pr } = await publishUpdate(execution.publication, prepared, reusable.number, content, 0);
     return { topic: unit.topic, outcome: "updated", pullRequest: pr.url, notes: computed.plan.notes };
@@ -229,9 +229,11 @@ async function review(context: ToolRunContext, deps: BumpItDeps): Promise<Readon
       // A major's adaptation survives a clean merge while its selected targets stay the same.
       const reconcile = previous.kind === "routine" ? planDigest(previous) !== planDigest(computed.plan) : !sameTargets(previous, computed.plan);
       let content = { title: pr.title, body: withPlanSection(pr.body, computed.plan), commitMessage: `merging ${context.base}` };
+      // A clean merge keeps the PR's earlier edits, which may be an agent's: only a fresh tool-only edit tightens the boundary.
+      let toolWritten: ReadonlyArray<string> | undefined;
       if (reconcile) {
         await deps.revert(context.workingCopy, base.id);
-        content = await edit(execution, computed, "apply");
+        ({ content, toolWritten } = await edit(execution, computed, "apply"));
       } else if (merge.kind === "conflicted") {
         const code: string[] = [];
         const restoredFiles: FileState[] = [];
@@ -257,12 +259,13 @@ async function review(context: ToolRunContext, deps: BumpItDeps): Promise<Readon
         if (code.length > 0 && previous.kind === "routine") {
           throw new Error("a routine PR may not resolve code conflicts");
         }
-        content = await edit(execution, computed, "resolve", { conflicted: code, restoredFiles });
+        // A routine of tool-written moves resolves without the agent: verification then holds it to what the tool wrote.
+        ({ content, toolWritten } = await edit(execution, computed, "resolve", { conflicted: code, restoredFiles }));
       } else {
         await writeNpm(execution, computed.files, previous.kind === "major");
         await writeWrapper(execution, computed);
       }
-      await verify(execution, computed);
+      await verify(execution, computed, toolWritten);
       await publishUpdate(execution.publication, merge.prepared, pr.number, content);
       return "rebased";
     },
@@ -281,8 +284,8 @@ async function review(context: ToolRunContext, deps: BumpItDeps): Promise<Readon
       const computed = { plan, files, wrapperFiles, base, gradle: await execution.inventories.ofCommit(base) };
       const checks = await context.github.headChecks({ repo: context.repo.repo, sha: pr.headSha });
       const failingChecks = failingCheckNames(checks);
-      const content = await edit(execution, computed, "adapt", { failingChecks });
-      await verify(execution, computed);
+      const { content } = await edit(execution, computed, "adapt", { failingChecks });
+      await verify(execution, computed, undefined);
       const { pushed } = await publishUpdate(execution.publication, prepared, pr.number, content, attempt);
       return pushed;
     },
