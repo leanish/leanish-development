@@ -14,11 +14,11 @@
   one the plan gives that name, secure-it still fails clearly instead of landing the fix; it needs a person until npm
   fixes the bug.
 - secure-it removes Gradle security floors from configurations with default dependencies, such as checkstyle's. The
-  reference build that checks the removal added those defaults back on top of the configuration's own declarations,
-  so the tool's dependency counted twice and verification failed although the edit was right.
-  Known limitation: a dependency the build adds to that configuration after its projects are evaluated is missing
-  from the reference, so verification fails clearly instead of landing the removal. Removing a floor that is a
-  configuration's only declaration still fails when its default dependencies then apply, as before.
+  reference build that checks the removal emptied the configuration's own dependencies, so its defaults came back on
+  top of the declarations it inherited from the filtered copy: the tool's dependency counted twice and verification
+  failed although the edit was right. The configuration now keeps its own dependencies but the floors, so its
+  defaults and dependencies the build adds later apply as they would once the floors are deleted. Removing a floor
+  that is a configuration's only declaration still fails when its default dependencies then apply, as before.
 
 ## 0.7.1 - 2026-10-20
 
