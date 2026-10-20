@@ -81,7 +81,7 @@ describe.skipIf(process.env["SUPPLY_CHAIN_GRADLE_TESTS"] !== "1")("Gradle floor 
     await write(build, "build.gradle", `${classpath}plugins { id "java" }
 repositories { maven { url = uri("${repo}") } }
 // tool also declares its default, lazily as checkstyle's users do; defaultTool relies on it; inheritedTool relies on it beside an inherited dependency;
-// lateTool gets tool added after the floor removal ran.
+// lateTool gets tool added after the floor removal ran; guardedTool has a withDependencies action.
 def toolDefaults = { dependencies -> dependencies.add(project.dependencies.create("fixture:tool:1.0")) }
 configurations {
   tool { defaultDependencies(toolDefaults) }
@@ -89,6 +89,8 @@ configurations {
   toolParent
   inheritedTool { extendsFrom(toolParent); defaultDependencies(toolDefaults) }
   lateTool
+  // Clears its own dependencies unless they include tool: on a copy of only what it inherits, it would clear those.
+  guardedTool { extendsFrom(toolParent); withDependencies { deps -> if (!deps.empty && !deps.any { it.name == "tool" }) deps.clear() } }
 }
 // After the init script's own projectsEvaluated, where the floor removal runs.
 gradle.projectsEvaluated { configurations.lateTool.dependencies.add(project.dependencies.create("fixture:tool:1.0")) }
@@ -101,6 +103,8 @@ dependencies {
   inheritedTool("fixture:t:2.0") { because("GHSA-t: plugin-lib brings a vulnerable t") }
   lateTool("fixture:plugin-lib:1.0")
   lateTool("fixture:t:2.0") { because("GHSA-t: plugin-lib brings a vulnerable t") }
+  guardedTool("fixture:tool:1.0")
+  guardedTool("fixture:t:2.0") { because("GHSA-t: plugin-lib brings a vulnerable t") }
 }
 `);
     await write(build, "buildSrc/build.gradle", classpath);
@@ -127,6 +131,7 @@ dependencies {
     [":defaultTool", ["tool:1.0"]],
     [":inheritedTool", ["plugin-lib:1.0", "tool:1.0"]],
     [":lateTool", ["plugin-lib:1.0", "tool:1.0"]],
+    [":guardedTool", ["plugin-lib:1.0", "tool:1.0"]],
   ])("removes a floor from %s, declaring its tool once", async (location, declared) => {
     const file = join(root, `removal-${location.slice(1)}.json`);
     await writeFile(file, JSON.stringify({ repositoryRoot: build, floors: [{ package: "fixture:t", version: "2.0", advisories: ["GHSA-t"], locations: [location] }] }));

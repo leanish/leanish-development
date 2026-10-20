@@ -92,10 +92,16 @@ def removeFloors = { configuration, String configLocation ->
     own.addAll(configuration.dependencies)
     def unforced = configuration.copyRecursive { dependency -> !own.contains(dependency) && !matchesAny(dependency, floors) }
     unforced.resolutionStrategy.deactivateDependencyLocking()
-    // The copy took the configuration's default dependencies too; it holds only what it copied, so they apply once.
+    // The copy also took the configuration's default dependencies and withDependencies actions, which the
+    // configuration still runs on its own dependencies: the copy resolves exactly what it copied.
     def inherited = Collections.newSetFromMap(new IdentityHashMap())
     inherited.addAll(unforced.dependencies)
-    unforced.withDependencies { dependencies -> dependencies.removeAll { dependency -> !inherited.contains(dependency) } }
+    unforced.withDependencies { dependencies ->
+        dependencies.removeAll { dependency -> !inherited.contains(dependency) }
+        def present = Collections.newSetFromMap(new IdentityHashMap())
+        present.addAll(dependencies)
+        dependencies.addAll(inherited.findAll { dependency -> !present.contains(dependency) })
+    }
     configuration.setExtendsFrom([unforced])
     configuration.dependencies.removeAll { dependency -> matchesAny(dependency, floors) }
     configuration.dependencyConstraints.clear()
