@@ -26,6 +26,14 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 - **Gradle metadata outside the reference comparison**: declaration `because(...)` reasons and resolved graph edges are exported but not compared with the planned reference; secure-it checks floor reasons separately. Reference-only `moved` markers are checked to prove the plan's moves. Local files, artifacts, attributes and capabilities are outside the exported module/version comparison.
 - **Links in workflow and action metadata (gate)**: the gate reads a symbolic link in a commit as the path it points to, so the actions behind a linked workflow, action metadata file or folder aren't read. This is pre-existing in 0.5.1. The tools refuse edits that add links or change what's behind one.
 - **An unpinned action moved into a step (gate)**: the comparison counts each action's occurrences in a file, so moving `uses: acme/action@main` from an `env` map (or another non-step key read as an action) into a step of the same workflow leaves the count unchanged and isn't required to be pinned; it's reported as an unpinned-action gap. Pre-existing in 0.5.2.
+- **Gradle floor removal and parent configurations (secure-it)**: the reference build that checks a floor removal
+  snapshots what the configuration inherits, after the projects are evaluated. A dependency the build adds to a
+  parent configuration later is missing from it, so a correct removal fails verification and needs a person. The
+  reference also covers only the configurations where the floor sits: an edit that also changes a shared parent is
+  caught only where another inventoried configuration shows the difference. Both are pre-existing in 0.7.1.
+- **Removing a configuration's only declared floor (secure-it)**: when the floor is the configuration's only
+  dependency of its own, removing it lets its default dependencies apply (checkstyle's tool version, for instance),
+  which exact declaration preservation refuses; the removal fails visibly. Pre-existing in 0.7.1.
 - **Optional root peers and the npm deprecation check (bump-it)**: a transitive version a major brings is exempt when the root declares the package, including as an optional peer it never installed, so a deprecated or unreadable version of it isn't refused. Planned for the next release.
 - **npm aliases without a version** (`"compat": "npm:lib"`): the inventory reads them, but neither tool can rewrite them, so an update fails visibly and a person makes it.
 - **Scheduled runs are best effort**: GitHub may delay or skip them, and disables them after 60 days without activity in a public repository.
