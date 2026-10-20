@@ -482,3 +482,41 @@ manifest-field gap that led to the exact tool-written boundary. Astra was decisi
 by comparing v0.7.0 and the candidate in memory.
 
 v0.7.1 (`3f3a08d`) is rc.1 plus its release metadata.
+
+## Release reviews and candidate of 0.7.2 — 2026-10-20
+
+0.7.2 followed 0.7.1's order: reviews of `v0.7.1..main` on `main` first (two Haiku reviews, Sol unprimed on a fresh
+thread, then Astra on that thread), then one candidate. It carries two secure-it fixes that the daily passes needed:
+npm overrides in projects with workspaces ([npm/cli#4834](https://github.com/npm/cli/issues/4834), #199) and Gradle
+floor removal beside default dependencies (#200).
+
+- **Fix PRs**: on #200, Haiku's gap-hunter found that a first version, which cleared whatever the configuration
+  gained at resolution, also dropped the defaults it inherits beside a parent's dependencies; Sol found it also
+  dropped dependencies the build adds later. Both were checked with real Gradle against `main` and the fix.
+- **Round 1 (`b223b11`, then `540c212`)**: Haiku found nothing blocking. Its note that materialization accepts a new
+  copy at a vulnerable base version led to #201, an end-to-end test that verification still refuses it. Sol, unprimed,
+  raised the late-addition case again; it fails visibly, so it was a known limitation. Astra found that it also let a
+  wrong edit through: a late project dependency missing from the reference, deleted along with the floor, matched it.
+- **Fix (#202)**: the configuration keeps its own dependencies minus the floors, and the filtered copy resolves fresh
+  copies of what it inherited. Haiku ran its own Gradle builds; Sol found two more shapes (a copied `withDependencies`
+  action clearing or changing the copy), both fixed on that PR. Each shape has a real-Gradle case that fails on
+  v0.7.1, on #200's version or on an intermediate fix.
+- **Round 2 (`a215b73`)**: Astra found nothing blocking. The pre-existing limits it and Haiku listed went to
+  [coverage gaps](coverage-gaps.md) in #203, narrowed on Sol's review.
+- **rc.1 (`e49f900`)**: both tools ran unattended from Claude scheduled tasks on the fixture repositories. secure-it
+  ran 12 of 12 and published a floor removal (`TEST_gradle#359`) that passed the gate. bump-it's first run failed one
+  unit on a GitHub push error (`fatal error in commit_refs`); a rerun of that repository ran with no failure. One gate
+  run hit an HTTP 502 from Maven Central and passed on rerun. Coverage gaps (29 and 30) matched earlier candidates;
+  every PR the tools opened was green except one held by the cooldown, as planned.
+
+Known limitations, for 0.7.3: classic branch protection isn't read at readiness; `ready-missing-required` is listed
+only on the tick that marks the PR ready; the batch log keeps raw tool output unredacted (private, 30 days); after
+npm's update, a copy of an overridden name moved to a version the plan doesn't give it still fails the fix; the Gradle
+floor-removal limits in [coverage gaps](coverage-gaps.md).
+
+What each step added: Haiku's gap-hunter found the inherited-defaults regression on #200; its notes led to #201's test
+and the documented limits, and it was rightly overturned on calling the new-copy case a bypass. Sol found three shapes
+on the fix PRs (late additions, a clearing action, a mutating action) and narrowed the docs. Astra was decisive once:
+the late project dependency that turned a visible failure into a wrong edit passing.
+
+v0.7.2 (`81c683c`) is rc.1 plus its release metadata.
