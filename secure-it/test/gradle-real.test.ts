@@ -80,7 +80,7 @@ describe.skipIf(process.env["SUPPLY_CHAIN_GRADLE_TESTS"] !== "1")("Gradle floor 
     // Default dependencies, as plugins such as checkstyle give their tool's configuration.
     await write(build, "build.gradle", `${classpath}plugins { id "java" }
 repositories { maven { url = uri("${repo}") } }
-// tool also declares its default; defaultTool relies on it; inheritedTool relies on it beside an inherited dependency.
+// tool also declares its default, lazily as checkstyle's users do; defaultTool relies on it; inheritedTool relies on it beside an inherited dependency.
 def toolDefaults = { dependencies -> dependencies.add(project.dependencies.create("fixture:tool:1.0")) }
 configurations {
   tool { defaultDependencies(toolDefaults) }
@@ -89,7 +89,7 @@ configurations {
   inheritedTool { extendsFrom(toolParent); defaultDependencies(toolDefaults) }
 }
 dependencies {
-  tool("fixture:tool:1.0")
+  tool(providers.provider { "fixture:tool:1.0" })
   tool("fixture:plugin-lib:1.0")
   tool("fixture:t:2.0") { because("GHSA-t: plugin-lib brings a vulnerable t") }
   defaultTool("fixture:t:2.0") { because("GHSA-t: plugin-lib brings a vulnerable t") }
