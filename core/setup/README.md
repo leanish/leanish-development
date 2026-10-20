@@ -386,8 +386,8 @@ command's reason is. Neither the log nor its path ever appears in the batch outp
 scheduled agent reads. A log that can't be opened or written never stops a batch.
 Lines over 100,000 characters are cut, and daily files older than 30 days are removed
 when a batch opens the log. The log holds what the tools printed, which can include
-repository text: it's private to the user's account, not hidden from the user's own
-processes. Startup failures produce an error summary with zero
+repository text, and masks nothing: a secret a tool printed would be kept as printed.
+It's private to the user's account, not hidden from the user's own processes. Startup failures produce an error summary with zero
 commands, the failed `phase` (`configuration`, `release`, `repository-selection`,
 `candidate-scope` or `scanner`) and a fixed
 phase-specific `reason`, never raw error text. Missing final
