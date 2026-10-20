@@ -520,3 +520,33 @@ on the fix PRs (late additions, a clearing action, a mutating action) and narrow
 the late project dependency that turned a visible failure into a wrong edit passing.
 
 v0.7.2 (`81c683c`) is rc.1 plus its release metadata.
+
+## Release reviews and candidate of 0.7.3 — 2026-10-20
+
+The v0.7.2 passes still failed fast-uri in leanish-development and the incubator ("did not land exactly at 3.1.9").
+fast-uri's dependents already admit the fix, so the plan moves the lockfile only (`npm-lock`), through a temporary
+pin; npm/cli#4834 ignores that pin as it does a lasting override, and #199's `npm update` covered overrides only.
+
+- **Fix (#208)**: install leaving any planned target unlanded triggers the update. Before review, a probe ran real
+  secure-it from the branch on both repositories, stopped before the agent: the plan was fast-uri 3.1.8 → 3.1.9
+  (`npm-lock`) and it landed; main failed there with the production error; the gate's `compare` passed the result,
+  which changed fast-uri's three lockfile lines only. On the PR, Sol found the copy check had lost v0.7.2's coverage
+  of every planned name; restored.
+- **Round 1 (`d844bf0`)**: Haiku's notes became #209 (what the copy check covers). Its blocker, a young transitive
+  version an update brings, was overturned: the gate's cooldown holds every version a change adds or changes. Sol,
+  unprimed, found that checking every planned name in the final lockfile refused copies install moved legitimately,
+  which v0.7.2 accepted. Fixed in #210: the check covers what the update itself moved, measured around it in each
+  install pass; what install moves is judged as without an update.
+- **Round 2 (`a55efc9`)**: Sol and Astra found nothing blocking; Astra's note added #211, a test variant that fails
+  on v0.7.2.
+- **rc.1 (`c7a8a1c`)**: secure-it ran 12 of 12; bump-it 11 of 12, one unit failing on an osv.dev network timeout; a
+  rerun of that repository ran with no failure. Every PR the tools opened was green except fast-uri, held by the
+  cooldown as planned. Coverage gaps (29 and 30) matched earlier candidates.
+
+Known limitations, for 0.7.4: those listed for 0.7.3 under 0.7.2, and bump-it's 43,000-character limit on its PR's
+plan section, which a large routine batch exceeded on leanish-development (pre-existing; the next pass fit).
+
+What each step added: Sol was decisive twice (the lost coverage on #208 and the over-broad check in round 1), and
+Astra added a discriminating test. Haiku's findings on this release were mostly overturned or documentation.
+
+v0.7.3 (`cd10a45`) is rc.1 plus its release metadata.
