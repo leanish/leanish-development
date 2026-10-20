@@ -96,7 +96,8 @@ async function materializeLock(inputs: MaterializationInputs, locks: ReadonlyMap
   // override for a package the lockfile already holds, while `npm update <name>` applies it. That covers lasting
   // security overrides and the temporary pins that force a target its dependents already admit. The update runs only
   // when install left a planned target unlanded, so projects npm handles keep install alone. Once npm fixes that bug,
-  // runInstall goes back to `npm install` alone: drop everything after its first line, and assertUpdatedCopies.
+  // runInstall goes back to `npm install` alone: drop everything after its first line, plannedNames, locked and
+  // assertUpdatedCopies.
   const plannedNames = new Set([...plannedTargets.values()].map((move) => move.name));
   const locked = async () => new NpmGraph(JSON.parse(await readFile(join(dir, lockfile), "utf8")));
   const runInstall = async () => {
