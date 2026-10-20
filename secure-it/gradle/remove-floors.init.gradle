@@ -91,6 +91,9 @@ def removeFloors = { configuration, String configLocation ->
     configuration.setExtendsFrom([unforced])
     configuration.dependencies.clear()
     configuration.dependencyConstraints.clear()
+    // With no dependencies of its own left, the configuration would add its default dependencies (checkstyle's tool
+    // version, for instance) on top of the declarations unforced carries: drop whatever is added at resolution.
+    configuration.withDependencies { dependencies -> dependencies.clear() }
 
     def remains = configuration.allDependencies.findAll { dependency -> matchesAny(dependency, floors) }
     if (!remains.isEmpty()) {

@@ -76,7 +76,17 @@ describe.skipIf(process.env["SUPPLY_CHAIN_GRADLE_TESTS"] !== "1")("Gradle floor 
 }
 `;
     await write(build, "settings.gradle", `${classpath}rootProject.name = "fixture"\n`);
-    await write(build, "build.gradle", `${classpath}plugins { id "java" }\n`);
+    // tool has default dependencies, as plugins such as checkstyle give their tool's configuration.
+    await write(build, "build.gradle", `${classpath}plugins { id "java" }
+repositories { maven { url = uri("${repo}") } }
+configurations {
+  tool { defaultDependencies { dependencies -> dependencies.add(project.dependencies.create("fixture:plugin-lib:1.0")) } }
+}
+dependencies {
+  tool("fixture:plugin-lib:1.0")
+  tool("fixture:t:2.0") { because("GHSA-t: plugin-lib brings a vulnerable t") }
+}
+`);
     await write(build, "buildSrc/build.gradle", classpath);
   }, 600_000);
 
@@ -93,6 +103,13 @@ describe.skipIf(process.env["SUPPLY_CHAIN_GRADLE_TESTS"] !== "1")("Gradle floor 
     for (const other of [":buildscript.classpath", "settings.classpath", "buildSrc/:buildscript.classpath"].filter((each) => each !== location)) {
       expect(at(inventory, other)).toEqual({ resolved: ["plugin-lib:1.0", "t:2.0"], declared: ["plugin-lib:1.0", "t:2.0"] });
     }
+  }, 600_000);
+
+  it("removes a floor from a configuration with default dependencies without declaring them twice", async () => {
+    const file = join(root, "removal-tool.json");
+    await writeFile(file, JSON.stringify({ repositoryRoot: build, floors: [{ package: "fixture:t", version: "2.0", advisories: ["GHSA-t"], locations: [":tool"] }] }));
+    const inventory = await runGradleInventory(build, ["."], "worktree", runProcess, { additionalInitScripts: [REMOVE_FLOORS], systemProperties: { "supplyChain.removeFloors.file": file } });
+    expect(at(inventory, ":tool")).toEqual({ resolved: ["plugin-lib:1.0", "t:1.0"], declared: ["plugin-lib:1.0"] });
   }, 600_000);
 });
 
