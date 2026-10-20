@@ -93,25 +93,26 @@ async function materializeLock(inputs: MaterializationInputs, locks: ReadonlyMap
     if (result.code !== 0) throw new Error(`npm ${[command, ...names].join(" ")} in ${root} failed: ${result.stderr.trim()}`);
   };
   // Workaround for https://github.com/npm/cli/issues/4834: in a project with workspaces, `npm install` ignores a new
-  // override for a package the lockfile already holds, while `npm update <name>` applies it. The update runs only when
-  // install left an overridden target unlanded, so projects npm handles keep install alone. Once npm fixes that bug,
-  // runInstall goes back to `npm install` alone: drop overrideTargets, the unlanded check, the update, `updated` and
-  // assertOverriddenCopies (with its call below).
-  const overrideTargets = [...plannedTargets].filter(([, move]) => move.mechanism === "npm-override");
-  let updated = false;
+  // override for a package the lockfile already holds, while `npm update <name>` applies it. That covers lasting
+  // security overrides and the temporary pins that force a target its dependents already admit. The update runs only
+  // when install left a planned target unlanded, so projects npm handles keep install alone. Once npm fixes that bug,
+  // runInstall goes back to `npm install` alone: drop the unlanded check, the update, `updatedNames` and
+  // assertUpdatedCopies (with its call below).
+  const updatedNames = new Set<string>();
   const runInstall = async () => {
     await runNpm("install");
     const locked = new NpmGraph(JSON.parse(await readFile(join(dir, lockfile), "utf8")));
-    const unlanded = overrideTargets.filter(([path, move]) => locked.packages[path]?.version !== move.to).map(([, move]) => move.name);
+    const unlanded = [...plannedTargets].filter(([path, move]) => locked.packages[path]?.version !== move.to).map(([, move]) => move.name);
     if (unlanded.length === 0) return;
-    await runNpm("update", [...new Set(unlanded)].sort());
-    updated = true;
+    const names = [...new Set(unlanded)].sort();
+    await runNpm("update", names);
+    for (const name of names) updatedNames.add(name);
   };
   await resolveExact(cwd, texts, pinnedManifests(pinGraph, pins, manifests, repositoryOverrides(manifests.get(""))), runInstall, runInstall);
   const final = await readFile(join(dir, lockfile), "utf8");
   const head = new NpmGraph(JSON.parse(final));
   assertLanding(graph, head, plannedTargets);
-  if (updated) assertOverriddenCopies(graph, head, new Set(overrideTargets.map(([, move]) => move.name)), moves, required);
+  if (updatedNames.size > 0) assertUpdatedCopies(graph, head, updatedNames, moves, required);
   for (const target of required) {
     if (head.packages[target.path]?.version !== target.version) throw new Error(`${target.name} at ${target.path} did not keep its lowest required target ${target.version}`);
   }
@@ -196,14 +197,14 @@ function planOverrides(graph: NpmGraph, plannedTargets: ReadonlyMap<string, Plan
 }
 
 /**
- * `npm update <name>` moves every copy of that name its ranges allow, not just the overridden ones, and an exempted
- * name may even take a young version. After it ran, each copy of an overridden name must end at the version it had
+ * `npm update <name>` moves every copy of that name its ranges allow, not just the planned ones, and an exempted
+ * name may even take a young version. After it ran, each copy of an updated name must end at the version it had
  * at its path in base or at a version the plan gives that name (a planned move's target, a version a planned carrier
  * ships of it, or a required target); a copy at a new path (a hoisting change), at a version some base copy of the
  * name had or at such a version.
  */
-function assertOverriddenCopies(graph: NpmGraph, head: NpmGraph, overridden: ReadonlySet<string>, moves: ReadonlyArray<PlannedMove>, required: ReadonlyArray<PlannedRequirement>): void {
-  for (const copy of head.copies().filter((copy) => overridden.has(copy.name))) {
+function assertUpdatedCopies(graph: NpmGraph, head: NpmGraph, updated: ReadonlySet<string>, moves: ReadonlyArray<PlannedMove>, required: ReadonlyArray<PlannedRequirement>): void {
+  for (const copy of head.copies().filter((copy) => updated.has(copy.name))) {
     const targets = [
       ...moves.filter((move) => move.name === copy.name).map((move) => move.to),
       ...moves.flatMap((move) => move.carries ?? []).filter((carried) => carried.name === copy.name).flatMap((carried) => carried.to),
