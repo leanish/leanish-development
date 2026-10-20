@@ -89,8 +89,12 @@ configurations {
   toolParent
   inheritedTool { extendsFrom(toolParent); defaultDependencies(toolDefaults) }
   lateTool
-  // Clears its own dependencies unless they include tool: on a copy of only what it inherits, it would clear those.
-  guardedTool { extendsFrom(toolParent); withDependencies { deps -> if (!deps.empty && !deps.any { it.name == "tool" }) deps.clear() } }
+  // Changes and clears its own dependencies unless they include tool: on a copy of only what it inherits, it would
+  // change and clear those.
+  guardedTool {
+    extendsFrom(toolParent)
+    withDependencies { deps -> if (!deps.any { it.name == "tool" }) { deps.each { it.transitive = false }; deps.clear() } }
+  }
 }
 // After the init script's own projectsEvaluated, where the floor removal runs.
 gradle.projectsEvaluated { configurations.lateTool.dependencies.add(project.dependencies.create("fixture:tool:1.0")) }
