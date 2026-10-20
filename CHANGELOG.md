@@ -7,10 +7,10 @@
 - secure-it lands npm security fixes that its dependents' ranges already admit in projects with workspaces. Such a
   fix moves the lockfile through a temporary pin, which npm also ignores for an already-locked package
   ([npm/cli#4834](https://github.com/npm/cli/issues/4834)); 0.7.2's `npm update` covered lasting overrides only. Now
-  any planned target install leaves unlanded gets the update; after it, every copy of a planned name must end at its
-  own version or one the plan gives that name. Other packages the update moves are judged like any change: by
-  verification and the gate, whose cooldown holds every version younger than the wait. Until then such a fix failed
-  with "did not land exactly" (fast-uri in leanish-development).
+  any planned target install leaves unlanded gets the update; every copy of a planned name the update moves must
+  land at its own version or one the plan gives that name. What install moves, and other packages the update moves,
+  are judged as they are without an update: by verification and the gate, whose cooldown holds every version
+  younger than the wait. Until then such a fix failed with "did not land exactly" (fast-uri in leanish-development).
 
 ## 0.7.2 - 2026-10-20
 

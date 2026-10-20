@@ -196,6 +196,25 @@ describe("security npm materialization", () => {
     })).rejects.toThrow(`brace at ${nested} moved to 2.9.0 during npm update, neither its own version nor a planned target`);
   });
 
+  it("accepts a copy of a planned name that install moved, when the update for another name runs after it", async () => {
+    // Install lands lib and moves the nested lib engine needs; only vite's override is left for the update.
+    const nested = "node_modules/engine/node_modules/lib";
+    const root = { dependencies: { lib: "^5.0.9", engine: "^1.0.0", parent: "^1.0.0" } };
+    const lock = { packages: { "": root, "node_modules/lib": { version: "5.0.9" }, "node_modules/engine": { version: "1.0.0", dependencies: { lib: "^2.0.0" } }, [nested]: { version: "2.0.0" },
+      "node_modules/parent": { version: "1.0.0", dependencies: { vite: "^8" } }, "node_modules/vite": { version: "8.3.2" } } };
+    const h = await fixture({ "package.json": json(root), "package-lock.json": json(lock), ".github/dependency-floors.json": json({ floors: [] }) });
+    const lib = { ...move("lib", "5.0.12", "npm-direct"), from: "5.0.9" };
+    const files = await materializeInCopy({ releaseAgeDays: 7, now }, h.dir, h.base, plan([lib, move("vite", "8.3.3", "npm-override")]), ["vite"], async (cwd, args) => {
+      if (args[0] === "--version") return { code: 0, stdout: "11.20.0", stderr: "" };
+      const manifest = JSON.parse(await readFile(join(cwd, "package.json"), "utf8"));
+      const installed = { "node_modules/lib": { version: "5.0.12" }, [nested]: { version: "2.9.0" } };
+      const update = args[0] === "update" ? { "node_modules/vite": { version: "8.3.3" } } : {};
+      await writeFile(join(cwd, "package-lock.json"), json({ packages: { ...JSON.parse(await readFile(join(cwd, "package-lock.json"), "utf8")).packages, "": manifest, ...installed, ...update } }));
+      return { code: 0, stdout: "", stderr: "" };
+    });
+    expect(JSON.parse(files.get("package-lock.json")!).packages[nested].version).toBe("2.9.0");
+  });
+
   it("runs no update when install lands every target", async () => {
     const original = { dependencies: { vite: "^8.3.2" } };
     const lock = { packages: { "": original, "node_modules/vite": { version: "8.3.2" } } };

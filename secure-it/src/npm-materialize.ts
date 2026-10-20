@@ -96,23 +96,22 @@ async function materializeLock(inputs: MaterializationInputs, locks: ReadonlyMap
   // override for a package the lockfile already holds, while `npm update <name>` applies it. That covers lasting
   // security overrides and the temporary pins that force a target its dependents already admit. The update runs only
   // when install left a planned target unlanded, so projects npm handles keep install alone. Once npm fixes that bug,
-  // runInstall goes back to `npm install` alone: drop the unlanded check, the update, `updated` and
-  // assertUpdatedCopies (with its call below).
-  let updated = false;
+  // runInstall goes back to `npm install` alone: drop everything after its first line, plannedNames, locked and
+  // assertUpdatedCopies.
+  const plannedNames = new Set([...plannedTargets.values()].map((move) => move.name));
+  const locked = async () => new NpmGraph(JSON.parse(await readFile(join(dir, lockfile), "utf8")));
   const runInstall = async () => {
     await runNpm("install");
-    const locked = new NpmGraph(JSON.parse(await readFile(join(dir, lockfile), "utf8")));
-    const unlanded = [...plannedTargets].filter(([path, move]) => locked.packages[path]?.version !== move.to).map(([, move]) => move.name);
+    const installed = await locked();
+    const unlanded = [...plannedTargets].filter(([path, move]) => installed.packages[path]?.version !== move.to).map(([, move]) => move.name);
     if (unlanded.length === 0) return;
     await runNpm("update", [...new Set(unlanded)].sort());
-    updated = true;
+    assertUpdatedCopies(graph, installed, await locked(), plannedNames, moves, required);
   };
   await resolveExact(cwd, texts, pinnedManifests(pinGraph, pins, manifests, repositoryOverrides(manifests.get(""))), runInstall, runInstall);
   const final = await readFile(join(dir, lockfile), "utf8");
   const head = new NpmGraph(JSON.parse(final));
   assertLanding(graph, head, plannedTargets);
-  // An update can move copies of every planned name, landed by install or not.
-  if (updated) assertUpdatedCopies(graph, head, new Set([...plannedTargets.values()].map((move) => move.name)), moves, required);
   for (const target of required) {
     if (head.packages[target.path]?.version !== target.version) throw new Error(`${target.name} at ${target.path} did not keep its lowest required target ${target.version}`);
   }
@@ -198,13 +197,15 @@ function planOverrides(graph: NpmGraph, plannedTargets: ReadonlyMap<string, Plan
 
 /**
  * `npm update <name>` moves every copy of that name its ranges allow, not just the planned ones, and an exempted
- * name may even take a young version. After it ran, each copy of a planned name must end at the version it had
- * at its path in base or at a version the plan gives that name (a planned move's target, a version a planned carrier
- * ships of it, or a required target); a copy at a new path (a hoisting change), at a version some base copy of the
- * name had or at such a version.
+ * name may even take a young version; it can move another planned name's copies too. Each copy of a planned name
+ * the update changed (from `installed`, what install left, to `updated`) must end at the version it had at its path
+ * in base or at a version the plan gives that name (a planned move's target, a version a planned carrier ships of
+ * it, or a required target); a copy at a new path (a hoisting change), at a version some base copy of the name had
+ * or at such a version. What install moved is install's, judged as it is without an update.
  */
-function assertUpdatedCopies(graph: NpmGraph, head: NpmGraph, planned: ReadonlySet<string>, moves: ReadonlyArray<PlannedMove>, required: ReadonlyArray<PlannedRequirement>): void {
-  for (const copy of head.copies().filter((copy) => planned.has(copy.name))) {
+function assertUpdatedCopies(graph: NpmGraph, installed: NpmGraph, updated: NpmGraph, planned: ReadonlySet<string>, moves: ReadonlyArray<PlannedMove>, required: ReadonlyArray<PlannedRequirement>): void {
+  const changed = updated.copies().filter((copy) => planned.has(copy.name) && installed.packages[copy.path]?.version !== copy.version);
+  for (const copy of changed) {
     const targets = [
       ...moves.filter((move) => move.name === copy.name).map((move) => move.to),
       ...moves.flatMap((move) => move.carries ?? []).filter((carried) => carried.name === copy.name).flatMap((carried) => carried.to),
