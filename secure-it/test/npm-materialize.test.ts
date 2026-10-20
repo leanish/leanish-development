@@ -158,7 +158,45 @@ describe("security npm materialization", () => {
     expect(JSON.parse(files.get("package-lock.json")!).packages["node_modules/vite"].version).toBe("8.3.3");
   });
 
-  it("runs no update when nothing is overridden", async () => {
+  it("updates a target its temporary pin forces, as npm/cli#4834 also keeps that pin off a locked copy", async () => {
+    // parent's range already admits the fix, so the plan moves the lockfile only (npm-lock), through a temporary pin.
+    const root = { dependencies: { parent: "^1.0.0" } };
+    const lock = { packages: { "": root, "node_modules/parent": { version: "1.0.0", dependencies: { vite: "^8" } }, "node_modules/vite": { version: "8.3.2" } } };
+    const h = await fixture({ "package.json": json(root), "package-lock.json": json(lock) });
+    const commands: string[][] = [];
+    const files = await materializeInCopy({ releaseAgeDays: 7, now }, h.dir, h.base, plan([move("vite", "8.3.3", "npm-lock")]), ["vite"], async (cwd, args) => {
+      if (args[0] === "--version") return { code: 0, stdout: "11.20.0", stderr: "" };
+      commands.push(args.slice(0, args.indexOf("--package-lock-only")));
+      // Like npm with workspaces: install keeps the locked copy despite the pin; only update applies it.
+      const version = args[0] === "update" ? "8.3.3" : JSON.parse(await readFile(join(cwd, "package-lock.json"), "utf8")).packages["node_modules/vite"].version;
+      const manifest = JSON.parse(await readFile(join(cwd, "package.json"), "utf8"));
+      await writeFile(join(cwd, "package-lock.json"), json({ packages: { ...lock.packages, "": manifest, "node_modules/vite": { version } } }));
+      return { code: 0, stdout: "", stderr: "" };
+    });
+    // Once the pin is gone, the second install keeps 8.3.3, which parent's range admits.
+    expect(commands).toEqual([["install"], ["update", "vite"], ["install"]]);
+    expect(JSON.parse(files.get("package-lock.json")!).packages["node_modules/vite"].version).toBe("8.3.3");
+    expect(JSON.parse(files.get("package.json")!)).toEqual(root);
+  });
+
+  it("refuses another copy of a name install already landed, which the update for another name then moves", async () => {
+    // Install lands brace but not vite; vite's update also moves the nested brace that vite brings, unplanned.
+    const nested = "node_modules/vite/node_modules/brace";
+    const root = { dependencies: { parent: "^1.0.0" } };
+    const lock = { packages: { "": root, "node_modules/parent": { version: "1.0.0", dependencies: { vite: "^8", brace: "^5" } }, "node_modules/vite": { version: "8.3.2", dependencies: { brace: "^2" } },
+      "node_modules/brace": { version: "5.0.9" }, [nested]: { version: "2.0.0" } } };
+    const h = await fixture({ "package.json": json(root), "package-lock.json": json(lock), ".github/dependency-floors.json": json({ floors: [] }) });
+    const brace = { ...move("brace", "5.0.12", "npm-override"), from: "5.0.9" };
+    await expect(materializeInCopy({ releaseAgeDays: 7, now }, h.dir, h.base, plan([move("vite", "8.3.3", "npm-override"), brace]), ["vite"], async (cwd, args) => {
+      if (args[0] === "--version") return { code: 0, stdout: "11.20.0", stderr: "" };
+      const manifest = JSON.parse(await readFile(join(cwd, "package.json"), "utf8"));
+      const update = args[0] === "update" ? { "node_modules/vite": { version: "8.3.3", dependencies: { brace: "^2" } }, [nested]: { version: "2.9.0" } } : {};
+      await writeFile(join(cwd, "package-lock.json"), json({ packages: { ...JSON.parse(await readFile(join(cwd, "package-lock.json"), "utf8")).packages, "": manifest, "node_modules/brace": { version: "5.0.12" }, ...update } }));
+      return { code: 0, stdout: "", stderr: "" };
+    })).rejects.toThrow(`brace at ${nested} moved to 2.9.0 during npm update, neither its own version nor a planned target`);
+  });
+
+  it("runs no update when install lands every target", async () => {
     const original = { dependencies: { vite: "^8.3.2" } };
     const lock = { packages: { "": original, "node_modules/vite": { version: "8.3.2" } } };
     const h = await fixture({ "package.json": json(original), "package-lock.json": json(lock) });
