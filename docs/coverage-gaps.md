@@ -28,9 +28,9 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 - **An unpinned action moved into a step (gate)**: the comparison counts each action's occurrences in a file, so moving `uses: acme/action@main` from an `env` map (or another non-step key read as an action) into a step of the same workflow leaves the count unchanged and isn't required to be pinned; it's reported as an unpinned-action gap. Pre-existing in 0.5.2.
 - **Gradle floor removal and parent configurations (secure-it)**: the reference build that checks a floor removal
   snapshots what the configuration inherits, after the projects are evaluated. A dependency the build adds to a
-  parent configuration later is missing from it, so a correct removal fails verification and needs a person. The
-  reference also covers only the configurations where the floor sits: an edit that also changes a shared parent is
-  caught only where another inventoried configuration shows the difference. Both are pre-existing in 0.7.1.
+  parent configuration later is missing from it, so a correct removal fails verification and needs a person. An
+  edit that also changes a shared parent goes unnoticed only when the change leaves every inventoried
+  configuration's declarations and resolution as the reference has them. Both are pre-existing in 0.7.1.
 - **Removing a configuration's only declared floor (secure-it)**: when the floor is the configuration's only
   dependency of its own, removing it lets its default dependencies apply (checkstyle's tool version, for instance),
   which exact declaration preservation refuses; the removal fails visibly. Pre-existing in 0.7.1.
