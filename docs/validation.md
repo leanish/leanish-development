@@ -446,3 +446,39 @@ once: on rc.5 it found the sandbox escalation the others missed, by looking at t
 together; on rc.7 it confirmed.
 
 v0.7.0 (`ec5d884`) is rc.7 plus its release metadata.
+
+## Release reviews and candidate of 0.7.1 — 2026-10-20
+
+0.7.1 ran the review steps on `main` before tagging a candidate, so that review fixes wouldn't each cost one. Each
+round reviewed `v0.7.0..main`: two Haiku reviews, Sol unprimed on a fresh thread, then Astra on that thread. A
+blocker was fixed on `main` through its own PR and the next round started over; findings blocked only when new or
+worse than v0.7.0.
+
+- **Round 1 (`5ae5ba2`)**: Haiku and Sol found nothing blocking. Astra found that keeping a green draft as
+  `waiting-required` deadlocks a required check whose workflow starts only on `ready_for_review`, confirmed by
+  running v0.7.0's and the candidate's review side by side. Fixed in #191: the draft is marked ready, with the
+  outcome `ready-missing-required`.
+- **Round 2 (`0227fa0`)**: Sol found that the gate's own major, now written by the tool without the agent, skipped
+  the agent's workspace guard, while verification let a major change any file. Fixed in #192: a pass the tool writes
+  alone may change only the files it wrote. On that PR, Haiku caught a first version that also tightened agent passes,
+  and Sol a remaining manifest-field gap.
+- **Round 3 (`a72cb49`)**: Astra found the same gap on conflict resolution of a routine pin PR, which also skips the
+  agent but dropped what the tool wrote. Fixed in #193.
+- **Round 4 (`e78dae2`, then `5331a85`)**: every Haiku round had flagged that a failed read of the required checks
+  (a 5xx, a rate limit) kept a green draft as `error`, where v0.7.0 marked it ready. Fixed in #194: such a read counts
+  as unknown, with a note and a warning. Sol and Astra found nothing blocking.
+- **rc.1 (`5331a85`)**: both tools ran unattended from Claude scheduled tasks on the fixture repositories. secure-it
+  ran 12 of 12. bump-it's first run failed on one repository; the new batch log named the cause, an HTTP 502 from
+  `plugins.gradle.org`, and the rerun ran 12 of 12. Coverage gaps (30) matched the tools' reports, every PR they
+  opened was green, the task folders stayed empty and the release checkout clean.
+
+Known limitations, for 0.7.2: classic branch protection isn't read at readiness; `ready-missing-required` is listed
+only on the tick that marks the PR ready; the batch log keeps raw tool output unredacted (private, 30 days).
+
+What each step added: Haiku, in every round, raised the failed-read inconsistency that became #194, and on the fix
+PRs caught a first fix's overreach and its documentation gaps; it was rightly overturned on calling the bypass-actor
+exposure of a ready PR a blocker (v0.7.0 has it too). Sol, unprimed, found round 2's blocker and, on its PR, the
+manifest-field gap that led to the exact tool-written boundary. Astra was decisive twice (rounds 1 and 3), both times
+by comparing v0.7.0 and the candidate in memory.
+
+v0.7.1 (`3f3a08d`) is rc.1 plus its release metadata.
