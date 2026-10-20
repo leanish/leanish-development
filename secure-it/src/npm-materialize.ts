@@ -87,14 +87,31 @@ async function materializeLock(inputs: MaterializationInputs, locks: ReadonlyMap
     return move !== undefined || target !== undefined || graph.edgesTo(copy.path).some((edge) => edge.declared)
       ? [{ copy, target: move?.to ?? target?.version ?? copy.version }] : [];
   });
+  const flags = ["--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund", `--min-release-age=${context.releaseAgeDays}`, ...exclude.map((name) => `--min-release-age-exclude=${name}`)];
+  const runNpm = async (command: "install" | "update", names: ReadonlyArray<string> = []) => {
+    const result = await npm(cwd, [command, ...names, ...flags]);
+    if (result.code !== 0) throw new Error(`npm ${[command, ...names].join(" ")} in ${root} failed: ${result.stderr.trim()}`);
+  };
+  // Workaround for https://github.com/npm/cli/issues/4834: in a project with workspaces, `npm install` ignores a new
+  // override for a package the lockfile already holds, while `npm update <name>` applies it. The update runs only when
+  // install left an overridden target unlanded, so projects npm handles keep install alone. Once npm fixes that bug,
+  // runInstall goes back to `npm install` alone: drop overrideTargets, the unlanded check, the update, `updated` and
+  // assertOverriddenCopies (with its call below).
+  const overrideTargets = [...plannedTargets].filter(([, move]) => move.mechanism === "npm-override");
+  let updated = false;
   const runInstall = async () => {
-    const result = await npm(cwd, ["install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund", `--min-release-age=${context.releaseAgeDays}`, ...exclude.map((name) => `--min-release-age-exclude=${name}`)]);
-    if (result.code !== 0) throw new Error(`npm install in ${root} failed: ${result.stderr.trim()}`);
+    await runNpm("install");
+    const locked = new NpmGraph(JSON.parse(await readFile(join(dir, lockfile), "utf8")));
+    const unlanded = overrideTargets.filter(([path, move]) => locked.packages[path]?.version !== move.to).map(([, move]) => move.name);
+    if (unlanded.length === 0) return;
+    await runNpm("update", [...new Set(unlanded)].sort());
+    updated = true;
   };
   await resolveExact(cwd, texts, pinnedManifests(pinGraph, pins, manifests, repositoryOverrides(manifests.get(""))), runInstall, runInstall);
   const final = await readFile(join(dir, lockfile), "utf8");
   const head = new NpmGraph(JSON.parse(final));
   assertLanding(graph, head, plannedTargets);
+  if (updated) assertOverriddenCopies(graph, head, new Set(overrideTargets.map(([, move]) => move.name)), moves, required);
   for (const target of required) {
     if (head.packages[target.path]?.version !== target.version) throw new Error(`${target.name} at ${target.path} did not keep its lowest required target ${target.version}`);
   }
@@ -176,6 +193,26 @@ function planOverrides(graph: NpmGraph, plannedTargets: ReadonlyMap<string, Plan
     floorsText = securityFloor(floorsText, move, join(root, "package.json"), selector, now);
   }
   return floorsText;
+}
+
+/**
+ * `npm update <name>` moves every copy of that name its ranges allow, not just the overridden ones, and an exempted
+ * name may even take a young version. After it ran, each copy of an overridden name must end at the version it had
+ * at its path in base or at a version the plan gives that name (a planned move's target, a version a planned carrier
+ * ships of it, or a required target); a copy at a new path (a hoisting change), at a version some base copy of the
+ * name had or at such a version.
+ */
+function assertOverriddenCopies(graph: NpmGraph, head: NpmGraph, overridden: ReadonlySet<string>, moves: ReadonlyArray<PlannedMove>, required: ReadonlyArray<PlannedRequirement>): void {
+  for (const copy of head.copies().filter((copy) => overridden.has(copy.name))) {
+    const targets = [
+      ...moves.filter((move) => move.name === copy.name).map((move) => move.to),
+      ...moves.flatMap((move) => move.carries ?? []).filter((carried) => carried.name === copy.name).flatMap((carried) => carried.to),
+      ...required.filter((target) => target.name === copy.name).map((target) => target.version),
+    ];
+    const own = graph.packages[copy.path]?.version;
+    const allowed = new Set([...targets, ...(own !== undefined ? [own] : graph.copies().filter((base) => base.name === copy.name).map((base) => base.version))]);
+    if (!allowed.has(copy.version)) throw new Error(`${copy.name} at ${copy.path} moved to ${copy.version} during npm update, neither its own version nor a planned target`);
+  }
 }
 
 function assertLanding(graph: NpmGraph, head: NpmGraph, plannedTargets: ReadonlyMap<string, PlannedMove>): void {
