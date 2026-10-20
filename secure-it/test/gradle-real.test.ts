@@ -27,6 +27,7 @@ const MODULES: Record<string, string[]> = {
   "fixture:plugin-lib:1.0": ["fixture:t:1.0"],
   "fixture:t:1.0": [],
   "fixture:t:2.0": [],
+  "fixture:tool:1.0": [],
 };
 
 function pom(coordinates: string, dependencies: string[]): string {
@@ -76,15 +77,24 @@ describe.skipIf(process.env["SUPPLY_CHAIN_GRADLE_TESTS"] !== "1")("Gradle floor 
 }
 `;
     await write(build, "settings.gradle", `${classpath}rootProject.name = "fixture"\n`);
-    // tool has default dependencies, as plugins such as checkstyle give their tool's configuration.
+    // Default dependencies, as plugins such as checkstyle give their tool's configuration.
     await write(build, "build.gradle", `${classpath}plugins { id "java" }
 repositories { maven { url = uri("${repo}") } }
+// tool also declares its default; defaultTool relies on it; inheritedTool relies on it beside an inherited dependency.
+def toolDefaults = { dependencies -> dependencies.add(project.dependencies.create("fixture:tool:1.0")) }
 configurations {
-  tool { defaultDependencies { dependencies -> dependencies.add(project.dependencies.create("fixture:plugin-lib:1.0")) } }
+  tool { defaultDependencies(toolDefaults) }
+  defaultTool { defaultDependencies(toolDefaults) }
+  toolParent
+  inheritedTool { extendsFrom(toolParent); defaultDependencies(toolDefaults) }
 }
 dependencies {
+  tool("fixture:tool:1.0")
   tool("fixture:plugin-lib:1.0")
   tool("fixture:t:2.0") { because("GHSA-t: plugin-lib brings a vulnerable t") }
+  defaultTool("fixture:t:2.0") { because("GHSA-t: plugin-lib brings a vulnerable t") }
+  toolParent("fixture:plugin-lib:1.0")
+  inheritedTool("fixture:t:2.0") { because("GHSA-t: plugin-lib brings a vulnerable t") }
 }
 `);
     await write(build, "buildSrc/build.gradle", classpath);
@@ -105,11 +115,17 @@ dependencies {
     }
   }, 600_000);
 
-  it("removes a floor from a configuration with default dependencies without declaring them twice", async () => {
-    const file = join(root, "removal-tool.json");
-    await writeFile(file, JSON.stringify({ repositoryRoot: build, floors: [{ package: "fixture:t", version: "2.0", advisories: ["GHSA-t"], locations: [":tool"] }] }));
+  // Once the floor goes, each configuration declares tool once: its own declaration, or else its default.
+  it.each([
+    [":tool", ["plugin-lib:1.0", "tool:1.0"]],
+    [":defaultTool", ["tool:1.0"]],
+    [":inheritedTool", ["plugin-lib:1.0", "tool:1.0"]],
+  ])("removes a floor from %s, which has default dependencies, declaring them once", async (location, declared) => {
+    const file = join(root, `removal-${location.slice(1)}.json`);
+    await writeFile(file, JSON.stringify({ repositoryRoot: build, floors: [{ package: "fixture:t", version: "2.0", advisories: ["GHSA-t"], locations: [location] }] }));
     const inventory = await runGradleInventory(build, ["."], "worktree", runProcess, { additionalInitScripts: [REMOVE_FLOORS], systemProperties: { "supplyChain.removeFloors.file": file } });
-    expect(at(inventory, ":tool")).toEqual({ resolved: ["plugin-lib:1.0", "t:1.0"], declared: ["plugin-lib:1.0"] });
+    const resolved = declared.includes("plugin-lib:1.0") ? ["plugin-lib:1.0", "t:1.0", "tool:1.0"] : ["tool:1.0"];
+    expect(at(inventory, location)).toEqual({ resolved, declared });
   }, 600_000);
 });
 
