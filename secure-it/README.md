@@ -72,9 +72,8 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
      no advisory of their own. With workspaces, npm can leave a new override or temporary pin for an already-locked
      package unapplied ([npm/cli#4834](https://github.com/npm/cli/issues/4834)); the tool then runs `npm update` for
      those names and refuses any copy of them that ends at a version that is neither its own nor one the plan gives
-     that name (a copy
-     at a new path may also take a version another copy had in base). Verification still fails the fix if any copy
-     keeps an advisory the plan targets.
+     that name (a copy at a new path may also take a version another copy had in base). Verification still fails the
+     fix if any copy keeps an advisory the plan targets.
    - **Required versions with no aged satisfier.** When a security target needs one, code proves the registry
      requirement and pins its lowest stable, non-deprecated target exactly, including young direct-peer companions
      and recursive requirements. Reciprocal direct peers are solved jointly at their resolved locations, and aged
