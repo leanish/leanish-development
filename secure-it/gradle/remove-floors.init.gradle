@@ -88,9 +88,16 @@ def removeFloors = { configuration, String configLocation ->
     // this configuration to that filtered copy, leaving shared parent configurations untouched.
     def unforced = configuration.copyRecursive { dependency -> !matchesAny(dependency, floors) }
     unforced.resolutionStrategy.deactivateDependencyLocking()
+    // Default dependencies (checkstyle's tool version, for instance) apply once the floors are gone only when the
+    // configuration's own dependencies are then empty. unforced carries those defaults and adds them when it holds
+    // nothing, own or inherited; the configuration adds them once its own dependencies are cleared below. Keep the
+    // configuration's only when they apply and unforced won't add them.
+    def ownKept = configuration.dependencies.any { dependency -> !matchesAny(dependency, floors) }
+    def keepOwnDefaults = !ownKept && !unforced.dependencies.isEmpty()
     configuration.setExtendsFrom([unforced])
     configuration.dependencies.clear()
     configuration.dependencyConstraints.clear()
+    if (!keepOwnDefaults) configuration.withDependencies { dependencies -> dependencies.clear() }
 
     def remains = configuration.allDependencies.findAll { dependency -> matchesAny(dependency, floors) }
     if (!remains.isEmpty()) {

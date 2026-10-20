@@ -11,6 +11,11 @@
   Known limitation: when the update also moves another copy of that name to a version that is neither its own nor
   one the plan gives that name, secure-it still fails clearly instead of landing the fix; it needs a person until npm
   fixes the bug.
+- secure-it removes Gradle security floors from configurations with default dependencies, such as checkstyle's. The
+  reference build that checks the removal added those defaults back on top of the configuration's own declarations,
+  so the tool's dependency counted twice and verification failed although the edit was right.
+  Known limitation: a dependency the build adds to that configuration after its projects are evaluated is missing
+  from the reference, so verification fails clearly instead of landing the removal.
 
 ## 0.7.1 - 2026-10-20
 
