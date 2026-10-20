@@ -86,18 +86,19 @@ def removeFloors = { configuration, String configLocation ->
     // allDependencies is read-only. Copy the selected resolvable configuration, which also copies
     // inherited constraints, excludes, attributes, artifacts, and resolution rules. Reparent only
     // this configuration to that filtered copy, leaving shared parent configurations untouched.
-    def unforced = configuration.copyRecursive { dependency -> !matchesAny(dependency, floors) }
+    // The configuration keeps its own dependencies but the floors, so its default dependencies (checkstyle's tool
+    // version, for instance) and those the build adds later apply as they would once the floors are deleted. unforced
+    // carries the inherited ones alone and drops what it would add at resolution, the defaults copied with it.
+    def own = Collections.newSetFromMap(new IdentityHashMap())
+    own.addAll(configuration.dependencies)
+    def unforced = configuration.copyRecursive { dependency -> !own.contains(dependency) && !matchesAny(dependency, floors) }
     unforced.resolutionStrategy.deactivateDependencyLocking()
-    // Default dependencies (checkstyle's tool version, for instance) apply once the floors are gone only when the
-    // configuration's own dependencies are then empty. unforced carries those defaults and adds them when it holds
-    // nothing, own or inherited; the configuration adds them once its own dependencies are cleared below. Keep the
-    // configuration's only when they apply and unforced won't add them.
-    def ownKept = configuration.dependencies.any { dependency -> !matchesAny(dependency, floors) }
-    def keepOwnDefaults = !ownKept && !unforced.dependencies.isEmpty()
+    def inherited = Collections.newSetFromMap(new IdentityHashMap())
+    inherited.addAll(unforced.dependencies)
+    unforced.withDependencies { dependencies -> dependencies.removeAll { dependency -> !inherited.contains(dependency) } }
     configuration.setExtendsFrom([unforced])
-    configuration.dependencies.clear()
+    configuration.dependencies.removeAll { dependency -> matchesAny(dependency, floors) }
     configuration.dependencyConstraints.clear()
-    if (!keepOwnDefaults) configuration.withDependencies { dependencies -> dependencies.clear() }
 
     def remains = configuration.allDependencies.findAll { dependency -> matchesAny(dependency, floors) }
     if (!remains.isEmpty()) {
