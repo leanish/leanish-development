@@ -138,6 +138,113 @@ describe("security npm materialization", () => {
     expect(records[1]).toMatchObject({ package: "vite", version: "8.3.3", selector: [["vite"]], purpose: "security", advisories: ["GHSA-rq7h-c2jc-7f22"] });
   });
 
+  it("updates the overridden names after installing, as npm/cli#4834 keeps a new override off a locked copy", async () => {
+    const root = { dependencies: { parent: "^1.0.0" } };
+    const lock = { packages: { "": root, "node_modules/parent": { version: "1.0.0", dependencies: { vite: "^8" } }, "node_modules/vite": { version: "8.3.2" } } };
+    const h = await fixture({ "package.json": json(root), "package-lock.json": json(lock), ".github/dependency-floors.json": json({ floors: [] }) });
+    const commands: string[][] = [];
+    const files = await materializeInCopy({ releaseAgeDays: 7, now }, h.dir, h.base, plan([move("vite", "8.3.3", "npm-override")]), ["vite"], async (cwd, args) => {
+      if (args[0] === "--version") return { code: 0, stdout: "11.20.0", stderr: "" };
+      commands.push(args.slice(0, args.indexOf("--package-lock-only")));
+      expect(args).toEqual(expect.arrayContaining(["--package-lock-only", "--min-release-age=7", "--min-release-age-exclude=vite"]));
+      // Like npm with workspaces: install keeps the locked copy; only update applies the new override.
+      const version = args[0] === "update" ? "8.3.3" : JSON.parse(await readFile(join(cwd, "package-lock.json"), "utf8")).packages["node_modules/vite"].version;
+      const manifest = JSON.parse(await readFile(join(cwd, "package.json"), "utf8"));
+      await writeFile(join(cwd, "package-lock.json"), json({ packages: { ...lock.packages, "": manifest, "node_modules/vite": { version } } }));
+      return { code: 0, stdout: "", stderr: "" };
+    });
+    // The second pass's install keeps what the update landed, so it needs no update of its own.
+    expect(commands).toEqual([["install"], ["update", "vite"], ["install"]]);
+    expect(JSON.parse(files.get("package-lock.json")!).packages["node_modules/vite"].version).toBe("8.3.3");
+  });
+
+  it("runs no update when nothing is overridden", async () => {
+    const original = { dependencies: { vite: "^8.3.2" } };
+    const lock = { packages: { "": original, "node_modules/vite": { version: "8.3.2" } } };
+    const h = await fixture({ "package.json": json(original), "package-lock.json": json(lock) });
+    const commands: string[] = [];
+    await materializeInCopy({ releaseAgeDays: 7, now }, h.dir, h.base, plan([move()]), [], async (cwd, args) => {
+      commands.push(args[0]!);
+      const manifest = JSON.parse(await readFile(join(cwd, "package.json"), "utf8"));
+      await writeFile(join(cwd, "package-lock.json"), json({ packages: { ...lock.packages, "": manifest, "node_modules/vite": { version: "8.3.3" } } }));
+      return { code: 0, stdout: "", stderr: "" };
+    });
+    expect(commands.filter((command) => command !== "--version")).toEqual(["install", "install"]);
+  });
+
+  it("runs no update when install lands the override, leaving other copies of the name as npm put them", async () => {
+    const nested = "node_modules/other/node_modules/vite";
+    const root = { dependencies: { parent: "^1.0.0", other: "^1.0.0" } };
+    const lock = { packages: { "": root, "node_modules/parent": { version: "1.0.0", dependencies: { vite: "^8" } }, "node_modules/vite": { version: "8.3.2" },
+      "node_modules/other": { version: "1.0.0", dependencies: { vite: "^7" } }, [nested]: { version: "7.0.0" } } };
+    const h = await fixture({ "package.json": json(root), "package-lock.json": json(lock), ".github/dependency-floors.json": json({ floors: [] }) });
+    const commands: string[] = [];
+    const files = await materializeInCopy({ releaseAgeDays: 7, now }, h.dir, h.base, plan([move("vite", "8.3.3", "npm-override")]), ["vite"], async (cwd, args) => {
+      if (args[0] === "--version") return { code: 0, stdout: "11.20.0", stderr: "" };
+      commands.push(args[0]!);
+      const manifest = JSON.parse(await readFile(join(cwd, "package.json"), "utf8"));
+      await writeFile(join(cwd, "package-lock.json"), json({ packages: { ...lock.packages, "": manifest, "node_modules/vite": { version: "8.3.3" } } }));
+      return { code: 0, stdout: "", stderr: "" };
+    });
+    expect(commands).toEqual(["install", "install"]);
+    expect(JSON.parse(files.get("package-lock.json")!).packages[nested].version).toBe("7.0.0");
+  });
+
+  it.each([
+    ["a young version", "7.9.0"],
+    ["another copy's version", "8.3.2"],
+  ])("refuses another copy of an overridden name that the update moved to %s", async (_name, drifted) => {
+    const nested = "node_modules/other/node_modules/vite";
+    const root = { dependencies: { parent: "^1.0.0", other: "^1.0.0" } };
+    const lock = { packages: { "": root, "node_modules/parent": { version: "1.0.0", dependencies: { vite: "^8" } }, "node_modules/vite": { version: "8.3.2" },
+      "node_modules/other": { version: "1.0.0", dependencies: { vite: ">=7" } }, [nested]: { version: "7.0.0" } } };
+    const h = await fixture({ "package.json": json(root), "package-lock.json": json(lock), ".github/dependency-floors.json": json({ floors: [] }) });
+    await expect(materializeInCopy({ releaseAgeDays: 7, now }, h.dir, h.base, plan([move("vite", "8.3.3", "npm-override")]), ["vite"], async (cwd, args) => {
+      if (args[0] === "--version") return { code: 0, stdout: "11.20.0", stderr: "" };
+      const manifest = JSON.parse(await readFile(join(cwd, "package.json"), "utf8"));
+      // Install leaves the override unlanded (npm/cli#4834); the update lands it but also moves the unplanned nested copy.
+      const update = args[0] === "update" ? { "node_modules/vite": { version: "8.3.3" }, [nested]: { version: drifted } } : {};
+      await writeFile(join(cwd, "package-lock.json"), json({ packages: { ...lock.packages, "": manifest, ...update } }));
+      return { code: 0, stdout: "", stderr: "" };
+    })).rejects.toThrow(`vite at ${nested} moved to ${drifted} during npm update, neither its own version nor a planned target`);
+  });
+
+  it("accepts a bundled copy of an overridden name at a version its planned carrier ships", async () => {
+    const bundled = "node_modules/bundler/node_modules/vite";
+    const root = { dependencies: { parent: "^1.0.0", bundler: "^1.0.0" } };
+    const lock = { packages: { "": root, "node_modules/parent": { version: "1.0.0", dependencies: { vite: "^8" } }, "node_modules/vite": { version: "8.3.2" },
+      "node_modules/bundler": { version: "1.0.0", bundleDependencies: ["vite"], dependencies: { vite: "8.3.1" } }, [bundled]: { version: "8.3.1", inBundle: true } } };
+    const h = await fixture({ "package.json": json(root), "package-lock.json": json(lock), ".github/dependency-floors.json": json({ floors: [] }) });
+    const carrier = { ...move("bundler", "1.0.1", "npm-direct"), from: "1.0.0", carries: [{ name: "vite", from: ["8.3.1"], to: ["8.3.5"], locations: [bundled], advisories: ["GHSA-rq7h-c2jc-7f22"] }] };
+    const files = await materializeInCopy({ releaseAgeDays: 7, now }, h.dir, h.base, plan([move("vite", "8.3.3", "npm-override"), carrier]), ["vite"], async (cwd, args) => {
+      if (args[0] === "--version") return { code: 0, stdout: "11.20.0", stderr: "" };
+      const manifest = JSON.parse(await readFile(join(cwd, "package.json"), "utf8"));
+      const current = JSON.parse(await readFile(join(cwd, "package-lock.json"), "utf8")).packages;
+      // Install moves the carrier (with its bundle) but leaves the override unlanded; the update lands it.
+      const moved = { "node_modules/bundler": { version: "1.0.1", bundleDependencies: ["vite"], dependencies: { vite: "8.3.5" } }, [bundled]: { version: "8.3.5", inBundle: true } };
+      const update = args[0] === "update" ? { "node_modules/vite": { version: "8.3.3" } } : {};
+      await writeFile(join(cwd, "package-lock.json"), json({ packages: { ...current, "": manifest, ...moved, ...update } }));
+      return { code: 0, stdout: "", stderr: "" };
+    });
+    expect(JSON.parse(files.get("package-lock.json")!).packages[bundled].version).toBe("8.3.5");
+  });
+
+  it("accepts an update that also takes another copy of the name to the planned target", async () => {
+    const nested = "node_modules/other/node_modules/vite";
+    const root = { dependencies: { parent: "^1.0.0", other: "^1.0.0" } };
+    const lock = { packages: { "": root, "node_modules/parent": { version: "1.0.0", dependencies: { vite: "^8" } }, "node_modules/vite": { version: "8.3.2" },
+      "node_modules/other": { version: "1.0.0", dependencies: { vite: "^8" } }, [nested]: { version: "8.3.1" } } };
+    const h = await fixture({ "package.json": json(root), "package-lock.json": json(lock), ".github/dependency-floors.json": json({ floors: [] }) });
+    const files = await materializeInCopy({ releaseAgeDays: 7, now }, h.dir, h.base, plan([move("vite", "8.3.3", "npm-override")]), ["vite"], async (cwd, args) => {
+      if (args[0] === "--version") return { code: 0, stdout: "11.20.0", stderr: "" };
+      const manifest = JSON.parse(await readFile(join(cwd, "package.json"), "utf8"));
+      const update = args[0] === "update" ? { "node_modules/vite": { version: "8.3.3" }, [nested]: { version: "8.3.3" } } : {};
+      await writeFile(join(cwd, "package-lock.json"), json({ packages: { ...JSON.parse(await readFile(join(cwd, "package-lock.json"), "utf8")).packages, "": manifest, ...update } }));
+      return { code: 0, stdout: "", stderr: "" };
+    });
+    expect(JSON.parse(files.get("package-lock.json")!).packages[nested].version).toBe("8.3.3");
+  });
+
   it("updates an existing security floor in place, including a string selector", async () => {
     const root = { dependencies: { parent: "^1" }, overrides: { vite: "8.3.2" } };
     const lock = { packages: { "": root, "node_modules/parent": { version: "1.0.0", dependencies: { vite: "^7" } }, "node_modules/vite": { version: "8.3.2" } } };

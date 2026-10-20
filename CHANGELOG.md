@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed
+
+- secure-it lands npm security overrides in projects with workspaces: there `npm install` ignores a new override for
+  a package the lockfile already holds ([npm/cli#4834](https://github.com/npm/cli/issues/4834)). When install leaves an
+  override unlanded, secure-it runs `npm update` for those names and refuses any copy of them that then moves to a
+  version that is neither its own nor a planned target. Until then such a fix failed with "did not land exactly".
+  Known limitation: when the update also moves another copy of that name to a version that is neither its own nor
+  one the plan gives that name, secure-it still fails clearly instead of landing the fix; it needs a person until npm
+  fixes the bug.
+
 ## 0.7.1 - 2026-10-20
 
 ### Added
