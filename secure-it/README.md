@@ -69,7 +69,9 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
      root/workspace copies use temporary exact declarations rather than overrides npm may ignore; unsupported
      nested/conflicting placements are reported and nothing in that unit is published. Existing floors remain, and
      new security overrides get matching floor records. Direct peers selected by code are explicit moves, even with
-     no advisory of their own.
+     no advisory of their own. With workspaces, npm can leave a new override for an already-locked package unapplied
+     ([npm/cli#4834](https://github.com/npm/cli/issues/4834)); the tool then runs `npm update` for those names and
+     refuses any copy of them that ends at a version that is neither its own nor one the plan gives that name.
    - **Required versions with no aged satisfier.** When a security target needs one, code proves the registry
      requirement and pins its lowest stable, non-deprecated target exactly, including young direct-peer companions
      and recursive requirements. Reciprocal direct peers are solved jointly at their resolved locations, and aged

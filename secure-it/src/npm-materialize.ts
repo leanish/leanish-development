@@ -92,10 +92,11 @@ async function materializeLock(inputs: MaterializationInputs, locks: ReadonlyMap
     const result = await npm(cwd, [command, ...names, ...flags]);
     if (result.code !== 0) throw new Error(`npm ${[command, ...names].join(" ")} in ${root} failed: ${result.stderr.trim()}`);
   };
-  // Workaround for https://github.com/npm/cli/issues/4834: in a project with workspaces, `npm install` ignores a new override for a package
-  // the lockfile already holds, while `npm update <name>` applies it. The update runs only when install left an
-  // overridden target unlanded, so projects npm handles keep install alone. Once npm fixes that bug, drop the update
-  // (and assertOverriddenCopies) and go back to `npm install` alone.
+  // Workaround for https://github.com/npm/cli/issues/4834: in a project with workspaces, `npm install` ignores a new
+  // override for a package the lockfile already holds, while `npm update <name>` applies it. The update runs only when
+  // install left an overridden target unlanded, so projects npm handles keep install alone. Once npm fixes that bug,
+  // runInstall goes back to `npm install` alone: drop overrideTargets, the unlanded check, the update, `updated` and
+  // assertOverriddenCopies (with its call below).
   const overrideTargets = [...plannedTargets].filter(([, move]) => move.mechanism === "npm-override");
   let updated = false;
   const runInstall = async () => {
