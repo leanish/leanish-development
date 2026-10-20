@@ -552,7 +552,7 @@ describe("an npm override landed through npm update, then verified", () => {
         if (args[0] === "--version") return { code: 0, stdout: "11.20.0", stderr: "" };
         const manifest = JSON.parse(await readFile(join(cwd, "package.json"), "utf8"));
         // Install leaves the override unlanded (npm/cli#4834); the update lands it at the root but also puts a new copy
-        // under other at 1.0.0, a version base had at another path, which assertOverriddenCopies accepts on its own.
+        // under other at 1.0.0, a version base had at another path, which assertUpdatedCopies accepts on its own.
         const update = args[0] === "update" ? { "node_modules/lib": entry("lib", "1.0.1"), "node_modules/other/node_modules/lib": entry("lib", "1.0.0") } : {};
         const current = JSON.parse(await readFile(join(cwd, "package-lock.json"), "utf8")).packages;
         await writeFile(join(cwd, "package-lock.json"), `${JSON.stringify({ lockfileVersion: 3, packages: { ...current, "": manifest, ...update } }, null, 2)}\n`);
