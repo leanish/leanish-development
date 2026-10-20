@@ -1,5 +1,5 @@
-import { readFile } from "node:fs/promises";
-
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -10,6 +10,7 @@ import type { Tree } from "@leanish/gate/tree";
 import { fakeFetch, type FakeResponse } from "@leanish/gate/test/fake-fetch";
 import { MAVEN_CENTRAL, pomUrl } from "@leanish/gate/source-repos";
 import { archive, manifest, serving } from "@leanish/gate/test/tarballs";
+import { materializeInCopy } from "../src/npm-materialize.ts";
 import type { ChangePlan } from "../src/plan.ts";
 import { STRICT_PIN_SOURCES, strictPinInventory } from "@leanish/tool-runtime/test/strict-pin-inventory";
 import { RICH_VERSION_CHANGES, richVersionInventory } from "@leanish/tool-runtime/test/rich-version-inventory";
@@ -529,5 +530,41 @@ describe("full verification of additions at Maven security floors", () => {
     const reference = markMoved(inventory("0.6.3", floorVersion, floorVersion), marker, "0.6.3", [":buildscript.classpath"]);
     expect(await verifyPlan({ ...input, reference,
       gradle: { ...input.gradle, head: inventory("0.6.3", floorVersion, floorVersion) } })).toEqual([]);
+  });
+});
+
+describe("an npm override landed through npm update, then verified", () => {
+  it("fails when the update leaves a new copy at a targeted vulnerable version, which materialization accepts", async () => {
+    // Base: lib 1.0.0, vulnerable, at the root, brought by other; the plan overrides it to 1.0.1.
+    const root = { name: "app", dependencies: { other: "^1.0.0" } };
+    const entry = (name: string, version: string, dependencies?: Record<string, string>) => ({ version, resolved: `https://registry.npmjs.org/${name}/-/${name}-${version}.tgz`, integrity: "sha512-AAAA", ...(dependencies === undefined ? {} : { dependencies }) });
+    const packages = { "": root, "node_modules/other": entry("other", "1.0.0", { lib: "^1.0.0" }), "node_modules/lib": entry("lib", "1.0.0") };
+    const files = { "package.json": `${JSON.stringify(root, null, 2)}\n`, "package-lock.json": `${JSON.stringify({ lockfileVersion: 3, packages }, null, 2)}\n`, ".github/dependency-floors.json": `${JSON.stringify({ floors: [] }, null, 2)}\n` };
+    const dir = await mkdtemp(join(process.cwd(), ".verify-update-test-"));
+    try {
+      await mkdir(join(dir, ".github"));
+      for (const [path, text] of Object.entries(files)) await writeFile(join(dir, path), text);
+      const base = tree("b".repeat(40), files);
+      // A real advisory id: the override's floor record requires one.
+      const advisory = "GHSA-rq7h-c2jc-7f22";
+      const plan: ChangePlan = { ...PLAN, moves: [{ ...PLAN.moves[0]!, mechanism: "npm-override", advisories: [advisory] }] };
+      const npmFiles = await materializeInCopy({ releaseAgeDays: 7, now: NOW }, dir, base, plan, ["lib"], async (cwd, args) => {
+        if (args[0] === "--version") return { code: 0, stdout: "11.20.0", stderr: "" };
+        const manifest = JSON.parse(await readFile(join(cwd, "package.json"), "utf8"));
+        // Install leaves the override unlanded (npm/cli#4834); the update lands it at the root but also puts a new copy
+        // under other at 1.0.0, a version base had at another path, which assertOverriddenCopies accepts on its own.
+        const update = args[0] === "update" ? { "node_modules/lib": entry("lib", "1.0.1"), "node_modules/other/node_modules/lib": entry("lib", "1.0.0") } : {};
+        const current = JSON.parse(await readFile(join(cwd, "package-lock.json"), "utf8")).packages;
+        await writeFile(join(cwd, "package-lock.json"), `${JSON.stringify({ lockfileVersion: 3, packages: { ...current, "": manifest, ...update } }, null, 2)}\n`);
+        return { code: 0, stdout: "", stderr: "" };
+      });
+      expect(JSON.parse(npmFiles.get("package-lock.json")!).packages["node_modules/other/node_modules/lib"].version).toBe("1.0.0");
+
+      const head = tree("worktree", { ...files, ...Object.fromEntries(npmFiles) });
+      const problems = await verifyPlan({ reference: undefined, plan, base, head, env: environment({ "lib@1.0.0": [advisory] }), gradle: {}, npmFiles, changedFiles: [...npmFiles.keys()] });
+      expect(problems).toContain(`lib@1.0.0 still has ${advisory}, which the plan was to fix`);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

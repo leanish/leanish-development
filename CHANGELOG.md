@@ -6,8 +6,10 @@
 
 - secure-it lands npm security overrides in projects with workspaces: there `npm install` ignores a new override for
   a package the lockfile already holds ([npm/cli#4834](https://github.com/npm/cli/issues/4834)). When install leaves an
-  override unlanded, secure-it runs `npm update` for those names and refuses any copy of them that then moves to a
-  version that is neither its own nor a planned target. Until then such a fix failed with "did not land exactly".
+  override unlanded, secure-it runs `npm update` for those names. Each copy of them must then end at its own version
+  or one the plan gives that name; a copy at a new path (npm hoisting differently) may also take a version another
+  copy had in base, and verification still fails the fix if any copy keeps an advisory the plan targets. Until then
+  such a fix failed with "did not land exactly".
   Known limitation: when the update also moves another copy of that name to a version that is neither its own nor
   one the plan gives that name, secure-it still fails clearly instead of landing the fix; it needs a person until npm
   fixes the bug.
@@ -15,7 +17,8 @@
   reference build that checks the removal added those defaults back on top of the configuration's own declarations,
   so the tool's dependency counted twice and verification failed although the edit was right.
   Known limitation: a dependency the build adds to that configuration after its projects are evaluated is missing
-  from the reference, so verification fails clearly instead of landing the removal.
+  from the reference, so verification fails clearly instead of landing the removal. Removing a floor that is a
+  configuration's only declaration still fails when its default dependencies then apply, as before.
 
 ## 0.7.1 - 2026-10-20
 
