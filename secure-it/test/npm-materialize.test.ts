@@ -179,14 +179,15 @@ describe("security npm materialization", () => {
     expect(JSON.parse(files.get("package.json")!)).toEqual(root);
   });
 
-  it("refuses another copy of a name install already landed, which the update for another name then moves", async () => {
+  // npm-lock is the case v0.7.2 didn't check: it judged only override names' copies.
+  it.each(["npm-override", "npm-lock"] as const)("refuses another copy of a name install already landed (%s), which the update for another name then moves", async (mechanism) => {
     // Install lands brace but not vite; vite's update also moves the nested brace that vite brings, unplanned.
     const nested = "node_modules/vite/node_modules/brace";
     const root = { dependencies: { parent: "^1.0.0" } };
     const lock = { packages: { "": root, "node_modules/parent": { version: "1.0.0", dependencies: { vite: "^8", brace: "^5" } }, "node_modules/vite": { version: "8.3.2", dependencies: { brace: "^2" } },
       "node_modules/brace": { version: "5.0.9" }, [nested]: { version: "2.0.0" } } };
     const h = await fixture({ "package.json": json(root), "package-lock.json": json(lock), ".github/dependency-floors.json": json({ floors: [] }) });
-    const brace = { ...move("brace", "5.0.12", "npm-override"), from: "5.0.9" };
+    const brace = { ...move("brace", "5.0.12", mechanism), from: "5.0.9" };
     await expect(materializeInCopy({ releaseAgeDays: 7, now }, h.dir, h.base, plan([move("vite", "8.3.3", "npm-override"), brace]), ["vite"], async (cwd, args) => {
       if (args[0] === "--version") return { code: 0, stdout: "11.20.0", stderr: "" };
       const manifest = JSON.parse(await readFile(join(cwd, "package.json"), "utf8"));
