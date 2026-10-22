@@ -102,13 +102,13 @@ check_remote_add() {
   esac
 }
 
-# Known limit: check_config understands the spellings agents and tests use, not all of git's (`-t <type>`, abbreviated
-# options, `rename-section` into a protected section, `--` before a value); none reaches a repository's own config,
-# whose git metadata the sandbox keeps read-only.
+# A write is refused when any operand names a protected key or section, not only the one taken for the key: an option
+# this parser doesn't know (`-t <type>`, an abbreviation) could make another one the key, and a renamed section's new
+# name is an operand too. Known limit: `--` before a value that looks like `--get` still reads as a read.
 # `get`, `list`, `set` and `unset` are subcommands (newer git) only before the key, and the options that take a value
 # take the next argument: a value there is neither the key nor a subcommand.
 check_config() {
-  local arg read=false write=false scope="" key="" values=0 operands=0 value_next=false
+  local arg read=false write=false scope="" key="" values=0 operands=0 value_next=false names=()
   for arg in "${rest[@]}"; do
     if [ "$value_next" = true ]; then value_next=false; continue; fi
     case "$arg" in
@@ -127,13 +127,17 @@ check_config() {
             edit) deny "git config edit" ;;
           esac
         fi
+        names+=("$arg")
         if [ -z "$key" ]; then key=$arg; else values=$((values + 1)); fi ;;
     esac
   done
   # `git config <key>` alone is a read too.
   if [ "$write" = false ] && { [ "$read" = true ] || [ "$values" -eq 0 ]; }; then return 0; fi
   [ -z "$scope" ] || deny "git config $scope (write)"
-  [ -n "$key" ] && risky_key "$key" && deny "git config $key"
+  # `<name>.` makes a section name (`alias`, `credential`) match its keys' patterns.
+  for arg in "${names[@]}"; do
+    { risky_key "$arg" || risky_key "$arg."; } && deny "git config $arg"
+  done
   return 0
 }
 
