@@ -102,6 +102,9 @@ check_remote_add() {
   esac
 }
 
+# Known limit: check_config understands the spellings agents and tests use, not all of git's (`-t <type>`, abbreviated
+# options, `rename-section` into a protected section, `--` before a value); none reaches a repository's own config,
+# whose git metadata the sandbox keeps read-only.
 # `get`, `list`, `set` and `unset` are subcommands (newer git) only before the key, and the options that take a value
 # take the next argument: a value there is neither the key nor a subcommand.
 check_config() {
@@ -174,6 +177,8 @@ EOF
 
 case "$sub" in
   push) check_push ;;
+  # The plumbing under push takes a destination URL directly.
+  send-pack|http-push) deny_push ;;
   remote) check_remote ;;
   config) check_config ;;
 esac

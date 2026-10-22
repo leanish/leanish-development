@@ -89,6 +89,8 @@ describe("git guard", () => {
     [["-C", "/work/sqs-codec", "push", "origin", `HEAD:refs/heads/${BRANCH}`], "git push"],
     [["push", "--force", "origin", BRANCH], "git push"],
     [["push", "origin", "--delete", BRANCH], "git push"],
+    [["send-pack", "git@example.invalid:repo.git", "refs/heads/main:refs/heads/published"], "git push"],
+    [["http-push", "https://example.invalid/repo.git", "main"], "git push"],
     [["-c", "remote.origin.pushurl=https://evil.example/x", "push", "origin", BRANCH], "remote.origin.pushurl"],
     [["-c", "credential.helper=store", "fetch"], "credential.helper"],
     [["-c", "credential.helper", "fetch"], "credential.helper"],
