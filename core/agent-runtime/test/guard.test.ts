@@ -73,6 +73,8 @@ describe("git guard", () => {
     [["-c", "credential.helper=", "-c", "protocol.file.allow=never", "fetch"]],
     [["-c", "Credential.Helper=", "fetch"]],
     [["remote", "add", "origin", "https://github.com/leanish/leanish-development.git"]],
+    [["remote", "-v", "add", "origin", "git@github.com:leanish/leanish-development.git"]],
+    [["remote", "--verbose", "show", "origin"]],
   ])("passes %j", async (args) => {
     expect((await run("git", args)).allowed).toBe(true);
   });
@@ -97,10 +99,21 @@ describe("git guard", () => {
     [["-c", "core.hooksPath", "status"], "core.hooksPath"],
     [["-c", "core.hooksPath=/dev/null", "-c", "core.hooksPath=/tmp/x", "status"], "core.hooksPath"],
     [["--config-env=core.sshCommand=X", "fetch"], "--config-env"],
+    [["--config-env", "credential.helper=X", "fetch"], "--config-env"],
+    [["--attr-source", "HEAD", "push", "origin", BRANCH], "git push"],
     [["remote", "set-url", "origin", "https://evil.example/x"], "git remote set-url"],
     [["remote", "rename", "origin", "upstream"], "git remote rename"],
     [["remote", "remove", "origin"], "git remote remove"],
     [["remote", "set-url", "--push", "origin", "https://evil.example/x"], "git remote set-url"],
+    [["remote", "-v", "set-url", "origin", "https://evil.example/x"], "git remote set-url"],
+    [["remote", "--verbose", "rename", "origin", "upstream"], "git remote rename"],
+    [["remote", "add", "other", "/work/other.git"], "only a network URL"],
+    [["remote", "add", "other", "file:///work/other.git"], "only a network URL"],
+    [["remote", "add", "other", "../other.git"], "only a network URL"],
+    [["remote", "-v", "add", "other", "/work/other.git"], "only a network URL"],
+    [["remote", "add", "-f", "other", "https://example.com/other.git"], "only <name> <URL>"],
+    [["remote", "add", "--mirror=push", "other", "https://example.com/other.git"], "only <name> <URL>"],
+    [["remote", "add", "-f", "https://example.com/other.git"], "git remote add -f"],
     [["config", "remote.origin.pushurl", "https://evil.example/x"], "remote.origin.pushurl"],
     [["config", "--global", "user.name", "x"], "--global"],
     [["config", "--edit"], "--edit"],
@@ -226,6 +239,13 @@ describe("git guard pushes, with the real git", () => {
     const outcome = git(["push", "added", "main"]);
     expect(outcome.status).toBe(126);
     expect(outcome.stderr).toContain("agent guard: refused: git push");
+  });
+
+  it("refuses adding a remote at a path, so a push can't reach another repository on this machine", () => {
+    const added = git(["remote", "add", "elsewhere", bare]);
+    expect(added.status).toBe(126);
+    expect(added.stderr).toContain("agent guard: refused: git remote add");
+    expect(git(["push", "elsewhere", "main"]).status).toBe(126);
   });
 
   it("keeps the global options for the remote lookup and the push", () => {

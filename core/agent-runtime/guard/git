@@ -1,9 +1,9 @@
 #!/bin/bash
 # Copied from leanish/leanish-development agents/bump-it/local/guard/git at c6282df; see PROVENANCE.md.
 # Local changes: messages say "agent guard" (secure-it and bump-it share these); "the handler" is "the tool";
-# `-c core.hooksPath=/dev/null`, `-c credential.helper=`, `git remote add` and pushes to repositories on this machine
-# pass; lib.sh,
-# the real git and config names are handled without starting processes.
+# `-c core.hooksPath=/dev/null`, `-c credential.helper=`, `git remote add` with a network URL and pushes to
+# repositories on this machine pass; `git remote -v <subcommand>`, `--attr-source <tree>` and `--config-env <name>`
+# are checked like their other forms; lib.sh, the real git and config names are handled without starting processes.
 # agent guard for git: no pushes (the tool publishes; the agent's git
 # metadata is read-only anyway), and existing remotes and credential settings
 # can't be changed. Everything else passes through to the real git. Three exceptions let a
@@ -55,12 +55,13 @@ i=0
 while [ "$i" -lt "${#args[@]}" ]; do
   a=${args[$i]}
   case "$a" in
-    -C|--git-dir|--work-tree|--namespace|--exec-path) i=$((i + 2)) ;;
+    # Every global option git takes with a separate value: one missing here would be taken for the subcommand.
+    -C|--git-dir|--work-tree|--namespace|--exec-path|--attr-source) i=$((i + 2)) ;;
     -c)
       setting=${args[$((i + 1))]:-}
       hooks_off "$setting" || credentials_off "$setting" || { risky_key "${setting%%=*}" && deny "git -c ${setting%%=*}"; }
       i=$((i + 2)) ;;
-    --config-env=*) deny "git --config-env" ;;
+    --config-env|--config-env=*) deny "git --config-env" ;;
     -*) i=$((i + 1)) ;;
     *) break ;;
   esac
@@ -69,13 +70,32 @@ sub=${args[$i]:-}
 global=("${args[@]:0:$i}")
 rest=("${args[@]:$((i + 1))}")
 
-# Reading remotes, and adding one, pass: a push is checked against every push URL of its remote when it runs, so a
-# remote added here reaches no network either (a release installer under test adds its origin to a new repository).
-# Changing an existing remote doesn't pass.
+# Reading remotes passes; changing an existing one doesn't. `-v` may come before the subcommand, so it's skipped
+# rather than taken for one.
 check_remote() {
-  case "${rest[0]:-}" in
-    ""|-v|--verbose|show|get-url|add) ;;
-    *) deny "git remote ${rest[0]}" ;;
+  local i=0
+  while [ "$i" -lt "${#rest[@]}" ]; do
+    case "${rest[$i]}" in
+      -v|--verbose) i=$((i + 1)) ;;
+      *) break ;;
+    esac
+  done
+  case "${rest[$i]:-}" in
+    ""|show|get-url) ;;
+    add) check_remote_add "${rest[@]:$((i + 1))}" ;;
+    *) deny "git remote ${rest[$i]}" ;;
+  esac
+}
+
+# Adding a remote passes only as `add <name> <network URL>`, with no options: a push to it is then refused like any
+# network push (a release installer under test adds its GitHub origin to a new repository). A path would let a push
+# reach another repository on this machine.
+check_remote_add() {
+  [ "$#" -eq 2 ] || deny "git remote add (only <name> <URL>)"
+  case "$1" in -*) deny "git remote add $1" ;; esac
+  case "$2" in
+    https://*|ssh://*|git@*:*) ;;
+    *) deny "git remote add (only a network URL)" ;;
   esac
 }
 
