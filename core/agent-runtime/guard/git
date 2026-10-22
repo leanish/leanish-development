@@ -1,32 +1,52 @@
 #!/bin/bash
 # Copied from leanish/leanish-development agents/bump-it/local/guard/git at c6282df; see PROVENANCE.md.
 # Local changes: messages say "agent guard" (secure-it and bump-it share these); "the handler" is "the tool";
-# `-c core.hooksPath=/dev/null` and pushes to repositories on this machine pass.
+# `-c core.hooksPath=/dev/null`, `-c credential.helper=`, `git remote add` and pushes to repositories on this machine
+# pass; lib.sh,
+# the real git and config names are handled without starting processes.
 # agent guard for git: no pushes (the tool publishes; the agent's git
-# metadata is read-only anyway), and origin and credential settings can't be
-# changed. Everything else passes through to the real git. Two exceptions let a
+# metadata is read-only anyway), and existing remotes and credential settings
+# can't be changed. Everything else passes through to the real git. Three exceptions let a
 # repository's own tests run: `-c core.hooksPath=/dev/null` (it only turns hooks
-# off), and a push to a remote whose every URL is on this machine (tests push to
-# bare repositories in temp dirs; that publishes nothing).
+# off), `-c credential.helper=` (it only turns credential helpers off), and a push
+# to a remote whose every URL is on this machine (tests push to bare repositories
+# in temp dirs; that publishes nothing).
 # No `set -u`: macOS's bash 3.2 treats an empty "${array[@]}" as unbound.
-source "$(dirname "$0")/lib.sh"
-real=$(real_bin git)
+# Without `dirname`: every process started here adds to each guarded call.
+case "$0" in */*) source "${0%/*}/lib.sh" ;; *) source ./lib.sh ;; esac
+real_bin git
+
+# Config names are case-insensitive. They're compared with nocasematch, switched on only around a name and never for
+# a value: lowercasing with `tr` cost two processes per `-c`, which slowed a repository's tests that call git a lot.
+names_match() {
+  local status=1
+  shopt -s nocasematch
+  # `[[ == ]]` with a quoted right side: a literal comparison that honors nocasematch (`[ = ]` doesn't).
+  [[ "$1" == "$2" ]] && status=0
+  shopt -u nocasematch
+  return "$status"
+}
 
 # Config keys that would redirect pushes or credentials.
 risky_key() {
-  local key
-  key=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
-  case "$key" in
-    remote.*|url.*|credential*|include.*|includeif.*|core.sshcommand|core.askpass|core.hookspath|core.gitproxy|http.*extraheader*|http.*proxy*|pushurl) return 0 ;;
+  local status=1
+  shopt -s nocasematch
+  case "$1" in
+    remote.*|url.*|credential*|include.*|includeif.*|core.sshcommand|core.askpass|core.hookspath|core.gitproxy|http.*extraheader*|http.*proxy*|pushurl) status=0 ;;
   esac
-  return 1
+  shopt -u nocasematch
+  return "$status"
 }
 
 # Exactly `core.hooksPath=/dev/null`: the per-command way to run no hooks at all.
 hooks_off() {
-  local key
-  key=$(printf '%s' "${1%%=*}" | tr '[:upper:]' '[:lower:]')
-  [ "$key" = "core.hookspath" ] && [ "$1" != "${1%%=*}" ] && [ "${1#*=}" = "/dev/null" ]
+  names_match "${1%%=*}" "core.hookspath" && [ "$1" != "${1%%=*}" ] && [ "${1#*=}" = "/dev/null" ]
+}
+
+# Exactly `credential.helper=` with an empty value: it clears the helper list, so git asks no helper for credentials
+# (a release installer under test runs git this way).
+credentials_off() {
+  names_match "${1%%=*}" "credential.helper" && [ "$1" = "${1%%=*}=" ]
 }
 
 # Global options come before the subcommand.
@@ -38,7 +58,7 @@ while [ "$i" -lt "${#args[@]}" ]; do
     -C|--git-dir|--work-tree|--namespace|--exec-path) i=$((i + 2)) ;;
     -c)
       setting=${args[$((i + 1))]:-}
-      hooks_off "$setting" || { risky_key "${setting%%=*}" && deny "git -c ${setting%%=*}"; }
+      hooks_off "$setting" || credentials_off "$setting" || { risky_key "${setting%%=*}" && deny "git -c ${setting%%=*}"; }
       i=$((i + 2)) ;;
     --config-env=*) deny "git --config-env" ;;
     -*) i=$((i + 1)) ;;
@@ -49,9 +69,12 @@ sub=${args[$i]:-}
 global=("${args[@]:0:$i}")
 rest=("${args[@]:$((i + 1))}")
 
+# Reading remotes, and adding one, pass: a push is checked against every push URL of its remote when it runs, so a
+# remote added here reaches no network either (a release installer under test adds its origin to a new repository).
+# Changing an existing remote doesn't pass.
 check_remote() {
   case "${rest[0]:-}" in
-    ""|-v|--verbose|show|get-url) ;;
+    ""|-v|--verbose|show|get-url|add) ;;
     *) deny "git remote ${rest[0]}" ;;
   esac
 }
