@@ -69,6 +69,8 @@ describe("git guard", () => {
     [["config", "remote.origin.url"]],
     [["config", "user.name", "bump-it"]],
     [["config", "rename-section", "scratch", "notes"]],
+    [["config", "--file", ".gitmodules", "submodule.headers.path", "include"]],
+    [["config", "user.name", "remote"]],
     [["remote", "-v", "--no-verbose", "get-url", "origin"]],
     [["config", "get", "user.name"]],
     [["config", "--file", ".gitmodules", "--get", "submodule.lib.url"]],

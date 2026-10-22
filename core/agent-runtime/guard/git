@@ -108,13 +108,14 @@ check_remote_add() {
 # `get`, `list`, `set` and `unset` are subcommands (newer git) only before the key, and the options that take a value
 # take the next argument: a value there is neither the key nor a subcommand.
 check_config() {
-  local arg read=false write=false scope="" key="" values=0 operands=0 value_next=false names=()
+  local arg read=false write=false scope="" key="" values=0 operands=0 value_next=false names=() rename=false
   for arg in "${rest[@]}"; do
     if [ "$value_next" = true ]; then value_next=false; continue; fi
     case "$arg" in
       --get|--get-all|--get-regexp|--get-urlmatch|-l|--list) read=true ;;
       -e|--edit) deny "git config --edit" ;;
-      --unset|--unset-all|--add|--replace-all|--rename-section|--remove-section) write=true ;;
+      --rename-section) write=true; rename=true ;;
+      --unset|--unset-all|--add|--replace-all|--remove-section) write=true ;;
       --global|--system) scope=$arg ;;
       -f|--file|--blob|--type|--default|--comment|--value) value_next=true ;;
       -*) ;;
@@ -123,7 +124,8 @@ check_config() {
         if [ "$operands" -eq 1 ]; then
           case "$arg" in
             get|list) read=true; continue ;;
-            set|unset|rename-section|remove-section) write=true; continue ;;
+            rename-section) write=true; rename=true; continue ;;
+            set|unset|remove-section) write=true; continue ;;
             edit) deny "git config edit" ;;
           esac
         fi
@@ -134,9 +136,10 @@ check_config() {
   # `git config <key>` alone is a read too.
   if [ "$write" = false ] && { [ "$read" = true ] || [ "$values" -eq 0 ]; }; then return 0; fi
   [ -z "$scope" ] || deny "git config $scope (write)"
-  # `<name>.` makes a section name (`alias`, `credential`) match its keys' patterns.
+  # A renamed section's names are sections: `<name>.` makes one (`alias`, `credential`) match its keys' patterns. A
+  # value is only checked as a key, so `submodule.x.path include` passes.
   for arg in "${names[@]}"; do
-    { risky_key "$arg" || risky_key "$arg."; } && deny "git config $arg"
+    { risky_key "$arg" || { [ "$rename" = true ] && risky_key "$arg."; }; } && deny "git config $arg"
   done
   return 0
 }
