@@ -99,6 +99,20 @@ describe("plan blocks", () => {
     expect(plain).toBe(`before\n\n${section({ a: 2 })}\n\nafter`);
   });
 
+  it("clears leftover plan blocks when it rewrites, so no release reads a stale one", () => {
+    const orphan = planBlock({ stale: true });
+    // A plain block after the section: a release that can't read the new compressed block would read it.
+    const after = withPlanSection(`${section({ a: 1 })}\n\n${orphan}\n\nafter`, HEADING, section(large()));
+    expect(after.match(/leanish:plan/g)).toHaveLength(1);
+    expect(OLD_BLOCK.exec(after)).toBeNull();
+    expect(after.endsWith("\n\nafter")).toBe(true);
+    // A block before the heading, which a reader would take first.
+    const before = withPlanSection(`${orphan}\n\nDescription.\n\n${section({ a: 1 })}`, HEADING, section({ a: 2 }));
+    expect(before.match(/leanish:plan/g)).toHaveLength(1);
+    expect(planPayload(before)).toEqual({ a: 2 });
+    expect(before).toBe(`\n\nDescription.\n\n${section({ a: 2 })}`);
+  });
+
   it("refuses a body over GitHub's limit", () => {
     expect(() => withPlanSection("x".repeat(BODY_LIMIT), HEADING, section({ a: 1 }))).toThrow(/over GitHub's 65536/);
   });
