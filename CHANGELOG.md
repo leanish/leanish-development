@@ -10,7 +10,8 @@
   `git remote` or `-c` settings. The agent's git metadata is read-only, and the only credential it can reach is its
   read-only GitHub token: its git reads neither the home's nor the system's config, and the sandbox can't read the
   Keychain, `~/.git-credentials` or the SSH keys. So neither a config change nor a `-c` setting such as
-  `credential.helper` can publish anything off the machine. The guard is a guard rail, not a boundary (see the
+  `credential.helper` can write to GitHub: the read-only token is all they could use. Like any command in a write
+  run, they still reach the network. The guard is a guard rail, not a boundary (see the
   [security model](docs/security-model.md#secure-it-and-bump-it)): a push under an alias, or one whose
   `-c remote.<name>.receivePack` runs another command, isn't recognised and may reach another repository on this
   machine, as an alias could in 0.7.3. A mistaken remote or config change now fails in git ("could not lock config
