@@ -51,7 +51,7 @@ describe("the advisory notice on a held PR", () => {
   });
 
   it("warns most about an advisory only the project's repository has, as a possible fake", () => {
-    expect(REPOSITORY_ONLY).toContain("neither OSV nor a reviewed record in GitHub's advisory database does");
+    expect(REPOSITORY_ONLY).toContain("neither OSV nor a reviewed GitHub record does");
     expect(REPOSITORY_ONLY).toContain("fake");
     const unreviewed = evidence([checked("repository", [record()]), checked("github", [record({ reviewed: false })]), checked("osv")]);
     const notice = advisoryNotice([hold({ evidence: unreviewed })]);

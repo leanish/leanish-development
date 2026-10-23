@@ -21,10 +21,10 @@ export const REVIEWED =
   "Every advisory a source still backs is backed by a reviewed record: OSV or GitHub's reviewed advisory database lists the replaced versions as affected and the proposed version, if any, as not.";
 
 export const REPOSITORY_ONLY =
-  "**Only the project's own repository advisories back this fix: neither OSV nor a reviewed record in GitHub's advisory database does.** Whoever controls the project's repository can publish such an advisory in minutes, with no review, so a fake one is the quickest way to get a release carrying an attack installed before the release-age wait ends: publish the \"fixed\" version, then an advisory pointing at it. Don't take this early on the advisory's word.";
+  "**The project's own unreviewed repository advisories back this fix; neither OSV nor a reviewed GitHub record does.** Whoever controls the project's repository can publish such an advisory in minutes, with no review, so a fake one is the quickest way to get a release carrying an attack installed before the release-age wait ends: publish the \"fixed\" version, then an advisory pointing at it. Don't take this early on the advisory's word.";
 
 export const REPOSITORY_ONLY_UNCHECKED =
-  "**Only the project's own repository advisories back this fix so far; OSV or GitHub's advisory database couldn't be checked.** Treat it as unreviewed: whoever controls the project's repository can publish a fake advisory in minutes to get a release carrying an attack installed before the release-age wait ends.";
+  "**The project's own unreviewed repository advisories back this fix; neither OSV nor a reviewed GitHub record does so far, and OSV or GitHub's advisory database couldn't be fully checked.** Treat it as unreviewed: whoever controls the project's repository can publish a fake advisory in minutes to get a release carrying an attack installed before the release-age wait ends.";
 
 export const UNREVIEWED_GITHUB =
   "**Only a record GitHub hasn't reviewed backs this fix: neither OSV nor a reviewed record in GitHub's advisory database does.** GitHub imports unreviewed records without checking them, so treat the fix as unreviewed.";
