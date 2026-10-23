@@ -31,7 +31,7 @@ import { type BundleReader, bundleMismatches } from "./npm-bundles.ts";
 import type { NpmRegistry } from "./npm-registry.ts";
 import type { PackageVersion } from "./package-version.ts";
 import { versionKey } from "./package-version.ts";
-import type { ChangedVersion } from "./release-age.ts";
+import { type ChangedVersion, groupIds, type HeldTarget } from "./release-age.ts";
 import type { Snapshot } from "./snapshot.ts";
 
 export interface BundleFixInputs {
@@ -45,25 +45,32 @@ export interface BundleFixInputs {
   readonly scan: (packages: ReadonlyArray<PackageVersion>) => Promise<Snapshot>;
 }
 
-/** Per young npm version (`versionKey`) that replaces a carrier in place: undefined when proved, else why not. */
-export async function bundleFixProofs(young: ReadonlyArray<ChangedVersion>, inputs: BundleFixInputs): Promise<ReadonlyMap<string, string | undefined>> {
-  const proofs = new Map<string, string | undefined>();
+/** A proved bundle fix and the advisories behind it, or why it isn't one. */
+export type BundleFixProof =
+  | { readonly problem: undefined; readonly targets: ReadonlyArray<HeldTarget> }
+  | { readonly problem: string };
+
+/** Per young npm version (`versionKey`) that replaces a carrier in place. */
+export async function bundleFixProofs(young: ReadonlyArray<ChangedVersion>, inputs: BundleFixInputs): Promise<ReadonlyMap<string, BundleFixProof>> {
+  const proofs = new Map<string, BundleFixProof>();
   for (const change of young) {
     if (change.pkg.ecosystem !== "npm" || change.replaced.length === 0) continue;
     const found = occurrences(change, inputs);
     if (found.length === 0) continue;
     // Every head copy of the version needs its own evidence: one proved copy can't vouch for another.
     if (found.some((occurrence) => occurrence === undefined)) {
-      proofs.set(versionKey(change.pkg), `${change.pkg.name}@${change.pkg.version} is also where it replaces no carrier copy in place`);
+      proofs.set(versionKey(change.pkg), { problem: `${change.pkg.name}@${change.pkg.version} is also where it replaces no carrier copy in place` });
       continue;
     }
     const reasons: string[] = [];
+    const targets: HeldTarget[] = [];
     for (const occurrence of found as Occurrence[]) {
-      const why = await proofProblem(change.pkg, occurrence, inputs).catch((error: unknown) =>
+      const proof = await occurrenceProof(change.pkg, occurrence, inputs).catch((error: unknown) =>
         `${occurrence.lockfile}: ${occurrence.path}: the bundle-fix justification could not be established: ${error instanceof Error ? error.message : String(error)}`);
-      if (why !== undefined) reasons.push(why);
+      if (typeof proof === "string") reasons.push(proof);
+      else targets.push(...proof);
     }
-    proofs.set(versionKey(change.pkg), reasons.length === 0 ? undefined : reasons.join("; "));
+    proofs.set(versionKey(change.pkg), reasons.length === 0 ? { problem: undefined, targets: mergedTargets(targets) } : { problem: reasons.join("; ") });
   }
   return proofs;
 }
@@ -97,7 +104,8 @@ function occurrences(change: ChangedVersion, inputs: Pick<BundleFixInputs, "base
   return found.some((occurrence) => occurrence !== undefined) ? found : [];
 }
 
-async function proofProblem(pkg: PackageVersion, occurrence: Occurrence, inputs: BundleFixInputs): Promise<string | undefined> {
+/** The occurrence's targets when it's proved, else why it isn't. */
+async function occurrenceProof(pkg: PackageVersion, occurrence: Occurrence, inputs: BundleFixInputs): Promise<HeldTarget[] | string> {
   const { reader, registry, config, now } = inputs;
   const at = `${occurrence.lockfile}: ${occurrence.path}`;
   const published = await registryIntegrity(registry, pkg.name, pkg.version);
@@ -142,7 +150,41 @@ async function proofProblem(pkg: PackageVersion, occurrence: Occurrence, inputs:
   if (choice.version !== pkg.version) {
     return `${at}: ${choice.version} ${choice.aged ? `ships a bundle without ${describe(carried)} too and is at least ${config.releaseAgeDays} days old` : `is the lowest version whose bundle drops ${describe(carried)}`} (line ${choice.line})`;
   }
-  return undefined;
+  const carriedGroups = new Set(carried.map((target) => target.advisory));
+  const bundledTargets = [...new Set(carried.map((target) => target.name))].sort().map((name): HeldTarget => {
+    const versions = (bundle: typeof fromBundle) => [...new Set(bundle.packages.filter((entry) => entry.name === name).map((entry) => entry.version))].sort();
+    const replaced = versions(fromBundle);
+    const ofName = new Set(carried.filter((target) => target.name === name).map((target) => target.advisory));
+    return {
+      name,
+      bundled: true,
+      replaced,
+      proposed: versions(toBundle),
+      groups: groupIds(snapshot, replaced.map((version): PackageVersion => ({ ecosystem: "npm", name, version })), (group) => carriedGroups.has(group) && ofName.has(group)),
+    };
+  });
+  const ownGroups = new Set(own);
+  const carrier: HeldTarget[] = own.length === 0 ? [] : [{
+    name: pkg.name, bundled: false, replaced: [occurrence.from], proposed: [pkg.version],
+    groups: groupIds(snapshot, [{ ...pkg, version: occurrence.from }], (group) => ownGroups.has(group)),
+  }];
+  return [...carrier, ...bundledTargets];
+}
+
+/** One target per package and side, every occurrence's versions and groups together. */
+function mergedTargets(targets: ReadonlyArray<HeldTarget>): HeldTarget[] {
+  const merged = new Map<string, { name: string; bundled: boolean; replaced: Set<string>; proposed: Set<string>; groups: Map<string, string[]> }>();
+  for (const target of targets) {
+    const key = `${target.bundled ? "bundled" : "own"}|${target.name}`;
+    const entry = merged.get(key) ?? { name: target.name, bundled: target.bundled, replaced: new Set(), proposed: new Set(), groups: new Map() };
+    for (const version of target.replaced) entry.replaced.add(version);
+    for (const version of target.proposed) entry.proposed.add(version);
+    for (const ids of target.groups) entry.groups.set(ids.join(" "), [...ids]);
+    merged.set(key, entry);
+  }
+  return [...merged.values()].map((entry) => ({
+    name: entry.name, bundled: entry.bundled, replaced: [...entry.replaced].sort(), proposed: [...entry.proposed].sort(), groups: [...entry.groups.values()],
+  }));
 }
 
 function lockfileOf(inventory: Inventory, path: string) {

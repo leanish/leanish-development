@@ -309,10 +309,13 @@ describe("bump-it run", () => {
       if (problem !== undefined) {
         const detail = { pin: "verification failed:", compare: "compare: new advisory", workspace: "agent workspace has undeclared changes against HEAD: README.md", "late-edit": "the working tree changed after verification" }[problem];
         expect(result, JSON.stringify(result)).toMatchObject({ units: [{ outcome: "nothing-to-move" }, { outcome: "failed", detail: expect.stringContaining(detail) }] });
-        expect(verified).toHaveLength(problem === "workspace" ? 0 : 1);
+        // A run asks the agent once more with a refusal (the review's rebase doesn't): refused again, it fails the same.
+        const refused = command === "run" && (problem === "pin" || problem === "compare");
+        expect(verified).toHaveLength(problem === "workspace" ? 0 : refused ? 2 : 1);
+        if (refused) expect(h.agentCalls.map((call) => (call.input as Record<string, unknown>)["rejected"] !== undefined)).toEqual([false, true]);
         expect(fixture.publications).toEqual([]);
         expect(h.github.prs.get(pr.number)!.headSha).toBe(oldHead);
-        expect(runCompare).toHaveBeenCalledTimes(problem === "pin" || problem === "workspace" ? 0 : 1);
+        expect(runCompare).toHaveBeenCalledTimes(problem === "pin" || problem === "workspace" ? 0 : refused ? 2 : 1);
         if (problem === "workspace") expect(h.agentCalls).toEqual([]);
         return;
       }
@@ -599,6 +602,23 @@ describe("bump-it run", () => {
     expect(invalid.workspace.publications).toEqual([]);
     const refused = harness({ refuse: true });
     expect(await bumpIt(refused.deps).run(refused.context)).toMatchObject({ units: [{ outcome: "published" }, { outcome: "failed" }] });
+  });
+  it("asks the agent once more with a refusal, and never retries what the tool wrote alone", async () => {
+    const h = harness();
+    const attempts = new Map<string, number>();
+    const deps = { ...h.deps, verify: async (input: Parameters<BumpItDeps["verify"]>[0]) => {
+      const count = (attempts.get(input.plan.kind) ?? 0) + 1;
+      attempts.set(input.plan.kind, count);
+      return count === 1 ? [`compare: refused ${input.plan.kind}`] : [];
+    } };
+    expect(await bumpIt(deps).run(h.context)).toMatchObject({ units: [
+      { topic: "routine", outcome: "failed", detail: "verification failed: compare: refused routine" },
+      { outcome: "published", rejected: ["compare: refused major"] },
+    ] });
+    expect([...attempts]).toEqual([["routine", 1], ["major", 2]]);
+    expect(h.agentCalls.map((call) => call.input["rejected"])).toEqual([undefined, ["compare: refused major"]]);
+    expect(h.reverted.at(-1)).toBe(BASE_SHA);
+    expect(h.workspace.publications).toHaveLength(1);
   });
   it("fails a unit whose edit left a symbolic link, whatever the other checks say", async () => {
     const linked = harness({ links: ["package-lock.json"] });

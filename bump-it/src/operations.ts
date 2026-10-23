@@ -58,6 +58,8 @@ interface SkillAnswer {
 interface EditContext {
   readonly failingChecks?: string[];
   readonly conflicted?: ReadonlyArray<string>;
+  /** Why verification refused the previous attempt at this same plan. */
+  readonly rejected?: ReadonlyArray<string>;
   /** Base-side dependency restores, checked by the guard; the agent may reapply the plan over them. */
   readonly restoredFiles?: ReadonlyArray<FileState>;
 }
@@ -210,8 +212,17 @@ export async function verify(execution: Execution, computed: Computed, toolWritt
     toolWritten,
   });
   const links = await deps.linkProblems(context.workingCopy, computed.base.id, candidate);
-  if (problems.length > 0 || links.length > 0) {
-    throw new Error(`verification failed: ${[...links, ...problems].join("; ")}`);
+  if (problems.length > 0 || links.length > 0) throw new VerificationRejected([...links, ...problems]);
+}
+
+/** Verification refused the edit (as opposed to an operational failure): its problems, for the agent to see. */
+export class VerificationRejected extends Error {
+  readonly problems: ReadonlyArray<string>;
+
+  constructor(problems: ReadonlyArray<string>) {
+    super(`verification failed: ${problems.join("; ")}`);
+    this.name = "VerificationRejected";
+    this.problems = problems;
   }
 }
 

@@ -128,6 +128,11 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
    the original problems appear in the run report, the PR description and its persisted plan; only the remaining
    moves are claimed as applied. npm may still induce transitive changes, and these still face `compare`. The next
    run reconsiders omitted fixes.
+
+   Before that reduction, a first refusal gets the agent asked once more for the same plan, from the base, with the
+   refusal (`rejected`): an agent that moved a parent instead of the planned floor, say. The reduction then works
+   from the second attempt's problems; the run report keeps the first (`rejected`). A review's adaptation is never
+   restarted this way, since a restart from the base would lose it.
 7. **Publishes** draft PRs: `secure-it/<date>-security` for the routine, `secure-it/<date>-<package>-major` for each
    major, or `secure-it/<date>-malware`. Each unit starts from the scanned base and publishes at most one new or
    updated PR. A failed unit is reported and doesn't stop other major units. The tool appends the move table and the
@@ -214,6 +219,26 @@ and passing every check doesn't rule out malware, that secure-it keeps the PR a 
 aged, and how a person takes it earlier: every other check green, the reason written on the PR, an admin merge. A PR
 planned as aged that the comparison holds anyway is held the same way. A cooldown the comparison couldn't evaluate
 fails verification.
+
+For a security or bundle fix, the warning also says where the advisories behind it appear. After the verification,
+secure-it reads each advisory, and every alias the responses name, from the dependency's own repository advisories,
+GitHub's database and OSV, fresh and only to inform. A table shows each source as it says: the fix it declares, and
+whether its ranges put each replaced and proposed version among the affected ones; a bundled package is named as
+bundled, and a removal as a removal. A lookup that fails reads "couldn't be fully checked", never "not found".
+
+Fixed paragraphs open the warning, by the most trusted source listing each advisory for the package. OSV ranks
+first (it imports GitHub's reviewed advisories among other sources), then GitHub's database (reviewed records only),
+then the project's own repository advisories, which whoever controls the repository publishes with no review:
+
+- in OSV: a plain line saying so;
+- only in GitHub's database: a warning that it is newer and less trusted than one OSV lists;
+- only in the project's repository advisories: a stronger warning that such an advisory is easy to fake, to get a
+  release carrying an attack installed before the wait ends;
+- when a more trusted source couldn't be checked, a variant saying so;
+- when no source read now backs the fix the comparison proved (a record withdrawn since, or ranges that no longer put
+  the replaced version among the affected ones): a paragraph saying so. The verdict stands; the rows are marked ⚠.
+
+The agent never writes any of this.
 
 ## Isolation
 

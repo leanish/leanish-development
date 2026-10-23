@@ -7,9 +7,11 @@
  */
 import { createHash } from "node:crypto";
 
+import { isAdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import { heldEntry, heldUntil } from "@leanish/gate/cooldown";
 import { assertBodyFits, planPayload, planSection as sectionOf, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
 
+import { advisoryNotice } from "./advisory-notice.ts";
 import { floorIdentity, validRemoval } from "./floor-removal.ts";
 import type { ChangePlan, PlannedHold, PlannedMove } from "./plan.ts";
 
@@ -117,15 +119,19 @@ export function cooldownWarning(held: ReadonlyArray<PlannedHold>): string | unde
   const why = { "security-fix": "the security fix the version rule picks", "bundle-fix": "the carrier version the rule picks for advisories in its bundle", required: "required by a security fix", exception: "a release-age exception", unjustified: "not justified: the gate fails it" } as const;
   const rows = held.map((entry) =>
     `> | ${entry.ecosystem} \`${cell(entry.name)}\` | ${entry.replaced.length === 0 ? "new" : cell(entry.replaced.join(", "))} → ${cell(entry.version)} | ${minute(entry.published)} | ${minute(entry.eligibleAt)} | ${why[entry.justification]} | ${cell(entry.signals.join("; ")) || "—"} |`);
+  const notice = advisoryNotice(held);
+  const quoted = (lines: ReadonlyArray<string>) => lines.map((line) => (line === "" ? ">" : `> ${line}`));
   return [
     WARNING_START,
     "> [!WARNING]",
     "> **Release-age cooldown bypassed.** This PR takes versions published less than the release-age wait ago. Needing them for a security fix, and passing every check, doesn't rule out malware: whoever controls a publisher can ship it inside a real fix, whatever the advisory's severity.",
     ">",
+    ...notice.paragraphs.flatMap((paragraph) => [`> ${paragraph}`, ">"]),
     "> | Package | Version | Published (UTC) | Held until (UTC) | Why | Signals |",
     "> |---|---|---|---|---|---|",
     ...rows,
     ">",
+    ...(notice.details.length === 0 ? [] : [...quoted(notice.details), ">"]),
     `> secure-it keeps this PR a draft, and the supply-chain gate's \`cooldown\` check stays red, until ${minute(until)} UTC. Then secure-it closes it and its next run opens a freshly verified PR (held again only if something in it is still young).`,
     ">",
     "> To take it earlier, a person decides: every other check green, the reason written in a PR comment, then an admin merge past the red `cooldown` check (where no ruleset enforces it, a merge with the same written reason).",
@@ -176,7 +182,8 @@ function validHolds(held: unknown): boolean {
     } catch {
       return false;
     }
-    const signals = (entry as PlannedHold).signals;
-    return Array.isArray(signals) && signals.every((signal) => typeof signal === "string");
+    const { signals, evidence, evidenceFailure } = entry as PlannedHold;
+    return Array.isArray(signals) && signals.every((signal) => typeof signal === "string")
+      && (evidence === undefined || isAdvisoryEvidence(evidence)) && (evidenceFailure === undefined || typeof evidenceFailure === "string");
   });
 }

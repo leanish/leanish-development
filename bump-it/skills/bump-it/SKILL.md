@@ -37,6 +37,7 @@ inputSchema:
     toolWritten: { type: array, items: { type: string } }
     failingChecks: { type: array, items: { type: string } }
     conflicted: { type: array, items: { type: string } }
+    rejected: { type: array, items: { type: string } }
 outputSchema:
   type: object
   if:
@@ -139,6 +140,13 @@ files and re-written its npm plan and generated wrapper files.
 Then apply the non-npm moves. In `adapt`, investigate `failingChecks` (Actions job names and commit status contexts)
 with `gh run list --commit <head SHA>`, `gh run view --log-failed` or commit status reads. These use Actions and
 Commit statuses permissions, never the Checks API. Fix only what this major broke. If it cannot be fixed within these limits, answer cannot-apply. Routine failures are not adapted.
+
+## A refused attempt
+
+When `rejected` is set, the tool's verification refused your previous attempt at this same plan for those reasons
+and put the working copy back at the base. Apply exactly the supplied moves again and avoid what was refused; change
+nothing the plan doesn't name to get around it. If the plan can't be applied without it, answer `cannot-apply` and say
+why.
 
 ## Answer
 

@@ -20,6 +20,7 @@ import { dirname } from "node:path";
 
 import semver from "semver";
 
+import type { AdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import { type SecurityFix, severityRank } from "@leanish/gate/candidates";
 import type { CarriedPackage } from "@leanish/gate/carrier-candidates";
 import type { NpmPeerPlanner } from "@leanish/gate/npm-peers";
@@ -84,6 +85,10 @@ export interface OmittedMoves {
 export interface PlannedHold extends HeldVersion {
   /** For people only (`releaseSignals`): provenance, publisher, install scripts. */
   readonly signals: ReadonlyArray<string>;
+  /** For people only: where the advisories behind a security or bundle fix appear, read after the verification. */
+  readonly evidence?: AdvisoryEvidence;
+  /** Why that evidence couldn't be read at all. */
+  readonly evidenceFailure?: string;
 }
 
 export interface ChangePlan {

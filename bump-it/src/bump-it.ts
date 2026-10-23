@@ -9,13 +9,13 @@ import { DEFAULT_MAX_NEW_MAJORS_PER_RUN } from "@leanish/tool-runtime/config";
 import type { FileState } from "@leanish/tool-runtime/git-copies";
 import { isMechanical } from "@leanish/tool-runtime/edit-checks";
 import { branchFor, topicOf, stateOf } from "@leanish/tool-runtime/own-pr";
-import { closeAndDelete, ownOpenPullRequests, publishNew, publishUpdate, recoverPublication } from "@leanish/tool-runtime/publication";
+import { closeAndDelete, ownOpenPullRequests, publishNew, publishUpdate, type PullRequestContent, recoverPublication } from "@leanish/tool-runtime/publication";
 import { machineRoots } from "@leanish/tool-runtime/publication-text";
 import { reviewOpenPullRequests, type ReviewSteps } from "@leanish/tool-runtime/review";
 
 import { WRAPPER_FILES, type WrapperCandidates } from "./gradle-wrapper.ts";
 import { type BumpItDeps, defaultDeps } from "./deps.ts";
-import { type Computed, compute, edit, type Execution, prepare, RULES, verify, writeNpm, writeWrapper } from "./operations.ts";
+import { type Computed, compute, edit, type Execution, prepare, RULES, VerificationRejected, verify, writeNpm, writeWrapper } from "./operations.ts";
 import { type BumpPlan, planDigest, planOf, withPlanSection } from "./plan.ts";
 import { majorUnits, routineUnit, type Unit } from "./units.ts";
 import { plannedFiles, wrapperFilesMatch } from "./verify.ts";
@@ -64,6 +64,8 @@ interface UnitReport {
   readonly pullRequest?: string;
   readonly detail?: string;
   readonly notes?: ReadonlyArray<string>;
+  /** What verification refused in the first attempt, when the agent was asked again with it. */
+  readonly rejected?: ReadonlyArray<string>;
 }
 
 async function run(context: ToolRunContext, deps: BumpItDeps): Promise<Readonly<Record<string, unknown>>> {
@@ -155,11 +157,11 @@ async function runUnit(execution: Execution, computed: Computed, unit: Unit, own
   }
   const reusable = owned[0];
   const prepared = await prepare(execution, unit, own, reusable, computed.base.id);
-  const { content, toolWritten } = await edit(execution, computed, "apply");
-  await verify(execution, computed, toolWritten);
+  const { content, rejected } = await applyVerified(execution, computed);
+  const retried = rejected === undefined ? {} : { rejected };
   if (reusable !== undefined) {
     const { pr } = await publishUpdate(execution.publication, prepared, reusable.number, content, 0);
-    return { topic: unit.topic, outcome: "updated", pullRequest: pr.url, notes: computed.plan.notes };
+    return { topic: unit.topic, outcome: "updated", pullRequest: pr.url, notes: computed.plan.notes, ...retried };
   }
   const pr = await publishNew(execution.publication, prepared, content);
   return {
@@ -167,7 +169,32 @@ async function runUnit(execution: Execution, computed: Computed, unit: Unit, own
     outcome: pr === undefined ? "nothing-to-move" : "published",
     ...(pr === undefined ? {} : { pullRequest: pr.url }),
     notes: computed.plan.notes,
+    ...retried,
   };
+}
+
+/**
+ * Applies the plan and verifies it. When verification refuses what the agent wrote, the agent is asked once more,
+ * from the base, with the refusal; a second refusal fails the unit as before. A pass the tool wrote alone isn't retried.
+ */
+async function applyVerified(execution: Execution, computed: Computed): Promise<{ readonly content: PullRequestContent; readonly rejected?: ReadonlyArray<string> }> {
+  const first = await edit(execution, computed, "apply");
+  try {
+    await verify(execution, computed, first.toolWritten);
+    return { content: first.content };
+  } catch (error) {
+    if (!(error instanceof VerificationRejected) || first.toolWritten !== undefined) throw error;
+    execution.context.logger.warn("bump-it: asking the agent again with the verification's refusal", { problems: error.problems });
+    await execution.deps.revert(execution.context.workingCopy, computed.base.id);
+    const again = await edit(execution, computed, "apply", { rejected: error.problems });
+    try {
+      await verify(execution, computed, again.toolWritten);
+    } catch (second) {
+      if (second instanceof VerificationRejected) throw new Error(`${second.message} (asked again after: ${error.problems.join("; ")})`);
+      throw second;
+    }
+    return { content: again.content, rejected: error.problems };
+  }
 }
 
 function planFrom(pr: GitHubPullRequest): BumpPlan {

@@ -152,6 +152,10 @@ describe("a young carrier proved as a bundled fix", () => {
     const outcome = await compare({ "1.0.0": { published: OLD, bundles: VULNERABLE }, "1.1.0": { published: daysAgo(1), bundles: FIXED } }, "1.0.0", "1.1.0");
     expect(ageFailures(outcome.failures)).toEqual([]);
     expect(outcome.cooldown).toMatchObject({ evaluated: true, held: [expect.objectContaining({ name: "carrier", version: "1.1.0", justification: "bundle-fix" })] });
+    // The advisories behind it are the bundled package's, named as such: not the carrier's version.
+    expect(outcome.cooldown.evaluated && outcome.cooldown.held[0]!.targets).toEqual([
+      { name: "brace", bundled: true, replaced: ["5.0.9"], proposed: ["5.0.12"], groups: [["GHSA-brace"]] },
+    ]);
   });
 
   it("isn't when an aged version's bundle drops it too", async () => {

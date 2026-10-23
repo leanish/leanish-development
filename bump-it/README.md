@@ -5,7 +5,9 @@ old (or the repository's `releaseAgeDays`), adding no advisory group or malware.
 scopes skip the wait (their dependencies don't).
 Actions pins and Dockerfile CLIs represented by configured npm manifest/lockfiles use the same rule.
 The tool decides versions, computes npm files and verifies every edit before opening a draft PR. The coding agent
-(Codex or Claude Code) handles Gradle declarations, Actions pins and major migrations.
+(Codex or Claude Code) handles Gradle declarations, Actions pins and major migrations. When verification refuses what
+the agent wrote, the agent is asked once more, from the base, with the refusal (`rejected`); a second refusal fails the
+unit. A pass the tool wrote alone isn't retried.
 
 ```bash
 core/tool-runtime/run.sh bump-it run leanish/widget      # weekly
