@@ -82,8 +82,9 @@ export interface Machine {
  *     stays readable, and so do toolchains and working copies under it;
  *   - replace the home's git and npm config (denied above, and able to hold
  *     credentials) with env, and leave out the system's git config (its
- *     credential helper, such as Homebrew's `osxkeychain`, would hand git the
- *     developer's own credentials): the configured commit identity, npm's
+ *     credential helper, such as Homebrew's `osxkeychain`, would ask the
+ *     Keychain; the agent can name a helper itself with `-c`, so the denied
+ *     `Library/Keychains` is what keeps those credentials out): the configured commit identity, npm's
  *     `ignore-scripts`, the repository's `min-release-age` and its own
  *     packages' `min-release-age-exclude` (npm 11.17 or later reads it);
  *   - put `commandPath` (the guards) first on the PATH of the agent's
