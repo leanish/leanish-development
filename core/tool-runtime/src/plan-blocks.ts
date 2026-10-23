@@ -113,37 +113,17 @@ function firstBlock(body: string): { index: number; length: number; compressed: 
 /**
  * `body` with its section (from `heading` through the hidden comment)
  * replaced by `section`, which must start with `heading` and end with its
- * block; appended when `body` has none. Any other plan block left in the body
- * goes: a reader takes the first one, and a release that can't read a
- * compressed block would take an older plain one after it. Throws when the
- * result is over GitHub's body limit.
+ * block; appended when `body` has none. Throws when the result is over GitHub's body limit.
  */
 export function withPlanSection(body: string, heading: string, section: string): string {
   if (!section.startsWith(heading) || firstBlock(section) === undefined) throw new Error(`a plan section starts with '${heading}' and carries its block`);
   const start = body.indexOf(heading);
-  const block = start === -1 ? null : BLOCK.exec(body.slice(start));
-  const [before, after] = start === -1 || block === null
-    ? [`${body.trimEnd()}\n\n`, ""]
-    : [body.slice(0, start), body.slice(start + block.index + block[0].length)];
-  const result = `${withoutMarkers(before)}${section}${withoutMarkers(after)}`;
+  const block = firstBlock(body);
+  const result = start === -1 || block === undefined || block.index < start
+    ? `${body.trimEnd()}\n\n${section}`
+    : `${body.slice(0, start)}${section}${body.slice(block.index + block.length)}`;
   assertBodyFits(result);
   return result;
-}
-
-/**
- * `text` without any closed comment starting with the reserved prefix, well-formed or not; an unclosed one stays. A
- * linear scan, since a regular expression would retry from every unclosed prefix.
- */
-function withoutMarkers(text: string): string {
-  let result = "";
-  let from = 0;
-  for (let start = text.indexOf(RESERVED); start !== -1; start = text.indexOf(RESERVED, from)) {
-    const end = text.indexOf("-->", start + RESERVED.length);
-    if (end === -1) break;
-    result += text.slice(from, start);
-    from = end + "-->".length;
-  }
-  return result + text.slice(from);
 }
 
 /** Throws when `body` is over GitHub's limit on a PR body. */
