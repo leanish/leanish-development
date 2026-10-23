@@ -582,6 +582,10 @@ describe("securityCandidates, bundled copies", () => {
     // The carrier's own reviewed advisory is the target, decided as a carrier (`carries`), the bundled one reported.
     expect(found.fixes.find((fix) => fix.name === "carrier")).toMatchObject({ targets: ["GHSA-own"], carries: [], to: { version: "1.1.0" } });
     expect(found.fixes.find((fix) => fix.name === "brace")).toMatchObject({ to: undefined, problem: expect.stringContaining("only in the project's repository advisories") });
+    // An own advisory no version fixes, and nothing reviewed in the bundle: no move that fixes nothing.
+    const stuck = withArchives(environment({ "carrier@1.0.0": ["GHSA-own"], "carrier@1.1.0": ["GHSA-own"] }, registry, [], carrierManifests));
+    const unfixed = await securityCandidates(await head(), { ...stuck, fetch: async (url, init) => (url.includes("brace") ? fetch(url, init) : stuck.fetch(url, init)) });
+    expect(unfixed.fixes.find((fix) => fix.name === "carrier")).toMatchObject({ to: undefined, unfixable: ["GHSA-own"], problem: "no version of carrier fixes GHSA-own" });
   });
 
   it("leaves the carrier's own advisory no version fixes, without holding back the bundled fix", async () => {

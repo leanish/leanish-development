@@ -137,6 +137,10 @@ export async function decideCarrier(group: CarrierGroup, own: ReadonlyArray<stri
   const ownSnapshot = own.length === 0 ? undefined : await context.scan([pkg, ...versions.map((version) => ({ ...pkg, version }))]);
   const fixable = ownSnapshot === undefined ? [] : own.filter((advisory) => versions.some((version) => fixes(ownSnapshot, pkg, group.version, [ownSnapshot.group(advisory)], version)));
   const unfixable = own.filter((advisory) => !fixable.includes(advisory));
+  // Nothing to fix, bundled or its own (only unreviewed bundled advisories, an own one no version fixes): no move.
+  if (!malicious && carriedTargets.length === 0 && fixable.length === 0) {
+    return { ...none(`no version of ${group.name} fixes ${own.length === 0 ? "anything reviewed" : own.join(", ")}`), unfixable };
+  }
   const choice = await chooseCarrier({
     carrier: group.name,
     from: group.version,
