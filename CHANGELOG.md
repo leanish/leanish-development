@@ -10,7 +10,8 @@
   people to what fits, with a line saying how many lines aren't shown. A plan that fits is written exactly as before,
   so open PRs keep their text, and releases before this one read every PR they could have written themselves. They
   don't read a compressed plan: after a rollback, such a PR is skipped as carrying no plan, and the next pass may open
-  another one. A plan stays refused when even compressed it doesn't fit, or when its JSON is over 1 MiB, which also
+  another one. Where a person duplicated a plan block in a PR body, an earlier release would read the plain duplicate
+  instead of the compressed plan, so remove duplicate blocks before rolling back. A plan stays refused when even compressed it doesn't fit, or when its JSON is over 1 MiB, which also
   bounds what a block in a PR body can decompress to. Reads still take the first well-formed block. A body over
   GitHub's 65,536 characters (with secure-it's cooldown warning) fails while it's composed instead of at GitHub.
 
