@@ -103,6 +103,22 @@ describe("plan blocks", () => {
     },
   );
 
+  it("keeps a person's text after a marker left open on its line, up to any later close", () => {
+    const note = "<!-- leanish:plan (typed by a reviewer, never closed)\nImportant reviewer text.\n<!-- ci note --> tail";
+    const rewritten = withPlanSection(`${note}\n\n${section({ a: 1 })}\n\n${note}`, HEADING, section({ a: 2 }));
+    expect(rewritten.split("Important reviewer text.")).toHaveLength(3);
+    expect(rewritten.split("<!-- ci note --> tail")).toHaveLength(3);
+    expect(planPayload(rewritten)).toEqual({ a: 2 });
+  });
+
+  it("rewrites quickly around many markers left open on separate lines", () => {
+    const unclosed = "<!-- leanish:plan \n".repeat(3000);
+    const started = performance.now();
+    const rewritten = withPlanSection(`${unclosed}text -->\n\n${section({ a: 1 })}`, HEADING, section({ a: 2 }));
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(rewritten.startsWith(unclosed)).toBe(true);
+  });
+
   it("rewrites quickly around many unclosed markers, and keeps them", () => {
     const unclosed = "<!-- leanish:plan ".repeat(3000);
     const started = performance.now();

@@ -131,19 +131,28 @@ export function withPlanSection(body: string, heading: string, section: string):
 }
 
 /**
- * `text` without any closed comment starting with the reserved prefix, well-formed or not; an unclosed one stays. A
- * linear scan, since a regular expression would retry from every unclosed prefix.
+ * `text` without any comment starting with the reserved prefix that closes on the same line, well-formed or not (a
+ * plan block is always one line). One left open on its line stays, and so does everything after it up to any later
+ * `-->`, which belongs to whoever wrote it. Linear: the next close and the next line end are only ever searched forward.
  */
 function withoutMarkers(text: string): string {
   let result = "";
-  let from = 0;
-  for (let start = text.indexOf(RESERVED); start !== -1; start = text.indexOf(RESERVED, from)) {
-    const end = text.indexOf("-->", start + RESERVED.length);
-    if (end === -1) break;
-    result += text.slice(from, start);
-    from = end + "-->".length;
+  let kept = 0;
+  let close = -1;
+  let lineEnd = -1;
+  for (let at = text.indexOf(RESERVED); at !== -1; ) {
+    if (close < at) close = text.indexOf("-->", at + RESERVED.length);
+    if (close === -1) break;
+    if (lineEnd < at) lineEnd = text.indexOf("\n", at);
+    if (lineEnd !== -1 && lineEnd < close) {
+      at = text.indexOf(RESERVED, at + RESERVED.length);
+      continue;
+    }
+    result += text.slice(kept, at);
+    kept = close + "-->".length;
+    at = text.indexOf(RESERVED, kept);
   }
-  return result + text.slice(from);
+  return result + text.slice(kept);
 }
 
 /** Throws when `body` is over GitHub's limit on a PR body. */
