@@ -33,7 +33,7 @@ risky_key() {
   local status=1
   shopt -s nocasematch
   case "$1" in
-    alias.*|remote.*|url.*|credential*|include.*|includeif.*|core.sshcommand|core.askpass|core.hookspath|core.gitproxy|http.*extraheader*|http.*proxy*|pushurl) status=0 ;;
+    alias.*|remote.*|url.*|credential.*|include.*|includeif.*|core.sshcommand|core.askpass|core.hookspath|core.gitproxy|http.*extraheader*|http.*proxy*|pushurl) status=0 ;;
   esac
   shopt -u nocasematch
   return "$status"
@@ -102,9 +102,19 @@ check_remote_add() {
   esac
 }
 
+# git takes any unambiguous prefix of a long option (`--remove-sec`); a prefix of a write option makes a write.
+write_option_prefix() {
+  local option
+  for option in --unset --unset-all --add --replace-all --remove-section --rename-section; do
+    case "$option" in "$1"*) return 0 ;; esac
+  done
+  return 1
+}
+
 # A write is refused when any operand names a protected key or section, not only the one taken for the key: an option
-# this parser doesn't know (`-t <type>`, an abbreviation) could make another one the key, and a renamed section's new
-# name is an operand too. Known limit: `--` before a value that looks like `--get` still reads as a read.
+# this parser doesn't know (`-t <type>`) could make another one the key, and a renamed section's new name is an operand
+# too. So a value that looks like a protected key (`user.name remote.origin`) is refused as well. Known limit: `--`
+# before a value that looks like `--get` still reads as a read.
 # `get`, `list`, `set` and `unset` are subcommands (newer git) only before the key, and the options that take a value
 # take the next argument: a value there is neither the key nor a subcommand.
 check_config() {
@@ -118,6 +128,11 @@ check_config() {
       --unset|--unset-all|--add|--replace-all|--remove-section) write=true ;;
       --global|--system) scope=$arg ;;
       -f|--file|--blob|--type|--default|--comment|--value) value_next=true ;;
+      --?*)
+        if write_option_prefix "$arg"; then
+          write=true
+          case --rename-section in "$arg"*) rename=true ;; esac
+        fi ;;
       -*) ;;
       *)
         operands=$((operands + 1))
@@ -137,7 +152,7 @@ check_config() {
   if [ "$write" = false ] && { [ "$read" = true ] || [ "$values" -eq 0 ]; }; then return 0; fi
   [ -z "$scope" ] || deny "git config $scope (write)"
   # A renamed section's names are sections: `<name>.` makes one (`alias`, `credential`) match its keys' patterns. A
-  # value is only checked as a key, so `submodule.x.path include` passes.
+  # value is checked like a key, as a whole name: `submodule.x.path include` passes, `user.name remote.origin` doesn't.
   for arg in "${names[@]}"; do
     { risky_key "$arg" || { [ "$rename" = true ] && risky_key "$arg."; }; } && deny "git config $arg"
   done
