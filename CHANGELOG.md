@@ -6,14 +6,15 @@
 
 - The agent's `git` guard, in both tools, checks only pushes. A push to a remote whose every push URL is on this
   machine passes, so a repository's own tests can push to bare repositories; any other `git push`, `send-pack` or
-  `http-push` command is refused with a message that the tool publishes (a push under an alias isn't recognised, as in
-  0.7.3). The guard no longer parses `git config`, `git remote`
-  or `-c` settings: the agent's git metadata is read-only, and the only credential it can reach is its read-only GitHub
-  token (its git reads neither the home's nor the system's config, and the sandbox can't read the Keychain,
-  `~/.git-credentials` or the SSH keys), so neither a config change nor a `-c` setting such as `credential.helper` or `remote.<name>.receivePack`
-  can publish anything. The guard is a guard rail, not a boundary
-  (see the [security model](docs/security-model.md#secure-it-and-bump-it)); a mistaken remote or config change now
-  fails in git ("could not lock config file") instead of in the guard.
+  `http-push` command is refused with a message that the tool publishes. The guard no longer parses `git config`,
+  `git remote` or `-c` settings. The agent's git metadata is read-only, and the only credential it can reach is its
+  read-only GitHub token: its git reads neither the home's nor the system's config, and the sandbox can't read the
+  Keychain, `~/.git-credentials` or the SSH keys. So neither a config change nor a `-c` setting such as
+  `credential.helper` can publish anything off the machine. The guard is a guard rail, not a boundary (see the
+  [security model](docs/security-model.md#secure-it-and-bump-it)): a push under an alias, or one whose
+  `-c remote.<name>.receivePack` runs another command, isn't recognised and may reach another repository on this
+  machine, as an alias could in 0.7.3. A mistaken remote or config change now fails in git ("could not lock config
+  file") instead of in the guard.
 
 ### Fixed
 
