@@ -8,7 +8,7 @@
 import { createHash } from "node:crypto";
 
 import { heldEntry, heldUntil } from "@leanish/gate/cooldown";
-import { planBlock, planPayload, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
+import { assertBodyFits, planPayload, planSection as sectionOf, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
 
 import { floorIdentity, validRemoval } from "./floor-removal.ts";
 import type { ChangePlan, PlannedHold, PlannedMove } from "./plan.ts";
@@ -37,32 +37,26 @@ export function planSection(plan: ChangePlan): string {
     (move) =>
       `| ${move.ecosystem} | \`${move.name}\` | ${move.from} → ${move.to}${move.major ? " (major)" : ""} | ${move.mechanism} | ${fixesLabel(plan, move)} | ${move.locations.map((location) => `\`${location}\``).join(", ")} |`,
   );
-  const section = [
-    HEADING,
-    "",
+  const people = [
     "| Ecosystem | Package | Version | How | Fixes | Where |",
     "|---|---|---|---|---|---|",
     ...rows,
     ...omittedSection(plan),
     ...(plan.notes ?? []).map((note) => `- ${note.replace(/\s+/g, " ")}`),
-    "",
-    "Security targets are the versions the supply-chain gate's rule picks (`supply-chain candidates --rule security`); code chose any required direct-peer companions at their lowest safe compatible versions. The gate verified the change before it was published.",
-    "",
-    planBlock(plan),
   ].join("\n");
-  if (section.length > 43000) throw new Error("security plan is too large for a PR body");
-  return section;
+  const footer = "Security targets are the versions the supply-chain gate's rule picks (`supply-chain candidates --rule security`); code chose any required direct-peer companions at their lowest safe compatible versions. The gate verified the change before it was published.";
+  return sectionOf({ heading: HEADING, people, footer, payload: plan, name: "security plan" });
 }
 
 function removalSection(plan: ChangePlan): string {
   const removal = plan.floorRemoval!;
   const escape = (text: string) => text.replaceAll("|", "\\|").replace(/\s+/g, " ");
   const rows = removal.floors.map((floor) => `| ${floor.ecosystem} | ${escape(floor.package)} | ${floor.version} | ${escape(floor.declaredIn)} | ${floor.advisories.join(", ")} |`);
-  const section = [HEADING, "", "Security floors removed after one joint resolution without dependency locks kept every recorded advisory fixed.", "",
+  const people = ["Security floors removed after one joint resolution without dependency locks kept every recorded advisory fixed.", "",
     "| Ecosystem | Package | Floor | Declaration | Advisories |", "|---|---|---|---|---|", ...rows, "",
-    ...removal.notes.map((note) => `- ${escape(note)}`), "", "Compatibility floors are preserved. All induced versions are judged by compare before publication.", "", planBlock(plan)].join("\n");
-  if (section.length > 43000) throw new Error("floor-removal plan is too large for a PR body");
-  return section;
+    ...removal.notes.map((note) => `- ${escape(note)}`)].join("\n");
+  const footer = "Compatibility floors are preserved. All induced versions are judged by compare before publication.";
+  return sectionOf({ heading: HEADING, people, footer, payload: plan, name: "floor-removal plan" });
 }
 
 /** A companion aligns the direct-peer set rather than claiming to fix an advisory itself. */
@@ -101,7 +95,10 @@ function omittedSection(plan: ChangePlan): string[] {
 export function withPlanSection(body: string, plan: ChangePlan): string {
   const warning = cooldownWarning(plan.cooldown ?? []);
   const rest = replaced(withoutWarning(body), HEADING, planSection(plan));
-  return warning === undefined ? rest : `${warning}\n\n${rest}`;
+  if (warning === undefined) return rest;
+  const warned = `${warning}\n\n${rest}`;
+  assertBodyFits(warned);
+  return warned;
 }
 
 function withoutWarning(body: string): string {

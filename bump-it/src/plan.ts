@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 
 import { safePath } from "@leanish/tool-runtime/local-files";
-import { planBlock, planPayload, withPlanSection as replaceSection } from "@leanish/tool-runtime/plan-blocks";
+import { planPayload, planSection as sectionOf, withPlanSection as replaceSection } from "@leanish/tool-runtime/plan-blocks";
 
 import type { WrapperFile } from "./wrapper-generation.ts";
 import { WRAPPER_FILES, WRAPPER_PROPERTIES } from "./gradle-wrapper.ts";
@@ -233,11 +233,8 @@ export function planSection(plan: BumpPlan): string {
   if (plan.changeCount > 30) {
     changes.push(`- and ${plan.changeCount - 30} more npm copy changes`);
   }
-  const section = `${HEADING}\n\n${direct.join("\n")}\n\n${changes.join("\n")}\n\n${plan.notes.map((note) => `- ${cell(note)}`).join("\n")}\n\n${planBlock(plan)}`;
-  if (section.length > 43000) {
-    throw new Error("bump-it's plan is too large for a PR body");
-  }
-  return section;
+  const people = `${direct.join("\n")}\n\n${changes.join("\n")}\n\n${plan.notes.map((note) => `- ${cell(note)}`).join("\n")}`;
+  return sectionOf({ heading: HEADING, people, payload: plan, name: "bump-it's plan" });
 }
 
 export function withPlanSection(body: string, plan: BumpPlan): string {

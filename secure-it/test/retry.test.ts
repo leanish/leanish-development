@@ -96,4 +96,19 @@ describe("batch retry", () => {
     expect(refreshed.match(/What secure-it moved/g)).toHaveLength(1);
     expect(planOf(planSection({ ...reduced, kind: "invalid" as never }))).toBeUndefined();
   });
+
+  it("compresses a plan too large for a plain block, and keeps its cooldown warning within GitHub's body limit", () => {
+    const large = plan(...Array.from({ length: 400 }, (_, n) => move(`lib-${n}`)));
+    expect(planBlock(large).length).toBeGreaterThan(43_000);
+    const section = planSection(large);
+    expect(section.length).toBeLessThanOrEqual(43_000);
+    expect(section).toContain("<!-- leanish:plan:br ");
+    expect(section).toContain("Security targets are the versions");
+    expect(planOf(section)).toEqual(large);
+    const held = { ecosystem: "npm" as const, name: "lib-0", version: "1.0.1", replaced: ["1.0.0"], published: "2026-10-06T00:00:00.000Z", eligibleAt: "2026-10-13T00:00:00.000Z", justification: "security-fix" as const, signals: [] };
+    const warned = withPlanSection("Description.", { ...large, cooldown: [held] });
+    expect(warned).toContain("Release-age cooldown bypassed");
+    expect(planOf(warned)).toEqual({ ...large, cooldown: [held] });
+    expect(() => withPlanSection("x".repeat(65_536 - section.length), { ...large, cooldown: [held] })).toThrow(/over GitHub's 65536/);
+  });
 });

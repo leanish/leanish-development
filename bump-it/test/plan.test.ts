@@ -53,6 +53,16 @@ describe("units and persisted plan", () => {
     expect(planSection(plan)).toContain("and 970 more");
     expect(planSection(plan).length).toBeLessThan(20000);
   });
+  it("compresses a plan too large for a plain block, so it still publishes and reads back", async () => {
+    const bumps = Array.from({ length: 300 }, (_, n) => candidate({ name: `lib-${n}`, locations: [`workspaces/w${n}`, `workspaces/x${n}`] }));
+    const plan = await planFor(routineUnit(bumps), npm, async () => undefined);
+    expect(planBlock(plan).length).toBeGreaterThan(43_000);
+    const section = planSection(plan);
+    expect(section.length).toBeLessThanOrEqual(43_000);
+    expect(section).toContain("<!-- leanish:plan:br ");
+    expect(planOf(section)).toEqual(plan);
+    expect(planOf(withPlanSection("Description.", plan))).toEqual(plan);
+  });
   it("replaces the previous section once while keeping the surrounding PR body", async () => {
     const plan = await planFor(routineUnit([candidate()]), npm, async () => undefined);
     const updated = withPlanSection(`before\n${planSection(plan)}\nafter`, { ...plan, notes: ["new note"] });
