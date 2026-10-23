@@ -122,7 +122,8 @@ describe("plan blocks", () => {
   it("removes many closed markers on one line quickly", () => {
     const closed = "<!-- leanish:plan x --> ".repeat(2500);
     const started = performance.now();
-    const rewritten = withPlanSection(`${closed}\n\n${section({ a: 1 })}`, HEADING, section({ a: 2 }));
+    // After the section, with no line end left: the scan has to remember that none remains.
+    const rewritten = withPlanSection(`${section({ a: 1 })}\n\n${closed}`, HEADING, section({ a: 2 }));
     expect(performance.now() - started).toBeLessThan(500);
     expect(rewritten.match(/leanish:plan/g)).toHaveLength(1);
   });
