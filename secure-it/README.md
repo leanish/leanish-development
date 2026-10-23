@@ -231,8 +231,9 @@ Fixed paragraphs open the warning, by how each advisory for the package was revi
 mostly the same review, apart from import lag. A project's own repository advisories are unreviewed: whoever controls
 the repository publishes them at will.
 
-- every advisory reviewed: a plain line saying so;
-- only in the project's repository advisories: a warning that such an advisory is easy to fake, to get a release
+- every advisory backed by a reviewed record (it lists the replaced version as affected and the proposed one as not):
+  a plain line saying so;
+- backed only by the project's repository advisories: a warning that such an advisory is easy to fake, to get a release
   carrying an attack installed before the wait ends; a variant says so when OSV or GitHub couldn't be checked;
 - when no source read now backs the fix the comparison proved (a record withdrawn since, or ranges that no longer put
   the replaced version among the affected ones): a paragraph saying so. The verdict stands; the rows are marked ⚠.

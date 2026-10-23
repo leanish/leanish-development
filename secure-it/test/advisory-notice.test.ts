@@ -48,13 +48,18 @@ describe("the advisory notice on a held PR", () => {
   });
 
   it("warns most about an advisory only the project's repository has, as a possible fake", () => {
-    expect(REPOSITORY_ONLY).toContain("neither OSV nor GitHub's reviewed advisory database lists it");
+    expect(REPOSITORY_ONLY).toContain("neither OSV nor GitHub's reviewed advisory database lists it as fixed in the proposed version");
     expect(REPOSITORY_ONLY).toContain("fake");
     const unreviewed = evidence([checked("repository", [record()]), checked("github", [record({ reviewed: false })]), checked("osv")]);
     const notice = advisoryNotice([hold({ evidence: unreviewed })]);
     // An unreviewed GitHub record isn't GitHub's word: still repository-only, shown as unreviewed.
     expect(notice.paragraphs).toEqual([REPOSITORY_ONLY]);
     expect(notice.details.at(-1)).toContain("| GHSA-m8xf-2cr7-77ph: unreviewed, declares the fix 3.2.4");
+  });
+
+  it("doesn't call a fix reviewed when the reviewed record says the proposed version is still affected", () => {
+    const disagreeing = evidence([checked("repository", [record()]), checked("github"), checked("osv", [record({ declaredFixes: ["3.2.5"], verdicts: { "3.2.3": "affected", "3.2.4": "affected" } })])]);
+    expect(advisoryNotice([hold({ evidence: disagreeing })]).paragraphs).toEqual([REPOSITORY_ONLY]);
   });
 
   it("says what couldn't be checked instead of calling it absent", () => {

@@ -156,6 +156,7 @@ export async function fetchRepositoryAdvisories(
   const advisories: RepositoryAdvisory[] = [];
   const entries: unknown[] = [];
   let url: string | undefined = `${GITHUB_API}/repos/${repo}/security-advisories?state=published&per_page=100`;
+  let pages = 0;
   while (url !== undefined) {
     const response = await options.fetch(url, { headers });
     if (response.status === 404) return undefined;
@@ -171,6 +172,7 @@ export async function fetchRepositoryAdvisories(
       if (options.cache !== undefined) entries.push(entry);
     }
     url = nextLink(response.headers.get("link"));
+    if (url !== undefined && ++pages >= MAX_ADVISORY_PAGES) throw new Error(`GitHub repository advisories of ${repo} run past ${MAX_ADVISORY_PAGES} pages`);
   }
   // Cache only after every page was fetched and parsed. A later refusal must not preserve a partial list.
   await options.cache?.write(repo, entries);
@@ -223,7 +225,12 @@ function advisoryOf(entry: Record<string, unknown>, ghsaId: string, where: strin
   };
 }
 
+/** The next page GitHub's `Link` header names, only on GitHub's API host: the request carries the token. */
 export function nextLink(header: string | null): string | undefined {
   if (header === null) return undefined;
-  return /<([^>]+)>;\s*rel="next"/.exec(header)?.[1];
+  const next = /<([^>]+)>;\s*rel="next"/.exec(header)?.[1];
+  return next?.startsWith(`${GITHUB_API}/`) ? next : undefined;
 }
+
+/** Pages of one repository's advisories read at most: 100 each, far above any repository's count. */
+export const MAX_ADVISORY_PAGES = 20;

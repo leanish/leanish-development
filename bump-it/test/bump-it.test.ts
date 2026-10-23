@@ -620,6 +620,18 @@ describe("bump-it run", () => {
     expect(h.reverted.at(-1)).toBe(BASE_SHA);
     expect(h.workspace.publications).toHaveLength(1);
   });
+  it("keeps the first refusal when the agent, asked again, can't apply", async () => {
+    const h = harness();
+    let calls = 0;
+    const context = { ...h.context, agent: (async (call: { input: Record<string, unknown> }) => {
+      h.agentCalls.push(call);
+      return ++calls === 1 ? { outcome: "applied", summary: "updated", publication: { title: "upgrading lib", body: "Adapts.", commitMessage: "upgrading lib" } } : { outcome: "cannot-apply", summary: "the plan needs a parent move" };
+    }) as ToolRunContext["agent"] };
+    const deps = { ...h.deps, verify: async (input: Parameters<BumpItDeps["verify"]>[0]) => (input.plan.kind === "major" ? ["compare: refused major"] : []) };
+    expect(await bumpIt(deps).run(context)).toMatchObject({ units: [{ outcome: "published" }, {
+      outcome: "failed", detail: "the agent couldn't apply the plan: the plan needs a parent move (asked again after verification failed: compare: refused major)",
+    }] });
+  });
   it("fails a unit whose edit left a symbolic link, whatever the other checks say", async () => {
     const linked = harness({ links: ["package-lock.json"] });
     expect(await bumpIt(linked.deps).run(linked.context)).toMatchObject({ units: [{ outcome: "failed", detail: expect.stringContaining("the edit made package-lock.json a symbolic link") }, { outcome: "failed" }] });

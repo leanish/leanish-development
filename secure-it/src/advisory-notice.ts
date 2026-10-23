@@ -15,13 +15,13 @@ import type { PlannedHold } from "./plan.ts";
  * advisories, which whoever controls the repository publishes at will, in minutes.
  */
 
-export const REVIEWED = "The advisories behind these versions are reviewed: OSV or GitHub's reviewed advisory database lists them.";
+export const REVIEWED = "The advisories behind these versions are reviewed: OSV or GitHub's reviewed advisory database lists each one as fixed in the proposed version.";
 
 export const REPOSITORY_ONLY =
-  "**Only in the project's own repository advisories: neither OSV nor GitHub's reviewed advisory database lists it.** Whoever controls the project's repository can publish such an advisory in minutes, with no review, so a fake one is the quickest way to get a release carrying an attack installed before the release-age wait ends: publish the \"fixed\" version, then an advisory pointing at it. Don't take this early on the advisory's word.";
+  "**Only the project's own repository advisories back this fix: neither OSV nor GitHub's reviewed advisory database lists it as fixed in the proposed version.** Whoever controls the project's repository can publish such an advisory in minutes, with no review, so a fake one is the quickest way to get a release carrying an attack installed before the release-age wait ends: publish the \"fixed\" version, then an advisory pointing at it. Don't take this early on the advisory's word.";
 
 export const REPOSITORY_ONLY_UNCHECKED =
-  "**Found only in the project's own repository advisories so far; OSV or GitHub's advisory database couldn't be checked.** Treat it as unreviewed: whoever controls the project's repository can publish a fake advisory in minutes to get a release carrying an attack installed before the release-age wait ends.";
+  "**Only the project's own repository advisories back this fix so far; OSV or GitHub's advisory database couldn't be checked.** Treat it as unreviewed: whoever controls the project's repository can publish a fake advisory in minutes to get a release carrying an attack installed before the release-age wait ends.";
 
 export const EVIDENCE_DIFFERS =
   "**The advisories read after the comparison don't back this fix as the comparison did.** For the rows marked ⚠ below, no source lists every replaced version as affected and the proposed one as not, or a record was withdrawn. The comparison's verdict stands; check the table before taking this early.";
@@ -43,7 +43,7 @@ export function advisoryNotice(held: ReadonlyArray<PlannedHold>): AdvisoryNotice
   const rows = fixes.flatMap((entry) => (entry.evidence?.targets ?? []).flatMap((target) => target.groups.map((group) => ({ entry, target, group }))));
   const paragraphs: string[] = [];
   if (rows.some(({ target, group }) => !backed(target, group))) paragraphs.push(EVIDENCE_DIFFERS);
-  const tiers = rows.filter(({ target, group }) => backed(target, group)).map(({ group }) => tierOf(group));
+  const tiers = rows.filter(({ target, group }) => backed(target, group)).map(({ target, group }) => tierOf(target, group));
   if (tiers.some((entry) => entry.tier === "repository" && entry.checked)) paragraphs.push(REPOSITORY_ONLY);
   if (tiers.some((entry) => entry.tier === "repository" && !entry.checked)) paragraphs.push(REPOSITORY_ONLY_UNCHECKED);
   if (tiers.length > 0 && tiers.every((entry) => entry.tier === "reviewed")) paragraphs.push(REVIEWED);
@@ -76,13 +76,16 @@ interface Tier {
   readonly checked: boolean;
 }
 
-/** A GitHub record counts once GitHub reviewed it; an unreviewed one isn't GitHub's word. */
-function tierOf(group: GroupEvidence): Tier {
+/**
+ * The most trusted level whose records back the fix, not merely list the advisory: a reviewed record that puts the
+ * proposed version among the affected ones doesn't vouch for it. A GitHub record counts once GitHub reviewed it.
+ */
+function tierOf(target: TargetEvidence, group: GroupEvidence): Tier {
   const of = (name: SourceEvidence["source"]) => group.sources.find((source) => source.source === name);
-  const listed = (source: SourceEvidence | undefined) => source?.records.some((record) => !record.withdrawn && record.namesPackage && record.reviewed !== false) ?? false;
-  if (listed(of("osv")) || listed(of("github"))) return { tier: "reviewed", checked: true };
+  const backing = (source: SourceEvidence | undefined) => source?.records.some((record) => record.reviewed !== false && backsFix(record, target)) ?? false;
+  if (backing(of("osv")) || backing(of("github"))) return { tier: "reviewed", checked: true };
   const checked = of("osv")?.lookup === "checked" && of("github")?.lookup === "checked";
-  return { tier: listed(of("repository")) ? "repository" : "none", checked };
+  return { tier: backing(of("repository")) ? "repository" : "none", checked };
 }
 
 function packageCell(entry: PlannedHold, target: TargetEvidence): string {

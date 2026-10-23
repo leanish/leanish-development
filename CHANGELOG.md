@@ -8,7 +8,7 @@
   dependency's own repository advisories, GitHub's database and OSV, each read after the verification and shown as
   that source says (its declared fix, and whether its ranges put each replaced and proposed version among the affected
   ones). A fixed paragraph opens the warning: a plain line when OSV or GitHub's reviewed database lists each advisory
-  (reviewed), and a warning when one appears only in the project's own repository advisories, which are unreviewed
+  as fixed in the proposed version (reviewed), and a warning when only the project's own repository advisories do, which are unreviewed
   and easy to fake to get a release carrying an attack installed early. Another says when what the sources say now no
   longer backs the fix the comparison proved. A lookup that fails is shown as such, never as "not found". The gate's comparison report records, for each held fix,
   the advisories behind it (`targets`); nothing in the evidence changes a verdict.
@@ -17,6 +17,12 @@
   existing retry without the named package groups still follows. A review's adaptation isn't restarted this way. The
   run report lists the first refusal (`rejected`). On kryptovero, the agent replaced a planned Gradle floor with a
   move of its parent, which the gate refused, and the critical fix was never proposed.
+
+### Fixed
+
+- The gate follows a repository advisory list's next pages only on GitHub's API host, where the token goes, and at
+  most 20 of them; a source repository named `.` or `..` (in a manifest, a POM or the config) names none, so it can't
+  walk the API path the token is sent to.
 
 ## 0.7.5 - 2026-10-23
 

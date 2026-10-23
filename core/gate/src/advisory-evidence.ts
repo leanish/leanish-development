@@ -14,7 +14,7 @@ import { githubRefusal, type Fetch } from "./http.ts";
 import { isObject } from "./json.ts";
 import type { PackageName, PackageVersion } from "./package-version.ts";
 import type { HeldTarget, HeldVersion } from "./release-age.ts";
-import { affects, namesPackage, nextLink, parseRepositoryEntry, type RepositoryAdvisory } from "./repository-advisories.ts";
+import { affects, MAX_ADVISORY_PAGES, namesPackage, nextLink, parseRepositoryEntry, type RepositoryAdvisory } from "./repository-advisories.ts";
 import { sourceRepository, type SourceRepoOptions } from "./source-repos.ts";
 import { type Ecosystem, versionScheme } from "./versions.ts";
 
@@ -223,7 +223,8 @@ class Lookups {
     const entries: RepositoryEntry[] = [];
     // No state filter: a withdrawn advisory is evidence too.
     let url: string | undefined = `${GITHUB_API}/repos/${repo}/security-advisories?per_page=100`;
-    while (url !== undefined) {
+    for (let pages = 0; url !== undefined; pages++) {
+      if (pages === MAX_ADVISORY_PAGES) throw new Error(`GitHub repository advisories of ${repo} run past ${MAX_ADVISORY_PAGES} pages`);
       const response = await this.#options.fetch(url, { headers: this.#githubHeaders() });
       if (response.status === 404) return undefined;
       if (!response.ok) throw new Error(`GitHub repository advisories of ${repo} failed with HTTP ${response.status}${githubRefusal(response, this.#options.token !== undefined)}`);

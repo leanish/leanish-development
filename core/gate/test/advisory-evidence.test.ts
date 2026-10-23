@@ -119,6 +119,13 @@ describe("the evidence behind a held version", () => {
     expect(source(groups, "osv").lookup).toBe("checked");
   });
 
+  it("follows next pages only on GitHub's API host, and only so far", async () => {
+    const offHost = await evidence({ [REPO_LIST]: { body: [], headers: { link: '<https://evil.example/page2>; rel="next"' } } });
+    expect(source(offHost.targets[0]!.groups, "repository")).toMatchObject({ lookup: "checked", records: [] });
+    const endless = await evidence({ [REPO_LIST]: { body: [], headers: { link: `<${REPO_LIST}>; rel="next"` } } });
+    expect(source(endless.targets[0]!.groups, "repository")).toMatchObject({ lookup: "incomplete", reason: expect.stringContaining("run past 20 pages") });
+  });
+
   it("doesn't ask GitHub without a GHSA id, nor a repository it can't name", async () => {
     const found = await evidence({}, held([["CVE-2026-1"]]), new Map());
     const groups = found.targets[0]!.groups;

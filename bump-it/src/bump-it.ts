@@ -186,12 +186,13 @@ async function applyVerified(execution: Execution, computed: Computed): Promise<
     if (!(error instanceof VerificationRejected) || first.toolWritten !== undefined) throw error;
     execution.context.logger.warn("bump-it: asking the agent again with the verification's refusal", { problems: error.problems });
     await execution.deps.revert(execution.context.workingCopy, computed.base.id);
-    const again = await edit(execution, computed, "apply", { rejected: error.problems });
+    const after = `asked again after ${error.message}`;
+    let again;
     try {
+      again = await edit(execution, computed, "apply", { rejected: error.problems });
       await verify(execution, computed, again.toolWritten);
     } catch (second) {
-      if (second instanceof VerificationRejected) throw new Error(`${second.message} (asked again after: ${error.problems.join("; ")})`);
-      throw second;
+      throw new Error(`${second instanceof Error ? second.message : String(second)} (${after})`);
     }
     return { content: again.content, rejected: error.problems };
   }
