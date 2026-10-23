@@ -550,3 +550,51 @@ What each step added: Sol was decisive twice (the lost coverage on #208 and the 
 Astra added a discriminating test. Haiku's findings on this release were mostly overturned or documentation.
 
 v0.7.3 (`cd10a45`) is rc.1 plus its release metadata.
+
+## Release reviews and candidate of 0.7.4 — 2026-10-23
+
+secure-it's fast-uri pass over leanish-development (#215) hit the 840 s agent limit once and took 797 s the next time.
+The agent spent that time on this repository's own checks under the agent `git` guard. The guard started processes on
+every call, which doubled real-git test suites in the sandbox, and it refused `-c credential.helper=` and
+`git remote add`, which failed 23 release-installer tests. #217 made the guard check only pushes.
+
+- **#217**: Sol reviewed four rounds of a version that still parsed `git config`, `git remote` and `-c`. Two Haiku
+  reviews then found more ways around that parsing (abbreviated write options, values that look like keys). The owner
+  chose to keep only the push check and leave the rest to the boundaries that already held: read-only git metadata,
+  the read-only token, and a sandbox that can't read the Keychain. Astra asked to hold it over
+  `-c remote.<name>.receivePack`, then agreed it doesn't block: the agent can run any command anyway, and can't write
+  to GitHub without a credential. Measured in the sandbox:
+  - agent-runtime: 33.3 → 18.5 s.
+  - tool-runtime: 13.1 s with one timeout → 5.7 s.
+  - setup: 23 failures → 395 passing.
+- **Release reviews on main** (#218 added the CHANGELOG entry #217 lacked):
+  - Haiku ×2: both flagged `-c credential.helper` as a credential route. Measured in the tools' write sandbox, it
+    finds no credential. `security find-internet-password -s github.com` returns 44 there and 0 outside, and
+    `git credential fill` with `osxkeychain` fails with 128. The real finding was that the docs credited "git reads no
+    home or system config" instead of the sandbox (#219).
+  - Sol, unprimed: no blocker. The CHANGELOG overstated what `receivePack` can't do (#220).
+  - Astra: no blocker. One more overstated sentence: in a write run any command reaches the network, so what the
+    read-only token rules out is writing to GitHub (#221).
+- **rc.1 (`8bd29ea`)**: `batch` for both tools on all fixtures.
+  - secure-it: 12 of 12, 9 PRs. bump-it: 12 of 12, 15 PRs.
+  - Every PR was green except fast-uri 3.1.9, held by the cooldown until 2026-10-26 as planned.
+  - The longest agent run was 173 s. On 0.7.3's candidate, one took 384 s; the rest were comparable.
+- **Passes on v0.7.4**: two regular passes of both tools, 28 commands each.
+  - Failures: secure-it on kryptovero in both, pre-existing since 2026-10-21 (a fix that brings jackson 3.2.4,
+    younger than the wait). The second pass also had one Maven Central 502 on sqs-codec; a rerun found nothing to fix.
+  - The agent had no work on leanish-development in either pass: fast-uri's PR is already open, and bump-it's unit
+    needed no agent. So the repository that timed out has no new timing yet.
+
+Known limitations, for 0.7.5:
+- Those listed for 0.7.4 under 0.7.3, including bump-it's and secure-it's 43,000-character limit on a PR's plan
+  section.
+- The `git` guard doesn't recognise a push under an alias or one whose `receivePack` runs another command.
+- The incubator's Claude Code runner keeps Claude Code's `/doctor` and its builtin plugins' skills (incubator#31).
+
+What each step added:
+- The owner's question about the guard's purpose turned a growing parser into one check.
+- Haiku found the parsing holes that led there, but its release "blockers" were overturned by measuring in the
+  sandbox.
+- Sol and Astra each found an overstated claim in the docs; Astra's hold was settled on its own thread before merging.
+
+v0.7.4 (`1ba1779`) is rc.1 plus its release metadata.
