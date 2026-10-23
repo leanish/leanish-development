@@ -1,13 +1,15 @@
 #!/bin/bash
 # Copied from leanish/leanish-development agents/bump-it/local/guard/gh at c6282df; see PROVENANCE.md.
-# Local changes: messages say "agent guard" (secure-it and bump-it share these); "the handler" is "the tool".
+# Local changes: messages say "agent guard" (secure-it and bump-it share these); "the handler" is "the tool"; lib.sh is
+# sourced and the real gh found without starting processes.
 # agent guard for gh: reads only. The agent's token is read-only, and every
 # GitHub write (PRs, comments, labels, ready, close) is the tool's; this
 # shim catches a mistaken write before it reaches the API. Never merge,
 # settings, secrets, workflows, releases or the token itself.
 # No `set -u`: macOS's bash 3.2 treats an empty "${array[@]}" as unbound.
-source "$(dirname "$0")/lib.sh"
-real=$(real_bin gh)
+# Without `dirname`: every process started here adds to each guarded call.
+case "$0" in */*) source "${0%/*}/lib.sh" ;; *) source ./lib.sh ;; esac
+real_bin gh
 
 check_api() {
   local method="" fields=false endpoint="" arg next=""
