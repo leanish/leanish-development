@@ -17,6 +17,6 @@
     "check": "node --test test/workspace-layout.test.mjs && npm run check --workspaces"
   },
   "devDependencies": {
-    "rolldown": "^1.2.13"
+    "rolldown": "^1.2.14"
   }
 }
