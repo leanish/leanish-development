@@ -113,7 +113,7 @@ describe("moving a Gradle parent instead of flooring what it brings", () => {
     const probes: string[] = [];
     const { plan } = await search([own, okio()], { base: "4.9.1", probes });
     // Its veto was recorded for 4.9.2; the fold moves it to 4.12.0, another choice, so no note claims "this takes 4.9.2".
-    expect(plan.notes ?? []).not.toEqual(expect.arrayContaining([expect.stringContaining("ruled out")]));
+    expect(plan.moves.every((move) => move.vetoed === undefined)).toBe(true);
     expect(probes[0]).toBe("4.9.2");
     expect(plan.moves).toEqual([expect.objectContaining({ name: OKHTTP, from: "4.9.1", to: "4.12.0", advisories: ["GHSA-okhttp"], carries: [expect.objectContaining({ name: OKIO, advisories: ["GHSA-okio"] })] })]);
   });

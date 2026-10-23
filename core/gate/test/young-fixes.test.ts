@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { type Config, parseConfig } from "../src/config.ts";
 import type { PackageName, PackageVersion } from "../src/package-version.ts";
 import { type Advisory, Snapshot } from "../src/snapshot.ts";
-import { candidateVersions, compatibleLine, gatherCandidates, type VersionCatalog, youngFixProblem } from "../src/young-fixes.ts";
+import { candidateVersions, compatibleLine, gatherCandidates, type VersionCatalog, vetoesOf, youngFixProblem } from "../src/young-fixes.ts";
 
 const NOW = new Date("2026-10-06T12:00:00Z");
 const DAY = 86_400_000;
@@ -128,5 +128,20 @@ describe("candidate versions", () => {
     const guava: PackageName = { ecosystem: "Maven", name: "com.google.guava:guava" };
     const all = ["33.7.1-jre", "33.7.1-android", "33.7.2-jre", "33.7.2-android", "33.8.0-jre"];
     expect(candidateVersions(parseConfig({}), guava, "33.7.1-jre", "33.7.2-jre", all)).toEqual(["33.7.2-jre", "33.8.0-jre"]);
+  });
+});
+
+describe("vetoesOf", () => {
+  it("names only the unreviewed groups that block a candidate, not debt the current version already has", () => {
+    const sourced = (id: string, source: "osv" | "repository"): Advisory => ({ id, ids: [id], source, malicious: false, summary: undefined, severity: undefined });
+    const affecting = new Map<string, Advisory[]>([
+      ["npm|lib|1.0.0", [sourced("GHSA-a", "osv"), sourced("GHSA-b", "repository")]],
+      ["npm|lib|1.0.1", [sourced("GHSA-b", "repository"), sourced("GHSA-c", "repository")]],
+      ["npm|lib|1.0.2", [sourced("GHSA-b", "repository")]],
+    ]);
+    const snapshot = new Snapshot(affecting, [], new Date(0));
+    const pkg = { ecosystem: "npm" as const, name: "lib" };
+    // 1.0.1 fixes A and keeps B (inherited), but adds C: C alone rules it out. 1.0.2 just keeps B: no veto.
+    expect(vetoesOf(snapshot, pkg, "1.0.0", ["GHSA-a"], ["1.0.1", "1.0.2"])).toEqual([{ version: "1.0.1", advisories: ["GHSA-c"] }]);
   });
 });

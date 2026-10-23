@@ -25,7 +25,7 @@ import { actionGaps } from "./actions-changes.ts";
 import { type CarriedPackage, type CarrierContext, type CarrierGroup, decideCarrier, splitBundled } from "./carrier-candidates.ts";
 import { type Config, isOwnPackage } from "./config.ts";
 import { type Exceptions, unexcusedProblem } from "./exceptions.ts";
-import { type Finding, findingsOf, type Located } from "./findings.ts";
+import { type Finding, findingKey, findingsOf, type Located } from "./findings.ts";
 import type { Floor } from "./floors.ts";
 import {
   bundleReader,
@@ -127,8 +127,12 @@ export async function securityCandidates(head: Tree, env: GateEnvironment, gradl
   const findings = unexcused(state.packages, state.snapshot, exceptions, today);
   const triggers = findings.filter((finding) => finding.malicious || reviewedGroups(state.snapshot, finding).has(finding.advisory));
   const unreviewed = unreviewedReports(findings.filter((finding) => !triggers.includes(finding)), triggers);
-  // Bundled copies can only move with their carrier: their findings become the carrier's targets.
-  const { rest, carriers } = splitBundled(triggers, state.inventory.npm);
+  // Bundled copies can only move with their carrier: their findings become the carrier's targets. Every finding names
+  // carriers (one whose bundle has only unreviewed findings is still a carrier, so its own fix checks the bundle);
+  // only triggering ones become targets.
+  const split = splitBundled(findings, state.inventory.npm);
+  const rest = split.rest.filter((finding) => triggers.some((trigger) => findingKey(trigger) === findingKey(finding) && trigger.version === finding.version));
+  const carriers = split.carriers.map((group) => triggeredOnly(group, triggers));
   for (const finding of rest) {
     const pkg: Located = { ecosystem: finding.ecosystem, name: finding.name, version: finding.version, locations: finding.locations };
     const entry = failing.get(versionKey(pkg)) ?? { pkg, malicious: false, advisories: [], severities: [] };
@@ -157,7 +161,12 @@ export async function securityCandidates(head: Tree, env: GateEnvironment, gradl
     identity: (pkg, to) => identity.problems(pkg, to),
   };
   const carried: SecurityFix[] = [];
-  for (const group of carriers) carried.push(await carrierFix(group, carrierOwn.get(versionKey({ ecosystem: "npm", name: group.name, version: group.version })), carrierContext));
+  for (const group of carriers) {
+    const own = carrierOwn.get(versionKey({ ecosystem: "npm", name: group.name, version: group.version }));
+    // A carrier with nothing reviewed to fix, in its bundle or of its own, isn't moved: its findings were reported.
+    if (group.carried.size === 0 && own === undefined) continue;
+    carried.push(await carrierFix(group, own, carrierContext));
+  }
   const listings = new Map<string, ReadonlyArray<string> | undefined>();
   const candidates: PackageVersion[] = carried.flatMap((fix) => (fix.to === undefined ? [] : [{ ecosystem: "npm" as const, name: fix.name, version: fix.to.version }]));
   for (const { pkg, malicious } of failing.values()) {
@@ -210,6 +219,16 @@ export async function securityCandidates(head: Tree, env: GateEnvironment, gradl
     gaps: [...state.snapshot.gaps, ...snapshot.gaps, ...actionGaps(state.inventory.actions, state.resolutions)],
     osvScannerVersion: state.osvScannerVersion,
   };
+}
+
+/** `group` with only the carried advisories that trigger a fix (reviewed, or malware), and no package left without one. */
+function triggeredOnly(group: CarrierGroup, triggers: ReadonlyArray<Finding>): CarrierGroup {
+  const triggered = new Set(triggers.map((finding) => `${finding.name}|${finding.version}|${finding.advisory}`));
+  const carried = new Map([...group.carried.entries()].flatMap(([name, entry]) => {
+    const advisories = new Set([...entry.advisories].filter((advisory) => [...entry.versions].some((version) => triggered.has(`${name}|${version}|${advisory}`))));
+    return advisories.size === 0 ? [] : [[name, { ...entry, advisories }] as const];
+  }));
+  return { ...group, carried };
 }
 
 /**

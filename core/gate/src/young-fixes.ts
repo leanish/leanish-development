@@ -136,7 +136,10 @@ export function vetoesOf(snapshot: Snapshot, pkg: PackageName, from: string, tar
     const candidate = { ...pkg, version };
     const unreviewed = unreviewedGroups(snapshot, candidate);
     if (unreviewed.size === 0 || fixes(snapshot, pkg, from, targets, version) || !fixes(snapshot, pkg, from, targets, version, unreviewed)) return [];
-    const ids = snapshot.advisories(candidate).filter((advisory) => unreviewed.has(snapshot.group(advisory.id))).flatMap((advisory) => advisory.ids);
+    // Only the groups that block it: a target it still has, or one `from` didn't have (inherited debt doesn't).
+    const before = groupsOf(snapshot, { ...pkg, version: from });
+    const blocking = (group: string) => unreviewed.has(group) && (targets.includes(group) || !before.has(group));
+    const ids = snapshot.advisories(candidate).filter((advisory) => blocking(snapshot.group(advisory.id))).flatMap((advisory) => advisory.ids);
     return [{ version, advisories: [...new Set(ids)].sort() }];
   });
 }

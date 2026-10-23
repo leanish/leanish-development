@@ -22,6 +22,7 @@ import semver from "semver";
 
 import type { AdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import { type SecurityFix, severityRank } from "@leanish/gate/candidates";
+import type { Veto } from "@leanish/gate/young-fixes";
 import type { CarriedPackage } from "@leanish/gate/carrier-candidates";
 import type { NpmPeerPlanner } from "@leanish/gate/npm-peers";
 import type { HeldVersion } from "@leanish/gate/release-age";
@@ -53,6 +54,8 @@ export interface PlannedMove {
   readonly unblocks?: ReadonlyArray<string>;
   /** A carrier move: the packages it replaces (bundled npm copies, or the Gradle module a parent brings), each with its advisories. */
   readonly carries?: ReadonlyArray<CarriedPackage>;
+  /** Candidates the gate ruled out only by advisories no reviewed source corroborates (`vetoesOf`), for people. */
+  readonly vetoed?: ReadonlyArray<Veto>;
 }
 
 /** A dependent that moves so its range admits a copy's security target (`npm-parents.ts`). */
@@ -302,7 +305,10 @@ export async function planFor(work: ReadonlyArray<FixWork>, inputs: PlanInputs, 
     // Only what can be fixed is a target: an advisory no version fixes stays, inherited (fixing A and leaving B).
     // A carrier's own targets only: what it carries stays with each carried package (`carries`).
     const advisories = fix.targets.filter((target) => !fix.unfixable.includes(target));
-    const base = { ecosystem: fix.ecosystem, name: fix.name, from: fix.from, to: to.version, advisories, major: to.major, ...(fix.carries === undefined ? {} : { carries: fix.carries }) };
+    const base = {
+      ecosystem: fix.ecosystem, name: fix.name, from: fix.from, to: to.version, advisories, major: to.major,
+      ...(fix.carries === undefined ? {} : { carries: fix.carries }), ...(fix.vetoed === undefined || fix.vetoed.length === 0 ? {} : { vetoed: fix.vetoed }),
+    };
     if (fix.ecosystem === "GitHub Actions") {
       const commitSha = await inputs.tagCommit(fix.name, to.version);
       if (commitSha === undefined) throw new Error(`${fix.name} has no tag ${to.version} to pin to`);
@@ -334,7 +340,7 @@ export async function planFor(work: ReadonlyArray<FixWork>, inputs: PlanInputs, 
   const severity = work.map((fix) => fix.severity).reduce<string | undefined>((best, next) => (severityRank(next) > severityRank(best) ? next : best), undefined);
   const kind = unit?.kind ?? (malware ? "malware" : moves.some((move) => move.major) ? "major" : "routine");
   const topic = unit?.topic ?? (kind === "malware" ? "malware" : kind === "routine" ? "security" : `${work[0]!.name}-major`);
-  const notes = [...new Set(work.flatMap((fix) => [...fix.notes ?? [], ...vetoNotes(fix)]))];
+  const notes = [...new Set(work.flatMap((fix) => fix.notes ?? []))];
   return { kind, topic, malware, packages, moves, severity, ...(coupled.length === 0 ? {} : { coupled }), ...(notes.length === 0 ? {} : { notes }) };
 }
 
@@ -408,13 +414,6 @@ export function dependentsOf(lockfiles: ReadonlyMap<string, unknown>, location: 
     else dependents.push({ path, spec, name: entry.name ?? path.slice(path.lastIndexOf("node_modules/") + "node_modules/".length), version: entry.version, bundled: entry.inBundle === true });
   }
   return { installedAs, declaredByWorkspace, dependents };
-}
-
-/** The candidates the gate ruled out only by advisories no reviewed source corroborates: a fixed note each, for people. */
-function vetoNotes(fix: FixWork): string[] {
-  if (fix.to === undefined) return [];
-  return (fix.vetoed ?? []).map((veto) =>
-    `${fix.name} ${veto.version} was ruled out by ${veto.advisories.join(", ")}, not corroborated by the sources this decision used; this takes ${fix.to!.version}.`);
 }
 
 export function satisfies(version: string, range: string): boolean {

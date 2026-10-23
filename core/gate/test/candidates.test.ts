@@ -570,6 +570,20 @@ describe("securityCandidates, bundled copies", () => {
     });
   });
 
+  it("keeps a carrier a carrier when its bundle's only advisory is unreviewed, so its own fix still checks the bundle", async () => {
+    const env = withArchives(environment({ "carrier@1.0.0": ["GHSA-own"] }, registry, [], carrierManifests));
+    const advisories = [{ ghsa_id: "GHSA-brace-repo", state: "published", vulnerabilities: [{ package: { ecosystem: "npm", name: "brace" }, vulnerable_version_range: "< 5.0.12" }] }];
+    const fetch: GateEnvironment["fetch"] = async (url, init) => {
+      if (url === "https://registry.npmjs.org/brace/5.0.9") return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ repository: "github:acme/brace" }), text: async () => "" };
+      if (url === "https://api.github.com/repos/acme/brace/security-advisories?state=published&per_page=100") return { ok: true, status: 200, headers: { get: () => null }, json: async () => advisories, text: async () => "" };
+      return env.fetch(url, init);
+    };
+    const found = await securityCandidates(await head(), { ...env, fetch });
+    // The carrier's own reviewed advisory is the target, decided as a carrier (`carries`), the bundled one reported.
+    expect(found.fixes.find((fix) => fix.name === "carrier")).toMatchObject({ targets: ["GHSA-own"], carries: [], to: { version: "1.1.0" } });
+    expect(found.fixes.find((fix) => fix.name === "brace")).toMatchObject({ to: undefined, problem: expect.stringContaining("only in the project's repository advisories") });
+  });
+
   it("leaves the carrier's own advisory no version fixes, without holding back the bundled fix", async () => {
     const affected = { "brace@5.0.9": ["GHSA-brace"], "carrier@1.0.0": ["GHSA-forever"], "carrier@1.1.0": ["GHSA-forever"] };
     const found = await securityCandidates(await head(), withArchives(environment(affected, registry, [], carrierManifests)));

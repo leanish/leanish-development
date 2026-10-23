@@ -44,6 +44,7 @@ export function planSection(plan: ChangePlan): string {
     "|---|---|---|---|---|---|",
     ...rows,
     ...omittedSection(plan),
+    ...plan.moves.flatMap(vetoLines),
     ...(plan.notes ?? []).map((note) => `- ${note.replace(/\s+/g, " ")}`),
   ].join("\n");
   const footer = "Security targets are the versions the supply-chain gate's rule picks (`supply-chain candidates --rule security`); code chose any required direct-peer companions at their lowest safe compatible versions. The gate verified the change before it was published.";
@@ -75,6 +76,12 @@ function fixesLabel(plan: ChangePlan, move: PlannedMove): string {
   if (plan.requiredNpm?.some((target) => target.name === move.name && target.version === move.to)) return "required dependency compatibility";
   const coupled = plan.coupled?.some((set) => set.includes(`${move.ecosystem}|${move.name}`));
   return coupled ? "direct peer compatibility" : "";
+}
+
+/** A fixed line per candidate the gate ruled out only by advisories no reviewed source corroborates. */
+function vetoLines(move: PlannedMove): string[] {
+  return (move.vetoed ?? []).map((veto) =>
+    `- ${move.name} ${veto.version} was ruled out by ${veto.advisories.join(", ")}, not corroborated by the sources this decision used; this takes ${move.to}.`);
 }
 
 /** Omissions are visible to reviewers as well as the command report and persisted plan. */
@@ -164,7 +171,14 @@ function isMove(move: unknown): move is PlannedMove {
   if (typeof move !== "object" || move === null) return false;
   const m = move as Record<string, unknown>;
   return typeof m["name"] === "string" && typeof m["from"] === "string" && typeof m["to"] === "string" && typeof m["mechanism"] === "string" && Array.isArray(m["locations"]) &&
-    (m["carries"] === undefined || (Array.isArray(m["carries"]) && m["carries"].every(isCarried)));
+    (m["carries"] === undefined || (Array.isArray(m["carries"]) && m["carries"].every(isCarried))) &&
+    (m["vetoed"] === undefined || (Array.isArray(m["vetoed"]) && m["vetoed"].every(isVeto)));
+}
+
+function isVeto(entry: unknown): boolean {
+  if (typeof entry !== "object" || entry === null) return false;
+  const v = entry as Record<string, unknown>;
+  return typeof v["version"] === "string" && Array.isArray(v["advisories"]) && v["advisories"].every((id) => typeof id === "string");
 }
 
 function isCarried(entry: unknown): boolean {
