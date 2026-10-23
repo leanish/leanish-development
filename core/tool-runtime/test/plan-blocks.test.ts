@@ -103,6 +103,15 @@ describe("plan blocks", () => {
     },
   );
 
+  it("rewrites quickly around many unclosed markers, and keeps them", () => {
+    const unclosed = "<!-- leanish:plan ".repeat(3000);
+    const started = performance.now();
+    const rewritten = withPlanSection(`${unclosed}\n\n${section({ a: 1 })}`, HEADING, section({ a: 2 }));
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(rewritten.startsWith(unclosed)).toBe(true);
+    expect(planPayload(rewritten)).toEqual({ a: 2 });
+  });
+
   it("replaces a plain block with a compressed one and back, keeping the text around it", () => {
     const body = `before\n\n${section({ a: 1 })}\n\nafter`;
     const compressed = withPlanSection(body, HEADING, section(large()));

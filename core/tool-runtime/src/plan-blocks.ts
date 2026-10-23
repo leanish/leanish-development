@@ -9,8 +9,6 @@ import { brotliCompressSync, brotliDecompressSync } from "node:zlib";
  */
 const RESERVED = "<!-- leanish:plan";
 const BLOCK = /<!-- leanish:plan(:br)? ([A-Za-z0-9+/=]+) -->/;
-/** Any closed comment starting with the reserved prefix, well-formed or not, to clear leftovers around a rewritten section. */
-const ANY_MARKER = /<!-- leanish:plan[\s\S]*?-->/g;
 
 /** A plan section's size limit, leaving the rest of GitHub's body limit to the agent's description. */
 export const SECTION_LIMIT = 43_000;
@@ -127,9 +125,25 @@ export function withPlanSection(body: string, heading: string, section: string):
   const [before, after] = start === -1 || block === null
     ? [`${body.trimEnd()}\n\n`, ""]
     : [body.slice(0, start), body.slice(start + block.index + block[0].length)];
-  const result = `${before.replace(ANY_MARKER, "")}${section}${after.replace(ANY_MARKER, "")}`;
+  const result = `${withoutMarkers(before)}${section}${withoutMarkers(after)}`;
   assertBodyFits(result);
   return result;
+}
+
+/**
+ * `text` without any closed comment starting with the reserved prefix, well-formed or not; an unclosed one stays. A
+ * linear scan, since a regular expression would retry from every unclosed prefix.
+ */
+function withoutMarkers(text: string): string {
+  let result = "";
+  let from = 0;
+  for (let start = text.indexOf(RESERVED); start !== -1; start = text.indexOf(RESERVED, from)) {
+    const end = text.indexOf("-->", start + RESERVED.length);
+    if (end === -1) break;
+    result += text.slice(from, start);
+    from = end + "-->".length;
+  }
+  return result + text.slice(from);
 }
 
 /** Throws when `body` is over GitHub's limit on a PR body. */
