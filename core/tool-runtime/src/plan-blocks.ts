@@ -143,8 +143,11 @@ function withoutMarkers(text: string): string {
   for (let at = text.indexOf(RESERVED); at !== -1; ) {
     if (close < at) close = text.indexOf("-->", at + RESERVED.length);
     if (close === -1) break;
-    if (lineEnd < at) lineEnd = text.indexOf("\n", at);
-    if (lineEnd !== -1 && lineEnd < close) {
+    if (lineEnd < at) {
+      const next = text.indexOf("\n", at);
+      lineEnd = next === -1 ? text.length : next;
+    }
+    if (lineEnd < close) {
       at = text.indexOf(RESERVED, at + RESERVED.length);
       continue;
     }

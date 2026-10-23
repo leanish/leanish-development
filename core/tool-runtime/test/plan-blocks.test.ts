@@ -119,6 +119,14 @@ describe("plan blocks", () => {
     expect(rewritten.startsWith(unclosed)).toBe(true);
   });
 
+  it("removes many closed markers on one line quickly", () => {
+    const closed = "<!-- leanish:plan x --> ".repeat(2500);
+    const started = performance.now();
+    const rewritten = withPlanSection(`${closed}\n\n${section({ a: 1 })}`, HEADING, section({ a: 2 }));
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(rewritten.match(/leanish:plan/g)).toHaveLength(1);
+  });
+
   it("rewrites quickly around many unclosed markers, and keeps them", () => {
     const unclosed = "<!-- leanish:plan ".repeat(3000);
     const started = performance.now();
