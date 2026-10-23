@@ -1,46 +1,24 @@
 #!/bin/bash
 # Copied from leanish/leanish-development agents/bump-it/local/guard/git at c6282df; see PROVENANCE.md.
-# Local changes: messages say "agent guard" (secure-it and bump-it share these); "the handler" is "the tool";
-# `-c core.hooksPath=/dev/null` and pushes to repositories on this machine pass.
-# agent guard for git: no pushes (the tool publishes; the agent's git
-# metadata is read-only anyway), and origin and credential settings can't be
-# changed. Everything else passes through to the real git. Two exceptions let a
-# repository's own tests run: `-c core.hooksPath=/dev/null` (it only turns hooks
-# off), and a push to a remote whose every URL is on this machine (tests push to
-# bare repositories in temp dirs; that publishes nothing).
+# Local changes: messages say "agent guard" (secure-it and bump-it share these); "the handler" is "the tool"; only
+# pushes are checked, and a push to repositories on this machine passes; lib.sh and the real git are found without
+# starting processes.
+# agent guard for git: catches a mistaken push early, with a message saying the tool publishes. It is a guard rail,
+# not a boundary: the agent's token is read-only and its git metadata can't be written (see docs/security-model.md),
+# so remotes, config and `-c` settings aren't parsed here. A push to a remote whose every URL is on this machine
+# passes: tests push to bare repositories in temp dirs, and that publishes nothing.
 # No `set -u`: macOS's bash 3.2 treats an empty "${array[@]}" as unbound.
-source "$(dirname "$0")/lib.sh"
-real=$(real_bin git)
-
-# Config keys that would redirect pushes or credentials.
-risky_key() {
-  local key
-  key=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
-  case "$key" in
-    remote.*|url.*|credential*|include.*|includeif.*|core.sshcommand|core.askpass|core.hookspath|core.gitproxy|http.*extraheader*|http.*proxy*|pushurl) return 0 ;;
-  esac
-  return 1
-}
-
-# Exactly `core.hooksPath=/dev/null`: the per-command way to run no hooks at all.
-hooks_off() {
-  local key
-  key=$(printf '%s' "${1%%=*}" | tr '[:upper:]' '[:lower:]')
-  [ "$key" = "core.hookspath" ] && [ "$1" != "${1%%=*}" ] && [ "${1#*=}" = "/dev/null" ]
-}
+# Without `dirname`: every process started here adds to each guarded call.
+case "$0" in */*) source "${0%/*}/lib.sh" ;; *) source ./lib.sh ;; esac
+real_bin git
 
 # Global options come before the subcommand.
 args=("$@")
 i=0
 while [ "$i" -lt "${#args[@]}" ]; do
-  a=${args[$i]}
-  case "$a" in
-    -C|--git-dir|--work-tree|--namespace|--exec-path) i=$((i + 2)) ;;
-    -c)
-      setting=${args[$((i + 1))]:-}
-      hooks_off "$setting" || { risky_key "${setting%%=*}" && deny "git -c ${setting%%=*}"; }
-      i=$((i + 2)) ;;
-    --config-env=*) deny "git --config-env" ;;
+  case "${args[$i]}" in
+    # Every global option git takes with a separate value: one missing here would be taken for the subcommand.
+    -C|-c|--git-dir|--work-tree|--namespace|--exec-path|--attr-source|--config-env) i=$((i + 2)) ;;
     -*) i=$((i + 1)) ;;
     *) break ;;
   esac
@@ -48,32 +26,6 @@ done
 sub=${args[$i]:-}
 global=("${args[@]:0:$i}")
 rest=("${args[@]:$((i + 1))}")
-
-check_remote() {
-  case "${rest[0]:-}" in
-    ""|-v|--verbose|show|get-url) ;;
-    *) deny "git remote ${rest[0]}" ;;
-  esac
-}
-
-check_config() {
-  local arg read=false write=false scope="" key="" values=0
-  for arg in "${rest[@]}"; do
-    case "$arg" in
-      --get|--get-all|--get-regexp|--get-urlmatch|-l|--list|get|list) read=true ;;
-      -e|--edit) deny "git config --edit" ;;
-      --unset|--unset-all|--add|--replace-all|--rename-section|--remove-section|set|unset) write=true ;;
-      --global|--system) scope=$arg ;;
-      -*) ;;
-      *) if [ -z "$key" ]; then key=$arg; else values=$((values + 1)); fi ;;
-    esac
-  done
-  # `git config <key>` alone is a read too.
-  if [ "$write" = false ] && { [ "$read" = true ] || [ "$values" -eq 0 ]; }; then return 0; fi
-  [ -z "$scope" ] || deny "git config $scope (write)"
-  [ -n "$key" ] && risky_key "$key" && deny "git config $key"
-  return 0
-}
 
 deny_push() {
   deny "git push (the tool pushes what you leave in the working tree)"
@@ -96,7 +48,8 @@ check_push() {
     [ -n "$remote" ] || remote=$arg
   done
   # Named remotes only: a URL or path given directly can still be rewritten to a network one
-  # (`url.<base>.insteadOf`), while `remote get-url` expands the rewrites and lists every push URL of a remote.
+  # (`url.<base>.insteadOf`), while `remote get-url` expands the rewrites (`-c` ones too: the global options are
+  # passed along) and lists every push URL of a remote.
   [ -n "$remote" ] || deny_push
   urls=$("$real" "${global[@]}" remote get-url --push --all -- "$remote" 2>/dev/null) || deny_push
   [ -n "$urls" ] || deny_push
@@ -115,7 +68,7 @@ EOF
 
 case "$sub" in
   push) check_push ;;
-  remote) check_remote ;;
-  config) check_config ;;
+  # The plumbing under push takes a destination URL directly.
+  send-pack|http-push) deny_push ;;
 esac
 exec "$real" "$@"
