@@ -637,6 +637,19 @@ describe("secure-it run", () => {
     });
   });
 
+  it("keeps the first refusal when the reduced attempt throws", async () => {
+    const h = harness({ fixes: [vite(), leftPad()], problems: ["compare: new: left-pad@1.0.1: GHSA-new has no exception"] });
+    let calls = 0;
+    const context = { ...h.context, agent: (async () => {
+      if (++calls <= 2) return APPLIED;
+      throw new Error("agent crashed");
+    }) as ToolRunContext["agent"] };
+    expect(await secureIt(h.deps).run(context)).toMatchObject({
+      outcome: "verification-failed", rejected: ["compare: new: left-pad@1.0.1: GHSA-new has no exception"], problems: ["retry failed: agent crashed"],
+    });
+    expect(calls).toBe(3);
+  });
+
   it("retries a failed batch from base once without named package groups and discloses them", async () => {
     const h = harness({ fixes: [vite(), leftPad()] });
     const sequence: string[] = [];

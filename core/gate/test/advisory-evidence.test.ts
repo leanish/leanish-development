@@ -134,6 +134,9 @@ describe("the evidence behind a held version", () => {
     expect(await verdicts({ versions: ["3.2.3"], ranges: [{ type: "ECOSYSTEM" }] })).toEqual({ "3.2.3": "affected", "3.2.4": "unknown" });
     expect(await verdicts({ ranges: [{ type: "ECOSYSTEM", events: [{ introduced: "3.2.0" }, { limit: "3.2.4" }] }] })).toEqual({ "3.2.3": "unknown", "3.2.4": "unknown" });
     expect(await verdicts({})).toEqual({ "3.2.3": "unknown", "3.2.4": "unknown" });
+    for (const events of [[], [{}], [{ introduced: 42 }], [{ introduced: "3.2.0", fixed: "3.2.4" }]]) {
+      expect(await verdicts({ versions: ["3.2.3"], ranges: [{ type: "ECOSYSTEM", events }] })).toEqual({ "3.2.3": "affected", "3.2.4": "unknown" });
+    }
     expect(await verdicts({ ranges: [{ type: "ECOSYSTEM", events: [{ introduced: "0" }, { last_affected: "3.2.3" }] }] })).toEqual({ "3.2.3": "affected", "3.2.4": "not-affected" });
   });
 

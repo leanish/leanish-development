@@ -338,9 +338,21 @@ function rangesOf(entry: Record<string, unknown>): OsvRange[] {
   if (ranges === undefined) return [];
   if (!Array.isArray(ranges)) return [{ type: undefined, events: undefined }];
   return ranges.map((range: unknown): OsvRange => {
-    if (!isObject(range) || !Array.isArray(range["events"]) || !range["events"].every((event: unknown) => isObject(event))) return { type: undefined, events: undefined };
+    if (!isObject(range) || !Array.isArray(range["events"]) || !readableEvents(range["events"])) return { type: undefined, events: undefined };
     return { type: range["type"], events: range["events"] as Record<string, unknown>[] };
   });
+}
+
+const EVENT_KINDS = new Set(["introduced", "fixed", "last_affected", "limit"]);
+
+/** Events a range can be judged by: each one bound with a string version, and at least one `introduced`. */
+function readableEvents(events: ReadonlyArray<unknown>): boolean {
+  const readable = events.every((event) => {
+    if (!isObject(event)) return false;
+    const keys = Object.keys(event);
+    return keys.length === 1 && EVENT_KINDS.has(keys[0]!) && typeof event[keys[0]!] === "string";
+  });
+  return readable && events.some((event) => typeof (event as Record<string, unknown>)["introduced"] === "string");
 }
 
 /**

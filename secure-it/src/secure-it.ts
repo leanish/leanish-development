@@ -547,17 +547,25 @@ async function verifyWithRetry(execution: Execution, base: PlanBase, plan: Chang
   const retry = retryWithoutNamed(plan, problems);
   if (retry.plan === undefined) return { plan, content, problems, named: retry.named, leftOut: retry.leftOut, ...rejected };
   context.logger.warn("secure-it: retrying the routine without named package groups", { leftOut: retry.leftOut });
-  await deps.revert(context.workingCopy, base.tree.id);
-  const answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({
-    entrypoint: "secure-it", input: await agentInput(execution, retry.plan, base.tree, "apply"),
-  });
-  if (answer.outcome !== "applied" || answer.publication == null) {
-    return { plan: retry.plan, content, problems: [`retry could not apply: ${answer.summary}`], named: retry.named, leftOut: retry.plan.leftOut ?? [], ...rejected };
+  let answer: SkillAnswer;
+  let remaining: string[];
+  try {
+    await deps.revert(context.workingCopy, base.tree.id);
+    answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({
+      entrypoint: "secure-it", input: await agentInput(execution, retry.plan, base.tree, "apply"),
+    });
+    if (answer.outcome !== "applied" || answer.publication == null) {
+      return { plan: retry.plan, content, problems: [`retry could not apply: ${answer.summary}`], named: retry.named, leftOut: retry.plan.leftOut ?? [], ...rejected };
+    }
+    assertNoPlanMarker(answer.publication.body);
+    cooldown = undefined;
+    remaining = [...await verifyEdit(context, deps, retry.plan, env, inventories, base.tree, base.gradle, execution.npmFiles, heard)];
+  } catch (error) {
+    // After a feedback attempt, the report keeps its refusal whatever stopped the reduced one; otherwise as before.
+    if (rejected.rejected === undefined) throw error;
+    return { plan: retry.plan, content, problems: [`retry failed: ${error instanceof Error ? error.message : String(error)}`], named: retry.named, leftOut: retry.plan.leftOut ?? [], ...rejected };
   }
-  assertNoPlanMarker(answer.publication.body);
-  cooldown = undefined;
-  const remaining = await verifyEdit(context, deps, retry.plan, env, inventories, base.tree, base.gradle, execution.npmFiles, heard);
-  const batch = { plan: retry.plan, content: answer.publication, problems: remaining, named: [...retry.named, ...namedProblems(retry.plan, remaining)], leftOut: retry.plan.leftOut ?? [], ...rejected };
+  const batch = { plan: retry.plan, content: answer.publication!, problems: remaining, named: [...retry.named, ...namedProblems(retry.plan, remaining)], leftOut: retry.plan.leftOut ?? [], ...rejected };
   return remaining.length === 0 ? withCooldown(env, base.tree, batch, cooldown) : batch;
 }
 

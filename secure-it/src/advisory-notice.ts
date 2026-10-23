@@ -21,7 +21,7 @@ export const REVIEWED =
   "Every advisory a source still backs is backed by a reviewed record: OSV or GitHub's reviewed advisory database lists the replaced versions as affected and the proposed version, if any, as not.";
 
 export const REPOSITORY_ONLY =
-  "**Only the project's own repository advisories back this fix: neither OSV nor GitHub's advisory database has a record that does.** Whoever controls the project's repository can publish such an advisory in minutes, with no review, so a fake one is the quickest way to get a release carrying an attack installed before the release-age wait ends: publish the \"fixed\" version, then an advisory pointing at it. Don't take this early on the advisory's word.";
+  "**Only the project's own repository advisories back this fix: neither OSV nor a reviewed record in GitHub's advisory database does.** Whoever controls the project's repository can publish such an advisory in minutes, with no review, so a fake one is the quickest way to get a release carrying an attack installed before the release-age wait ends: publish the \"fixed\" version, then an advisory pointing at it. Don't take this early on the advisory's word.";
 
 export const REPOSITORY_ONLY_UNCHECKED =
   "**Only the project's own repository advisories back this fix so far; OSV or GitHub's advisory database couldn't be checked.** Treat it as unreviewed: whoever controls the project's repository can publish a fake advisory in minutes to get a release carrying an attack installed before the release-age wait ends.";
@@ -30,7 +30,7 @@ export const UNREVIEWED_GITHUB =
   "**Only a record GitHub hasn't reviewed backs this fix: neither OSV nor a reviewed record in GitHub's advisory database does.** GitHub imports unreviewed records without checking them, so treat the fix as unreviewed.";
 
 export const UNREVIEWED_GITHUB_UNCHECKED =
-  "**Only a record GitHub hasn't reviewed backs this fix so far; OSV couldn't be checked.** GitHub imports unreviewed records without checking them, so treat the fix as unreviewed.";
+  "**Only a record GitHub hasn't reviewed backs this fix so far; OSV or GitHub's advisory database couldn't be fully checked.** GitHub imports unreviewed records without checking them, so treat the fix as unreviewed.";
 
 export const EVIDENCE_DIFFERS =
   "**The advisories read after the comparison don't back this fix as the comparison did.** For the rows marked ⚠ below, no source lists the replaced versions as affected and the proposed one as not, or a record was withdrawn. The comparison's verdict stands; check the table before taking this early.";
@@ -99,7 +99,7 @@ function tierOf(target: TargetEvidence, group: GroupEvidence): Tier {
     of(name)?.records.some((record) => (record.reviewed !== false) === reviewed && backsFix(record, group, target)) ?? false;
   if (backing("osv", true) || backing("github", true)) return { tier: "reviewed", checked: true };
   if (backing("repository", true)) return { tier: "repository", checked: of("osv")?.lookup === "checked" && of("github")?.lookup === "checked" };
-  return { tier: "unreviewed", checked: of("osv")?.lookup === "checked" };
+  return { tier: "unreviewed", checked: of("osv")?.lookup === "checked" && of("github")?.lookup === "checked" };
 }
 
 function packageCell(entry: PlannedHold, group: GroupEvidence, target: TargetEvidence): string {

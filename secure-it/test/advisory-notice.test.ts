@@ -51,7 +51,7 @@ describe("the advisory notice on a held PR", () => {
   });
 
   it("warns most about an advisory only the project's repository has, as a possible fake", () => {
-    expect(REPOSITORY_ONLY).toContain("neither OSV nor GitHub's advisory database has a record that does");
+    expect(REPOSITORY_ONLY).toContain("neither OSV nor a reviewed record in GitHub's advisory database does");
     expect(REPOSITORY_ONLY).toContain("fake");
     const unreviewed = evidence([checked("repository", [record()]), checked("github", [record({ reviewed: false })]), checked("osv")]);
     const notice = advisoryNotice([hold({ evidence: unreviewed })]);
@@ -70,6 +70,9 @@ describe("the advisory notice on a held PR", () => {
     expect(advisoryNotice([hold({ evidence: unreviewed })]).paragraphs).toEqual([UNREVIEWED_GITHUB]);
     const osvDown = evidence([checked("repository"), checked("github", [record({ reviewed: false })]), { source: "osv", lookup: "incomplete", reason: "HTTP 503", records: [] }]);
     expect(advisoryNotice([hold({ evidence: osvDown })]).paragraphs).toEqual([UNREVIEWED_GITHUB_UNCHECKED]);
+    // Another GitHub alias that failed could be the reviewed record.
+    const aliasDown = evidence([checked("repository"), { source: "github", lookup: "incomplete", reason: "GHSA-other: HTTP 500", records: [record({ reviewed: false })] }, checked("osv")]);
+    expect(advisoryNotice([hold({ evidence: aliasDown })]).paragraphs).toEqual([UNREVIEWED_GITHUB_UNCHECKED]);
   });
 
   it("judges each advisory against the replaced versions it affects, not all of them", () => {
