@@ -263,6 +263,21 @@ describe("securityCandidates and repository-only advisories", () => {
     const [fix] = (await securityCandidates(await tree({ lib: "1.0.0" }), env)).fixes;
     expect(fix).toMatchObject({ targets: ["GHSA-a"], to: { version: "1.0.2", aged: false }, vetoed: [{ version: "1.0.1", advisories: ["GHSA-b"] }] });
   });
+
+  it("records the veto on an own package's move too", async () => {
+    // An aged 1.0.3 too: the rule would take it for anyone else; an own package takes the lowest fix, 1.0.2.
+    const registry = { "@leanish/lib": { "1.0.0": OLD, "1.0.1": YESTERDAY, "1.0.2": YESTERDAY, "1.0.3": OLD } };
+    const env = environment({ "@leanish/lib@1.0.0": ["GHSA-a"] }, registry);
+    const advisories = [{ ghsa_id: "GHSA-b", state: "published", vulnerabilities: [{ package: { ecosystem: "npm", name: "@leanish/lib" }, vulnerable_version_range: ">= 1.0.1, < 1.0.2" }] }];
+    const own = { ...env, fetch: async (url: string, init?: Parameters<typeof env.fetch>[1]) => {
+      if (/^https:\/\/registry\.npmjs\.org\/%40leanish%2Flib\/[^/]+$/.test(url)) return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ repository: "github:leanish/lib" }), text: async () => "" };
+      if (url === "https://api.github.com/repos/leanish/lib/security-advisories?state=published&per_page=100") return { ok: true, status: 200, headers: { get: () => null }, json: async () => advisories, text: async () => "" };
+      return env.fetch(url, init);
+    } };
+    const head = await tree({ "@leanish/lib": "1.0.0" }, { ".github/supply-chain.json": JSON.stringify({ ownPackages: { npm: { scopes: ["@leanish"] } } }) });
+    const [fix] = (await securityCandidates(head, own)).fixes;
+    expect(fix).toMatchObject({ to: { version: "1.0.2" }, vetoed: [{ version: "1.0.1", advisories: ["GHSA-b"] }] });
+  });
 });
 
 describe("securityCandidates, regressions", () => {

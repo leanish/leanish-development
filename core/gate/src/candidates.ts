@@ -311,11 +311,14 @@ async function chooseMove(
   const line = (version: string) => compatibleLine(config, name, version);
   const fixable = targets.filter((target) => moves.some((version) => fixes(snapshot, name, pkg.version, [target], version)));
   const unfixable = targets.filter((target) => !fixable.includes(target));
+  // Every choice below skips what unreviewed advisories alone rule out: recorded on whichever move it makes.
+  const vetoed = vetoesOf(snapshot, name, pkg.version, fixable, moves);
   const move = async (version: string, aged: boolean): Promise<SecurityFix> => ({
     ...base,
     unfixable,
     to: { version, line: line(version), aged, major: line(version) !== line(pkg.version), blockers: await context.identity.problems(pkg, version) },
     problem: undefined,
+    ...(vetoed.length === 0 ? {} : { vetoed }),
   });
   const none = (why: string): SecurityFix => ({ ...base, unfixable, to: undefined, problem: why });
   const fixing = moves.filter((version) => fixes(snapshot, name, pkg.version, fixable, version));
@@ -346,9 +349,7 @@ async function chooseMove(
   if (choice.kind === "undated") {
     return none(`the publish time of ${choice.versions.join(", ")} (fixing, line ${choice.line}) is unknown, so the rule can't tell which fix is old enough`);
   }
-  const chosen = await move(choice.version, choice.aged);
-  const vetoed = vetoesOf(snapshot, name, pkg.version, fixable, moves);
-  return vetoed.length === 0 ? chosen : { ...chosen, vetoed };
+  return move(choice.version, choice.aged);
 }
 
 async function isAged(pkg: PackageVersion, catalog: VersionCatalog, config: Config, now: Date): Promise<boolean> {
