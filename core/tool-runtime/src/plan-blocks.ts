@@ -113,49 +113,17 @@ function firstBlock(body: string): { index: number; length: number; compressed: 
 /**
  * `body` with its section (from `heading` through the hidden comment)
  * replaced by `section`, which must start with `heading` and end with its
- * block; appended when `body` has none. Any other plan block left in the body
- * goes: a reader takes the first one, and a release that can't read a
- * compressed block would take an older plain one after it. Throws when the
- * result is over GitHub's body limit.
+ * block; appended when `body` has none. Throws when the result is over GitHub's body limit.
  */
 export function withPlanSection(body: string, heading: string, section: string): string {
   if (!section.startsWith(heading) || firstBlock(section) === undefined) throw new Error(`a plan section starts with '${heading}' and carries its block`);
   const start = body.indexOf(heading);
-  const block = start === -1 ? null : BLOCK.exec(body.slice(start));
-  const [before, after] = start === -1 || block === null
-    ? [`${body.trimEnd()}\n\n`, ""]
-    : [body.slice(0, start), body.slice(start + block.index + block[0].length)];
-  const result = `${withoutMarkers(before)}${section}${withoutMarkers(after)}`;
+  const block = firstBlock(body);
+  const result = start === -1 || block === undefined || block.index < start
+    ? `${body.trimEnd()}\n\n${section}`
+    : `${body.slice(0, start)}${section}${body.slice(block.index + block.length)}`;
   assertBodyFits(result);
   return result;
-}
-
-/**
- * `text` without any comment starting with the reserved prefix that closes on the same line, well-formed or not (a
- * plan block is always one line). One left open on its line stays, and so does everything after it up to any later
- * `-->`, which belongs to whoever wrote it. Linear: the next close and the next line end are only ever searched forward.
- */
-function withoutMarkers(text: string): string {
-  let result = "";
-  let kept = 0;
-  let close = -1;
-  let lineEnd = -1;
-  for (let at = text.indexOf(RESERVED); at !== -1; ) {
-    if (close < at) close = text.indexOf("-->", at + RESERVED.length);
-    if (close === -1) break;
-    if (lineEnd < at) {
-      const next = text.indexOf("\n", at);
-      lineEnd = next === -1 ? text.length : next;
-    }
-    if (lineEnd < close) {
-      at = text.indexOf(RESERVED, at + RESERVED.length);
-      continue;
-    }
-    result += text.slice(kept, at);
-    kept = close + "-->".length;
-    at = text.indexOf(RESERVED, kept);
-  }
-  return result + text.slice(kept);
 }
 
 /** Throws when `body` is over GitHub's limit on a PR body. */
