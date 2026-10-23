@@ -43,11 +43,22 @@ export function planSection(parts: PlanSectionParts): string {
   const whole = assembled(parts, parts.people, block);
   if (whole.length <= SECTION_LIMIT) return whole;
   const lines = parts.people.split("\n");
-  for (let shown = lines.length - 1; shown >= 0; shown -= 1) {
-    const cut = assembled(parts, `${lines.slice(0, shown).join("\n")}\n\n${notShown(lines.length - shown)}`.trimStart(), block);
-    if (cut.length <= SECTION_LIMIT) return cut;
+  const cut = (shown: number) => {
+    const hidden = lines.slice(shown).filter((line) => line.trim() !== "").length;
+    return assembled(parts, `${lines.slice(0, shown).join("\n").trimEnd()}\n\n${notShown(hidden)}`.trimStart(), block);
+  };
+  if (cut(0).length > SECTION_LIMIT) {
+    throw new Error(`${parts.name} is too large for a PR body: without its table it still takes ${cut(0).length} characters of the section's ${SECTION_LIMIT}, ${block.length} of them its compressed block`);
   }
-  throw new Error(`${parts.name} is too large for a PR body: its compressed block takes ${block.length} characters of the section's ${SECTION_LIMIT}`);
+  // The most lines that fit, by bisection: showing more lines never makes the section shorter.
+  let fits = 0;
+  let over = lines.length;
+  while (over - fits > 1) {
+    const middle = Math.floor((fits + over) / 2);
+    if (cut(middle).length <= SECTION_LIMIT) fits = middle;
+    else over = middle;
+  }
+  return cut(fits);
 }
 
 /** The hidden comment carrying `payload`, as plain base64 JSON or, when `compressed`, base64 brotli JSON. */
@@ -63,22 +74,22 @@ function assembled(parts: PlanSectionParts, people: string, block: string): stri
   return [parts.heading, people, ...(parts.footer === undefined ? [] : [parts.footer]), block].join("\n\n");
 }
 
-const notShown = (count: number) => `_${count} more line${count === 1 ? "" : "s"} of this plan aren't shown here; the hidden plan below has all of it._`;
+const notShown = (count: number) => `_${count} more line${count === 1 ? "" : "s"} of this plan ${count === 1 ? "isn't" : "aren't"} shown here; the hidden plan below has all of it._`;
 
 /**
- * Refuses an agent's PR description that carries a plan marker. A body with more than one marker carries no plan, so a
- * copied or invented plan placed in the description would make the verified one unreadable instead of replacing it.
+ * Refuses an agent's PR description that carries a plan marker. Reads take the first marker in a body, so a copied
+ * or invented plan placed before the tool's own section would replace the verified plan for every later read.
  */
 export function assertNoPlanMarker(body: string): void {
   if (body.includes(RESERVED)) throw new Error("the agent returned a reserved plan marker in its PR description");
 }
 
 /**
- * The payload `body`'s hidden comment carries; undefined when there's none, when there's more than one marker, or when
- * the only one doesn't parse (an unknown format, bad data, or a plan over the size limit).
+ * The payload of `body`'s first hidden comment; undefined when there's none, or when that first marker doesn't parse
+ * (an unknown format, bad data, or a plan over the size limit): a later marker never stands in for it.
  */
 export function planPayload(body: string): unknown {
-  const found = onlyBlock(body);
+  const found = firstBlock(body);
   if (found === undefined) return undefined;
   try {
     const data = Buffer.from(found.data, "base64");
@@ -91,10 +102,10 @@ export function planPayload(body: string): unknown {
   }
 }
 
-/** The block of a body with exactly one reserved marker, when that marker is a well-formed block. */
-function onlyBlock(body: string): { index: number; length: number; compressed: boolean; data: string } | undefined {
+/** The block at a body's first reserved marker, when that marker is a well-formed block. */
+function firstBlock(body: string): { index: number; length: number; compressed: boolean; data: string } | undefined {
   const index = body.indexOf(RESERVED);
-  if (index === -1 || body.includes(RESERVED, index + RESERVED.length)) return undefined;
+  if (index === -1) return undefined;
   const found = BLOCK.exec(body.slice(index));
   if (found === null || found.index !== 0 || found[2]!.length > BODY_LIMIT) return undefined;
   return { index, length: found[0].length, compressed: found[1] !== undefined, data: found[2]! };
@@ -106,9 +117,9 @@ function onlyBlock(body: string): { index: number; length: number; compressed: b
  * block; appended when `body` has none. Throws when the result is over GitHub's body limit.
  */
 export function withPlanSection(body: string, heading: string, section: string): string {
-  if (!section.startsWith(heading) || onlyBlock(section) === undefined) throw new Error(`a plan section starts with '${heading}' and carries its block`);
+  if (!section.startsWith(heading) || firstBlock(section) === undefined) throw new Error(`a plan section starts with '${heading}' and carries its block`);
   const start = body.indexOf(heading);
-  const block = onlyBlock(body);
+  const block = firstBlock(body);
   const result = start === -1 || block === undefined || block.index < start
     ? `${body.trimEnd()}\n\n${section}`
     : `${body.slice(0, start)}${section}${body.slice(block.index + block.length)}`;

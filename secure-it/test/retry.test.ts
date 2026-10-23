@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { planBlock } from "@leanish/tool-runtime/plan-blocks";
-import { planOf, planSection, withPlanSection } from "../src/plan-block.ts";
+import { cooldownWarning, planOf, planSection, withPlanSection } from "../src/plan-block.ts";
 import type { ChangePlan, PlannedMove } from "../src/plan.ts";
 import { retryWithoutNamed } from "../src/retry.ts";
 
@@ -109,6 +109,10 @@ describe("batch retry", () => {
     const warned = withPlanSection("Description.", { ...large, cooldown: [held] });
     expect(warned).toContain("Release-age cooldown bypassed");
     expect(planOf(warned)).toEqual({ ...large, cooldown: [held] });
-    expect(() => withPlanSection("x".repeat(65_536 - section.length), { ...large, cooldown: [held] })).toThrow(/over GitHub's 65536/);
+    // The body fits without the warning and goes over with it.
+    const warning = cooldownWarning([held])!;
+    const filler = "x".repeat(65_536 - "\n\n".length - planSection({ ...large, cooldown: [held] }).length - Math.floor(warning.length / 2));
+    expect(() => withPlanSection(filler, large)).not.toThrow();
+    expect(() => withPlanSection(filler, { ...large, cooldown: [held] })).toThrow(/over GitHub's 65536/);
   });
 });

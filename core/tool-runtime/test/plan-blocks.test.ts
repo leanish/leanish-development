@@ -56,23 +56,32 @@ describe("plan blocks", () => {
   it("stops before a single line too long to show", () => {
     const written = section(large(), ["| first |", "x".repeat(SECTION_LIMIT), "| last |"].join("\n"));
     expect(written).toContain("| first |\n\n_2 more lines of this plan aren't shown here");
+  });
+
+  it("counts only the lines with text it leaves out, without a blank line before its note", () => {
+    const rows = Array.from({ length: 3000 }, (_, n) => `| lib${n} | 1.0.0 | 1.1.0 | workspaces/w${n} |`);
+    const written = section(large(), [...rows, "", "- a note"].join("\n"));
+    expect(written).not.toContain("- a note");
+    const shown = rows.filter((row) => written.includes(`${row}\n`)).length;
+    expect(written).toContain(`${rows[shown - 1]}\n\n_${rows.length - shown + 1} more lines`);
+    expect(written).not.toContain("\n\n\n");
     expect(written).not.toContain("| last |");
   });
 
   it("refuses a plan that doesn't fit even compressed, or that is over the size limit as JSON", () => {
     const incompressible = { kind: "routine", hashes: Array.from({ length: 1000 }, () => randomBytes(32).toString("hex")) };
-    expect(() => section(incompressible)).toThrow(/the plan is too large for a PR body: its compressed block takes \d+ characters/);
+    expect(() => section(incompressible)).toThrow(/the plan is too large for a PR body: without its table it still takes \d+ characters of the section's 43000, \d+ of them its compressed block/);
     expect(() => section({ data: "x".repeat(1024 * 1024) })).toThrow(/bytes of JSON, over 1048576/);
   });
 
-  it("reads nothing from unknown formats, bad data, more than one marker, or a block that expands past the limit", () => {
+  it("reads the first marker only, and nothing from unknown formats, bad data or a block that expands past the limit", () => {
     const one = planBlock({ a: 1 });
     expect(planPayload("<!-- leanish:plan:zz eyJhIjoxfQ== -->")).toBeUndefined();
     expect(planPayload("<!-- leanish:plan:br Zm9v -->")).toBeUndefined();
     expect(planPayload("<!-- leanish:plan bm90IGpzb24= -->")).toBeUndefined();
-    expect(planPayload(`${one}\n${one}`)).toBeUndefined();
-    expect(planPayload(`${planBlock({ a: 1 }, true)}\n${one}`)).toBeUndefined();
+    expect(planPayload(`${planBlock({ a: 2 }, true)}\n${one}`)).toEqual({ a: 2 });
     expect(planPayload(`<!-- leanish:plan:zz x -->\n${one}`)).toBeUndefined();
+    expect(planPayload(`<!-- leanish:plan:br Zm9v -->\n${one}`)).toBeUndefined();
     const bomb = compressedBlock(JSON.stringify(" ".repeat(2 * 1024 * 1024)));
     expect(bomb.length).toBeLessThan(10_000);
     expect(planPayload(bomb)).toBeUndefined();
