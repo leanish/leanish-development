@@ -14,7 +14,7 @@
  */
 import type { Config } from "./config.ts";
 import { isObject } from "./json.ts";
-import type { HeldTarget, HeldVersion, YoungJustification } from "./release-age.ts";
+import type { HeldGroup, HeldTarget, HeldVersion, YoungJustification } from "./release-age.ts";
 import { REPORT_SCHEMA_VERSION } from "./report.ts";
 import type { Ecosystem } from "./versions.ts";
 
@@ -107,8 +107,10 @@ function heldTargets(raw: unknown): HeldTarget[] {
     }
     const { replaced, proposed, groups } = entry;
     if (!isStrings(replaced) || !isStrings(proposed)) throw new Error(`held target ${entry["name"]} has no version lists`);
-    if (!Array.isArray(groups) || !groups.every((ids) => isStrings(ids) && ids.length > 0)) throw new Error(`held target ${entry["name"]} has no advisory groups`);
-    return { name: entry["name"], bundled: entry["bundled"], replaced, proposed, groups: groups as string[][] };
+    if (!Array.isArray(groups) || !groups.every((group) => isObject(group) && isStrings(group["ids"]) && group["ids"].length > 0 && isStrings(group["replaced"]))) {
+      throw new Error(`held target ${entry["name"]} has no advisory groups`);
+    }
+    return { name: entry["name"], bundled: entry["bundled"], replaced, proposed, groups: groups as HeldGroup[] };
   });
 }
 

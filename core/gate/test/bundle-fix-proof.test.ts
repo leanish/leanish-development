@@ -156,7 +156,7 @@ describe("a young carrier proved as a bundled fix", () => {
     expect(outcome.cooldown).toMatchObject({ evaluated: true, held: [expect.objectContaining({ name: "carrier", version: "1.1.0", justification: "bundle-fix" })] });
     // The advisories behind it are the bundled package's, named as such: not the carrier's version.
     expect(outcome.cooldown.evaluated && outcome.cooldown.held[0]!.targets).toEqual([
-      { name: "brace", bundled: true, replaced: ["5.0.9"], proposed: ["5.0.12"], groups: [["GHSA-brace"]] },
+      { name: "brace", bundled: true, replaced: ["5.0.9"], proposed: ["5.0.12"], groups: [{ ids: ["GHSA-brace"], replaced: ["5.0.9"] }] },
     ]);
   });
 

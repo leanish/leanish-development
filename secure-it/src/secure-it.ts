@@ -527,17 +527,21 @@ async function verifyWithRetry(execution: Execution, base: PlanBase, plan: Chang
   if (options.retryRejected === true) {
     context.logger.warn("secure-it: asking the agent again with the verification's refusal", { problems });
     rejected = { rejected: first };
-    await deps.revert(context.workingCopy, base.tree.id);
-    const again = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({
-      entrypoint: "secure-it", input: await agentInput(execution, plan, base.tree, "apply", { rejected: first }),
-    });
-    if (again.outcome !== "applied" || again.publication == null) {
-      return { plan, content, problems: [...first, `asked again with that refusal, the agent couldn't apply: ${again.summary}`], named: namedProblems(plan, first), leftOut: plan.leftOut ?? [], ...rejected };
+    const failed = (why: string): VerifiedBatch => ({ plan, content, problems: [...first, `asked again with that refusal, ${why}`], named: namedProblems(plan, first), leftOut: plan.leftOut ?? [], ...rejected });
+    try {
+      await deps.revert(context.workingCopy, base.tree.id);
+      const again = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({
+        entrypoint: "secure-it", input: await agentInput(execution, plan, base.tree, "apply", { rejected: first }),
+      });
+      if (again.outcome !== "applied" || again.publication == null) return failed(`the agent couldn't apply: ${again.summary}`);
+      assertNoPlanMarker(again.publication.body);
+      content = again.publication;
+      cooldown = undefined;
+      problems = await verifyEdit(context, deps, plan, env, inventories, base.tree, base.gradle, execution.npmFiles, heard);
+    } catch (error) {
+      // The report keeps the refusal that started the retry, whatever stopped it.
+      return failed(`the attempt failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-    assertNoPlanMarker(again.publication.body);
-    content = again.publication;
-    cooldown = undefined;
-    problems = await verifyEdit(context, deps, plan, env, inventories, base.tree, base.gradle, execution.npmFiles, heard);
     if (problems.length === 0) return withCooldown(env, base.tree, { plan, content, problems, named: [], leftOut: plan.leftOut ?? [], ...rejected }, cooldown);
   }
   const retry = retryWithoutNamed(plan, problems);

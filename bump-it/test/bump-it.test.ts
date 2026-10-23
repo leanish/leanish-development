@@ -632,6 +632,15 @@ describe("bump-it run", () => {
       outcome: "failed", detail: "the agent couldn't apply the plan: the plan needs a parent move (asked again after verification failed: compare: refused major)",
     }] });
   });
+  it("keeps the first refusal when reverting for the second attempt fails", async () => {
+    const h = harness();
+    const deps = { ...h.deps,
+      verify: async (input: Parameters<BumpItDeps["verify"]>[0]) => (input.plan.kind === "major" ? ["compare: refused major"] : []),
+      revert: async () => { throw new Error("revert failed"); } };
+    expect(await bumpIt(deps).run(h.context)).toMatchObject({ units: [{ outcome: "published" }, {
+      outcome: "failed", detail: "revert failed (asked again after verification failed: compare: refused major)",
+    }] });
+  });
   it("fails a unit whose edit left a symbolic link, whatever the other checks say", async () => {
     const linked = harness({ links: ["package-lock.json"] });
     expect(await bumpIt(linked.deps).run(linked.context)).toMatchObject({ units: [{ outcome: "failed", detail: expect.stringContaining("the edit made package-lock.json a symbolic link") }, { outcome: "failed" }] });

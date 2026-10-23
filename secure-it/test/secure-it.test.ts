@@ -624,6 +624,19 @@ describe("secure-it run", () => {
     expect(h.workspace.publications).toEqual([]);
   });
 
+  it("keeps the first refusal when the second attempt throws", async () => {
+    const h = harness({ fixes: [vite()], problems: ["vite at node_modules/vite is 8.3.2, not 8.3.3"] });
+    let calls = 0;
+    const context = { ...h.context, agent: (async () => {
+      if (++calls === 1) return APPLIED;
+      throw new Error("agent crashed");
+    }) as ToolRunContext["agent"] };
+    expect(await secureIt(h.deps).run(context)).toMatchObject({
+      outcome: "verification-failed", rejected: ["vite at node_modules/vite is 8.3.2, not 8.3.3"],
+      problems: ["vite at node_modules/vite is 8.3.2, not 8.3.3", "asked again with that refusal, the attempt failed: agent crashed"],
+    });
+  });
+
   it("retries a failed batch from base once without named package groups and discloses them", async () => {
     const h = harness({ fixes: [vite(), leftPad()] });
     const sequence: string[] = [];
@@ -1055,7 +1068,7 @@ describe("the cooldown hold", () => {
 
   it("records where the advisories behind a held fix appear, and opens the warning with it", async () => {
     const h = harness({ fixes: [vite()] });
-    const targeted = { ...HELD, targets: [{ name: "vite", bundled: false, replaced: ["8.3.1"], proposed: ["8.3.3"], groups: [["GHSA-vite-0001"]] }] };
+    const targeted = { ...HELD, targets: [{ name: "vite", bundled: false, replaced: ["8.3.1"], proposed: ["8.3.3"], groups: [{ ids: ["GHSA-vite-0001"], replaced: ["8.3.1"] }] }] };
     const verify = async (inputs: VerifyInputs) => {
       inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: [targeted] });
       return [];

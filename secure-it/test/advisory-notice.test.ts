@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { AdvisoryEvidence, EvidenceRecord, SourceEvidence } from "@leanish/gate/advisory-evidence";
 
 import {
-  advisoryNotice, EVIDENCE_DIFFERS, NOT_RECORDED, REPOSITORY_ONLY, REPOSITORY_ONLY_UNCHECKED, REVIEWED,
+  advisoryNotice, EVIDENCE_DIFFERS, NOT_RECORDED, REPOSITORY_ONLY, REPOSITORY_ONLY_UNCHECKED, REVIEWED, UNREVIEWED_GITHUB, UNREVIEWED_GITHUB_UNCHECKED,
 } from "../src/advisory-notice.ts";
 import type { ChangePlan, PlannedHold } from "../src/plan.ts";
 import { cooldownWarning, planOf, withPlanSection } from "../src/plan-block.ts";
@@ -14,10 +14,13 @@ const record = (overrides: Partial<EvidenceRecord> = {}): EvidenceRecord => ({
   verdicts: { "3.2.3": "affected", "3.2.4": "not-affected" }, ...overrides,
 });
 const checked = (source: SourceEvidence["source"], records: EvidenceRecord[] = []): SourceEvidence => ({ source, lookup: "checked", records });
-const evidence = (sources: SourceEvidence[], target: Partial<AdvisoryEvidence["targets"][number]> = {}): AdvisoryEvidence => ({
-  collectedAt: "2026-10-23T16:57:12.000Z",
-  targets: [{ ecosystem: "Maven", name: PKG, bundled: false, replaced: ["3.2.3"], proposed: ["3.2.4"], groups: [{ ids: ["GHSA-m8xf-2cr7-77ph"], sources }], ...target }],
-});
+const evidence = (sources: SourceEvidence[], target: Partial<AdvisoryEvidence["targets"][number]> = {}): AdvisoryEvidence => {
+  const replaced = target.replaced ?? ["3.2.3"];
+  return {
+    collectedAt: "2026-10-23T16:57:12.000Z",
+    targets: [{ ecosystem: "Maven", name: PKG, bundled: false, replaced, proposed: ["3.2.4"], groups: [{ ids: ["GHSA-m8xf-2cr7-77ph"], replaced, sources }], ...target }],
+  };
+};
 const hold = (overrides: Partial<PlannedHold> = {}): PlannedHold => ({
   ecosystem: "Maven", name: PKG, version: "3.2.4", replaced: ["3.2.3"], published: "2026-10-18T23:01:30.000Z",
   eligibleAt: "2026-10-25T23:01:30.000Z", justification: "security-fix", signals: [], ...overrides,
@@ -48,7 +51,7 @@ describe("the advisory notice on a held PR", () => {
   });
 
   it("warns most about an advisory only the project's repository has, as a possible fake", () => {
-    expect(REPOSITORY_ONLY).toContain("neither OSV nor GitHub's reviewed advisory database lists it as fixed in the proposed version");
+    expect(REPOSITORY_ONLY).toContain("neither OSV nor GitHub's advisory database has a record that does");
     expect(REPOSITORY_ONLY).toContain("fake");
     const unreviewed = evidence([checked("repository", [record()]), checked("github", [record({ reviewed: false })]), checked("osv")]);
     const notice = advisoryNotice([hold({ evidence: unreviewed })]);
@@ -60,6 +63,30 @@ describe("the advisory notice on a held PR", () => {
   it("doesn't call a fix reviewed when the reviewed record says the proposed version is still affected", () => {
     const disagreeing = evidence([checked("repository", [record()]), checked("github"), checked("osv", [record({ declaredFixes: ["3.2.5"], verdicts: { "3.2.3": "affected", "3.2.4": "affected" } })])]);
     expect(advisoryNotice([hold({ evidence: disagreeing })]).paragraphs).toEqual([REPOSITORY_ONLY]);
+  });
+
+  it("names a fix backed only by an unreviewed GitHub record as unreviewed", () => {
+    const unreviewed = evidence([checked("repository"), checked("github", [record({ reviewed: false })]), checked("osv")]);
+    expect(advisoryNotice([hold({ evidence: unreviewed })]).paragraphs).toEqual([UNREVIEWED_GITHUB]);
+    const osvDown = evidence([checked("repository"), checked("github", [record({ reviewed: false })]), { source: "osv", lookup: "incomplete", reason: "HTTP 503", records: [] }]);
+    expect(advisoryNotice([hold({ evidence: osvDown })]).paragraphs).toEqual([UNREVIEWED_GITHUB_UNCHECKED]);
+  });
+
+  it("judges each advisory against the replaced versions it affects, not all of them", () => {
+    const a = record({ id: "GHSA-a", verdicts: { "1.0.0": "affected", "2.0.0": "not-affected", "3.0.0": "not-affected" } });
+    const b = record({ id: "GHSA-b", verdicts: { "1.0.0": "not-affected", "2.0.0": "affected", "3.0.0": "not-affected" } });
+    const both: AdvisoryEvidence = { collectedAt: "2026-10-23T16:57:12.000Z", targets: [{
+      ecosystem: "Maven", name: PKG, bundled: false, replaced: ["1.0.0", "2.0.0"], proposed: ["3.0.0"], groups: [
+        { ids: ["GHSA-a"], replaced: ["1.0.0"], sources: [checked("repository"), checked("github"), checked("osv", [a])] },
+        { ids: ["GHSA-b"], replaced: ["2.0.0"], sources: [checked("repository"), checked("github"), checked("osv", [b])] },
+      ],
+    }] };
+    const notice = advisoryNotice([hold({ version: "3.0.0", replaced: ["1.0.0", "2.0.0"], evidence: both })]);
+    expect(notice.paragraphs).toEqual([REVIEWED]);
+    expect(notice.details.slice(-2)).toEqual([
+      "| GHSA-a | `tools.jackson.core:jackson-databind` 1.0.0 → 3.0.0 | not found | not found | GHSA-a: declares the fix 3.2.4, 1.0.0 affected, 3.0.0 not affected |",
+      "| GHSA-b | `tools.jackson.core:jackson-databind` 2.0.0 → 3.0.0 | not found | not found | GHSA-b: declares the fix 3.2.4, 2.0.0 affected, 3.0.0 not affected |",
+    ]);
   });
 
   it("says what couldn't be checked instead of calling it absent", () => {

@@ -225,11 +225,12 @@ function advisoryOf(entry: Record<string, unknown>, ghsaId: string, where: strin
   };
 }
 
-/** The next page GitHub's `Link` header names, only on GitHub's API host: the request carries the token. */
+/** The next page GitHub's `Link` header names; one off GitHub's API host is refused, never followed: the request carries the token. */
 export function nextLink(header: string | null): string | undefined {
   if (header === null) return undefined;
   const next = /<([^>]+)>;\s*rel="next"/.exec(header)?.[1];
-  return next?.startsWith(`${GITHUB_API}/`) ? next : undefined;
+  if (next !== undefined && !next.startsWith(`${GITHUB_API}/`)) throw new Error(`a next page off GitHub's API host: ${next}`);
+  return next;
 }
 
 /** Pages of one repository's advisories read at most: 100 each, far above any repository's count. */

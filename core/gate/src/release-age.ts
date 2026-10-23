@@ -65,8 +65,13 @@ export interface HeldTarget {
   readonly replaced: ReadonlyArray<string>;
   /** Its versions after the change; empty when the change removes it. */
   readonly proposed: ReadonlyArray<string>;
-  /** Each target advisory group, as every id the comparison's snapshot knows for it. */
-  readonly groups: ReadonlyArray<ReadonlyArray<string>>;
+  readonly groups: ReadonlyArray<HeldGroup>;
+}
+
+/** One target advisory group: every id the comparison's snapshot knows for it, and the replaced versions it affects. */
+export interface HeldGroup {
+  readonly ids: ReadonlyArray<string>;
+  readonly replaced: ReadonlyArray<string>;
 }
 
 /** A version the change adds or changes that is still under the wait. */
@@ -168,20 +173,21 @@ function ownTarget(change: ChangedVersion, snapshot: Snapshot): HeldTarget {
   };
 }
 
-/** Every id the snapshot knows for each target group of `versions`, in a stable order. */
-export function groupIds(snapshot: Snapshot, versions: ReadonlyArray<PackageVersion>, keep: (group: string) => boolean): string[][] {
-  const groups = new Map<string, Set<string>>();
+/** Each target group of `versions` with every id the snapshot knows for it and the versions it affects, in a stable order. */
+export function groupIds(snapshot: Snapshot, versions: ReadonlyArray<PackageVersion>, keep: (group: string) => boolean): HeldGroup[] {
+  const groups = new Map<string, { ids: Set<string>; replaced: Set<string> }>();
   for (const version of versions) {
     const targets = new Set(targetsOf(snapshot, version).filter(keep));
     for (const advisory of snapshot.advisories(version)) {
       const group = snapshot.group(advisory.id);
       if (!targets.has(group)) continue;
-      const ids = groups.get(group) ?? new Set<string>();
-      for (const id of advisory.ids) ids.add(id);
-      groups.set(group, ids);
+      const entry = groups.get(group) ?? { ids: new Set<string>(), replaced: new Set<string>() };
+      for (const id of advisory.ids) entry.ids.add(id);
+      entry.replaced.add(version.version);
+      groups.set(group, entry);
     }
   }
-  return [...groups.keys()].sort().map((group) => [...groups.get(group)!].sort());
+  return [...groups.keys()].sort().map((group) => ({ ids: [...groups.get(group)!.ids].sort(), replaced: [...groups.get(group)!.replaced].sort() }));
 }
 
 /**

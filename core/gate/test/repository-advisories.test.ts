@@ -256,5 +256,11 @@ describe("repository advisories", () => {
     await expect(fetchRepositoryAdvisories("acme/lib", { fetch: malformed, token: undefined })).rejects.toThrow("aren't a list");
     const noId = fakeFetch({ [first]: { body: [{ state: "published" }] } });
     await expect(fetchRepositoryAdvisories("acme/lib", { fetch: noId, token: undefined })).rejects.toThrow("has no ghsa_id");
+    // A next page off GitHub's API host is refused, never followed with the token, and never cached as a full list.
+    const elsewhere = fakeFetch({ [first]: { body: [], headers: { link: '<https://evil.example/page2>; rel="next"' } } }, requests);
+    await expect(fetchRepositoryAdvisories("acme/lib", { fetch: elsewhere, token: "secret" })).rejects.toThrow("off GitHub's API host");
+    expect(requests.some((request) => request.url.startsWith("https://evil.example"))).toBe(false);
+    const endless = fakeFetch({ [first]: { body: [], headers: { link: `<${first}>; rel="next"` } } });
+    await expect(fetchRepositoryAdvisories("acme/lib", { fetch: endless, token: undefined })).rejects.toThrow("run past 20 pages");
   });
 });

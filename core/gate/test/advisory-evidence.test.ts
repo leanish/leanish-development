@@ -8,10 +8,10 @@ const NOW = new Date("2026-10-23T16:57:00.000Z");
 const PKG = "tools.jackson.core:jackson-databind";
 const REPO_LIST = "https://api.github.com/repos/fasterxml/jackson-databind/security-advisories?per_page=100";
 
-const held = (groups: string[][] = [["GHSA-m8xf-2cr7-77ph"]], name = PKG): HeldVersion => ({
+const held = (ids: string[] = ["GHSA-m8xf-2cr7-77ph"], name = PKG): HeldVersion => ({
   ecosystem: "Maven", name, version: "3.2.4", replaced: ["3.2.3"],
   published: "2026-10-18T23:01:30.000Z", eligibleAt: "2026-10-25T23:01:30.000Z", justification: "security-fix",
-  targets: [{ name, bundled: false, replaced: ["3.2.3"], proposed: ["3.2.4"], groups }],
+  targets: [{ name, bundled: false, replaced: ["3.2.3"], proposed: ["3.2.4"], groups: [{ ids, replaced: ["3.2.3"] }] }],
 });
 
 const repositoryAdvisory = (overrides: Record<string, unknown> = {}) => ({
@@ -43,7 +43,7 @@ describe("the evidence behind a held version", () => {
       id: "GHSA-m8xf-2cr7-77ph", aliases: ["CVE-2026-110879"], withdrawn: false, namesPackage: true, declaredFixes: ["3.2.4"],
       verdicts: { "3.2.3": "affected", "3.2.4": "not-affected" },
     }]);
-    expect(backsFix(repository.records[0]!, target!)).toBe(true);
+    expect(backsFix(repository.records[0]!, target!.groups[0]!, target!)).toBe(true);
     // Both checked, nothing found: absence is established, not assumed.
     expect(source(target!.groups, "github")).toEqual({ source: "github", lookup: "checked", records: [] });
     expect(source(target!.groups, "osv")).toEqual({ source: "osv", lookup: "checked", records: [] });
@@ -69,7 +69,7 @@ describe("the evidence behind a held version", () => {
     }]);
     const osv = source(groups, "osv").records[0]!;
     expect(osv).toMatchObject({ declaredFixes: ["3.2.5"], verdicts: { "3.2.3": "affected", "3.2.4": "affected" } });
-    expect(backsFix(osv, found.targets[0]!)).toBe(false);
+    expect(backsFix(osv, found.targets[0]!.groups[0]!, found.targets[0]!)).toBe(false);
     expect(source(groups, "repository")).toMatchObject({ lookup: "checked", records: [] });
   });
 
@@ -79,7 +79,7 @@ describe("the evidence behind a held version", () => {
       [REPO_LIST]: { body: [repositoryAdvisory({ ghsa_id: "GHSA-repo-only-0001" })] },
       "https://api.osv.dev/v1/vulns/CVE-2026-110879": { body: { id: "CVE-2026-110879", aliases: [], affected: [] } },
     };
-    const found = await heldEvidence(held([["CVE-2026-110879"]]), {
+    const found = await heldEvidence(held(["CVE-2026-110879"]), {
       fetch: fakeFetch(routes, requests), token: undefined, now: () => NOW,
       sourceRepos: { fetch: fakeFetch({}), overrides: new Map([[`Maven|${PKG}`, "fasterxml/jackson-databind"]]), mavenRepositories: [] },
     });
@@ -104,7 +104,7 @@ describe("the evidence behind a held version", () => {
     const groups = found.targets[0]!.groups;
     const repository = source(groups, "repository").records[0]!;
     expect(repository.withdrawn).toBe(true);
-    expect(backsFix(repository, found.targets[0]!)).toBe(false);
+    expect(backsFix(repository, found.targets[0]!.groups[0]!, found.targets[0]!)).toBe(false);
     expect(source(groups, "osv").records[0]!.verdicts).toEqual({ "3.2.3": "unknown", "3.2.4": "unknown" });
   });
 
@@ -121,13 +121,24 @@ describe("the evidence behind a held version", () => {
 
   it("follows next pages only on GitHub's API host, and only so far", async () => {
     const offHost = await evidence({ [REPO_LIST]: { body: [], headers: { link: '<https://evil.example/page2>; rel="next"' } } });
-    expect(source(offHost.targets[0]!.groups, "repository")).toMatchObject({ lookup: "checked", records: [] });
+    // Refused, not followed, and the list it cut short isn't complete.
+    expect(source(offHost.targets[0]!.groups, "repository")).toMatchObject({ lookup: "incomplete", reason: expect.stringContaining("off GitHub's API host") });
     const endless = await evidence({ [REPO_LIST]: { body: [], headers: { link: `<${REPO_LIST}>; rel="next"` } } });
     expect(source(endless.targets[0]!.groups, "repository")).toMatchObject({ lookup: "incomplete", reason: expect.stringContaining("run past 20 pages") });
   });
 
+  it("never reads a fix from an OSV range it can't judge", async () => {
+    const record = (affected: unknown) => ({ "https://api.osv.dev/v1/vulns/GHSA-m8xf-2cr7-77ph": { body: { id: "GHSA-m8xf-2cr7-77ph", affected: [{ package: { ecosystem: "Maven", name: PKG }, ...affected as object }] } } });
+    const verdicts = async (affected: unknown) => source((await evidence({ [REPO_LIST]: { body: [] }, ...record(affected) })).targets[0]!.groups, "osv").records[0]!.verdicts;
+    // 3.2.3 listed explicitly; the range that should say whether 3.2.4 is affected has no events.
+    expect(await verdicts({ versions: ["3.2.3"], ranges: [{ type: "ECOSYSTEM" }] })).toEqual({ "3.2.3": "affected", "3.2.4": "unknown" });
+    expect(await verdicts({ ranges: [{ type: "ECOSYSTEM", events: [{ introduced: "3.2.0" }, { limit: "3.2.4" }] }] })).toEqual({ "3.2.3": "unknown", "3.2.4": "unknown" });
+    expect(await verdicts({})).toEqual({ "3.2.3": "unknown", "3.2.4": "unknown" });
+    expect(await verdicts({ ranges: [{ type: "ECOSYSTEM", events: [{ introduced: "0" }, { last_affected: "3.2.3" }] }] })).toEqual({ "3.2.3": "affected", "3.2.4": "not-affected" });
+  });
+
   it("doesn't ask GitHub without a GHSA id, nor a repository it can't name", async () => {
-    const found = await evidence({}, held([["CVE-2026-1"]]), new Map());
+    const found = await evidence({}, held(["CVE-2026-1"]), new Map());
     const groups = found.targets[0]!.groups;
     expect(source(groups, "github")).toMatchObject({ lookup: "not-queried", reason: "no GHSA id is known for it" });
     expect(source(groups, "repository")).toMatchObject({ lookup: "not-queried", reason: "no GitHub source repository is named for it" });

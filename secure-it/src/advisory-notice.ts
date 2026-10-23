@@ -12,19 +12,28 @@ import type { PlannedHold } from "./plan.ts";
 /*
  * Two levels of trust. Reviewed: OSV, or GitHub's database once GitHub reviewed the advisory (OSV imports those, so
  * for npm and Maven they're mostly the same review, apart from import lag). Unreviewed: a project's own repository
- * advisories, which whoever controls the repository publishes at will, in minutes.
+ * advisories, which whoever controls the repository publishes at will, in minutes, and GitHub's unreviewed records.
+ * A record "backs" a fix when it puts the replaced versions the comparison found affected among the affected ones and
+ * none of the proposed versions (a removed package has none).
  */
 
-export const REVIEWED = "The advisories behind these versions are reviewed: OSV or GitHub's reviewed advisory database lists each one as fixed in the proposed version.";
+export const REVIEWED =
+  "Every advisory a source still backs is backed by a reviewed record: OSV or GitHub's reviewed advisory database lists the replaced versions as affected and the proposed version, if any, as not.";
 
 export const REPOSITORY_ONLY =
-  "**Only the project's own repository advisories back this fix: neither OSV nor GitHub's reviewed advisory database lists it as fixed in the proposed version.** Whoever controls the project's repository can publish such an advisory in minutes, with no review, so a fake one is the quickest way to get a release carrying an attack installed before the release-age wait ends: publish the \"fixed\" version, then an advisory pointing at it. Don't take this early on the advisory's word.";
+  "**Only the project's own repository advisories back this fix: neither OSV nor GitHub's advisory database has a record that does.** Whoever controls the project's repository can publish such an advisory in minutes, with no review, so a fake one is the quickest way to get a release carrying an attack installed before the release-age wait ends: publish the \"fixed\" version, then an advisory pointing at it. Don't take this early on the advisory's word.";
 
 export const REPOSITORY_ONLY_UNCHECKED =
   "**Only the project's own repository advisories back this fix so far; OSV or GitHub's advisory database couldn't be checked.** Treat it as unreviewed: whoever controls the project's repository can publish a fake advisory in minutes to get a release carrying an attack installed before the release-age wait ends.";
 
+export const UNREVIEWED_GITHUB =
+  "**Only a record GitHub hasn't reviewed backs this fix: neither OSV nor a reviewed record in GitHub's advisory database does.** GitHub imports unreviewed records without checking them, so treat the fix as unreviewed.";
+
+export const UNREVIEWED_GITHUB_UNCHECKED =
+  "**Only a record GitHub hasn't reviewed backs this fix so far; OSV couldn't be checked.** GitHub imports unreviewed records without checking them, so treat the fix as unreviewed.";
+
 export const EVIDENCE_DIFFERS =
-  "**The advisories read after the comparison don't back this fix as the comparison did.** For the rows marked ⚠ below, no source lists every replaced version as affected and the proposed one as not, or a record was withdrawn. The comparison's verdict stands; check the table before taking this early.";
+  "**The advisories read after the comparison don't back this fix as the comparison did.** For the rows marked ⚠ below, no source lists the replaced versions as affected and the proposed one as not, or a record was withdrawn. The comparison's verdict stands; check the table before taking this early.";
 
 export const NOT_RECORDED = "Where these advisories appear wasn't recorded for this plan.";
 
@@ -44,8 +53,11 @@ export function advisoryNotice(held: ReadonlyArray<PlannedHold>): AdvisoryNotice
   const paragraphs: string[] = [];
   if (rows.some(({ target, group }) => !backed(target, group))) paragraphs.push(EVIDENCE_DIFFERS);
   const tiers = rows.filter(({ target, group }) => backed(target, group)).map(({ target, group }) => tierOf(target, group));
-  if (tiers.some((entry) => entry.tier === "repository" && entry.checked)) paragraphs.push(REPOSITORY_ONLY);
-  if (tiers.some((entry) => entry.tier === "repository" && !entry.checked)) paragraphs.push(REPOSITORY_ONLY_UNCHECKED);
+  const has = (tier: Tier["tier"], checked: boolean) => tiers.some((entry) => entry.tier === tier && entry.checked === checked);
+  if (has("repository", true)) paragraphs.push(REPOSITORY_ONLY);
+  if (has("repository", false)) paragraphs.push(REPOSITORY_ONLY_UNCHECKED);
+  if (has("unreviewed", true)) paragraphs.push(UNREVIEWED_GITHUB);
+  if (has("unreviewed", false)) paragraphs.push(UNREVIEWED_GITHUB_UNCHECKED);
   if (tiers.length > 0 && tiers.every((entry) => entry.tier === "reviewed")) paragraphs.push(REVIEWED);
   const details: string[] = [];
   if (rows.length > 0) {
@@ -54,8 +66,8 @@ export function advisoryNotice(held: ReadonlyArray<PlannedHold>): AdvisoryNotice
     details.push("| Advisory | Package | Project's repository | GitHub database | OSV |", "|---|---|---|---|---|");
     for (const { entry, target, group } of rows) {
       const mark = backed(target, group) ? "" : "⚠ ";
-      const sources = COLUMNS.map((name) => sourceCell(group.sources.find((source) => source.source === name), target));
-      details.push(`| ${mark}${cell(group.ids.join(", "))} | ${packageCell(entry, target)} | ${sources.join(" | ")} |`);
+      const sources = COLUMNS.map((name) => sourceCell(group.sources.find((source) => source.source === name), group, target));
+      details.push(`| ${mark}${cell(group.ids.join(", "))} | ${packageCell(entry, group, target)} | ${sources.join(" | ")} |`);
     }
   }
   const failures = fixes.flatMap((entry) => (entry.evidenceFailure === undefined ? [] : [`- ${entry.name}@${entry.version}: ${cell(entry.evidenceFailure)}`]));
@@ -66,46 +78,48 @@ export function advisoryNotice(held: ReadonlyArray<PlannedHold>): AdvisoryNotice
 
 /** Some source, read now, still backs the fix the comparison proved. */
 function backed(target: TargetEvidence, group: GroupEvidence): boolean {
-  return group.sources.some((source) => source.records.some((record) => backsFix(record, target)));
+  return group.sources.some((source) => source.records.some((record) => backsFix(record, group, target)));
 }
 
 interface Tier {
-  /** The most trusted level listing it for the package; `none` when no source does. */
-  readonly tier: "reviewed" | "repository" | "none";
-  /** Whether every reviewed source was checked, so its absence there is established. */
+  /** The most trusted level whose records back the fix. */
+  readonly tier: "reviewed" | "repository" | "unreviewed";
+  /** Whether every more trusted source was checked, so that none of its records backs the fix is established. */
   readonly checked: boolean;
 }
 
 /**
  * The most trusted level whose records back the fix, not merely list the advisory: a reviewed record that puts the
- * proposed version among the affected ones doesn't vouch for it. A GitHub record counts once GitHub reviewed it.
+ * proposed version among the affected ones doesn't vouch for it. Only called on a backed group. Among the unreviewed,
+ * the project's own repository advisory is the one its controller can fake at will, so it's named first.
  */
 function tierOf(target: TargetEvidence, group: GroupEvidence): Tier {
   const of = (name: SourceEvidence["source"]) => group.sources.find((source) => source.source === name);
-  const backing = (source: SourceEvidence | undefined) => source?.records.some((record) => record.reviewed !== false && backsFix(record, target)) ?? false;
-  if (backing(of("osv")) || backing(of("github"))) return { tier: "reviewed", checked: true };
-  const checked = of("osv")?.lookup === "checked" && of("github")?.lookup === "checked";
-  return { tier: backing(of("repository")) ? "repository" : "none", checked };
+  const backing = (name: SourceEvidence["source"], reviewed: boolean) =>
+    of(name)?.records.some((record) => (record.reviewed !== false) === reviewed && backsFix(record, group, target)) ?? false;
+  if (backing("osv", true) || backing("github", true)) return { tier: "reviewed", checked: true };
+  if (backing("repository", true)) return { tier: "repository", checked: of("osv")?.lookup === "checked" && of("github")?.lookup === "checked" };
+  return { tier: "unreviewed", checked: of("osv")?.lookup === "checked" };
 }
 
-function packageCell(entry: PlannedHold, target: TargetEvidence): string {
+function packageCell(entry: PlannedHold, group: GroupEvidence, target: TargetEvidence): string {
   const to = target.proposed.length === 0 ? "removed" : target.proposed.join(", ");
   const where = target.bundled ? ` (bundled in \`${cell(entry.name)}\` ${cell(entry.version)})` : "";
-  return `\`${cell(target.name)}\` ${cell(target.replaced.join(", "))} → ${cell(to)}${where}`;
+  return `\`${cell(target.name)}\` ${cell(group.replaced.join(", "))} → ${cell(to)}${where}`;
 }
 
-function sourceCell(source: SourceEvidence | undefined, target: TargetEvidence): string {
+function sourceCell(source: SourceEvidence | undefined, group: GroupEvidence, target: TargetEvidence): string {
   if (source === undefined || source.lookup === "not-queried") return `not checked${source?.reason === undefined ? "" : `: ${cell(source.reason)}`}`;
-  const records = source.records.map((record) => `${cell(record.id)}: ${recordText(record, target)}`);
+  const records = source.records.map((record) => `${cell(record.id)}: ${recordText(record, group, target)}`);
   if (source.lookup === "incomplete") return [...records, `couldn't be fully checked: ${cell(source.reason ?? "unknown")}`].join("; ");
   return records.length === 0 ? "not found" : records.join("; ");
 }
 
-function recordText(record: EvidenceRecord, target: TargetEvidence): string {
+function recordText(record: EvidenceRecord, group: GroupEvidence, target: TargetEvidence): string {
   if (record.withdrawn) return "withdrawn";
   if (!record.namesPackage) return "doesn't name this package";
   const fix = record.declaredFixes.length === 0 ? "no fixed version declared" : `declares the fix ${record.declaredFixes.map(cell).join(", ")}`;
-  const verdicts = [...target.replaced, ...target.proposed].map((version) => `${cell(version)} ${VERDICT_TEXT[record.verdicts[version] ?? "unknown"]}`);
+  const verdicts = [...group.replaced, ...target.proposed].map((version) => `${cell(version)} ${VERDICT_TEXT[record.verdicts[version] ?? "unknown"]}`);
   return [...(record.reviewed === false ? ["unreviewed"] : []), fix, verdicts.join(", ")].join(", ");
 }
 

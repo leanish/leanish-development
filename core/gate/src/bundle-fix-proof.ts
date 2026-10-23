@@ -178,17 +178,23 @@ export function affectedVersions(snapshot: Snapshot, name: string, versions: Rea
 
 /** One target per package and side, every occurrence's versions and groups together. */
 function mergedTargets(targets: ReadonlyArray<HeldTarget>): HeldTarget[] {
-  const merged = new Map<string, { name: string; bundled: boolean; replaced: Set<string>; proposed: Set<string>; groups: Map<string, string[]> }>();
+  const merged = new Map<string, { name: string; bundled: boolean; replaced: Set<string>; proposed: Set<string>; groups: Map<string, { ids: string[]; replaced: Set<string> }> }>();
   for (const target of targets) {
     const key = `${target.bundled ? "bundled" : "own"}|${target.name}`;
     const entry = merged.get(key) ?? { name: target.name, bundled: target.bundled, replaced: new Set(), proposed: new Set(), groups: new Map() };
     for (const version of target.replaced) entry.replaced.add(version);
     for (const version of target.proposed) entry.proposed.add(version);
-    for (const ids of target.groups) entry.groups.set(ids.join(" "), [...ids]);
+    for (const group of target.groups) {
+      // Each group keeps the replaced versions it affects, across occurrences.
+      const known = entry.groups.get(group.ids.join(" ")) ?? { ids: [...group.ids], replaced: new Set<string>() };
+      for (const version of group.replaced) known.replaced.add(version);
+      entry.groups.set(group.ids.join(" "), known);
+    }
     merged.set(key, entry);
   }
   return [...merged.values()].map((entry) => ({
-    name: entry.name, bundled: entry.bundled, replaced: [...entry.replaced].sort(), proposed: [...entry.proposed].sort(), groups: [...entry.groups.values()],
+    name: entry.name, bundled: entry.bundled, replaced: [...entry.replaced].sort(), proposed: [...entry.proposed].sort(),
+    groups: [...entry.groups.values()].map((group) => ({ ids: group.ids, replaced: [...group.replaced].sort() })),
   }));
 }
 

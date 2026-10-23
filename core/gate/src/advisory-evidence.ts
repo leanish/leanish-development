@@ -13,7 +13,7 @@
 import { githubRefusal, type Fetch } from "./http.ts";
 import { isObject } from "./json.ts";
 import type { PackageName, PackageVersion } from "./package-version.ts";
-import type { HeldTarget, HeldVersion } from "./release-age.ts";
+import type { HeldGroup, HeldTarget, HeldVersion } from "./release-age.ts";
 import { affects, MAX_ADVISORY_PAGES, namesPackage, nextLink, parseRepositoryEntry, type RepositoryAdvisory } from "./repository-advisories.ts";
 import { sourceRepository, type SourceRepoOptions } from "./source-repos.ts";
 import { type Ecosystem, versionScheme } from "./versions.ts";
@@ -56,6 +56,8 @@ export interface SourceEvidence {
 export interface GroupEvidence {
   /** The group's ids as the comparison's snapshot knew them. */
   readonly ids: ReadonlyArray<string>;
+  /** The replaced versions the comparison found it affecting: what a record must agree on to back the fix. */
+  readonly replaced: ReadonlyArray<string>;
   readonly sources: ReadonlyArray<SourceEvidence>;
 }
 
@@ -91,10 +93,13 @@ export async function heldEvidence(held: HeldVersion, options: EvidenceOptions):
   return { collectedAt, targets };
 }
 
-/** Whether a record backs the fix as the comparison did: it names the package, every replaced version affected, none proposed. */
-export function backsFix(record: EvidenceRecord, target: Pick<TargetEvidence, "replaced" | "proposed">): boolean {
+/**
+ * Whether a record backs the fix as the comparison did: it names the package, puts every replaced version the
+ * comparison found the group affecting among the affected ones, and none of the proposed versions.
+ */
+export function backsFix(record: EvidenceRecord, group: Pick<GroupEvidence, "replaced">, target: Pick<TargetEvidence, "proposed">): boolean {
   return !record.withdrawn && record.namesPackage
-    && target.replaced.every((version) => record.verdicts[version] === "affected")
+    && group.replaced.every((version) => record.verdicts[version] === "affected")
     && target.proposed.every((version) => record.verdicts[version] === "not-affected");
 }
 
@@ -103,7 +108,7 @@ async function targetEvidence(ecosystem: Ecosystem, target: HeldTarget, lookups:
   const versions = [...target.replaced, ...target.proposed];
   const repository = await lookups.repositoryOf({ ...pkg, version: target.replaced[0] ?? target.proposed[0] ?? "" }, options.sourceRepos);
   const groups: GroupEvidence[] = [];
-  for (const ids of target.groups) groups.push(await groupEvidence(pkg, versions, ids, repository, lookups));
+  for (const group of target.groups) groups.push(await groupEvidence(pkg, versions, group, repository, lookups));
   return { ecosystem, name: target.name, bundled: target.bundled, replaced: target.replaced, proposed: target.proposed, groups };
 }
 
@@ -117,8 +122,8 @@ interface RepositoryEntry {
   readonly withdrawn: boolean;
 }
 
-async function groupEvidence(pkg: PackageName, versions: ReadonlyArray<string>, start: ReadonlyArray<string>, repository: RepositoryRead, lookups: Lookups): Promise<GroupEvidence> {
-  const known = new Set(start);
+async function groupEvidence(pkg: PackageName, versions: ReadonlyArray<string>, held: HeldGroup, repository: RepositoryRead, lookups: Lookups): Promise<GroupEvidence> {
+  const known = new Set(held.ids);
   const github = new SourceLookup("github");
   const osv = new SourceLookup("osv");
   const repo = new Map<string, EvidenceRecord>();
@@ -143,7 +148,7 @@ async function groupEvidence(pkg: PackageName, versions: ReadonlyArray<string>, 
     ? { source: "repository", lookup: "checked", repository: repository.repo, records: [...repo.values()] }
     : { source: "repository", lookup: repository.failed ? "incomplete" : "not-queried", reason: repository.reason, ...(repository.repo === undefined ? {} : { repository: repository.repo }), records: [] };
   const githubSource = [...known].some((id) => id.startsWith("GHSA-")) ? github.evidence() : { source: "github" as const, lookup: "not-queried" as const, reason: "no GHSA id is known for it", records: [] };
-  return { ids: [...start], sources: [repositorySource, githubSource, osv.evidence()] };
+  return { ids: [...held.ids], replaced: [...held.replaced], sources: [repositorySource, githubSource, osv.evidence()] };
 }
 
 /** One source's lookups for a group: each id once, within the budget; failures make it incomplete. */
@@ -318,25 +323,31 @@ function osvRecord(raw: unknown, id: string, pkg: PackageName, versions: Readonl
   }) as Record<string, unknown>[];
   const verdicts: Record<string, RangeVerdict> = {};
   for (const version of versions) verdicts[version] = mine.length === 0 ? "unknown" : osvVerdict(mine, pkg.ecosystem, version);
-  const fixes = mine.flatMap((entry) => rangesOf(entry).flatMap((range) => range.events.flatMap((event) => (typeof event["fixed"] === "string" ? [event["fixed"]] : []))));
+  const fixes = mine.flatMap((entry) => rangesOf(entry).flatMap((range) => (range.events ?? []).flatMap((event) => (typeof event["fixed"] === "string" ? [event["fixed"]] : []))));
   return { id: raw["id"], aliases, withdrawn: typeof raw["withdrawn"] === "string", namesPackage: mine.length > 0, declaredFixes: [...new Set(fixes)], verdicts };
 }
 
 interface OsvRange {
   readonly type: unknown;
-  readonly events: ReadonlyArray<Record<string, unknown>>;
+  /** Undefined when the range can't be read: it never counts as "not affected". */
+  readonly events: ReadonlyArray<Record<string, unknown>> | undefined;
 }
 
 function rangesOf(entry: Record<string, unknown>): OsvRange[] {
-  const ranges = Array.isArray(entry["ranges"]) ? entry["ranges"] : [];
-  return ranges.flatMap((range: unknown) => (isObject(range) && Array.isArray(range["events"])
-    ? [{ type: range["type"], events: range["events"].filter((event: unknown): event is Record<string, unknown> => isObject(event)) }] : []));
+  const ranges = entry["ranges"];
+  if (ranges === undefined) return [];
+  if (!Array.isArray(ranges)) return [{ type: undefined, events: undefined }];
+  return ranges.map((range: unknown): OsvRange => {
+    if (!isObject(range) || !Array.isArray(range["events"]) || !range["events"].every((event: unknown) => isObject(event))) return { type: undefined, events: undefined };
+    return { type: range["type"], events: range["events"] as Record<string, unknown>[] };
+  });
 }
 
 /**
  * OSV's affected-version rule over one package's entries: an explicit `versions` list, or `ECOSYSTEM`/`SEMVER`
  * ranges read as intervals from each `introduced` to the next `fixed` (exclusive) or `last_affected` (inclusive).
- * Any range of another type, or a version that doesn't compare, makes a "not affected" answer unknown.
+ * A range of another type, one that can't be read or carries a `limit`, an entry with neither ranges nor versions,
+ * or a version that doesn't compare makes a "not affected" answer unknown.
  */
 function osvVerdict(entries: ReadonlyArray<Record<string, unknown>>, ecosystem: Ecosystem, version: string): RangeVerdict {
   const scheme = versionScheme(ecosystem);
@@ -351,8 +362,10 @@ function osvVerdict(entries: ReadonlyArray<Record<string, unknown>>, ecosystem: 
   for (const entry of entries) {
     const listed = entry["versions"];
     if (Array.isArray(listed) && listed.includes(version)) return "affected";
-    for (const range of rangesOf(entry)) {
-      if (range.type !== "ECOSYSTEM" && range.type !== "SEMVER") {
+    const ranges = rangesOf(entry);
+    if (ranges.length === 0 && !Array.isArray(listed)) unknown = true;
+    for (const range of ranges) {
+      if ((range.type !== "ECOSYSTEM" && range.type !== "SEMVER") || range.events === undefined || range.events.some((event) => event["limit"] !== undefined)) {
         unknown = true;
         continue;
       }
@@ -410,7 +423,7 @@ function isTargetEvidence(raw: unknown): boolean {
   if (!isObject(raw) || typeof raw["ecosystem"] !== "string" || !ECOSYSTEM_NAMES.has(raw["ecosystem"])) return false;
   if (typeof raw["name"] !== "string" || typeof raw["bundled"] !== "boolean" || !isStrings(raw["replaced"]) || !isStrings(raw["proposed"])) return false;
   return Array.isArray(raw["groups"]) && raw["groups"].every((group: unknown) =>
-    isObject(group) && isStrings(group["ids"]) && Array.isArray(group["sources"]) && group["sources"].every(isSourceEvidence));
+    isObject(group) && isStrings(group["ids"]) && isStrings(group["replaced"]) && Array.isArray(group["sources"]) && group["sources"].every(isSourceEvidence));
 }
 
 function isSourceEvidence(raw: unknown): boolean {
