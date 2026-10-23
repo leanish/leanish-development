@@ -48,7 +48,7 @@ import { withGradleParents } from "./gradle-parents.ts";
 import { withParents } from "./npm-parents.ts";
 import { requiredNpmPlan } from "./npm-required-plan.ts";
 import { npmWindowFor } from "./npm-window.ts";
-import { assertNoPlanMarker } from "@leanish/tool-runtime/plan-blocks";
+import { assertBodyFits, assertNoPlanMarker } from "@leanish/tool-runtime/plan-blocks";
 import { planDigest, planOf, planSection, withPlanSection } from "./plan-block.ts";
 import { type ChangePlan, coupledWork, type FixWork, HELD_TOPIC, packageKey, planFor, type PlannedHold, type SecurityUnit, withUnsupportedCarriers } from "./plan.ts";
 import { namedProblems, retryWithoutNamed, type ProblemMoves } from "./retry.ts";
@@ -714,7 +714,9 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
         // A different plan is a different change: its own title and description.
         if (changed && answer.publication != null) {
           assertNoPlanMarker(answer.publication.body);
-          content = { title: answer.publication.title, body: `${answer.publication.body}\n\n${planSection(plan)}`, commitMessage: answer.publication.commitMessage };
+          const body = `${answer.publication.body}\n\n${planSection(plan)}`;
+          assertBodyFits(body);
+          content = { title: answer.publication.title, body, commitMessage: answer.publication.commitMessage };
         }
       } else {
         await prepareNpmFiles(execution, plan, base, true);

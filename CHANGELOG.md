@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Fixed
+
+- A large plan no longer stops bump-it or secure-it from publishing its PR. The plan section of a PR body was limited
+  to 43,000 characters, and a large routine batch went over it on leanish-development. When the plan's plain block
+  doesn't fit, the tools now write it compressed (brotli, as `<!-- leanish:plan:br … -->`), and shorten the table for
+  people to what fits, with a line saying how many lines aren't shown. A plan that fits is written exactly as before,
+  so open PRs keep their text, and releases before this one read every PR they could have written themselves. They
+  don't read a compressed plan: after a rollback, such a PR is skipped as carrying no plan, and the next pass may open
+  another one. A plan stays refused when even compressed it doesn't fit, or when its JSON is over 1 MiB, which also
+  bounds what a block in a PR body can decompress to. A first plan marker that doesn't parse is no longer passed over
+  for a later one, and a body over GitHub's 65,536 characters (with secure-it's cooldown warning) fails while it's
+  composed instead of at GitHub.
+
 ## 0.7.4 - 2026-10-23
 
 ### Changed
