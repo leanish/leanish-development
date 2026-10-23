@@ -89,6 +89,8 @@ export interface SecurityFix {
   readonly carries?: ReadonlyArray<CarriedPackage>;
   /** Candidates ruled out only by advisories no reviewed source corroborates, for people (`vetoesOf`). */
   readonly vetoed?: ReadonlyArray<Veto>;
+  /** For people: what the fix leaves alone, such as another version's unreviewed advisories. */
+  readonly notes?: ReadonlyArray<string>;
 }
 
 export interface SecurityCandidates {
@@ -124,7 +126,7 @@ export async function securityCandidates(head: Tree, env: GateEnvironment, gradl
   // Only a reviewed advisory (or malware) triggers a fix; one only the project's repository publishes is reported.
   const findings = unexcused(state.packages, state.snapshot, exceptions, today);
   const triggers = findings.filter((finding) => finding.malicious || reviewedGroups(state.snapshot, finding).has(finding.advisory));
-  const unreviewedOnly = unreviewedReports(findings.filter((finding) => !triggers.includes(finding)), triggers);
+  const unreviewed = unreviewedReports(findings.filter((finding) => !triggers.includes(finding)), triggers);
   // Bundled copies can only move with their carrier: their findings become the carrier's targets.
   const { rest, carriers } = splitBundled(triggers, state.inventory.npm);
   for (const finding of rest) {
@@ -188,7 +190,14 @@ export async function securityCandidates(head: Tree, env: GateEnvironment, gradl
       found.push(await chooseMove(pkg, targets, malicious, moves, { snapshot, catalog: catalogs[pkg.ecosystem], config, now, identity }, base));
     }
   }
-  found.push(...carried, ...unreviewedOnly);
+  found.push(...carried, ...unreviewed.reports);
+  // A package with a reviewed fix carries its other versions' unreviewed findings as notes, not as blocking reports;
+  // one whose reviewed fix is blocked anyway reports them like the rest.
+  for (const [pkg, notes] of unreviewed.notes) {
+    const index = found.findIndex((fix) => `${fix.ecosystem}|${fix.name}` === pkg && fix.to !== undefined);
+    if (index >= 0) found[index] = { ...found[index]!, notes: [...found[index]!.notes ?? [], ...notes] };
+    else found.push(...unreviewed.held.get(pkg) ?? []);
+  }
   return {
     fixes: found,
     npmPeers: { resolve: (moves) => peers.resolve(moves, snapshot) },
@@ -204,26 +213,42 @@ export async function securityCandidates(head: Tree, env: GateEnvironment, gradl
 }
 
 /**
- * A package failing only on advisories no reviewed source corroborates gets no move: a fixed note per version,
- * reported like any fix that can't be made. A package with a reviewed finding anywhere is planned from those alone
- * (a note there would block its whole group).
+ * A version failing only on advisories no reviewed source corroborates gets no move: a fixed note. A package with no
+ * reviewed finding anywhere reports it like any fix that can't be made; one with a reviewed finding on another version
+ * gets it as a note on that fix instead (a report there would block the package's whole group).
  */
-function unreviewedReports(unreviewed: ReadonlyArray<Finding>, triggers: ReadonlyArray<Finding>): SecurityFix[] {
+function unreviewedReports(unreviewed: ReadonlyArray<Finding>, triggers: ReadonlyArray<Finding>): {
+  readonly reports: SecurityFix[];
+  /** `ecosystem|name` → notes for its reviewed fix, and the same as reports if that fix turns out blocked. */
+  readonly notes: Map<string, string[]>;
+  readonly held: Map<string, SecurityFix[]>;
+} {
   const byVersion = new Map<string, Finding[]>();
   for (const finding of unreviewed) {
     const key = versionKey(finding as PackageVersion);
-    if (triggers.some((trigger) => trigger.ecosystem === finding.ecosystem && trigger.name === finding.name)) continue;
+    if (triggers.some((trigger) => versionKey(trigger as PackageVersion) === key)) continue;
     byVersion.set(key, [...byVersion.get(key) ?? [], finding]);
   }
-  return [...byVersion.values()].map((group) => {
+  const reports: SecurityFix[] = [];
+  const notes = new Map<string, string[]>();
+  const held = new Map<string, SecurityFix[]>();
+  for (const group of byVersion.values()) {
     const [first] = group as [Finding, ...Finding[]];
     const ids = [...new Set(group.flatMap((finding) => finding.ids))].sort();
-    return {
+    const problem = `${first.name}@${first.version} is affected by ${ids.join(", ")}, only in the project's repository advisories (not corroborated by the sources this decision used): no fix is proposed until a reviewed source lists it`;
+    const report: SecurityFix = {
       ecosystem: first.ecosystem as Ecosystem, name: first.name, from: first.version, locations: [...new Set(group.flatMap((finding) => finding.locations))].sort(),
-      targets: [], unfixable: [], malicious: false, severity: highestSeverity(group.map((finding) => finding.severity)), to: undefined,
-      problem: `${first.name}@${first.version} is affected by ${ids.join(", ")}, only in the project's repository advisories (not corroborated by the sources this decision used): no fix is proposed until a reviewed source lists it`,
+      targets: [], unfixable: [], malicious: false, severity: highestSeverity(group.map((finding) => finding.severity)), to: undefined, problem,
     };
-  });
+    const pkg = `${first.ecosystem}|${first.name}`;
+    if (!triggers.some((trigger) => `${trigger.ecosystem}|${trigger.name}` === pkg)) {
+      reports.push(report);
+      continue;
+    }
+    notes.set(pkg, [...notes.get(pkg) ?? [], problem]);
+    held.set(pkg, [...held.get(pkg) ?? [], report]);
+  }
+  return { reports, notes, held };
 }
 
 /** A carrier version's fix; a decision that can't be made (an archive, a scan) is the fix's problem, not the run's. */

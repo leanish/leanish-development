@@ -245,6 +245,18 @@ describe("securityCandidates and repository-only advisories", () => {
     ]]);
   });
 
+  it("notes another version's unreviewed advisory on the package's reviewed fix, without blocking it", async () => {
+    const lock = { lockfileVersion: 3, packages: { "": { name: "app" },
+      "node_modules/lib": { version: "1.0.0", resolved: "https://registry.npmjs.org/lib/-/lib-1.0.0.tgz", integrity: "sha512-AAAA" },
+      "node_modules/other/node_modules/lib": { version: "2.0.0", resolved: "https://registry.npmjs.org/lib/-/lib-2.0.0.tgz", integrity: "sha512-AAAA" },
+      "node_modules/other": { version: "1.0.0", resolved: "https://registry.npmjs.org/other/-/other-1.0.0.tgz", integrity: "sha512-AAAA" } } };
+    const registry = { lib: { "1.0.0": OLD, "1.0.1": OLD, "2.0.0": OLD, "2.0.1": OLD }, other: { "1.0.0": OLD } };
+    const env = withRepositoryAdvisories(environment({ "lib@1.0.0": ["GHSA-a"] }, registry), [repositoryAdvisory("GHSA-repo", ">= 2.0.0, < 2.0.1")]);
+    const fixes = (await securityCandidates(await tree({}, { "package-lock.json": JSON.stringify(lock) }), env)).fixes;
+    expect(moves(fixes)).toEqual([["lib@1.0.0", "1.0.1", undefined]]);
+    expect(fixes[0]?.notes).toEqual([expect.stringContaining("lib@2.0.0 is affected by GHSA-repo, only in the project's repository advisories")]);
+  });
+
   it("lets one rule a candidate out, records the veto, and may steer to a young version", async () => {
     const registry = { lib: { "1.0.0": OLD, "1.0.1": OLD, "1.0.2": YESTERDAY } };
     const env = withRepositoryAdvisories(environment({ "lib@1.0.0": ["GHSA-a"] }, registry), [repositoryAdvisory("GHSA-b", ">= 1.0.1, < 1.0.2")]);

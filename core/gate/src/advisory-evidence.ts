@@ -290,7 +290,8 @@ function githubRecord(raw: unknown, id: string, pkg: PackageName, versions: Read
     return [{ ecosystem: found["ecosystem"], name: found["name"], range: typeof range === "string" ? range : undefined, patched }];
   });
   const withdrawn = typeof raw["withdrawn_at"] === "string";
-  return advisoryRecord(raw["ghsa_id"], [...new Set(aliases)], withdrawn, raw["type"] === "reviewed", { vulnerabilities }, pkg, versions);
+  // GitHub reviews malware records too; only `unreviewed` ones are its unchecked imports.
+  return advisoryRecord(raw["ghsa_id"], [...new Set(aliases)], withdrawn, raw["type"] === "reviewed" || raw["type"] === "malware", { vulnerabilities }, pkg, versions);
 }
 
 function advisoryRecord(

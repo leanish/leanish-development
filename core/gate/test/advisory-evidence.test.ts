@@ -73,6 +73,14 @@ describe("the evidence behind a held version", () => {
     expect(source(groups, "repository")).toMatchObject({ lookup: "checked", records: [] });
   });
 
+  it("counts GitHub's malware records as reviewed, and only its unreviewed imports as not", async () => {
+    const github = (type: string) => evidence({ [REPO_LIST]: { body: [] }, "https://api.github.com/advisories/GHSA-m8xf-2cr7-77ph": { body: {
+      ghsa_id: "GHSA-m8xf-2cr7-77ph", type, vulnerabilities: [{ package: { ecosystem: "maven", name: PKG }, vulnerable_version_range: "<= 3.2.3", first_patched_version: "3.2.4" }],
+    } } });
+    expect(source((await github("malware")).targets[0]!.groups, "github").records[0]!.reviewed).toBe(true);
+    expect(source((await github("unreviewed")).targets[0]!.groups, "github").records[0]!.reviewed).toBe(false);
+  });
+
   it("follows an alias a response names, looking each id up once", async () => {
     const requests: Array<{ url: string; headers: Record<string, string> }> = [];
     const routes: Record<string, FakeResponse> = {
