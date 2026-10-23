@@ -11,9 +11,10 @@
   so open PRs keep their text, and releases before this one read every PR they could have written themselves. They
   don't read a compressed plan: after a rollback, such a PR is skipped as carrying no plan, and the next pass may open
   another one. A plan stays refused when even compressed it doesn't fit, or when its JSON is over 1 MiB, which also
-  bounds what a block in a PR body can decompress to. A first plan marker that doesn't parse is no longer passed over
-  for a later one, and a body over GitHub's 65,536 characters (with secure-it's cooldown warning) fails while it's
-  composed instead of at GitHub.
+  bounds what a block in a PR body can decompress to. Reads take the first well-formed block, as before; rewriting a
+  section removes any other plan marker from the body, well-formed or not, so a stale or stray one doesn't outlive the
+  tool's next rewrite (an unclosed one stays). A body over GitHub's 65,536 characters (with secure-it's cooldown
+  warning) fails while it's composed instead of at GitHub.
 
 ## 0.7.4 - 2026-10-23
 

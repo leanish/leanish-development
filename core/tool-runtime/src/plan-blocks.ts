@@ -9,8 +9,8 @@ import { brotliCompressSync, brotliDecompressSync } from "node:zlib";
  */
 const RESERVED = "<!-- leanish:plan";
 const BLOCK = /<!-- leanish:plan(:br)? ([A-Za-z0-9+/=]+) -->/;
-/** Any well-formed plan block, whatever its format, to clear leftovers around a rewritten section. */
-const ANY_BLOCK = /<!-- leanish:plan(?::[a-z]+)? [A-Za-z0-9+/=]* -->/g;
+/** Any closed comment starting with the reserved prefix, well-formed or not, to clear leftovers around a rewritten section. */
+const ANY_MARKER = /<!-- leanish:plan[\s\S]*?-->/g;
 
 /** A plan section's size limit, leaving the rest of GitHub's body limit to the agent's description. */
 export const SECTION_LIMIT = 43_000;
@@ -87,8 +87,9 @@ export function assertNoPlanMarker(body: string): void {
 }
 
 /**
- * The payload of `body`'s first hidden comment; undefined when there's none, or when that first marker doesn't parse
- * (an unknown format, bad data, or a plan over the size limit): a later marker never stands in for it.
+ * The payload of `body`'s first well-formed block, as releases before compressed blocks read it: other text starting
+ * with the reserved prefix is passed over. Undefined when there's none, or when that block's payload doesn't decode
+ * (bad data, or a plan over the size limit); a later block never stands in for it.
  */
 export function planPayload(body: string): unknown {
   const found = firstBlock(body);
@@ -104,13 +105,11 @@ export function planPayload(body: string): unknown {
   }
 }
 
-/** The block at a body's first reserved marker, when that marker is a well-formed block. */
+/** A body's first well-formed block, of a format this release reads. */
 function firstBlock(body: string): { index: number; length: number; compressed: boolean; data: string } | undefined {
-  const index = body.indexOf(RESERVED);
-  if (index === -1) return undefined;
-  const found = BLOCK.exec(body.slice(index));
-  if (found === null || found.index !== 0 || found[2]!.length > BODY_LIMIT) return undefined;
-  return { index, length: found[0].length, compressed: found[1] !== undefined, data: found[2]! };
+  const found = BLOCK.exec(body);
+  if (found === null || found[2]!.length > BODY_LIMIT) return undefined;
+  return { index: found.index, length: found[0].length, compressed: found[1] !== undefined, data: found[2]! };
 }
 
 /**
@@ -128,7 +127,7 @@ export function withPlanSection(body: string, heading: string, section: string):
   const [before, after] = start === -1 || block === null
     ? [`${body.trimEnd()}\n\n`, ""]
     : [body.slice(0, start), body.slice(start + block.index + block[0].length)];
-  const result = `${before.replace(ANY_BLOCK, "")}${section}${after.replace(ANY_BLOCK, "")}`;
+  const result = `${before.replace(ANY_MARKER, "")}${section}${after.replace(ANY_MARKER, "")}`;
   assertBodyFits(result);
   return result;
 }

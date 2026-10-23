@@ -74,19 +74,34 @@ describe("plan blocks", () => {
     expect(() => section({ data: "x".repeat(1024 * 1024) })).toThrow(/bytes of JSON, over 1048576/);
   });
 
-  it("reads the first marker only, and nothing from unknown formats, bad data or a block that expands past the limit", () => {
+  it("reads the first well-formed block only, and nothing from unknown formats, bad data or a block that expands past the limit", () => {
     const one = planBlock({ a: 1 });
     expect(planPayload("<!-- leanish:plan:zz eyJhIjoxfQ== -->")).toBeUndefined();
     expect(planPayload("<!-- leanish:plan:br Zm9v -->")).toBeUndefined();
     expect(planPayload("<!-- leanish:plan bm90IGpzb24= -->")).toBeUndefined();
     expect(planPayload(`${planBlock({ a: 2 }, true)}\n${one}`)).toEqual({ a: 2 });
-    expect(planPayload(`<!-- leanish:plan:zz x -->\n${one}`)).toBeUndefined();
+    expect(planPayload(`<!-- leanish:plan:zz x -->\n${one}`)).toEqual({ a: 1 });
+    // A well-formed block whose payload doesn't decode carries no plan; a later block never stands in for it.
     expect(planPayload(`<!-- leanish:plan:br Zm9v -->\n${one}`)).toBeUndefined();
     const bomb = compressedBlock(JSON.stringify(" ".repeat(2 * 1024 * 1024)));
     expect(bomb.length).toBeLessThan(10_000);
     expect(planPayload(bomb)).toBeUndefined();
     expect(planPayload(planBlock({ a: "é" }, true))).toEqual({ a: "é" });
   });
+
+  it.each(["<!-- leanish:plan -->", "<!-- leanish:plan:BR AAAA -->", "<!-- leanish:plan xx! -->", "<!-- leanish:plan xx> -->"])(
+    "passes over a stray %s before the real block, as releases before compressed blocks do, and removes it on rewrite",
+    (stray) => {
+      for (const real of [section({ a: 1 }), section(large())]) {
+        const body = `${stray}\n\nDescription.\n\n${real}\n\n${stray}`;
+        expect(planPayload(body)).toEqual(planPayload(real));
+        const rewritten = withPlanSection(body, HEADING, section({ a: 2 }));
+        expect(rewritten.match(/leanish:plan/g)).toHaveLength(1);
+        expect(planPayload(rewritten)).toEqual({ a: 2 });
+        expect(rewritten).toContain("Description.");
+      }
+    },
+  );
 
   it("replaces a plain block with a compressed one and back, keeping the text around it", () => {
     const body = `before\n\n${section({ a: 1 })}\n\nafter`;
