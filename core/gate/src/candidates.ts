@@ -25,7 +25,7 @@ import { actionGaps } from "./actions-changes.ts";
 import { type CarriedPackage, type CarrierContext, type CarrierGroup, decideCarrier, splitBundled } from "./carrier-candidates.ts";
 import { type Config, isOwnPackage } from "./config.ts";
 import { type Exceptions, unexcusedProblem } from "./exceptions.ts";
-import { findingsOf, type Located } from "./findings.ts";
+import { type Finding, findingsOf, type Located } from "./findings.ts";
 import type { Floor } from "./floors.ts";
 import {
   bundleReader,
@@ -50,7 +50,7 @@ import type { Snapshot } from "./snapshot.ts";
 import { takeSnapshot } from "./take-snapshot.ts";
 import type { Tree } from "./tree.ts";
 import { type Ecosystem, versionScheme } from "./versions.ts";
-import { compatibleLine, fixes, movesFrom, ruleChoice, targetsOf, type VersionCatalog } from "./young-fixes.ts";
+import { compatibleLine, fixes, movesFrom, reviewedGroups, ruleChoice, targetsOf, type VersionCatalog, type Veto, vetoesOf } from "./young-fixes.ts";
 
 const DAY_MS = 86_400_000;
 
@@ -87,6 +87,8 @@ export interface SecurityFix {
   readonly problem: string | undefined;
   /** A carrier move: the bundled packages it replaces, and their advisories (`carrier-candidates.ts`). */
   readonly carries?: ReadonlyArray<CarriedPackage>;
+  /** Candidates ruled out only by advisories no reviewed source corroborates, for people (`vetoesOf`). */
+  readonly vetoed?: ReadonlyArray<Veto>;
 }
 
 export interface SecurityCandidates {
@@ -119,8 +121,12 @@ export async function securityCandidates(head: Tree, env: GateEnvironment, gradl
   const now = env.now();
   const today = now.toISOString().slice(0, 10);
   const failing = new Map<string, FailingVersion>();
+  // Only a reviewed advisory (or malware) triggers a fix; one only the project's repository publishes is reported.
+  const findings = unexcused(state.packages, state.snapshot, exceptions, today);
+  const triggers = findings.filter((finding) => finding.malicious || reviewedGroups(state.snapshot, finding).has(finding.advisory));
+  const unreviewedOnly = unreviewedReports(findings.filter((finding) => !triggers.includes(finding)), triggers);
   // Bundled copies can only move with their carrier: their findings become the carrier's targets.
-  const { rest, carriers } = splitBundled(unexcused(state.packages, state.snapshot, exceptions, today), state.inventory.npm);
+  const { rest, carriers } = splitBundled(triggers, state.inventory.npm);
   for (const finding of rest) {
     const pkg: Located = { ecosystem: finding.ecosystem, name: finding.name, version: finding.version, locations: finding.locations };
     const entry = failing.get(versionKey(pkg)) ?? { pkg, malicious: false, advisories: [], severities: [] };
@@ -168,7 +174,8 @@ export async function securityCandidates(head: Tree, env: GateEnvironment, gradl
     // Regrouped on the second snapshot: a candidate can link aliases into another canonical id.
     const current = unexcused([pkg], snapshot, exceptions, today);
     const malicious = current.some((finding) => finding.malicious);
-    const targets = targetsOf(snapshot, pkg, new Set(current.map((finding) => finding.advisory)));
+    const reviewed = reviewedGroups(snapshot, pkg);
+    const targets = targetsOf(snapshot, pkg, new Set(current.filter((finding) => reviewed.has(finding.advisory)).map((finding) => finding.advisory)));
     const severity = highestSeverity(current.map((finding) => finding.severity));
     const base = { ecosystem: pkg.ecosystem, name: pkg.name, from: pkg.version, locations: pkg.locations, targets, malicious, severity };
     const moves = listings.get(versionKey(pkg));
@@ -181,7 +188,7 @@ export async function securityCandidates(head: Tree, env: GateEnvironment, gradl
       found.push(await chooseMove(pkg, targets, malicious, moves, { snapshot, catalog: catalogs[pkg.ecosystem], config, now, identity }, base));
     }
   }
-  found.push(...carried);
+  found.push(...carried, ...unreviewedOnly);
   return {
     fixes: found,
     npmPeers: { resolve: (moves) => peers.resolve(moves, snapshot) },
@@ -194,6 +201,29 @@ export async function securityCandidates(head: Tree, env: GateEnvironment, gradl
     gaps: [...state.snapshot.gaps, ...snapshot.gaps, ...actionGaps(state.inventory.actions, state.resolutions)],
     osvScannerVersion: state.osvScannerVersion,
   };
+}
+
+/**
+ * A package failing only on advisories no reviewed source corroborates gets no move: a fixed note per version,
+ * reported like any fix that can't be made. A package with a reviewed finding anywhere is planned from those alone
+ * (a note there would block its whole group).
+ */
+function unreviewedReports(unreviewed: ReadonlyArray<Finding>, triggers: ReadonlyArray<Finding>): SecurityFix[] {
+  const byVersion = new Map<string, Finding[]>();
+  for (const finding of unreviewed) {
+    const key = versionKey(finding as PackageVersion);
+    if (triggers.some((trigger) => trigger.ecosystem === finding.ecosystem && trigger.name === finding.name)) continue;
+    byVersion.set(key, [...byVersion.get(key) ?? [], finding]);
+  }
+  return [...byVersion.values()].map((group) => {
+    const [first] = group as [Finding, ...Finding[]];
+    const ids = [...new Set(group.flatMap((finding) => finding.ids))].sort();
+    return {
+      ecosystem: first.ecosystem as Ecosystem, name: first.name, from: first.version, locations: [...new Set(group.flatMap((finding) => finding.locations))].sort(),
+      targets: [], unfixable: [], malicious: false, severity: highestSeverity(group.map((finding) => finding.severity)), to: undefined,
+      problem: `${first.name}@${first.version} is affected by ${ids.join(", ")}, only in the project's repository advisories (not corroborated by the sources this decision used): no fix is proposed until a reviewed source lists it`,
+    };
+  });
 }
 
 /** A carrier version's fix; a decision that can't be made (an archive, a scan) is the fix's problem, not the run's. */
@@ -291,7 +321,9 @@ async function chooseMove(
   if (choice.kind === "undated") {
     return none(`the publish time of ${choice.versions.join(", ")} (fixing, line ${choice.line}) is unknown, so the rule can't tell which fix is old enough`);
   }
-  return move(choice.version, choice.aged);
+  const chosen = await move(choice.version, choice.aged);
+  const vetoed = vetoesOf(snapshot, name, pkg.version, fixable, moves);
+  return vetoed.length === 0 ? chosen : { ...chosen, vetoed };
 }
 
 async function isAged(pkg: PackageVersion, catalog: VersionCatalog, config: Config, now: Date): Promise<boolean> {

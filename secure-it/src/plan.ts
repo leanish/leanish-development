@@ -334,7 +334,7 @@ export async function planFor(work: ReadonlyArray<FixWork>, inputs: PlanInputs, 
   const severity = work.map((fix) => fix.severity).reduce<string | undefined>((best, next) => (severityRank(next) > severityRank(best) ? next : best), undefined);
   const kind = unit?.kind ?? (malware ? "malware" : moves.some((move) => move.major) ? "major" : "routine");
   const topic = unit?.topic ?? (kind === "malware" ? "malware" : kind === "routine" ? "security" : `${work[0]!.name}-major`);
-  const notes = [...new Set(work.flatMap((fix) => fix.notes ?? []))];
+  const notes = [...new Set(work.flatMap((fix) => [...fix.notes ?? [], ...vetoNotes(fix)]))];
   return { kind, topic, malware, packages, moves, severity, ...(coupled.length === 0 ? {} : { coupled }), ...(notes.length === 0 ? {} : { notes }) };
 }
 
@@ -408,6 +408,13 @@ export function dependentsOf(lockfiles: ReadonlyMap<string, unknown>, location: 
     else dependents.push({ path, spec, name: entry.name ?? path.slice(path.lastIndexOf("node_modules/") + "node_modules/".length), version: entry.version, bundled: entry.inBundle === true });
   }
   return { installedAs, declaredByWorkspace, dependents };
+}
+
+/** The candidates the gate ruled out only by advisories no reviewed source corroborates: a fixed note each, for people. */
+function vetoNotes(fix: FixWork): string[] {
+  if (fix.to === undefined) return [];
+  return (fix.vetoed ?? []).map((veto) =>
+    `${fix.name} ${veto.version} was ruled out by ${veto.advisories.join(", ")}, not corroborated by the sources this decision used; this takes ${fix.to!.version}.`);
 }
 
 export function satisfies(version: string, range: string): boolean {

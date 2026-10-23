@@ -22,7 +22,7 @@
  * A carrier proved this way doesn't seed required-dependency proofs: a young
  * non-bundled dependency it needs stays unjustified, and the comparison fails.
  */
-import { candidateVersions, groupsOf, targetsOf, type VersionCatalog } from "./young-fixes.ts";
+import { candidateVersions, groupsOf, reviewedGroups, targetsOf, type VersionCatalog } from "./young-fixes.ts";
 import { chooseCarrier, describe, removedTargets, registryIntegrity } from "./carrier-fixes.ts";
 import type { Config } from "./config.ts";
 import { isOwnPackage } from "./config.ts";
@@ -123,11 +123,20 @@ async function occurrenceProof(pkg: PackageVersion, occurrence: Occurrence, inpu
   const snapshot = await inputs.scan([
     { ...pkg, version: occurrence.from }, pkg, ...versionsOf(fromBundle), ...versionsOf(toBundle),
   ]);
-  const carried = removedTargets(fromBundle, toBundle, snapshot);
-  if (carried.length === 0) return `${at}: ${pkg.name}@${pkg.version}'s bundle fixes nothing ${occurrence.from}'s had`;
+  // Only reviewed advisories justify a young carrier: a bundled one or the carrier's own (vetoes still use them all).
+  const reviewedIn = (name: string, group: string) => fromBundle.packages.some((entry) => entry.name === name
+    && reviewedGroups(snapshot, { ecosystem: "npm", name, version: entry.version }).has(group));
+  const removed = removedTargets(fromBundle, toBundle, snapshot);
+  const carried = removed.filter((target) => reviewedIn(target.name, target.advisory));
   // The carrier's own advisories it fixes too: the combined choice secure-it makes, reconstructed from the trees.
   const after = groupsOf(snapshot, pkg);
-  const own = targetsOf(snapshot, { ...pkg, version: occurrence.from }).filter((group) => !after.has(group));
+  const ownReviewed = reviewedGroups(snapshot, { ...pkg, version: occurrence.from });
+  const own = targetsOf(snapshot, { ...pkg, version: occurrence.from }).filter((group) => !after.has(group) && ownReviewed.has(group));
+  if (carried.length === 0 && own.length === 0) {
+    return removed.length === 0
+      ? `${at}: ${pkg.name}@${pkg.version}'s bundle fixes nothing ${occurrence.from}'s had`
+      : `${at}: ${pkg.name}@${pkg.version}'s bundle fixes no reviewed advisory ${occurrence.from}'s had (${describe(removed)} only in the project's repository advisories, not corroborated by the sources this decision used)`;
+  }
   const listed = await inputs.catalog.versions(pkg);
   if (listed === undefined) return `${at}: the registry doesn't list ${pkg.name}'s versions, so the rule can't be checked`;
   const choice = await chooseCarrier({

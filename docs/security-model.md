@@ -51,9 +51,10 @@ decision: every other check green, the reason written on the PR, an admin merge.
 
 The gate also reads a dependency's own repository advisories, which name a fix days before GitHub reviews them into
 its database and OSV imports them. Whoever controls that repository and the package can publish an advisory and a
-"fixed" version together to get a young version proposed early. The proposal is all they get: it stays held like any
-other, and secure-it's warning says whether OSV or GitHub's reviewed database lists each advisory, and warns when only
-the project publishes it. Details:
+"fixed" version together to get a young version proposed early. So such unreviewed advisories detect and rule
+versions out, but never trigger a fix nor justify a young version; one can still steer the choice by ruling a
+version out, which the plan records, and whatever comes early stays held. The rules:
+[how each source counts](../core/gate/README.md#how-each-source-counts). Details:
 [the gate's cooldown](../core/gate/README.md#the-cooldown-young-versions-are-held-however-justified) and
 [secure-it's warning](../secure-it/README.md#the-cooldown-warning).
 

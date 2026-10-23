@@ -12,6 +12,23 @@ describe("independently gated security requirements", () => {
     expect(h.scans).toHaveLength(1);
   });
 
+  it("lets no repository-only advisory make a young root, nor the young requirement it would bring", async () => {
+    const h = environment({ affected: {} });
+    const repository = { body: { repository: "github:vitejs/vite" } };
+    const advisories = { body: [{ ghsa_id: "GHSA-vite-repo", state: "published", vulnerabilities: [{ package: { ecosystem: "npm", name: "vite" }, vulnerable_version_range: "< 8.3.3" }] }] };
+    const env = { ...h.env, fetch: async (url: string, init?: Parameters<typeof h.env.fetch>[1]) => {
+      if (/^https:\/\/registry\.npmjs\.org\/vite\/[^/]+$/.test(url)) return { ok: true, status: 200, headers: { get: () => null }, json: async () => repository.body, text: async () => "" };
+      if (url === "https://api.github.com/repos/vitejs/vite/security-advisories?state=published&per_page=100") return { ok: true, status: 200, headers: { get: () => null }, json: async () => advisories.body, text: async () => "" };
+      return h.env.fetch(url, init);
+    } };
+    const outcome = await runCompare(tree(files()), tree(files("8.3.3", "8.5.29"), "head"), env);
+    expect(outcome.failures).toEqual(expect.arrayContaining([
+      expect.stringContaining("vite@8.3.3 was published"),
+      expect.stringContaining("it fixes no reviewed advisory affecting 8.3.2"),
+      expect.stringContaining("postcss@8.5.29 was published"),
+    ]));
+  });
+
   it("reconstructs two independently proved security roots jointly on one snapshot", async () => {
     const batch = securityBatch();
     const h = environment(batch);

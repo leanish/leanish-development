@@ -129,6 +129,11 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
    moves are claimed as applied. npm may still induce transitive changes, and these still face `compare`. The next
    run reconsiders omitted fixes.
 
+   Advisories only the project's own repository publishes (unreviewed) plan no fix: such a version is reported, and
+   waits for a reviewed source. They still rule candidates out, and the plan notes each candidate ruled out that way
+   ("ruled out by …, not corroborated by the sources this decision used"). See
+   [how each source counts](../core/gate/README.md#how-each-source-counts).
+
    Before that reduction, a first refusal gets the agent asked once more for the same plan, from the base, with the
    refusal (`rejected`): an agent that moved a parent instead of the planned floor, say. The reduction then works
    from the second attempt's problems; the run report keeps the first (`rejected`). A review's adaptation is never
@@ -226,18 +231,10 @@ GitHub's database and OSV, fresh and only to inform. A table shows each source a
 whether its ranges put each replaced and proposed version among the affected ones; a bundled package is named as
 bundled, and a removal as a removal. A lookup that fails reads "couldn't be fully checked", never "not found".
 
-Fixed paragraphs open the warning, by how each advisory for the package was reviewed. OSV and GitHub's database
-(reviewed records only) count as reviewed: OSV imports GitHub's reviewed advisories, so for npm and Maven they're
-mostly the same review, apart from import lag. A project's own repository advisories are unreviewed: whoever controls
-the repository publishes them at will.
-
-- every advisory backed by a reviewed record (it lists the replaced version as affected and the proposed one as not):
-  a plain line saying so;
-- backed only by the project's repository advisories: a warning that such an advisory is easy to fake, to get a release
-  carrying an attack installed before the wait ends; a variant says so when OSV or GitHub couldn't be checked;
-- backed only by a GitHub record GitHub hasn't reviewed: a warning to treat the fix as unreviewed;
-- when no source read now backs the fix the comparison proved (a record withdrawn since, or ranges that no longer put
-  the replaced version among the affected ones): a paragraph saying so. The verdict stands; the rows are marked ⚠.
+A fixed line opens the warning: that a reviewed record (OSV, or GitHub's reviewed database) still backs every fix as
+read now, or, with those rows marked ⚠, that none does for some (withdrawn since, ranges that changed, or sources that
+couldn't be read). The comparison's verdict stands either way. A fix's targets are reviewed advisories by the time
+it's proposed; how each source counts is in [the gate's rules](../core/gate/README.md#how-each-source-counts).
 
 The agent never writes any of this.
 

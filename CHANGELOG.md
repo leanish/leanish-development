@@ -2,15 +2,25 @@
 
 ## Unreleased
 
+### Changed
+
+- A project's own repository advisories, unreviewed and published at will by whoever controls the repository, no
+  longer trigger a fix nor justify a young version: they still detect (a finding, a PR adding one fails) and rule
+  versions out. Only reviewed advisories (OSV, or GitHub's database for Actions) make secure-it plan a fix and make a
+  young version the rule-picked fix, a bundle fix or a required npm dependency. A version affected only by unreviewed
+  advisories is reported, not fixed, until a reviewed source lists it. An unreviewed advisory can still rule out the
+  version the rule would take and steer it to another, even a young one (held); secure-it's plan notes each such
+  candidate. A `releaseAge` exception may still name one: the owner's override. The rules are in the gate's README
+  ("How each source counts"). GitHub's Actions advisories that aren't `reviewed` or `malware` now fail the run.
+
 ### Added
 
 - secure-it's cooldown warning now says where the advisories behind each held security or bundle fix appear: the
   dependency's own repository advisories, GitHub's database and OSV, each read after the verification and shown as
   that source says (its declared fix, and whether its ranges put each replaced and proposed version among the affected
-  ones). A fixed paragraph opens the warning: a plain line when OSV or GitHub's reviewed database lists each advisory
-  as fixed in the proposed version (reviewed), a warning when only a record GitHub hasn't reviewed does, and a stronger one when only the project's own repository advisories do, which are unreviewed
-  and easy to fake to get a release carrying an attack installed early. Another says when what the sources say now no
-  longer backs the fix the comparison proved. A lookup that fails is shown as such, never as "not found". The gate's comparison report records, for each held fix,
+  ones). A fixed line opens the warning: that a reviewed record (OSV, or GitHub's reviewed database) still backs every
+  fix as read now, or, marking the rows, that none does for some. A lookup that fails is shown as such, never as "not
+  found". The gate's comparison report records, for each held fix,
   the advisories behind it (`targets`); nothing in the evidence changes a verdict.
 - When verification refuses an edit the agent wrote, bump-it and secure-it now ask the agent once more, from the base,
   with the refusal (`rejected` in the skill input); a second refusal fails the unit as before, and secure-it's

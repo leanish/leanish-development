@@ -103,8 +103,8 @@ function environment(releases: Record<string, Release>, affected: Record<string,
     "other/1.0.0",
   ].map((path) => [`https://registry.npmjs.org/${path}`, { body: {} }]));
   const fetch = fakeFetch({
-    ...routes,
     ...perVersion,
+    ...routes,
     ...Object.fromEntries(["holder", "other"].map((holder) => [`https://registry.npmjs.org/${holder}`, { body: { time: { "1.0.0": OLD }, versions: { "1.0.0": { _npmUser: { name: "maintainer" }, dist: {} } } } }])),
     "https://registry.npmjs.org/carrier": { body: { time: Object.fromEntries(Object.entries(releases).map(([version, release]) => [version, release.published])), versions } },
   });
@@ -158,6 +158,17 @@ describe("a young carrier proved as a bundled fix", () => {
     expect(outcome.cooldown.evaluated && outcome.cooldown.held[0]!.targets).toEqual([
       { name: "brace", bundled: true, replaced: ["5.0.9"], proposed: ["5.0.12"], groups: [{ ids: ["GHSA-brace"], replaced: ["5.0.9"] }] },
     ]);
+  });
+
+  it("isn't when the only advisory its bundle drops is one the bundled package's own repository alone publishes", async () => {
+    const routes = {
+      "https://registry.npmjs.org/brace/5.0.9": { body: { repository: "github:acme/brace" } },
+      "https://api.github.com/repos/acme/brace/security-advisories?state=published&per_page=100": { body: [
+        { ghsa_id: "GHSA-brace-repo", state: "published", vulnerabilities: [{ package: { ecosystem: "npm", name: "brace" }, vulnerable_version_range: "< 5.0.12" }] },
+      ] },
+    };
+    const outcome = await compare({ "1.0.0": { published: OLD, bundles: VULNERABLE }, "1.1.0": { published: daysAgo(1), bundles: FIXED } }, "1.0.0", "1.1.0", { affected: {}, routes });
+    expect(ageFailures(outcome.failures)).toEqual([expect.stringContaining("fixes no reviewed advisory 1.0.0's had (brace GHSA-brace-repo only in the project's repository advisories")]);
   });
 
   it("isn't when an aged version's bundle drops it too", async () => {

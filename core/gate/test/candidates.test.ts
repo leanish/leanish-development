@@ -223,6 +223,36 @@ describe("securityCandidates", () => {
   });
 });
 
+/** `environment` plus `lib`'s own repository (acme/lib) publishing `advisories`, which OSV doesn't have. */
+function withRepositoryAdvisories(env: GateEnvironment, advisories: object[]): GateEnvironment {
+  return { ...env, fetch: async (url, init) => {
+    if (/^https:\/\/registry\.npmjs\.org\/lib\/[^/]+$/.test(String(url))) return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ repository: "github:acme/lib" }), text: async () => "" };
+    if (String(url) === "https://api.github.com/repos/acme/lib/security-advisories?state=published&per_page=100") {
+      return { ok: true, status: 200, headers: { get: () => null }, json: async () => advisories, text: async () => "" };
+    }
+    return env.fetch(url, init);
+  } };
+}
+const repositoryAdvisory = (id: string, range: string) => ({ ghsa_id: id, state: "published", vulnerabilities: [{ package: { ecosystem: "npm", name: "lib" }, vulnerable_version_range: range }] });
+
+describe("securityCandidates and repository-only advisories", () => {
+  it("proposes no fix for an advisory only the project's repository publishes, and says so", async () => {
+    const env = withRepositoryAdvisories(environment({}, { lib: { "1.0.0": OLD, "1.0.1": OLD } }), [repositoryAdvisory("GHSA-repo", "< 1.0.1")]);
+    const found = await securityCandidates(await tree({ lib: "1.0.0" }), env);
+    expect(moves(found.fixes)).toEqual([[
+      "lib@1.0.0", undefined,
+      "lib@1.0.0 is affected by GHSA-repo, only in the project's repository advisories (not corroborated by the sources this decision used): no fix is proposed until a reviewed source lists it",
+    ]]);
+  });
+
+  it("lets one rule a candidate out, records the veto, and may steer to a young version", async () => {
+    const registry = { lib: { "1.0.0": OLD, "1.0.1": OLD, "1.0.2": YESTERDAY } };
+    const env = withRepositoryAdvisories(environment({ "lib@1.0.0": ["GHSA-a"] }, registry), [repositoryAdvisory("GHSA-b", ">= 1.0.1, < 1.0.2")]);
+    const [fix] = (await securityCandidates(await tree({ lib: "1.0.0" }), env)).fixes;
+    expect(fix).toMatchObject({ targets: ["GHSA-a"], to: { version: "1.0.2", aged: false }, vetoed: [{ version: "1.0.1", advisories: ["GHSA-b"] }] });
+  });
+});
+
 describe("securityCandidates, regressions", () => {
   it("regroups targets on the second snapshot, where a candidate can link an alias into another canonical id", async () => {
     const affected = { "lib@1.0.0": ["CVE-2026-1"], "lib@1.0.1": ["GHSA-a=CVE-2026-1"] };

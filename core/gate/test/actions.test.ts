@@ -360,8 +360,8 @@ describe("GitHub's advisory database", () => {
       fakeFetch({
         [`${API}/advisories/GHSA-unrv-unrv-unrv`]: { body: { ghsa_id: "GHSA-unrv-unrv-unrv", type: "unreviewed", ...vulnerable } },
         [`${API}/advisories/GHSA-revd-revd-revd`]: { body: { ghsa_id: "GHSA-revd-revd-revd", type: "reviewed", ...vulnerable } },
-        [affects("reviewed")]: { body: [{ ghsa_id: "GHSA-page-one1-aaaa" }], headers: { link: `<${API}/advisories?page=2>; rel="next"` } },
-        [`${API}/advisories?page=2`]: { body: [{ ghsa_id: "GHSA-page-two2-bbbb" }] },
+        [affects("reviewed")]: { body: [{ ghsa_id: "GHSA-page-one1-aaaa", type: "reviewed" }], headers: { link: `<${API}/advisories?page=2>; rel="next"` } },
+        [`${API}/advisories?page=2`]: { body: [{ ghsa_id: "GHSA-page-two2-bbbb", type: "reviewed" }] },
         [affects("malware")]: { body: [] },
       }),
       undefined,
@@ -369,6 +369,12 @@ describe("GitHub's advisory database", () => {
     expect(await gh.globalCovers("GHSA-unrv-unrv-unrv", "a/b")).toBe(false);
     expect(await gh.globalCovers("GHSA-revd-revd-revd", "a/b")).toBe(true);
     expect((await gh.advisories("a/b", "v1.0.0")).map((advisory) => advisory.id)).toEqual(["GHSA-page-one1-aaaa", "GHSA-page-two2-bbbb"]);
+  });
+
+  it("refuses a record the reviewed query returns that isn't reviewed: only reviewed ones may trigger a fix", async () => {
+    const affects = (type: string) => `${API}/advisories?ecosystem=actions&affects=${encodeURIComponent("a/b@v1.0.0")}&type=${type}&per_page=100`;
+    const gh = new ActionsGitHub(fakeFetch({ [affects("reviewed")]: { body: [{ ghsa_id: "GHSA-unrv-unrv-unrv", type: "unreviewed" }] }, [affects("malware")]: { body: [] } }), undefined);
+    await expect(gh.advisories("a/b", "v1.0.0")).rejects.toThrow("GitHub advisory GHSA-unrv-unrv-unrv isn't reviewed (type unreviewed)");
   });
 
   it("marks a release listing past the page cap incomplete, so the young-fix proof can't use it", async () => {

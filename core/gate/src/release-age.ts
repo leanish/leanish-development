@@ -20,7 +20,7 @@ import type { BundleFixProof } from "./bundle-fix-proof.ts";
 import { label, type PackageVersion, versionKey } from "./package-version.ts";
 import type { Snapshot } from "./snapshot.ts";
 import type { Ecosystem } from "./versions.ts";
-import { groupsOf, targetsOf, type VersionCatalog, youngFixProblem } from "./young-fixes.ts";
+import { groupsOf, reviewedGroups, targetsOf, type VersionCatalog, youngFixProblem } from "./young-fixes.ts";
 
 const DAY_MS = 86_400_000;
 
@@ -161,7 +161,7 @@ async function judgeYoung(change: ChangedVersion, context: AgeContext): Promise<
   return why === undefined ? { justification: "exception" } : { justification: "unjustified", problem: `${label(pkg)}: ${why}` };
 }
 
-/** The groups a security fix leaves behind: those affecting a replaced version and not the new one, malware aside. */
+/** The reviewed groups a security fix leaves behind: affecting a replaced version and not the new one, malware aside. */
 function ownTarget(change: ChangedVersion, snapshot: Snapshot): HeldTarget {
   const after = groupsOf(snapshot, change.pkg);
   return {
@@ -169,15 +169,15 @@ function ownTarget(change: ChangedVersion, snapshot: Snapshot): HeldTarget {
     bundled: false,
     replaced: change.replaced,
     proposed: [change.pkg.version],
-    groups: groupIds(snapshot, change.replaced.map((version) => ({ ...change.pkg, version })), (group) => !after.has(group)),
+    groups: groupIds(snapshot, change.replaced.map((version) => ({ ...change.pkg, version })), (group, version) => !after.has(group) && reviewedGroups(snapshot, version).has(group)),
   };
 }
 
 /** Each target group of `versions` with every id the snapshot knows for it and the versions it affects, in a stable order. */
-export function groupIds(snapshot: Snapshot, versions: ReadonlyArray<PackageVersion>, keep: (group: string) => boolean): HeldGroup[] {
+export function groupIds(snapshot: Snapshot, versions: ReadonlyArray<PackageVersion>, keep: (group: string, version: PackageVersion) => boolean): HeldGroup[] {
   const groups = new Map<string, { ids: Set<string>; replaced: Set<string> }>();
   for (const version of versions) {
-    const targets = new Set(targetsOf(snapshot, version).filter(keep));
+    const targets = new Set(targetsOf(snapshot, version).filter((group) => keep(group, version)));
     for (const advisory of snapshot.advisories(version)) {
       const group = snapshot.group(advisory.id);
       if (!targets.has(group)) continue;

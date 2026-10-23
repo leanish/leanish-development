@@ -1093,7 +1093,7 @@ describe("the cooldown hold", () => {
     expect(hold!.evidence).toMatchObject({ collectedAt: NOW.toISOString(), targets: [{ name: "vite", groups: [{ ids: ["GHSA-vite-0001"], sources: [
       { source: "repository", lookup: "incomplete" }, { source: "github", lookup: "checked", records: [] }, { source: "osv", lookup: "checked", records: [] },
     ] }] }] });
-    expect(body).toContain("> **The advisories read after the comparison don't back this fix as the comparison did.**");
+    expect(body).toContain("> **The reviewed advisories read after the comparison don't back this fix as the comparison did.**");
     expect(body).toContain("> | ⚠ GHSA-vite-0001 | `vite` 8.3.1 → 8.3.3 | couldn't be fully checked: its source repository can't be found: registry lookup of vite@8.3.1 failed with HTTP 404 | not found | not found |");
   });
 

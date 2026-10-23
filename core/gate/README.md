@@ -45,6 +45,17 @@ One snapshot per run, shared by base and head:
 
 A package with no GitHub source repository, an unreadable repository, and a range the gate can't read are **coverage gaps**: listed in the report, never a pass in disguise.
 
+## How each source counts
+
+A project's own repository advisories are published by whoever controls that repository, in minutes and with no review, so they count less than the others:
+
+- **Reviewed** means, for an advisory group on a package version, that some record of it comes from OSV or from GitHub's advisory database (Actions: GitHub's `reviewed` or `malware` records only). **Unreviewed** means every record comes from the project's own repository advisories. The gate decides with the sources this run read: it doesn't ask GitHub's database about npm or Maven, so an advisory GitHub reviewed but OSV hasn't imported yet counts as unreviewed for those hours.
+- **Every advisory, reviewed or not, detects and vetoes:** it's a finding, a PR that adds it fails, and a version it affects is no candidate (bump-it skips it; a security fix can't land on it).
+- **Only a reviewed advisory triggers and justifies:** secure-it plans a fix only for reviewed targets, and only reviewed targets make a young version the rule-picked fix, a young carrier a bundle fix, or a young npm dependency required by one. A version affected only by unreviewed advisories gets no fix: the run reports it, and it waits until a reviewed source lists it.
+- **A veto can steer the choice, even to a young version:** when an unreviewed advisory rules out the version the rule would otherwise take, the next fixing version is taken, held like any young one. secure-it's plan notes each candidate ruled out that way (not yet for carriers and required npm dependencies).
+- **Malware counts from any source,** and **a `releaseAge` exception** may still name an unreviewed advisory: it's the owner's written override.
+- **Every young version is held** by the [cooldown](#the-cooldown-young-versions-are-held-however-justified), however justified; taking it early is a person's decision.
+
 ## Gradle builds
 
 `gradle-inventory` runs [`gradle/supply-chain-inventory.init.gradle`](gradle/supply-chain-inventory.init.gradle) on a clean checkout (or, with `--head worktree`, on the working tree as it is, for the tools' own edits) and records, for every project, **every resolvable configuration**: runtime, compile and test classpaths, annotation processors, tool configurations (checkstyle, pitest, jacoco…), the buildscript classpath (where `plugins {}` and `buildscript {}` put plugins) and the settings classpath. Each configuration lists:
@@ -122,7 +133,7 @@ After a passing comparison, the `supply-chain` job runs `npm-signatures`: script
 
 A version younger than the wait passes without an exception when it's the fix the version rule picks. For a version V replacing R:
 
-- **Targets:** the advisories that affect R and not V. An upgrade that fixes A and leaves B fixes A; malware isn't a target. No target, no fix.
+- **Targets:** the reviewed advisories ([how each source counts](#how-each-source-counts)) that affect R and not V. An upgrade that fixes A and leaves B fixes A; malware isn't a target. No target, no fix.
 - **Candidates:** the registry's versions above R, up to the end of V's line. Prereleases count only if R is one; a Maven version keeps R's flavor (`-jre`). A candidate fixes when no target affects it, and it brings no advisory R doesn't have, malware included.
 - **The rule:**
   1. Take the first compatible line with a fixing candidate, starting from R's own (npm's caret range; Maven's first numeric segment, or `0.N` when the first is 0; adjustable through `compatibleLines` in config). A backport 1.9.5 beats a mature 2.0.0.
@@ -130,7 +141,7 @@ A version younger than the wait passes without an exception when it's the fix th
   3. If none is that old, take the lowest fixing candidate, however young.
 - V passes only if it's that version. If an older fix in the line turns 7 days old before CI runs, the check fails on purpose: that one is safer, and secure-it picks it up.
 
-Candidates join the same advisory snapshot as base and head, so the rule and the comparison read the same data. In an October 2026 example, sqs-codec's snappy-java 1.1.10.8 → 1.1.10.10, then three days old, passed with no exception: 1.1.10.9 leaves two of the seven advisories, and 1.1.10.10 is the lowest that fixes them all.
+Candidates join the same advisory snapshot as base and head, so the rule and the comparison read the same data. In an October 2026 example, sqs-codec's snappy-java 1.1.10.8 → 1.1.10.10, then three days old, passed with no exception: 1.1.10.9 leaves two of the seven advisories, and 1.1.10.10 is the lowest that fixes them all. Under the current rules it needs those advisories reviewed: while only snappy-java's own repository published them, they'd have ruled versions out and justified none.
 
 ## A young carrier with a bundled fix (npm)
 
@@ -145,9 +156,9 @@ head copy of V:
   redirects) and checks each against the sha512 integrity its lockfile records; head's must also be the one the
   registry publishes. Each lockfile's bundled entries under the copy must be exactly what its archive ships, path by
   path, name and version included, both ways.
-- **Targets:** the bundled package + advisory groups R's bundle has and V's doesn't (wherever in the bundle a package
-  sits: a package that moved inside the bundle still counts), plus R's own advisories V no longer has. Malware isn't a
-  target.
+- **Targets:** the bundled package + reviewed advisory groups R's bundle has and V's doesn't (wherever in the bundle a
+  package sits: a package that moved inside the bundle still counts), plus R's own reviewed advisories V no longer has.
+  Malware isn't a target; unreviewed advisories still rule candidates out.
 - **The rule:** the young-fix rule above, applied to the carrier: a candidate fixes when its bundle has none of the
   targets anywhere, adds no package + advisory group pair R's bundle lacked, holds no malware, and the carrier version
   itself fixes R's own targets without a new advisory. Candidates are read lazily, in order; each batch of newly read
