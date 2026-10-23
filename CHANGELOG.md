@@ -12,15 +12,16 @@
   A plan stays refused when even compressed it doesn't fit, or when its JSON is over 1 MiB, which also bounds what a
   block in a PR body can decompress to. Reads still take the first well-formed block.
 - A body over GitHub's 65,536 characters (with secure-it's cooldown warning) now fails while it's composed. The tool's
-  state markers are added later, at publication, so a body within about 160 characters of the limit still fails
-  there, as before.
+  state and ownership markers are added later, at publication, so a body within about 160 characters of the limit can
+  still exceed it and fail there, potentially after the branch was pushed, as before.
 
 ### Rolling back
 
-Earlier releases don't read a compressed plan. After a rollback, a PR carrying one isn't recognised as the tool's own:
-bump-it's next pass may open another PR for the same work, and its review tick may still mark that PR ready on green
-CI, or try adaptations and close it when CI keeps failing; secure-it's review tick reports an error for it. Close
-those PRs by hand before rolling back. Where a person duplicated a plan block in a PR body, an earlier release reads the
+Earlier releases don't read a compressed plan. After a rollback, neither tool's regular run can match a PR carrying one
+to its plan, so either tool may open another PR for the same work. Review ticks still recognise ownership: with the
+recorded base unchanged, bump-it may mark the PR ready on green CI, or consume failed adaptation attempts and
+eventually close it when CI keeps failing. If the base moved, bump-it reports an error; secure-it's review tick reports
+an error when reading the plan. Close those PRs by hand before rolling back. Where a person duplicated a plan block in a PR body, an earlier release reads the
 plain duplicate instead of the compressed plan, so remove duplicate blocks too.
 
 ## 0.7.4 - 2026-10-23
