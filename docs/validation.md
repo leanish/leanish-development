@@ -582,8 +582,10 @@ every call, which doubled real-git test suites in the sandbox, and it refused `-
 - **Passes on v0.7.4**: two regular passes of both tools, 28 commands each.
   - Failures: secure-it on kryptovero in both, pre-existing since 2026-10-21 (a fix that brings jackson 3.2.4,
     younger than the wait). The second pass also had one Maven Central 502 on sqs-codec; a rerun found nothing to fix.
-  - The agent had no work on leanish-development in either pass: fast-uri's PR is already open, and bump-it's unit
-    needed no agent. So the repository that timed out has no new timing yet.
+  - The agent had no work on leanish-development in either pass: fast-uri's PR was already open, and bump-it's unit
+    needed no agent. #215 was then closed by hand so secure-it would plan it again (#225). The agent ran this
+    repository's full `npm run check`, every workspace passing (setup's 395 tests included), in 169 s and 255K
+    tokens, against 840 s (timed out) and 797 s with about 425K tokens on v0.7.3.
 
 Known limitations, for 0.7.5:
 - Those listed for 0.7.4 under 0.7.3, including bump-it's and secure-it's 43,000-character limit on a PR's plan
