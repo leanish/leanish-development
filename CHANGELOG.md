@@ -7,11 +7,10 @@
 - secure-it's cooldown warning now says where the advisories behind each held security or bundle fix appear: the
   dependency's own repository advisories, GitHub's database and OSV, each read after the verification and shown as
   that source says (its declared fix, and whether its ranges put each replaced and proposed version among the affected
-  ones). A fixed paragraph opens the warning according to the most trusted source listing each advisory, in the order
-  OSV, GitHub's database, the project's own repository advisories: a plain line for OSV, a warning that an advisory
-  only GitHub has is less trusted, and a stronger one that an advisory only the project publishes is easy to fake to
-  get a release carrying an attack installed early. Another says when what the sources say now no longer backs the
-  fix the comparison proved. A lookup that fails is shown as such, never as "not found". The gate's comparison report records, for each held fix,
+  ones). A fixed paragraph opens the warning: a plain line when OSV or GitHub's reviewed database lists each advisory
+  (reviewed), and a warning when one appears only in the project's own repository advisories, which are unreviewed
+  and easy to fake to get a release carrying an attack installed early. Another says when what the sources say now no
+  longer backs the fix the comparison proved. A lookup that fails is shown as such, never as "not found". The gate's comparison report records, for each held fix,
   the advisories behind it (`targets`); nothing in the evidence changes a verdict.
 - When verification refuses an edit the agent wrote, bump-it and secure-it now ask the agent once more, from the base,
   with the refusal (`rejected` in the skill input); a second refusal fails the unit as before, and secure-it's

@@ -226,15 +226,14 @@ GitHub's database and OSV, fresh and only to inform. A table shows each source a
 whether its ranges put each replaced and proposed version among the affected ones; a bundled package is named as
 bundled, and a removal as a removal. A lookup that fails reads "couldn't be fully checked", never "not found".
 
-Fixed paragraphs open the warning, by the most trusted source listing each advisory for the package. OSV ranks
-first (it imports GitHub's reviewed advisories among other sources), then GitHub's database (reviewed records only),
-then the project's own repository advisories, which whoever controls the repository publishes with no review:
+Fixed paragraphs open the warning, by how each advisory for the package was reviewed. OSV and GitHub's database
+(reviewed records only) count as reviewed: OSV imports GitHub's reviewed advisories, so for npm and Maven they're
+mostly the same review, apart from import lag. A project's own repository advisories are unreviewed: whoever controls
+the repository publishes them at will.
 
-- in OSV: a plain line saying so;
-- only in GitHub's database: a warning that it is newer and less trusted than one OSV lists;
-- only in the project's repository advisories: a stronger warning that such an advisory is easy to fake, to get a
-  release carrying an attack installed before the wait ends;
-- when a more trusted source couldn't be checked, a variant saying so;
+- every advisory reviewed: a plain line saying so;
+- only in the project's repository advisories: a warning that such an advisory is easy to fake, to get a release
+  carrying an attack installed before the wait ends; a variant says so when OSV or GitHub couldn't be checked;
 - when no source read now backs the fix the comparison proved (a record withdrawn since, or ranges that no longer put
   the replaced version among the affected ones): a paragraph saying so. The verdict stands; the rows are marked ⚠.
 

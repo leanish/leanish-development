@@ -10,21 +10,15 @@ import { backsFix, type EvidenceRecord, type GroupEvidence, type SourceEvidence,
 import type { PlannedHold } from "./plan.ts";
 
 /*
- * The sources rank by how much review stands between an advisory and its publication: OSV (which imports GitHub's
- * reviewed advisories among others), then GitHub's database, then a project's own repository advisories, which anyone
- * controlling the repository publishes at will. Each advisory is described by the most trusted source that lists it.
+ * Two levels of trust. Reviewed: OSV, or GitHub's database once GitHub reviewed the advisory (OSV imports those, so
+ * for npm and Maven they're mostly the same review, apart from import lag). Unreviewed: a project's own repository
+ * advisories, which whoever controls the repository publishes at will, in minutes.
  */
 
-export const IN_OSV = "The advisories behind these versions are in OSV.";
-
-export const GITHUB_NOT_OSV =
-  "**Not in OSV: only in GitHub's advisory database.** OSV imports GitHub's reviewed advisories along with other sources, so one that GitHub has and OSV doesn't is newer and has had fewer eyes on it. Trust it less than an advisory OSV lists.";
-
-export const GITHUB_NOT_OSV_UNCHECKED =
-  "**Found in GitHub's advisory database; OSV couldn't be checked.** Whether OSV lists it is unknown, so trust it as one only GitHub has: less than an advisory OSV lists.";
+export const REVIEWED = "The advisories behind these versions are reviewed: OSV or GitHub's reviewed advisory database lists them.";
 
 export const REPOSITORY_ONLY =
-  "**Only in the project's own repository advisories: not in OSV nor in GitHub's advisory database.** Whoever controls the project's repository can publish such an advisory in minutes, with no review, so a fake one is the quickest way to get a release carrying an attack installed before the release-age wait ends: publish the \"fixed\" version, then an advisory pointing at it. Don't take this early on the advisory's word.";
+  "**Only in the project's own repository advisories: neither OSV nor GitHub's reviewed advisory database lists it.** Whoever controls the project's repository can publish such an advisory in minutes, with no review, so a fake one is the quickest way to get a release carrying an attack installed before the release-age wait ends: publish the \"fixed\" version, then an advisory pointing at it. Don't take this early on the advisory's word.";
 
 export const REPOSITORY_ONLY_UNCHECKED =
   "**Found only in the project's own repository advisories so far; OSV or GitHub's advisory database couldn't be checked.** Treat it as unreviewed: whoever controls the project's repository can publish a fake advisory in minutes to get a release carrying an attack installed before the release-age wait ends.";
@@ -50,12 +44,9 @@ export function advisoryNotice(held: ReadonlyArray<PlannedHold>): AdvisoryNotice
   const paragraphs: string[] = [];
   if (rows.some(({ target, group }) => !backed(target, group))) paragraphs.push(EVIDENCE_DIFFERS);
   const tiers = rows.filter(({ target, group }) => backed(target, group)).map(({ group }) => tierOf(group));
-  const has = (tier: Tier["tier"], checked: boolean) => tiers.some((entry) => entry.tier === tier && entry.checked === checked);
-  if (has("repository", true)) paragraphs.push(REPOSITORY_ONLY);
-  if (has("repository", false)) paragraphs.push(REPOSITORY_ONLY_UNCHECKED);
-  if (has("github", true)) paragraphs.push(GITHUB_NOT_OSV);
-  if (has("github", false)) paragraphs.push(GITHUB_NOT_OSV_UNCHECKED);
-  if (tiers.length > 0 && tiers.every((entry) => entry.tier === "osv")) paragraphs.push(IN_OSV);
+  if (tiers.some((entry) => entry.tier === "repository" && entry.checked)) paragraphs.push(REPOSITORY_ONLY);
+  if (tiers.some((entry) => entry.tier === "repository" && !entry.checked)) paragraphs.push(REPOSITORY_ONLY_UNCHECKED);
+  if (tiers.length > 0 && tiers.every((entry) => entry.tier === "reviewed")) paragraphs.push(REVIEWED);
   const details: string[] = [];
   if (rows.length > 0) {
     const collected = fixes.flatMap((entry) => (entry.evidence === undefined ? [] : [entry.evidence.collectedAt])).sort()[0]!;
@@ -79,9 +70,9 @@ function backed(target: TargetEvidence, group: GroupEvidence): boolean {
 }
 
 interface Tier {
-  /** The most trusted source listing it for the package; `none` when no source does. */
-  readonly tier: "osv" | "github" | "repository" | "none";
-  /** Whether every more trusted source was checked, so its absence there is established. */
+  /** The most trusted level listing it for the package; `none` when no source does. */
+  readonly tier: "reviewed" | "repository" | "none";
+  /** Whether every reviewed source was checked, so its absence there is established. */
   readonly checked: boolean;
 }
 
@@ -89,11 +80,9 @@ interface Tier {
 function tierOf(group: GroupEvidence): Tier {
   const of = (name: SourceEvidence["source"]) => group.sources.find((source) => source.source === name);
   const listed = (source: SourceEvidence | undefined) => source?.records.some((record) => !record.withdrawn && record.namesPackage && record.reviewed !== false) ?? false;
-  const checked = (...names: SourceEvidence["source"][]) => names.every((name) => of(name)?.lookup === "checked");
-  if (listed(of("osv"))) return { tier: "osv", checked: true };
-  if (listed(of("github"))) return { tier: "github", checked: checked("osv") };
-  if (listed(of("repository"))) return { tier: "repository", checked: checked("osv", "github") };
-  return { tier: "none", checked: checked("osv", "github", "repository") };
+  if (listed(of("osv")) || listed(of("github"))) return { tier: "reviewed", checked: true };
+  const checked = of("osv")?.lookup === "checked" && of("github")?.lookup === "checked";
+  return { tier: listed(of("repository")) ? "repository" : "none", checked };
 }
 
 function packageCell(entry: PlannedHold, target: TargetEvidence): string {

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { AdvisoryEvidence, EvidenceRecord, SourceEvidence } from "@leanish/gate/advisory-evidence";
 
 import {
-  advisoryNotice, EVIDENCE_DIFFERS, GITHUB_NOT_OSV, GITHUB_NOT_OSV_UNCHECKED, IN_OSV, NOT_RECORDED, REPOSITORY_ONLY, REPOSITORY_ONLY_UNCHECKED,
+  advisoryNotice, EVIDENCE_DIFFERS, NOT_RECORDED, REPOSITORY_ONLY, REPOSITORY_ONLY_UNCHECKED, REVIEWED,
 } from "../src/advisory-notice.ts";
 import type { ChangePlan, PlannedHold } from "../src/plan.ts";
 import { cooldownWarning, planOf, withPlanSection } from "../src/plan-block.ts";
@@ -37,19 +37,18 @@ describe("the advisory notice on a held PR", () => {
     ]);
   });
 
-  it("describes each advisory by the most trusted source listing it: OSV, then GitHub's database", () => {
-    const inOsv = evidence([checked("repository", [record()]), checked("github", [record({ reviewed: true })]), checked("osv", [record({ declaredFixes: ["3.2.5"] })])]);
+  it("calls an advisory OSV or GitHub's reviewed database lists reviewed, either one", () => {
+    const inOsv = evidence([checked("repository", [record()]), checked("github"), checked("osv", [record({ declaredFixes: ["3.2.5"] })])]);
     const osvNotice = advisoryNotice([hold({ evidence: inOsv })]);
-    expect(osvNotice.paragraphs).toEqual([IN_OSV]);
+    expect(osvNotice.paragraphs).toEqual([REVIEWED]);
     expect(osvNotice.details.at(-1)).toContain("| GHSA-m8xf-2cr7-77ph: declares the fix 3.2.5, 3.2.3 affected, 3.2.4 not affected |");
-    const inGithub = evidence([checked("repository", [record()]), checked("github", [record({ reviewed: true })]), checked("osv")]);
-    expect(advisoryNotice([hold({ evidence: inGithub })]).paragraphs).toEqual([GITHUB_NOT_OSV]);
-    const osvUnchecked = evidence([checked("repository"), checked("github", [record({ reviewed: true })]), { source: "osv", lookup: "incomplete", reason: "OSV record GHSA-m8xf-2cr7-77ph failed with HTTP 503", records: [] }]);
-    expect(advisoryNotice([hold({ evidence: osvUnchecked })]).paragraphs).toEqual([GITHUB_NOT_OSV_UNCHECKED]);
+    // Only GitHub so far (OSV's import lags, or couldn't be read): reviewed all the same.
+    const inGithub = evidence([checked("repository", [record()]), checked("github", [record({ reviewed: true })]), { source: "osv", lookup: "incomplete", reason: "HTTP 503", records: [] }]);
+    expect(advisoryNotice([hold({ evidence: inGithub })]).paragraphs).toEqual([REVIEWED]);
   });
 
   it("warns most about an advisory only the project's repository has, as a possible fake", () => {
-    expect(REPOSITORY_ONLY).toContain("not in OSV nor in GitHub's advisory database");
+    expect(REPOSITORY_ONLY).toContain("neither OSV nor GitHub's reviewed advisory database lists it");
     expect(REPOSITORY_ONLY).toContain("fake");
     const unreviewed = evidence([checked("repository", [record()]), checked("github", [record({ reviewed: false })]), checked("osv")]);
     const notice = advisoryNotice([hold({ evidence: unreviewed })]);
@@ -78,7 +77,7 @@ describe("the advisory notice on a held PR", () => {
     });
     const notice = advisoryNotice([hold({ ecosystem: "npm", name: "carrier", version: "1.1.0", replaced: ["1.0.0"], justification: "bundle-fix", evidence: bundled })]);
     expect(notice.details.at(-1)).toContain("| `brace` 5.0.9 → removed (bundled in `carrier` 1.1.0) |");
-    expect(notice.paragraphs).toEqual([GITHUB_NOT_OSV]);
+    expect(notice.paragraphs).toEqual([REVIEWED]);
   });
 
   it("reports evidence it couldn't read, or never recorded, and stays out of other holds", () => {
