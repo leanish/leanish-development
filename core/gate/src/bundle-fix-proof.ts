@@ -153,8 +153,8 @@ async function occurrenceProof(pkg: PackageVersion, occurrence: Occurrence, inpu
   const carriedGroups = new Set(carried.map((target) => target.advisory));
   const bundledTargets = [...new Set(carried.map((target) => target.name))].sort().map((name): HeldTarget => {
     const versions = (bundle: typeof fromBundle) => [...new Set(bundle.packages.filter((entry) => entry.name === name).map((entry) => entry.version))].sort();
-    const replaced = versions(fromBundle);
     const ofName = new Set(carried.filter((target) => target.name === name).map((target) => target.advisory));
+    const replaced = affectedVersions(snapshot, name, versions(fromBundle), ofName);
     return {
       name,
       bundled: true,
@@ -169,6 +169,11 @@ async function occurrenceProof(pkg: PackageVersion, occurrence: Occurrence, inpu
     groups: groupIds(snapshot, [{ ...pkg, version: occurrence.from }], (group) => ownGroups.has(group)),
   }];
   return [...carrier, ...bundledTargets];
+}
+
+/** The old copies a carried advisory affects: another copy of the package in the bundle isn't what the fix replaced. */
+export function affectedVersions(snapshot: Snapshot, name: string, versions: ReadonlyArray<string>, groups: ReadonlySet<string>): string[] {
+  return versions.filter((version) => [...groupsOf(snapshot, { ecosystem: "npm", name, version })].some((group) => groups.has(group)));
 }
 
 /** One target per package and side, every occurrence's versions and groups together. */

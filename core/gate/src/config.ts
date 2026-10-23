@@ -19,7 +19,7 @@
  */
 import { isObject } from "./json.ts";
 import { NPM_REGISTRY } from "./npm-lock.ts";
-import { MAVEN_CENTRAL } from "./source-repos.ts";
+import { isDotSegment, MAVEN_CENTRAL } from "./source-repos.ts";
 import { packageKey, type PackageName } from "./package-version.ts";
 import { ECOSYSTEMS, type Ecosystem } from "./versions.ts";
 
@@ -193,7 +193,7 @@ function repositories(value: unknown, where: string): Map<string, string> {
     if (cut === -1 || !ECOSYSTEMS.includes(ecosystem) || name === "") {
       throw new Error(`${where}: ${key} isn't <ecosystem>:<package> (ecosystems: ${ECOSYSTEMS.join(", ")})`);
     }
-    if (typeof repo !== "string" || !/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error(`${where}: ${key} must map to owner/repo`);
+    if (typeof repo !== "string" || !/^[\w.-]+\/[\w.-]+$/.test(repo) || repo.split("/").some(isDotSegment)) throw new Error(`${where}: ${key} must map to owner/repo`);
     result.set(packageKey({ ecosystem, name }), repo);
   }
   return result;

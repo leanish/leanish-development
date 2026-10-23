@@ -132,5 +132,11 @@ export function githubRepository(value: unknown): string | undefined {
   if (typeof raw !== "string") return undefined;
   const match =
     /github\.com[/:]([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:[/#?]|$)/i.exec(raw) ?? /^(?:github:)?([\w.-]+)\/([\w.-]+?)(?:\.git)?$/i.exec(raw);
-  return match === null ? undefined : `${match[1]}/${match[2]}`.toLowerCase();
+  // `.` or `..` would walk the API URL the token is sent to (`/repos/../..`): no repository is named.
+  if (match === null || isDotSegment(match[1]!) || isDotSegment(match[2]!)) return undefined;
+  return `${match[1]}/${match[2]}`.toLowerCase();
+}
+
+export function isDotSegment(segment: string): boolean {
+  return segment === "." || segment === "..";
 }
