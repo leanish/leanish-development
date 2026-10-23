@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Changed
+
+- The agent's `git` guard, in both tools, checks only pushes. A push to a remote whose every push URL is on this
+  machine passes, so a repository's own tests can push to bare repositories; any other `push`, `send-pack` or
+  `http-push` is refused with a message that the tool publishes. The guard no longer parses `git config`, `git remote`
+  or `-c` settings: the agent's git metadata is read-only, its GitHub token is read-only, and its git reads neither the
+  home's nor the system's config, so such a change can't publish anything. The guard is a guard rail, not a boundary
+  (see the [security model](docs/security-model.md#secure-it-and-bump-it)); a mistaken remote or config change now
+  fails in git ("could not lock config file") instead of in the guard.
+
+### Fixed
+
+- A repository's own tests run in their normal time under the agent. The `git` guard started several processes on
+  every call (`tr`, `dirname`, subshells), which doubled real-git test suites and made some hit vitest's 5 s timeout
+  in the agent's sandbox. It also refused `git -c credential.helper=` and `git remote add`, which failed 23 of this
+  repository's release-installer tests. On secure-it's fast-uri pass over this repository the agent spent most of its
+  840 s on that and timed out once.
+- `git --attr-source <tree> push …` and `git --config-env <name> push …` no longer skip the push check: their value
+  was taken for the subcommand.
+
 ## 0.7.3 - 2026-10-20
 
 ### Fixed
