@@ -88,9 +88,15 @@ describe("the advisory notice on a held PR", () => {
   });
 
   it("reports evidence it couldn't read, or never recorded, and stays out of other holds", () => {
-    expect(advisoryNotice([hold({ evidenceFailure: "boom" })])).toEqual({ paragraphs: [INCOMPLETE], details: ["Where these advisories appear couldn't be read for:", `- ${PKG}@3.2.4: boom`] });
-    expect(advisoryNotice([hold()])).toEqual({ paragraphs: [INCOMPLETE], details: ["Where these advisories appear couldn't be read for:", `- ${PKG}@3.2.4: ${NOT_RECORDED}`] });
+    expect(advisoryNotice([hold({ evidenceFailure: "boom" })])).toEqual({ paragraphs: [INCOMPLETE], details: ["These fixes couldn't be checked:", `- ${PKG}@3.2.4: boom`] });
+    expect(advisoryNotice([hold()])).toEqual({ paragraphs: [INCOMPLETE], details: ["These fixes couldn't be checked:", `- ${PKG}@3.2.4: ${NOT_RECORDED}`] });
     expect(advisoryNotice([hold({ justification: "required" }), hold({ justification: "exception" })])).toEqual({ paragraphs: [], details: [] });
+    // The list stays short however many fixes are unchecked, and a long reason is cut by character, not mid-pair.
+    const many = advisoryNotice(Array.from({ length: 25 }, (_, i) => hold({ name: `g:lib${i}`, evidenceFailure: "HTTP 502" })));
+    expect(many.details).toHaveLength(12);
+    expect(many.details.at(-1)).toBe("- and 15 more");
+    const long = advisoryNotice([hold({ evidenceFailure: `${"a".repeat(299)}😀 | tail` })]).details.at(-1)!;
+    expect(long).toBe(`- ${PKG}@3.2.4: ${"a".repeat(299)}😀…`);
   });
 
   it("never says every advisory is backed while some fix couldn't be checked", () => {

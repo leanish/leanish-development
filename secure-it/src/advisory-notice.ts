@@ -21,16 +21,17 @@ export const EVIDENCE_DIFFERS =
   "**The reviewed advisories read after the comparison don't back this fix as the comparison did.** For the rows marked ⚠ below, no reviewed record (OSV, or GitHub's reviewed advisory database) lists the replaced versions as affected and the proposed one as not, or one was withdrawn or couldn't be read. The comparison's verdict stands; check the table before taking this early.";
 
 export const INCOMPLETE =
-  "**Where the advisories behind some of these versions appear couldn't be read**, as listed below, so this notice can't say a reviewed record still backs every fix. The comparison's verdict stands; check those before taking this early.";
+  "**Some of these fixes couldn't be checked**, as listed below, so this notice can't say a reviewed record still backs every fix. The comparison's verdict stands; check those before taking this early.";
 
 /** Why a fix's evidence is missing, for the list INCOMPLETE points to. */
 export const NOT_RECORDED = "not recorded for this plan";
 
 /** Where the table went when it was left out; the plan's block keeps the evidence either way. */
-export const TABLE_LEFT_OUT = "The table of where each advisory appears is left out: with it, this PR's body would pass GitHub's limit. The plan's block keeps all of it.";
+export const TABLE_LEFT_OUT = "The table of where each advisory appears is left out: with it, this PR's body would exceed GitHub's limit. The plan's block keeps all of it.";
 
-/** The ⚠ packages named in place of the table's rows, and a reason's length, before the rest is counted. */
+/** The ⚠ packages named in place of the table's rows, the unchecked fixes listed, and a reason's length (in characters), before the rest is counted. */
 const NAMED_LIMIT = 20;
+const LISTED_LIMIT = 10;
 const REASON_LIMIT = 300;
 
 const JUSTIFIED = new Set<PlannedHold["justification"]>(["security-fix", "bundle-fix"]);
@@ -69,7 +70,10 @@ export function advisoryNotice(held: ReadonlyArray<PlannedHold>, options: { read
       details.push(`| ${mark}${cell(group.ids.join(", "))} | ${packageCell(entry, group, target)} | ${sources.join(" | ")} |`);
     }
   }
-  if (unchecked.length > 0) details.push(...(details.length === 0 ? [] : [""]), "Where these advisories appear couldn't be read for:", ...unchecked);
+  if (unchecked.length > 0) {
+    const more = unchecked.length > LISTED_LIMIT ? [`- and ${unchecked.length - LISTED_LIMIT} more`] : [];
+    details.push(...(details.length === 0 ? [] : [""]), "These fixes couldn't be checked:", ...unchecked.slice(0, LISTED_LIMIT), ...more);
+  }
   return { paragraphs, details };
 }
 
@@ -89,9 +93,10 @@ function differsFor(rows: ReadonlyArray<{ readonly entry: PlannedHold; readonly 
   return `**The reviewed advisories read after the comparison don't back this fix as the comparison did** for ${shown}${more}: no reviewed record (OSV, or GitHub's reviewed advisory database) lists the replaced versions as affected and the proposed one as not, or one was withdrawn or couldn't be read. The comparison's verdict stands; look into these before taking this early.`;
 }
 
+/** At most REASON_LIMIT characters, cut by code point before escaping, so no surrogate pair or `\|` is split. */
 function bounded(reason: string): string {
-  const text = cell(reason);
-  return text.length <= REASON_LIMIT ? text : `${text.slice(0, REASON_LIMIT)}…`;
+  const characters = Array.from(reason.replace(/\s+/g, " "));
+  return characters.length <= REASON_LIMIT ? cell(reason) : `${cell(characters.slice(0, REASON_LIMIT).join(""))}…`;
 }
 
 /** Some reviewed record, read now, still backs the fix the comparison proved: OSV's, or a GitHub-reviewed one. */
