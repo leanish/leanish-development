@@ -47,8 +47,8 @@ young version comes in; it doesn't make that version safe, and the build, tests 
 So the gate holds every young version a PR adds or changes, justified or not: the separate `cooldown` check stays
 red until the last one turns old enough, and no exception clears it. secure-it keeps such fixes in draft PRs of
 their own, one per group of young fixes that can move apart, each opened with a warning and retired once its
-versions aged. Taking it earlier is a person's explicit
-decision: every other check green, the reason written on the PR, an admin merge.
+versions aged. Taking it earlier is a person's explicit decision: every other check green, the reason written on the
+PR, an admin merge.
 
 The gate also reads a dependency's own repository advisories, which name a fix days before GitHub reviews them into
 its database and OSV imports them. Whoever controls that repository and the package can publish an advisory and a

@@ -191,10 +191,10 @@ updates or verify an agent's edits. The first actual tool run below can publish.
 
 Run one opted-in repository interactively before installing schedules. These
 commands may open/update draft PRs; review may also mark them ready or close
-them. Neither merges. A secure-it PR that takes versions younger than the
-release-age wait (one per group of young fixes) stays a draft, with a warning on
-top, until secure-it retires it once they've aged; require the gate's `supply-chain / cooldown` check too (see the
-gate's [adoption steps](../core/gate/README.md#adopting-the-gate)).
+them. Neither merges. secure-it holds versions younger than the release-age wait
+in draft PRs, one per group of young fixes, each with a warning on top, until it
+retires them once they've aged; require the gate's `supply-chain / cooldown`
+check too (see the gate's [adoption steps](../core/gate/README.md#adopting-the-gate)).
 
 ```bash
 cd "$HOME/dev/supply-chain"
