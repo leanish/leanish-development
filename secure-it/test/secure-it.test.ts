@@ -26,6 +26,8 @@ import { type ChangePlan, planFor, type SecurityUnit } from "../src/plan.ts";
 import { verifyPlan, type VerifyInputs } from "../src/verify.ts";
 import { computedNpmProblems } from "@leanish/tool-runtime/npm-file-checks";
 import { materializeInCopy } from "../src/npm-materialize.ts";
+import { requiredNpmPlan } from "../src/npm-required-plan.ts";
+import { environment, OLD, postcss, securityBatch } from "@leanish/gate/test/required-fixture";
 import { preservedFloors } from "../src/floor-checks.ts";
 import { defaultDeps, heldClaims, retirementOf, RULES, type SecureItDeps, secureIt, unitOf } from "../src/secure-it.ts";
 
@@ -1244,6 +1246,18 @@ describe("the cooldown hold", () => {
     const result = await secureIt({ ...h.deps, requiredNpm: apartFails, verify: holdingVerify }).run(h.context);
     expect(result).toMatchObject({ topic: "security-cooldown-left-pad", packages: ["npm|left-pad", "npm|vite"], outcome: "published" });
     expect([...h.github.prs.values()].map((pr) => planOf(pr.body)?.members)).toEqual([["npm|left-pad", "npm|vite"]]);
+  });
+
+  it.each([false, true])("plans two young roots together when each requires one exact companion, as planning proves it (aged companion: %s)", async (aged) => {
+    // securityBatch: vite and bundler 8.3.3 each require postcss 8.5.29 exactly, and 8.3.2 requires 8.5.28 exactly, so
+    // requiredNpmPlan can plan neither while the other stays at 8.3.2.
+    const batch = securityBatch();
+    const registry = environment({ ...batch, docs: aged ? { ...batch.docs, postcss: { ...postcss, time: { ...postcss.time, "8.5.29": OLD } } } : batch.docs });
+    const young = (name: string) => vite({ name, from: "8.3.2", locations: [`node_modules/${name}`], to: { version: "8.3.3", line: "8", aged: false, major: false, blockers: [] } });
+    const h = harness({ fixes: [young("vite"), young("bundler")], files: batch.base });
+    const requiredNpm: SecureItDeps["requiredNpm"] = (base, plan) => requiredNpmPlan(base, plan, registry.env);
+    const result = await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context);
+    expect(result).toMatchObject({ topic: "security-cooldown-bundler", packages: ["npm|bundler", "npm|vite"], outcome: "published" });
   });
 
   it("plans a young fix together with the aged fix its young requirement held, when they can't be planned apart", async () => {
