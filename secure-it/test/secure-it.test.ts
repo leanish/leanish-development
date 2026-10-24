@@ -1135,6 +1135,16 @@ describe("the cooldown hold", () => {
     expect(result).toMatchObject({ units: [{ topic: "security-cooldown-left-pad", packages: ["npm|left-pad", "npm|vite"] }] });
   });
 
+  it("keeps a coupling planning discovers in the held unit: a root that needs another root's fix", async () => {
+    // vite's young requirement moves it to a held unit; planning found it needs left-pad's fix too.
+    const h = harness({ fixes: [vite(), leftPad()] });
+    const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => plan.packages.includes("npm|vite") && plan.packages.includes("npm|left-pad")
+      ? { ...plan, coupled: [["npm|vite", "npm|left-pad"]], requiredNpm: [{ exempt: true, name: "postcss", version: "8.5.29", root: { name: "vite", version: "8.3.3", path: "node_modules/vite" } }] as never }
+      : plan;
+    const result = await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context);
+    expect(result).toMatchObject({ units: [{ topic: "security-cooldown-left-pad", packages: ["npm|left-pad", "npm|vite"] }] });
+  });
+
   it("doesn't hold an aged fix because it shares an aged companion with a held one", async () => {
     // Only vite's requirement of c is young; left-pad's is aged, so left-pad goes out with the aged batch.
     const h = harness({ fixes: [vite(), leftPad()] });
@@ -1186,6 +1196,31 @@ describe("the cooldown hold", () => {
     expect(h.github.prs.size).toBe(2);
     expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({ topic: "security-cooldown-vite", outcome: "already-open" });
     expect(h.github.prs.size).toBe(2);
+  });
+
+  const heldPlan = (fix: SecurityFix) => planFor([fix], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined },
+    { kind: "routine", topic: `security-cooldown-${fix.name}` });
+
+  it("doesn't claim a held PR a person marked ready: the unit keeps a PR of its own", async () => {
+    const plan = await heldPlan(YOUNG_VITE());
+    const taken = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite", isDraft: false,
+      body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [taken], fixes: [YOUNG_VITE()] });
+    expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({ topic: "security-cooldown-vite", outcome: "published" });
+    expect(h.github.prs.get(7)!.body).toBe(taken.body);
+  });
+
+  it("claims by the plan the journal published when the body lags behind the head", async () => {
+    // #7's body still records left-pad's plan at an older head; the journal holds vite's plan at its current head.
+    const stale = await heldPlan(YOUNG_PAD());
+    const current = withMarker(RULES, withPlanSection("Fixes vite.", await heldPlan(YOUNG_VITE())), { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 });
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite", headSha: PUSHED_SHA, body: withMarker(RULES, withPlanSection("Fixes left-pad.", stale), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pr], fixes: [YOUNG_VITE(), YOUNG_PAD()] });
+    await h.journal.pushed(REPO, 7, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: "moving vite", body: current, adaptations: 0 } });
+    expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({ units: [
+      { topic: "security-cooldown-left-pad", outcome: "published" },
+      { topic: "security-cooldown-vite", outcome: "already-open", pullRequest: "https://github.com/leanish/widget/pull/7" },
+    ] });
   });
 
   it("gives two held units whose topics cut to one branch name a branch each", async () => {

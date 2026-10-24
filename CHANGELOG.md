@@ -9,7 +9,8 @@
   each can be taken when it ages. Packages that must move together (coupled npm peers, a carrier and what it carries,
   roots requiring one young npm companion) stay in one PR; the aged batch, majors and malware are unchanged. Held
   units are matched to open PRs by their own packages (`members` in the plan), the same way in runs and reviews, so
-  v0.7's single held PR is taken over by one group and the others open their own. Branches created in one run no longer collide when two topics cut to the same
+  v0.7's single held PR is taken over by one group and the others open their own; a PR someone else pushed to, or a
+  held one a person marked ready, is never claimed. Branches created in one run no longer collide when two topics cut to the same
   name.
 
 - A project's own repository advisories, unreviewed and published at will by whoever controls the repository, no

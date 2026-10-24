@@ -269,7 +269,7 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   const own = await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base);
   const results: Readonly<Record<string, unknown>>[] = [];
   const units = await holdRequiredYoung(execution, selection.units, base);
-  const claims = heldClaims(units, await stillOurs(context, execution.publication, own));
+  const claims = heldClaims(units, await claimable(context, execution.publication, own));
   for (const unit of units) {
     try {
       results.push(await runUnit(execution, unit, base, own, claims.get(unit.topic)));
@@ -440,7 +440,9 @@ async function holdRequiredYoung(execution: Execution, units: ReadonlyArray<Secu
   const stays = aged.work.filter((fix) => !moved.has(packageKey(fix)));
   const joined = heldUnits(
     [...held.flatMap((unit) => unit.work), ...aged.work.filter((fix) => moved.has(packageKey(fix)))],
-    [...held.flatMap((unit) => unit.coupled ?? []), ...(aged.coupled ?? []).filter((set) => set.some((key) => moved.has(key)))],
+    // The aged plan's sets, not only the unit's: they include what planning required npm discovered (a root that
+    // needs another root's fix), which the held units keep for their own retries too.
+    [...held.flatMap((unit) => unit.coupled ?? []), ...(plan.coupled ?? []).filter((set) => set.some((key) => moved.has(key)))],
     bridges,
   );
   const rest = stays.length === 0 ? [] : [{ ...aged, work: stays, coupled: (aged.coupled ?? []).filter((set) => !set.some((key) => moved.has(key))) }];
@@ -474,16 +476,28 @@ export function heldClaims(units: ReadonlyArray<SecurityUnit>, own: ReadonlyArra
 }
 
 /**
- * The open PRs whose head is still the tool's, read-only (the body's recorded head, or the journal's): only these can
- * be claimed, or a PR someone pushed to would keep its unit from the PR the tool opens instead, run after run.
+ * The open PRs a held unit may claim, read-only: the head is still the tool's (the body's recorded head, or the
+ * journal's, whose saved publication then stands for the body), and no person took it over (a held PR marked ready,
+ * which review leaves alone). Otherwise a PR someone pushed to, or one a person took, would keep its unit from the PR
+ * the tool opens or keeps instead. The chosen PR is recovered later, as any reused one is.
  */
-async function stillOurs(context: ToolRunContext, publication: PublicationContext, own: ReadonlyArray<GitHubPullRequest>): Promise<GitHubPullRequest[]> {
-  const ours: GitHubPullRequest[] = [];
+async function claimable(context: ToolRunContext, publication: PublicationContext, own: ReadonlyArray<GitHubPullRequest>): Promise<GitHubPullRequest[]> {
+  const claimable: GitHubPullRequest[] = [];
   for (const pr of own) {
     if (topicOf(RULES, pr.headRef) === undefined) continue;
-    if (stateOf(pr.body)?.head === pr.headSha || (await publication.journal.last(context.repo.repo, pr.number))?.head === pr.headSha) ours.push(pr);
+    const effective = stateOf(pr.body)?.head === pr.headSha ? pr : await journaled(context, publication, pr);
+    if (effective === undefined) continue;
+    if ((planOf(effective.body)?.cooldown?.length ?? 0) > 0 && !effective.isDraft) continue;
+    claimable.push(effective);
   }
-  return ours;
+  return claimable;
+}
+
+/** `pr` as the journal last published it at its current head (legacy entries record only the head); else undefined. */
+async function journaled(context: ToolRunContext, publication: PublicationContext, pr: GitHubPullRequest): Promise<GitHubPullRequest | undefined> {
+  const pushed = await publication.journal.last(context.repo.repo, pr.number);
+  if (pushed?.head !== pr.headSha) return undefined;
+  return pushed.publication === undefined ? pr : { ...pr, title: pushed.publication.title, body: pushed.publication.body };
 }
 
 /** How many of a held unit's packages a held plan shares, and the lowest shared one; undefined when none. */
@@ -798,7 +812,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       // Split exactly as a run would, required-dependency moves included, before telling which unit is this PR's.
       const split = await holdRequiredYoung(execution, units, { tree: base, gradle: baseGradle });
       // A held PR is the unit a run would give it, so a run and a review never disagree on which PR is whose.
-      const open = isHeldPlan(previous) ? await stillOurs(context, publication, await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base)) : [];
+      const open = isHeldPlan(previous) ? await claimable(context, publication, await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base)) : [];
       const claims = heldClaims(split, open);
       const unit = unitOf(previous, split, claims, pr.number);
       if (unit === undefined) {
