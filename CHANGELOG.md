@@ -53,10 +53,11 @@
   `<` in what they quote, so a quoted HTML comment can't hide the rest. Before, an advisory's text in the new warning
   could replace a held PR's verified plan for later runs and reviews.
 - secure-it matches held units to its open PRs, reading their journals, only when a unit is held, and a journal it
-  can't read there fails just the held units instead of the whole run.
-- A secure-it retry that leaves moves out drops their notes too (a floor, an override, an advisory note on a package
-  they carry), keeping the gate's and the kept moves' notes; before, the PR could still describe a floor it no longer
-  added.
+  can't read there fails just the held units instead of the whole run (each unit still reads its own PRs' journals,
+  as before).
+- A secure-it retry that leaves moves out drops their notes too (a floor, an override, an advisory note on the move or
+  a package it carries), keeping the gate's and the kept moves' notes; the left-out section still names each move.
+  Before, the PR could still describe a floor it no longer added.
 - A secure-it plan without a topic, or whose packages aren't a list of names, no longer reads: a review leaves that PR
   open with an error, and matching held PRs passes over it instead of failing the whole run.
 - The gate refuses a repository advisory list's next page off GitHub's API host instead of sending the token there,
