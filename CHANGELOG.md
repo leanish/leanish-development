@@ -52,8 +52,8 @@
   them into a block, so the tool's own block stays the first one read. secure-it's warning and veto lines also escape
   `<` in what they quote, so a quoted HTML comment can't hide the rest. Before, an advisory's text in the new warning
   could replace a held PR's verified plan for later runs and reviews.
-- secure-it reads its open PRs' journals for held units only when a unit is held, and an unreadable one fails just
-  the held units instead of the whole run.
+- secure-it matches held units to its open PRs, reading their journals, only when a unit is held, and a journal it
+  can't read there fails just the held units instead of the whole run.
 - A secure-it retry that leaves moves out drops their notes too (a floor, an override, an advisory note on a package
   they carry), keeping the gate's and the kept moves' notes; before, the PR could still describe a floor it no longer
   added.
