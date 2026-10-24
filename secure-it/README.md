@@ -52,11 +52,19 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
    | Actions | any | pin to the tag's commit |
    - **Young fixes go apart, each group in its own PR.** Fixes whose target is younger than the release-age wait,
      everything coupled to them, and any fix whose required npm dependency is young leave the aged batch, so the aged
-     fixes aren't held back. They're then split as far as they can be: one held routine unit (topic
-     `security-cooldown-<package>`, after its lowest package) per group that must move together (coupled npm peers, a
-     carrier and its carried package, roots that require one young npm companion), so no young fix waits for another and
-     each can be taken when it ages or by a person's call. A major or malware unit with a young version stays whole
-     and is held. What the PR finally holds is the verifying comparison's call, not this prediction.
+     fixes aren't held back. They're then split as far as they can be, one held routine unit (topic
+     `security-cooldown-<package>`, after its lowest package) per group, so no young fix waits for another and each
+     can be taken when it ages or by a person's call:
+     - **Always together, what must move together:** coupled npm peers, a carrier and its carried package, and a root
+       that needs another root's fix.
+     - **Together, roots that only wait for the same young npm companion:** fixes that are aged themselves but require
+       one young dependency wait for it alike, so one PR moves it for all.
+     - **Apart on purpose, young fixes that share a young companion:** joined, each would wait for the other's
+       version too. Each PR moves the companion to the same version and is verified alone; when one merges, the
+       other's review rebases it.
+
+     A major or malware unit with a young version stays whole and is held. What the PR finally holds is the
+     verifying comparison's call, not this prediction.
 4. **Looks at its open PRs first.**
    - An open PR for the same routine/major/malware unit, with an identical plan and a recognised head: keep its
      commits and refresh the plan section if its notes changed; its review owns further work. The unit reports
@@ -73,9 +81,6 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
      others open their own. A PR someone else pushed to, or one a person marked ready, is never claimed. A held PR
      left without a unit (two groups merged, or none of its packages is held any more) is retired when a review
      recomputes it, after the default branch moves; until then it waits or graduates as any held PR does.
-   - Groups held apart may share a young npm companion when they're planned separately (only the aged batch's plan
-     shows which roots require what): each PR then moves it and proves it alone, and the next one rebases when one
-     merges.
 5. **The tool resolves npm; the agent applies non-npm moves** (skill [`secure-it`](skills/secure-it/SKILL.md)).
    - **npm, by the tool.** In a sandboxed export of base, before any agent work, the tool pins every planned direct
      and peer companion to its exact target at once (unplanned directs keep base versions), installs, restores the

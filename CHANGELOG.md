@@ -7,11 +7,12 @@
 - secure-it opens one held PR per group of young fixes that can move apart (topic `security-cooldown-<package>`),
   instead of one for all: a young version, or an advisory a person doubts, no longer holds the other young fixes, and
   each can be taken when it ages. Packages that must move together (coupled npm peers, a carrier and what it carries,
-  roots requiring one young npm companion) stay in one PR; the aged batch, majors and malware are unchanged. Held
-  units are matched to open PRs by their own packages (`members` in the plan), the same way in runs and reviews, so
-  v0.7's single held PR is taken over by one group and the others open their own; a PR someone else pushed to, or a
-  held one a person marked ready, is never claimed. Branches created in one run no longer collide when two topics cut to the same
-  name.
+  a root that needs another root's fix) stay in one PR, and so do aged fixes that only wait for the same young npm
+  companion; young fixes sharing a young companion stay apart, so neither waits for the other. The aged batch, majors
+  and malware are unchanged. Held units are matched to open PRs by their own packages (`members` in the plan), the
+  same way in runs and reviews, so v0.7's single held PR is taken over by one group and the others open their own; a
+  PR someone else pushed to, or a held one a person marked ready, is never claimed. Branches created in one run no
+  longer collide when two topics cut to the same name.
 
 - A project's own repository advisories, unreviewed and published at will by whoever controls the repository, no
   longer trigger a fix nor justify a young version: they still detect (a finding, a PR adding one fails) and rule
