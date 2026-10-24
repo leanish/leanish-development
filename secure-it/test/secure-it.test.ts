@@ -637,6 +637,35 @@ describe("secure-it run", () => {
     });
   });
 
+  it.each([
+    ["can't apply", async () => ({ outcome: "cannot-apply", summary: "the floor needs a parent move" })],
+    ["throws", async () => {
+      throw new Error("agent crashed");
+    }],
+  ])("still reduces from the first refusal when the second attempt %s", async (_case, second) => {
+    const refusal = "compare: new: left-pad@1.0.1: GHSA-new has no exception";
+    const h = harness({ fixes: [vite(), leftPad()] });
+    const verified: string[] = [];
+    const deps = { ...h.deps, verify: async (input: VerifyInputs) => {
+      verified.push(input.plan.packages.join(","));
+      return input.plan.packages.includes("npm|left-pad") ? [refusal] : [];
+    } };
+    const asked: unknown[] = [];
+    let calls = 0;
+    const context = { ...h.context, agent: (async (request: Parameters<ToolRunContext["agent"]>[0]) => {
+      asked.push((request.input as Record<string, unknown>)["rejected"]);
+      return ++calls === 2 ? second() : h.context.agent(request);
+    }) as ToolRunContext["agent"] };
+    expect(await secureIt(deps).run(context)).toMatchObject({
+      outcome: "published", packages: ["npm|vite"], rejected: [refusal], leftOut: [{ moves: [{ name: "left-pad" }], problems: [refusal] }],
+    });
+    // The reduced plan starts from the base without the refusal, and publishes only after its own verification.
+    expect(asked).toEqual([undefined, [refusal], undefined]);
+    expect(h.reverted).toEqual([BASE_SHA, BASE_SHA]);
+    expect(verified).toEqual(["npm|left-pad,npm|vite", "npm|vite"]);
+    expect(h.workspace.publications).toHaveLength(1);
+  });
+
   it("keeps the first refusal when the reduced attempt throws", async () => {
     const h = harness({ fixes: [vite(), leftPad()], problems: ["compare: new: left-pad@1.0.1: GHSA-new has no exception"] });
     let calls = 0;

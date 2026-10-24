@@ -592,28 +592,40 @@ async function verifyWithRetry(execution: Execution, base: PlanBase, plan: Chang
   if (first.length === 0) return withCooldown(env, base.tree, { plan, content, problems: first, named: [], leftOut: plan.leftOut ?? [] }, cooldown);
   let problems = first;
   let rejected: Pick<VerifiedBatch, "rejected"> = {};
+  // Why the feedback attempt never reached a verification; the reduction then works from the first refusal.
+  let unverified: string | undefined;
   if (options.retryRejected === true) {
     context.logger.warn("secure-it: asking the agent again with the verification's refusal", { problems });
     rejected = { rejected: first };
-    const failed = (why: string): VerifiedBatch => ({ plan, content, problems: [...first, `asked again with that refusal, ${why}`], named: namedProblems(plan, first), leftOut: plan.leftOut ?? [], ...rejected });
     try {
       await deps.revert(context.workingCopy, base.tree.id);
       const again = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({
         entrypoint: "secure-it", input: await agentInput(execution, plan, base.tree, "apply", { rejected: first }),
       });
-      if (again.outcome !== "applied" || again.publication == null) return failed(`the agent couldn't apply: ${again.summary}`);
-      assertNoPlanMarker(again.publication.body);
-      content = again.publication;
-      cooldown = undefined;
-      problems = await verifyEdit(context, deps, plan, env, inventories, base.tree, base.gradle, execution.npmFiles, heard);
+      if (again.outcome !== "applied" || again.publication == null) {
+        unverified = `the agent couldn't apply: ${again.summary}`;
+      } else {
+        assertNoPlanMarker(again.publication.body);
+        content = again.publication;
+        cooldown = undefined;
+        problems = await verifyEdit(context, deps, plan, env, inventories, base.tree, base.gradle, execution.npmFiles, heard);
+      }
     } catch (error) {
-      // The report keeps the refusal that started the retry, whatever stopped it.
-      return failed(`the attempt failed: ${error instanceof Error ? error.message : String(error)}`);
+      unverified = `the attempt failed: ${error instanceof Error ? error.message : String(error)}`;
     }
-    if (problems.length === 0) return withCooldown(env, base.tree, { plan, content, problems, named: [], leftOut: plan.leftOut ?? [], ...rejected }, cooldown);
+    if (unverified !== undefined) {
+      context.logger.warn("secure-it: asking again didn't reach a verification", { why: unverified });
+      problems = first;
+    } else if (problems.length === 0) {
+      return withCooldown(env, base.tree, { plan, content, problems, named: [], leftOut: plan.leftOut ?? [], ...rejected }, cooldown);
+    }
   }
   const retry = retryWithoutNamed(plan, problems);
-  if (retry.plan === undefined) return { plan, content, problems, named: retry.named, leftOut: retry.leftOut, ...rejected };
+  if (retry.plan === undefined) {
+    // The report keeps the refusal that started the retry, and what stopped the attempt with it.
+    const reported = unverified === undefined ? problems : [...problems, `asked again with that refusal, ${unverified}`];
+    return { plan, content, problems: reported, named: retry.named, leftOut: retry.leftOut, ...rejected };
+  }
   context.logger.warn("secure-it: retrying the routine without named package groups", { leftOut: retry.leftOut });
   let answer: SkillAnswer;
   let remaining: string[];

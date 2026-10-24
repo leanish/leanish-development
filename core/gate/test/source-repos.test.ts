@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { githubRepository, pomParent, pomRepository } from "../src/source-repos.ts";
+import { githubRepository, pomParent, pomRepository, sourceRepository } from "../src/source-repos.ts";
 
 const pkg = { ecosystem: "Maven" as const, name: "com.acme:lib", version: "1.0.0" };
 const project = (body: string, attributes = 'xmlns="http://maven.apache.org/POM/4.0.0"') => `<?xml version="1.0"?>\n<project ${attributes}>${body}</project>`;
@@ -62,6 +62,17 @@ describe("githubRepository", () => {
     expect(githubRepository("./lib")).toBeUndefined();
     // A leading dot is a real name (`.github`).
     expect(githubRepository("https://github.com/acme/.github")).toBe("acme/.github");
+  });
+
+  it("names no repository for an action whose owner or name is `.` or `..`", async () => {
+    const action = (name: string) => sourceRepository({ ecosystem: "GitHub Actions", name, version: "v1" }, { fetch: async () => {
+      throw new Error("no fetch for an action");
+    }, overrides: new Map(), mavenRepositories: [] });
+    expect(await action("../..")).toBeUndefined();
+    expect(await action("acme/..")).toBeUndefined();
+    expect(await action("../checkout")).toBeUndefined();
+    expect(await action("./checkout")).toBeUndefined();
+    expect(await action("Acme/.github")).toBe("acme/.github");
   });
 });
 
