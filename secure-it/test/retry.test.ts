@@ -26,16 +26,17 @@ describe("batch retry", () => {
   it("drops the notes of the moves it omits, a package one carries included, and keeps the rest", () => {
     const floor: PlannedMove = { ...move("g:foo"), ecosystem: "Maven" };
     const carrier: PlannedMove = { ...move("carrier"), carries: [{ name: "brace", from: ["5.0.9"], locations: ["node_modules/carrier/node_modules/brace"], advisories: ["GHSA-b"], to: [] }] };
+    // A note is about the package it starts with; the others it names only explain it.
     const notes = [
       "g:foo@1.0.0 gets a floor: gradle/libs.versions.toml names it",
       "brace@5.0.9 is affected by GHSA-r: these advisories alone don't trigger an update",
-      "carrier@1.0.1 at node_modules/carrier keeps an override: the parent's range admits it",
-      "kept@1.0.0 is affected by GHSA-k: these advisories alone don't trigger an update",
-      "g:foo@1.0.0 and kept@1.0.0 share GHSA-s",
+      "carrier@1.0.1 at node_modules/carrier keeps an override: every parent version in range drops @scope/kept@1.0.1",
+      "@scope/kept@1.0.0 is affected by GHSA-k: these advisories alone don't trigger an update",
+      "@scope/kept@1.0.1 at node_modules/@scope/kept keeps an override: every parent version in range drops carrier@1.0.1",
       "a gate note",
     ];
-    const retry = retryWithoutNamed({ ...plan(floor, carrier, move("kept")), notes }, ["g:foo at gradle/libs.versions.toml is gone, not 1.0.1", "carrier at node_modules/carrier is gone, not 1.0.1"]);
-    expect(retry.plan?.moves.map((kept) => kept.name)).toEqual(["kept"]);
+    const retry = retryWithoutNamed({ ...plan(floor, carrier, move("@scope/kept")), notes }, ["g:foo at gradle/libs.versions.toml is gone, not 1.0.1", "carrier at node_modules/carrier is gone, not 1.0.1"]);
+    expect(retry.plan?.moves.map((kept) => kept.name)).toEqual(["@scope/kept"]);
     expect(retry.plan?.notes).toEqual(notes.slice(3));
   });
 

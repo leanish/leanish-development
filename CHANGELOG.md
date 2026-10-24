@@ -55,8 +55,9 @@
 - secure-it matches held units to its open PRs, reading their journals, only when a unit is held, and a journal it
   can't read there fails just the held units instead of the whole run (each unit still reads its own PRs' journals,
   as before).
-- A secure-it retry that leaves moves out drops their notes too (a floor, an override, an advisory note on the move or
-  a package it carries), keeping the gate's and the kept moves' notes; the left-out section still names each move.
+- A secure-it retry that leaves moves out drops the notes about them too (a floor, an override, an advisory note on the
+  move or a package it carries; a note is about the package it starts with), keeping the gate's and the kept moves'
+  notes; the left-out section still names each move.
   Before, the PR could still describe a floor it no longer added.
 - A secure-it plan without a topic, or whose packages aren't a list of names, no longer reads: a review leaves that PR
   open with an error, and matching held PRs passes over it instead of failing the whole run.
