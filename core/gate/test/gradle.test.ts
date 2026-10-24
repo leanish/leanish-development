@@ -356,8 +356,8 @@ describe("Maven release age", () => {
   });
 
   it("accepts snappy-java 1.1.10.10: young, but the lowest version fixing every advisory 1.1.10.8 has", async () => {
-    const advisory = (id: string): Advisory => ({ id, ids: [id], source: "repository", malicious: false, summary: undefined, severity: "HIGH" });
-    // snappy-java's repository advisories: 1.1.10.9 fixes CVE-2026-90559, only 1.1.10.10 also fixes GHSA-6gp7-6wmv-gxqw.
+    const advisory = (id: string): Advisory => ({ id, ids: [id], source: "osv", malicious: false, summary: undefined, severity: "HIGH" });
+    // snappy-java's advisories, once reviewed: 1.1.10.9 fixes CVE-2026-90559, only 1.1.10.10 also fixes GHSA-6gp7-6wmv-gxqw.
     const affecting = {
       "Maven|org.xerial.snappy:snappy-java|1.1.10.8": [advisory("GHSA-wmgv-28fv-894x"), advisory("GHSA-6gp7-6wmv-gxqw")],
       "Maven|org.xerial.snappy:snappy-java|1.1.10.9": [advisory("GHSA-6gp7-6wmv-gxqw")],
@@ -376,6 +376,26 @@ describe("Maven release age", () => {
     expect(await age(base, [maven("org.xerial.snappy:snappy-java", "1.1.10.11")], routes(young), { affecting })).toEqual([
       "org.xerial.snappy:snappy-java@1.1.10.11 was published 2026-10-05T00:00:00.000Z (1.5 days ago, under 7), and it isn't the security fix the version rule would take: the lowest version fixing GHSA-wmgv-28fv-894x, GHSA-6gp7-6wmv-gxqw above 1.1.10.8 is 1.1.10.10 (line 1)",
     ]);
+    // While only snappy-java's own repository publishes them, they justify no young version (they still rule versions out).
+    const unreviewed = Object.fromEntries(Object.entries(affecting).map(([key, list]) => [key, list.map((entry) => ({ ...entry, source: "repository" as const }))]));
+    expect(await age(base, [maven("org.xerial.snappy:snappy-java", "1.1.10.10")], routes(young), { affecting: unreviewed })).toEqual([
+      "org.xerial.snappy:snappy-java@1.1.10.10 was published 2026-10-03T16:51:02.000Z (2.8 days ago, under 7), and it isn't the security fix the version rule would take: it fixes no reviewed advisory affecting 1.1.10.8: GHSA-wmgv-28fv-894x, GHSA-6gp7-6wmv-gxqw only in the project's repository advisories, not corroborated by the sources this decision used",
+    ]);
+  });
+
+  it("lets an unreviewed advisory veto the aged fix a reviewed one picks, and the young next one through", async () => {
+    // A reviewed (OSV) advisory on 1.0.0; the aged 1.0.1 fixes it, but only the project's repository says 1.0.1 has B.
+    const reviewed: Advisory = { id: "GHSA-a", ids: ["GHSA-a"], source: "osv", malicious: false, summary: undefined, severity: "HIGH" };
+    const vetoing: Advisory = { id: "GHSA-b", ids: ["GHSA-b"], source: "repository", malicious: false, summary: undefined, severity: "HIGH" };
+    const metadata = `<metadata><versioning><versions>${["1.0.0", "1.0.1", "1.0.2"].map((version) => `<version>${version}</version>`).join("")}</versions></versioning></metadata>`;
+    const fetch = fakeFetch({
+      "https://repo1.maven.org/maven2/com/acme/lib/maven-metadata.xml": { text: metadata },
+      [central("com.acme:lib", "1.0.1")]: { headers: { "last-modified": "Mon, 01 Jan 2024 00:00:00 GMT" } },
+      [central("com.acme:lib", "1.0.2")]: { headers: { "last-modified": "Sat, 03 Oct 2026 16:51:02 GMT" } },
+    });
+    const affecting = { "Maven|com.acme:lib|1.0.0": [reviewed], "Maven|com.acme:lib|1.0.1": [vetoing] };
+    // The owner's accepted trade-off: the veto may steer to a young version; the cooldown still holds it.
+    expect(await age([maven("com.acme:lib", "1.0.0")], [maven("com.acme:lib", "1.0.2")], fetch, { affecting })).toEqual([]);
   });
 
   it("accepts a young fix by a releaseAge exception when the proof can't make it", async () => {
@@ -406,7 +426,7 @@ describe("Maven release age", () => {
       [central("org.xerial.snappy:snappy-java", "1.1.10.10")]: { headers: { "last-modified": "Sat, 03 Oct 2026 16:51:02 GMT" } },
       ...snappyMetadata(["1.1.10.8", "1.1.10.10"]),
     });
-    const advisory: Advisory = { id: "GHSA-wmgv-28fv-894x", ids: ["GHSA-wmgv-28fv-894x"], source: "repository", malicious: false, summary: undefined, severity: "HIGH" };
+    const advisory: Advisory = { id: "GHSA-wmgv-28fv-894x", ids: ["GHSA-wmgv-28fv-894x"], source: "osv", malicious: false, summary: undefined, severity: "HIGH" };
     expect(await age(base, head, fetch, { affecting: { "Maven|org.xerial.snappy:snappy-java|1.1.10.8": [advisory] } })).toEqual([]);
   });
 

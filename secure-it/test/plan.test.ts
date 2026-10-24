@@ -80,6 +80,16 @@ describe("selectWork", () => {
 });
 
 describe("planFor", () => {
+  it("keeps on the move each candidate the gate ruled out only by advisories no reviewed source corroborates", async () => {
+    const lock = { lockfileVersion: 3, packages: { "": { name: "app", dependencies: { lib: "^1.0.0" } }, "node_modules/lib": { version: "1.0.0" } } };
+    const plan = await planFor(
+      [fix({ name: "lib", from: "1.0.0", to: { version: "1.0.2", line: "1", aged: false, major: false, blockers: [] }, vetoed: [{ version: "1.0.1", advisories: ["CVE-1", "GHSA-b"] }] })],
+      { named: () => true, lockfiles: new Map([["package-lock.json", lock]]), gradle: undefined, tagCommit: NO_TAGS },
+    );
+    expect(plan.moves[0]?.vetoed).toEqual([{ version: "1.0.1", advisories: ["CVE-1", "GHSA-b"] }]);
+    expect(plan.notes).toBeUndefined();
+  });
+
   it("chooses npm-direct for a declared dependency, npm-lock when every parent range allows the fix, else npm-override", async () => {
     const lock = {
       lockfileVersion: 3,

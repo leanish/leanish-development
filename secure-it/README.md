@@ -128,6 +128,18 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
    the original problems appear in the run report, the PR description and its persisted plan; only the remaining
    moves are claimed as applied. npm may still induce transitive changes, and these still face `compare`. The next
    run reconsiders omitted fixes.
+
+   Advisories only the project's own repository publishes (unreviewed) plan no fix: such a version is reported, and
+   waits for a reviewed source. They still rule candidates out, and the plan notes each candidate ruled out that way
+   ("ruled out by …, not corroborated by the sources this decision used"), carrier versions included. A required npm
+   dependency's version is set by its requirement, so there a veto refuses the fix, and the refusal names each advisory
+   the version adds, marked when unreviewed. See
+   [how each source counts](../core/gate/README.md#how-each-source-counts).
+
+   Before that reduction, a first refusal gets the agent asked once more for the same plan, from the base, with the
+   refusal (`rejected`): an agent that moved a parent instead of the planned floor, say. The reduction then works
+   from the second attempt's problems; the run report keeps the first (`rejected`). A review's adaptation is never
+   restarted this way, since a restart from the base would lose it.
 7. **Publishes** draft PRs: `secure-it/<date>-security` for the routine, `secure-it/<date>-<package>-major` for each
    major, or `secure-it/<date>-malware`. Each unit starts from the scanned base and publishes at most one new or
    updated PR. A failed unit is reported and doesn't stop other major units. The tool appends the move table and the
@@ -214,6 +226,19 @@ and passing every check doesn't rule out malware, that secure-it keeps the PR a 
 aged, and how a person takes it earlier: every other check green, the reason written on the PR, an admin merge. A PR
 planned as aged that the comparison holds anyway is held the same way. A cooldown the comparison couldn't evaluate
 fails verification.
+
+For a security or bundle fix, the warning also says where the advisories behind it appear. After the verification,
+secure-it reads each advisory, and every alias the responses name, from the dependency's own repository advisories,
+GitHub's database and OSV, fresh and only to inform. A table shows each source as it says: the fix it declares, and
+whether its ranges put each replaced and proposed version among the affected ones; a bundled package is named as
+bundled, and a removal as a removal. A lookup that fails reads "couldn't be fully checked", never "not found".
+
+A fixed line opens the warning: that a reviewed record (OSV, or GitHub's reviewed database) still backs every fix as
+read now, or, with those rows marked ⚠, that none does for some (withdrawn since, ranges that changed, or sources that
+couldn't be read). The comparison's verdict stands either way. A fix's targets are reviewed advisories by the time
+it's proposed; how each source counts is in [the gate's rules](../core/gate/README.md#how-each-source-counts).
+
+The agent never writes any of this.
 
 ## Isolation
 

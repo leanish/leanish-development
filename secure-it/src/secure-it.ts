@@ -10,6 +10,7 @@ import type { Floor } from "@leanish/gate/floors";
 import { type SecurityCandidates, type SecurityFix, securityCandidates } from "@leanish/gate/candidates";
 import { type CooldownEvaluation, heldUntil } from "@leanish/gate/cooldown";
 import type { NpmPeerPlanner } from "@leanish/gate/npm-peers";
+import { type EvidenceOptions, heldEvidence } from "@leanish/gate/advisory-evidence";
 import { type GateEnvironment, type GradleInputs, readSettings } from "@leanish/gate/gate";
 import { type GradleInventory, gradleLocation, pinnedAmong, strictPinNote, strictPins } from "@leanish/gate/gradle";
 import { namingFailures } from "@leanish/gate/http";
@@ -146,7 +147,14 @@ function publicationOf(context: ToolRunContext, deps: SecureItDeps): Publication
   };
 }
 
-function skillInput(context: ToolRunContext, plan: ChangePlan, npmAgeExclusions: ReadonlyArray<string>, mode: "apply" | "adapt" | "resolve", extra: { failingChecks?: string[]; conflicted?: ReadonlyArray<string> } = {}) {
+interface SkillExtra {
+  readonly failingChecks?: string[];
+  readonly conflicted?: ReadonlyArray<string>;
+  /** Why verification refused the previous attempt at this same plan. */
+  readonly rejected?: ReadonlyArray<string>;
+}
+
+function skillInput(context: ToolRunContext, plan: ChangePlan, npmAgeExclusions: ReadonlyArray<string>, mode: "apply" | "adapt" | "resolve", extra: SkillExtra = {}) {
   return {
     repo: context.repo.repo,
     mode,
@@ -174,6 +182,7 @@ function skillInput(context: ToolRunContext, plan: ChangePlan, npmAgeExclusions:
     npmAgeExclusions: [...npmAgeExclusions],
     ...(extra.failingChecks === undefined ? {} : { failingChecks: extra.failingChecks }),
     ...(extra.conflicted === undefined ? {} : { conflicted: [...extra.conflicted] }),
+    ...(extra.rejected === undefined ? {} : { rejected: [...extra.rejected] }),
   };
 }
 
@@ -183,7 +192,7 @@ async function agentInput(
   plan: ChangePlan,
   base: Tree,
   mode: "apply" | "adapt" | "resolve",
-  extra: { failingChecks?: string[]; conflicted?: ReadonlyArray<string> } = {},
+  extra: SkillExtra = {},
   restoredFiles?: Map<string, FileState>,
 ) {
   const window = await prepareNpmFiles(execution, plan, base, false, restoredFiles);
@@ -458,8 +467,11 @@ async function runUnit(execution: Execution, unit: SecurityUnit, base: PlanBase,
   const answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({ entrypoint: "secure-it", input });
   if (answer.outcome !== "applied" || answer.publication == null) return { ...details, outcome: "cannot-apply", summary: answer.summary };
   assertNoPlanMarker(answer.publication.body);
-  const verified = await verifyWithRetry(execution, base, plan, answer.publication);
-  const checked = { ...details, notes: verified.plan.notes ?? [], packages: verified.plan.packages, named: verified.named, leftOut: verified.leftOut };
+  const verified = await verifyWithRetry(execution, base, plan, answer.publication, { retryRejected: true });
+  const checked = {
+    ...details, notes: verified.plan.notes ?? [], packages: verified.plan.packages, named: verified.named, leftOut: verified.leftOut,
+    ...(verified.rejected === undefined ? {} : { rejected: verified.rejected }),
+  };
   if (verified.problems.length > 0) return { ...checked, outcome: "verification-failed", problems: verified.problems };
   const content = { ...verified.content, body: withPlanSection(verified.content.body, verified.plan) };
   if (reusable !== undefined) {
@@ -489,10 +501,16 @@ interface VerifiedBatch {
   readonly problems: ReadonlyArray<string>;
   readonly named: ReadonlyArray<ProblemMoves>;
   readonly leftOut: NonNullable<ChangePlan["leftOut"]>;
+  /** What verification refused in the first attempt, when the agent was asked again with it. */
+  readonly rejected?: ReadonlyArray<string>;
 }
 
-/** Restart once from the same base without named package groups; never shrink malware or guess an unnamed cause. */
-async function verifyWithRetry(execution: Execution, base: PlanBase, plan: ChangePlan, content: Content): Promise<VerifiedBatch> {
+/**
+ * When the first edit fails, and the caller allows it (a fresh application, not a review's adaptation, which a restart
+ * from the base would lose), ask the agent once more for the same plan with the refusal. Then restart once from the
+ * same base without named package groups; never shrink malware or guess an unnamed cause.
+ */
+async function verifyWithRetry(execution: Execution, base: PlanBase, plan: ChangePlan, content: Content, options: { readonly retryRejected?: boolean } = {}): Promise<VerifiedBatch> {
   const { context, deps, env, inventories } = execution;
   if (execution.npmFiles.size === 0 && plan.moves.some((move) => move.ecosystem === "npm")) {
     const window = await npmWindowFor(plan, context.releaseAgeDays, context.releaseAgeExclude, context.now, env.fetch, await lockfilesOf(base.tree));
@@ -502,39 +520,83 @@ async function verifyWithRetry(execution: Execution, base: PlanBase, plan: Chang
   const heard = (evaluation: CooldownEvaluation) => {
     cooldown = evaluation;
   };
-  const problems = await verifyEdit(context, deps, plan, env, inventories, base.tree, base.gradle, execution.npmFiles, heard);
-  if (problems.length === 0) return withCooldown(env, { plan, content, problems, named: [], leftOut: plan.leftOut ?? [] }, cooldown);
-  const retry = retryWithoutNamed(plan, problems);
-  if (retry.plan === undefined) return { plan, content, problems, named: retry.named, leftOut: retry.leftOut };
-  context.logger.warn("secure-it: retrying the routine without named package groups", { leftOut: retry.leftOut });
-  await deps.revert(context.workingCopy, base.tree.id);
-  const answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({
-    entrypoint: "secure-it", input: await agentInput(execution, retry.plan, base.tree, "apply"),
-  });
-  if (answer.outcome !== "applied" || answer.publication == null) {
-    return { plan: retry.plan, content, problems: [`retry could not apply: ${answer.summary}`], named: retry.named, leftOut: retry.plan.leftOut ?? [] };
+  const first = await verifyEdit(context, deps, plan, env, inventories, base.tree, base.gradle, execution.npmFiles, heard);
+  if (first.length === 0) return withCooldown(env, base.tree, { plan, content, problems: first, named: [], leftOut: plan.leftOut ?? [] }, cooldown);
+  let problems = first;
+  let rejected: Pick<VerifiedBatch, "rejected"> = {};
+  if (options.retryRejected === true) {
+    context.logger.warn("secure-it: asking the agent again with the verification's refusal", { problems });
+    rejected = { rejected: first };
+    const failed = (why: string): VerifiedBatch => ({ plan, content, problems: [...first, `asked again with that refusal, ${why}`], named: namedProblems(plan, first), leftOut: plan.leftOut ?? [], ...rejected });
+    try {
+      await deps.revert(context.workingCopy, base.tree.id);
+      const again = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({
+        entrypoint: "secure-it", input: await agentInput(execution, plan, base.tree, "apply", { rejected: first }),
+      });
+      if (again.outcome !== "applied" || again.publication == null) return failed(`the agent couldn't apply: ${again.summary}`);
+      assertNoPlanMarker(again.publication.body);
+      content = again.publication;
+      cooldown = undefined;
+      problems = await verifyEdit(context, deps, plan, env, inventories, base.tree, base.gradle, execution.npmFiles, heard);
+    } catch (error) {
+      // The report keeps the refusal that started the retry, whatever stopped it.
+      return failed(`the attempt failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (problems.length === 0) return withCooldown(env, base.tree, { plan, content, problems, named: [], leftOut: plan.leftOut ?? [], ...rejected }, cooldown);
   }
-  assertNoPlanMarker(answer.publication.body);
-  cooldown = undefined;
-  const remaining = await verifyEdit(context, deps, retry.plan, env, inventories, base.tree, base.gradle, execution.npmFiles, heard);
-  const batch = { plan: retry.plan, content: answer.publication, problems: remaining, named: [...retry.named, ...namedProblems(retry.plan, remaining)], leftOut: retry.plan.leftOut ?? [] };
-  return remaining.length === 0 ? withCooldown(env, batch, cooldown) : batch;
+  const retry = retryWithoutNamed(plan, problems);
+  if (retry.plan === undefined) return { plan, content, problems, named: retry.named, leftOut: retry.leftOut, ...rejected };
+  context.logger.warn("secure-it: retrying the routine without named package groups", { leftOut: retry.leftOut });
+  let answer: SkillAnswer;
+  let remaining: string[];
+  try {
+    await deps.revert(context.workingCopy, base.tree.id);
+    answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({
+      entrypoint: "secure-it", input: await agentInput(execution, retry.plan, base.tree, "apply"),
+    });
+    if (answer.outcome !== "applied" || answer.publication == null) {
+      return { plan: retry.plan, content, problems: [`retry could not apply: ${answer.summary}`], named: retry.named, leftOut: retry.plan.leftOut ?? [], ...rejected };
+    }
+    assertNoPlanMarker(answer.publication.body);
+    cooldown = undefined;
+    remaining = [...await verifyEdit(context, deps, retry.plan, env, inventories, base.tree, base.gradle, execution.npmFiles, heard)];
+  } catch (error) {
+    // After a feedback attempt, the report keeps its refusal whatever stopped the reduced one; otherwise as before.
+    if (rejected.rejected === undefined) throw error;
+    return { plan: retry.plan, content, problems: [`retry failed: ${error instanceof Error ? error.message : String(error)}`], named: retry.named, leftOut: retry.plan.leftOut ?? [], ...rejected };
+  }
+  const batch = { plan: retry.plan, content: answer.publication!, problems: remaining, named: [...retry.named, ...namedProblems(retry.plan, remaining)], leftOut: retry.plan.leftOut ?? [], ...rejected };
+  return remaining.length === 0 ? withCooldown(env, base.tree, batch, cooldown) : batch;
 }
 
 /**
  * The verified plan with what the verifying comparison's cooldown holds (and
- * the signals people weigh), or without any; a cooldown the comparison
- * couldn't evaluate is a problem, never "nothing held".
+ * the signals and advisory evidence people weigh), or without any; a cooldown
+ * the comparison couldn't evaluate is a problem, never "nothing held".
  */
-async function withCooldown(env: GateEnvironment, batch: VerifiedBatch, cooldown: CooldownEvaluation | undefined): Promise<VerifiedBatch> {
+async function withCooldown(env: GateEnvironment, base: Tree, batch: VerifiedBatch, cooldown: CooldownEvaluation | undefined): Promise<VerifiedBatch> {
   if (cooldown?.evaluated === false) return { ...batch, problems: [`the cooldown can't be evaluated: ${cooldown.reason}`] };
   const { cooldown: _previous, ...plan } = batch.plan;
   const held = cooldown?.held ?? [];
   if (held.length === 0) return { ...batch, plan };
   const registry = new NpmRegistry(env.fetch);
+  const { config } = await readSettings(base);
+  const options = { fetch: env.fetch, token: env.githubToken, now: env.now, sourceRepos: { fetch: env.fetch, overrides: config.repositories, mavenRepositories: config.maven.repositories } };
   const planned: PlannedHold[] = [];
-  for (const entry of held) planned.push({ ...entry, signals: entry.ecosystem === "npm" ? await npmSignals(registry, entry) : [] });
+  for (const entry of held) {
+    planned.push({ ...entry, signals: entry.ecosystem === "npm" ? await npmSignals(registry, entry) : [], ...await evidenceFor(entry, options) });
+  }
   return { ...batch, plan: { ...plan, cooldown: planned } };
+}
+
+/** The evidence for people, or why it couldn't be read: informative, so it never fails the verification. */
+async function evidenceFor(entry: HeldVersion, options: EvidenceOptions): Promise<Pick<PlannedHold, "evidence" | "evidenceFailure">> {
+  try {
+    const evidence = await heldEvidence(entry, options);
+    return evidence === undefined ? {} : { evidence };
+  } catch (error) {
+    return { evidenceFailure: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 async function npmSignals(registry: NpmRegistry, entry: HeldVersion): Promise<string[]> {

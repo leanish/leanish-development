@@ -104,7 +104,7 @@ export async function matchRepositoryAdvisories(
  * bound stops at its single patched version, if it names one: maintainers
  * often write `>=5.0.0-beta.1` with `5.0.0-rc.2` as the fix.
  */
-function affects(advisory: RepositoryAdvisory, pkg: PackageVersion): boolean | undefined {
+export function affects(advisory: Pick<RepositoryAdvisory, "vulnerabilities">, pkg: PackageVersion): boolean | undefined {
   const scheme = versionScheme(pkg.ecosystem);
   let unreadable = false;
   for (const vulnerability of advisory.vulnerabilities) {
@@ -132,7 +132,7 @@ function fixedByPatch(range: string, patched: string | undefined, version: strin
 }
 
 /** Same ecosystem, and the same name; for Maven a bare artifactId counts too (snappy-java's own advisories use one). */
-function namesPackage(vulnerability: { ecosystem: string; name: string }, pkg: PackageVersion): boolean {
+export function namesPackage(vulnerability: { ecosystem: string; name: string }, pkg: Pick<PackageVersion, "ecosystem" | "name">): boolean {
   if (vulnerability.ecosystem.toLowerCase() !== GITHUB_ECOSYSTEMS[pkg.ecosystem]) return false;
   if (vulnerability.name === pkg.name || (pkg.ecosystem === "GitHub Actions" && vulnerability.name.toLowerCase() === pkg.name)) return true;
   return pkg.ecosystem === "Maven" && vulnerability.name === mavenCoordinates(pkg.name)[1];
@@ -156,6 +156,7 @@ export async function fetchRepositoryAdvisories(
   const advisories: RepositoryAdvisory[] = [];
   const entries: unknown[] = [];
   let url: string | undefined = `${GITHUB_API}/repos/${repo}/security-advisories?state=published&per_page=100`;
+  let pages = 0;
   while (url !== undefined) {
     const response = await options.fetch(url, { headers });
     if (response.status === 404) return undefined;
@@ -171,6 +172,7 @@ export async function fetchRepositoryAdvisories(
       if (options.cache !== undefined) entries.push(entry);
     }
     url = nextLink(response.headers.get("link"));
+    if (url !== undefined && ++pages >= MAX_ADVISORY_PAGES) throw new Error(`GitHub repository advisories of ${repo} run past ${MAX_ADVISORY_PAGES} pages`);
   }
   // Cache only after every page was fetched and parsed. A later refusal must not preserve a partial list.
   await options.cache?.write(repo, entries);
@@ -178,12 +180,28 @@ export async function fetchRepositoryAdvisories(
 }
 
 function parseRepositoryAdvisory(entry: unknown, repo: string): RepositoryAdvisory | undefined {
+  const { record, ghsaId, where, state, withdrawn } = entryHeader(entry, repo);
+  return state !== "published" || withdrawn ? undefined : advisoryOf(record, ghsaId, where);
+}
+
+/** An entry of a repository's advisory list, whatever its state: the evidence reader keeps withdrawn ones. */
+export function parseRepositoryEntry(entry: unknown, repo: string): { readonly advisory: RepositoryAdvisory; readonly state: string | undefined; readonly withdrawn: boolean } {
+  const { record, ghsaId, where, state, withdrawn } = entryHeader(entry, repo);
+  return { advisory: advisoryOf(record, ghsaId, where), state, withdrawn };
+}
+
+function entryHeader(entry: unknown, repo: string) {
   if (!isObject(entry) || typeof entry["ghsa_id"] !== "string" || entry["ghsa_id"] === "") {
     throw new Error(`GitHub repository advisories of ${repo}: an entry has no ghsa_id`);
   }
   const ghsaId = entry["ghsa_id"];
   const where = `repository advisory ${ghsaId} (${repo})`;
-  if (entry["state"] !== "published" || optionalString(entry, "withdrawn_at", where) !== undefined) return undefined;
+  const state = typeof entry["state"] === "string" ? entry["state"] : undefined;
+  const withdrawn = state === "withdrawn" || optionalString(entry, "withdrawn_at", where) !== undefined;
+  return { record: entry, ghsaId, where, state, withdrawn };
+}
+
+function advisoryOf(entry: Record<string, unknown>, ghsaId: string, where: string): RepositoryAdvisory {
   const vulnerabilities = entry["vulnerabilities"] ?? [];
   if (!Array.isArray(vulnerabilities)) throw new Error(`${where}: \`vulnerabilities\` must be a list`);
   return {
@@ -207,7 +225,13 @@ function parseRepositoryAdvisory(entry: unknown, repo: string): RepositoryAdviso
   };
 }
 
-function nextLink(header: string | null): string | undefined {
+/** The next page GitHub's `Link` header names; one off GitHub's API host is refused, never followed: the request carries the token. */
+export function nextLink(header: string | null): string | undefined {
   if (header === null) return undefined;
-  return /<([^>]+)>;\s*rel="next"/.exec(header)?.[1];
+  const next = /<([^>]+)>;\s*rel="next"/.exec(header)?.[1];
+  if (next !== undefined && !next.startsWith(`${GITHUB_API}/`)) throw new Error(`a next page off GitHub's API host: ${next}`);
+  return next;
 }
+
+/** Pages of one repository's advisories read at most: 100 each, far above any repository's count. */
+export const MAX_ADVISORY_PAGES = 20;

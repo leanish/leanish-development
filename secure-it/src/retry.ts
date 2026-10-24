@@ -33,7 +33,10 @@ export function retryWithoutNamed(plan: ChangePlan, problems: ReadonlyArray<stri
   const moves = plan.moves.filter((move) => !keys.has(moveKey(move)));
   if (moves.length === 0) return { plan: undefined, named, leftOut };
   const requiredNpm = plan.requiredNpm?.filter((target) => !keys.has(`npm|${target.root.name}`));
-  const notes = requiredNpm?.map((target) => target.reason);
+  // Every other note stays (the gate's, a fix's); only the omitted required targets' reasons go with them.
+  const omittedReasons = new Set((plan.requiredNpm ?? []).filter((target) => keys.has(`npm|${target.root.name}`)).map((target) => target.reason));
+  const kept = (plan.notes ?? []).filter((note) => !omittedReasons.has(note));
+  const notes = plan.notes === undefined ? undefined : kept;
   return { plan: { ...plan, moves, requiredNpm, notes, packages: plan.packages.filter((key) => !keys.has(key)), leftOut: [...(plan.leftOut ?? []), ...leftOut] }, named, leftOut };
 }
 

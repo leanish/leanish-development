@@ -20,7 +20,9 @@ import { dirname } from "node:path";
 
 import semver from "semver";
 
+import type { AdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import { type SecurityFix, severityRank } from "@leanish/gate/candidates";
+import type { Veto } from "@leanish/gate/young-fixes";
 import type { CarriedPackage } from "@leanish/gate/carrier-candidates";
 import type { NpmPeerPlanner } from "@leanish/gate/npm-peers";
 import type { HeldVersion } from "@leanish/gate/release-age";
@@ -52,6 +54,8 @@ export interface PlannedMove {
   readonly unblocks?: ReadonlyArray<string>;
   /** A carrier move: the packages it replaces (bundled npm copies, or the Gradle module a parent brings), each with its advisories. */
   readonly carries?: ReadonlyArray<CarriedPackage>;
+  /** Candidates the gate ruled out only by advisories no reviewed source corroborates (`vetoesOf`), for people. */
+  readonly vetoed?: ReadonlyArray<Veto>;
 }
 
 /** A dependent that moves so its range admits a copy's security target (`npm-parents.ts`). */
@@ -84,6 +88,10 @@ export interface OmittedMoves {
 export interface PlannedHold extends HeldVersion {
   /** For people only (`releaseSignals`): provenance, publisher, install scripts. */
   readonly signals: ReadonlyArray<string>;
+  /** For people only: where the advisories behind a security or bundle fix appear, read after the verification. */
+  readonly evidence?: AdvisoryEvidence;
+  /** Why that evidence couldn't be read at all. */
+  readonly evidenceFailure?: string;
 }
 
 export interface ChangePlan {
@@ -297,7 +305,10 @@ export async function planFor(work: ReadonlyArray<FixWork>, inputs: PlanInputs, 
     // Only what can be fixed is a target: an advisory no version fixes stays, inherited (fixing A and leaving B).
     // A carrier's own targets only: what it carries stays with each carried package (`carries`).
     const advisories = fix.targets.filter((target) => !fix.unfixable.includes(target));
-    const base = { ecosystem: fix.ecosystem, name: fix.name, from: fix.from, to: to.version, advisories, major: to.major, ...(fix.carries === undefined ? {} : { carries: fix.carries }) };
+    const base = {
+      ecosystem: fix.ecosystem, name: fix.name, from: fix.from, to: to.version, advisories, major: to.major,
+      ...(fix.carries === undefined ? {} : { carries: fix.carries }), ...(fix.vetoed === undefined || fix.vetoed.length === 0 ? {} : { vetoed: fix.vetoed }),
+    };
     if (fix.ecosystem === "GitHub Actions") {
       const commitSha = await inputs.tagCommit(fix.name, to.version);
       if (commitSha === undefined) throw new Error(`${fix.name} has no tag ${to.version} to pin to`);

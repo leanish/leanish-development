@@ -581,6 +581,7 @@ describe("config", () => {
     expect(() => parseConfig({ releaseAgeDays: -1 })).toThrow("nonnegative integer");
     expect(() => parseConfig({ ownPackages: { npm: { scopes: ["leanish"] } } })).toThrow("not an @scope");
     expect(() => parseConfig({ repositories: { "snappy-java": "xerial/snappy-java" } })).toThrow("isn't <ecosystem>:<package>");
+    expect(() => parseConfig({ repositories: { "npm:lib": "../.." } })).toThrow("must map to owner/repo");
     expect(parseConfig({ repositories: { "Maven:org.xerial.snappy:snappy-java": "xerial/snappy-java" } }).repositories).toEqual(
       new Map([["Maven|org.xerial.snappy:snappy-java", "xerial/snappy-java"]]),
     );

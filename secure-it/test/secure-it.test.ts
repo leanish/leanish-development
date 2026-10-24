@@ -601,6 +601,55 @@ describe("secure-it run", () => {
     expect(h.agentCalls.map((call) => (call.input["moves"] as Array<{ name: string }>).map((move) => move.name).sort())).toEqual([["g:lib", "vite"]]);
   });
 
+  it("asks the agent again with the refusal and publishes the second attempt when it passes", async () => {
+    const h = harness({ fixes: [vite()] });
+    let attempts = 0;
+    const refusal = "compare: tools.jackson:jackson-bom@3.2.4 was published 2026-10-18T22:36:10.000Z (4.8 days ago, under 7)";
+    const deps = { ...h.deps, verify: async () => (++attempts === 1 ? [refusal] : []) };
+    expect(await secureIt(deps).run(h.context)).toMatchObject({ outcome: "published", rejected: [refusal] });
+    expect(h.agentCalls.map((call) => [call.input["mode"], call.input["rejected"]])).toEqual([["apply", undefined], ["apply", [refusal]]]);
+    expect(h.reverted).toEqual([BASE_SHA]);
+    expect(h.workspace.publications).toHaveLength(1);
+  });
+
+  it("stops at the second attempt's cannot-apply, keeping the first refusal", async () => {
+    const h = harness({ fixes: [vite()], problems: ["vite at node_modules/vite is 8.3.2, not 8.3.3"] });
+    let calls = 0;
+    const context = { ...h.context, agent: (async () => (++calls === 1 ? APPLIED : { outcome: "cannot-apply", summary: "the floor needs a parent move" })) as ToolRunContext["agent"] };
+    expect(await secureIt(h.deps).run(context)).toMatchObject({
+      outcome: "verification-failed", rejected: ["vite at node_modules/vite is 8.3.2, not 8.3.3"],
+      problems: ["vite at node_modules/vite is 8.3.2, not 8.3.3", "asked again with that refusal, the agent couldn't apply: the floor needs a parent move"],
+    });
+    expect(calls).toBe(2);
+    expect(h.workspace.publications).toEqual([]);
+  });
+
+  it("keeps the first refusal when the second attempt throws", async () => {
+    const h = harness({ fixes: [vite()], problems: ["vite at node_modules/vite is 8.3.2, not 8.3.3"] });
+    let calls = 0;
+    const context = { ...h.context, agent: (async () => {
+      if (++calls === 1) return APPLIED;
+      throw new Error("agent crashed");
+    }) as ToolRunContext["agent"] };
+    expect(await secureIt(h.deps).run(context)).toMatchObject({
+      outcome: "verification-failed", rejected: ["vite at node_modules/vite is 8.3.2, not 8.3.3"],
+      problems: ["vite at node_modules/vite is 8.3.2, not 8.3.3", "asked again with that refusal, the attempt failed: agent crashed"],
+    });
+  });
+
+  it("keeps the first refusal when the reduced attempt throws", async () => {
+    const h = harness({ fixes: [vite(), leftPad()], problems: ["compare: new: left-pad@1.0.1: GHSA-new has no exception"] });
+    let calls = 0;
+    const context = { ...h.context, agent: (async () => {
+      if (++calls <= 2) return APPLIED;
+      throw new Error("agent crashed");
+    }) as ToolRunContext["agent"] };
+    expect(await secureIt(h.deps).run(context)).toMatchObject({
+      outcome: "verification-failed", rejected: ["compare: new: left-pad@1.0.1: GHSA-new has no exception"], problems: ["retry failed: agent crashed"],
+    });
+    expect(calls).toBe(3);
+  });
+
   it("retries a failed batch from base once without named package groups and discloses them", async () => {
     const h = harness({ fixes: [vite(), leftPad()] });
     const sequence: string[] = [];
@@ -611,9 +660,14 @@ describe("secure-it run", () => {
       sequence.push(`revert:${sha}`);
       return h.deps.revert(wc, sha);
     } };
-    expect(await secureIt(deps).run(h.context)).toMatchObject({ outcome: "published", packages: ["npm|vite"], leftOut: [{ moves: [{ name: "left-pad" }], problems: [expect.stringContaining("GHSA-new")] }] });
-    expect(sequence).toEqual(["verify:npm|left-pad,npm|vite", `revert:${BASE_SHA}`, "verify:npm|vite"]);
-    expect(h.agentCalls.map((call) => (call.input["moves"] as Array<{ name: string }>).map((move) => move.name))).toEqual([["vite", "left-pad"], ["vite"]]);
+    expect(await secureIt(deps).run(h.context)).toMatchObject({
+      outcome: "published", packages: ["npm|vite"], leftOut: [{ moves: [{ name: "left-pad" }], problems: [expect.stringContaining("GHSA-new")] }],
+      rejected: ["compare: new: left-pad@1.0.1: GHSA-new has no exception"],
+    });
+    // The same plan once more with the refusal, then the reduced one from the last problems.
+    expect(sequence).toEqual(["verify:npm|left-pad,npm|vite", `revert:${BASE_SHA}`, "verify:npm|left-pad,npm|vite", `revert:${BASE_SHA}`, "verify:npm|vite"]);
+    expect(h.agentCalls.map((call) => (call.input["moves"] as Array<{ name: string }>).map((move) => move.name))).toEqual([["vite", "left-pad"], ["vite", "left-pad"], ["vite"]]);
+    expect(h.agentCalls.map((call) => call.input["rejected"])).toEqual([undefined, ["compare: new: left-pad@1.0.1: GHSA-new has no exception"], undefined]);
     const pr = h.github.prs.get(42)!;
     expect(pr.body).toContain("Left out after verification failed");
     expect(pr.body).toContain("left-pad");
@@ -625,20 +679,22 @@ describe("secure-it run", () => {
   it("does not retry a second time or guess a parent for an induced/global failure", async () => {
     const h = harness({ fixes: [vite(), leftPad()] });
     let attempts = 0;
-    const deps = { ...h.deps, verify: async () => ++attempts === 1 ? ["left-pad at node_modules/left-pad is 1.0.2, not 1.0.1"] : ["vite at node_modules/vite is 8.3.2, not 8.3.3"] };
+    const deps = { ...h.deps, verify: async () => ++attempts <= 2 ? ["left-pad at node_modules/left-pad is 1.0.2, not 1.0.1"] : ["vite at node_modules/vite is 8.3.2, not 8.3.3"] };
     expect(await secureIt(deps).run(h.context)).toMatchObject({ outcome: "verification-failed", leftOut: [{ moves: [{ name: "left-pad" }] }], named: [{ moves: [{ name: "left-pad" }] }, { moves: [{ name: "vite" }] }] });
-    expect(h.agentCalls).toHaveLength(2);
+    expect(h.agentCalls).toHaveLength(3);
     expect(h.workspace.publications).toEqual([]);
     const unknown = harness({ fixes: [vite(), leftPad()], problems: ["compare: new: induced@1.0.1: GHSA-new has no exception"] });
     expect(await secureIt(unknown.deps).run(unknown.context)).toMatchObject({ outcome: "verification-failed", named: [{ moves: [] }] });
-    expect(unknown.agentCalls).toHaveLength(1);
-    expect(unknown.reverted).toEqual([]);
+    // Asked once more with the refusal; no reduction guesses a parent.
+    expect(unknown.agentCalls).toHaveLength(2);
+    expect(unknown.reverted).toHaveLength(1);
   });
 
   it("does not shrink malware after verification fails", async () => {
     const h = harness({ fixes: [vite({ malicious: true }), leftPad({ malicious: true })], problems: ["compare: new: left-pad@1.0.1: MAL-bad has no exception"] });
     expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "verification-failed", topic: "malware", leftOut: [] });
-    expect(h.agentCalls).toHaveLength(1);
+    // The whole plan once more with the refusal, never a smaller one.
+    expect(h.agentCalls.map((call) => (call.input["moves"] as unknown[]).length)).toEqual([2, 2]);
     expect(h.workspace.publications).toEqual([]);
   });
 
@@ -848,6 +904,8 @@ describe("secure-it review", () => {
     failing.github.checks = RED;
     expect(await secureIt(failing.deps).review(failing.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "error", detail: expect.stringContaining("doesn't verify") }] });
     expect(stateOf(failing.github.prs.get(7)!.body)?.adaptations).toBe(1);
+    // An adaptation isn't restarted from the base with the refusal: that would lose it.
+    expect(failing.agentCalls.map((call) => call.input["rejected"])).toEqual([undefined]);
   });
 });
 
@@ -1019,6 +1077,24 @@ describe("the cooldown hold", () => {
     expect(held!.body).toContain("> | npm `vite` | 8.3.1 → 8.3.3 | 2026-10-06 00:00 | 2026-10-13 00:00 | the security fix the version rule picks | registry metadata unreadable |");
     expect(held!.isDraft).toBe(true);
     expect(planOf(held!.body)?.cooldown).toEqual([{ ...HELD, signals: ["registry metadata unreadable"] }]);
+  });
+
+  it("records where the advisories behind a held fix appear, and opens the warning with it", async () => {
+    const h = harness({ fixes: [vite()] });
+    const targeted = { ...HELD, targets: [{ name: "vite", bundled: false, replaced: ["8.3.1"], proposed: ["8.3.3"], groups: [{ ids: ["GHSA-vite-0001"], replaced: ["8.3.1"] }] }] };
+    const verify = async (inputs: VerifyInputs) => {
+      inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: [targeted] });
+      return [];
+    };
+    expect(await secureIt({ ...h.deps, verify }).run(h.context)).toMatchObject({ outcome: "published" });
+    const body = h.github.prs.get(42)!.body;
+    const [hold] = planOf(body)!.cooldown!;
+    // The harness answers every lookup with a 404: checked and not found, never failed.
+    expect(hold!.evidence).toMatchObject({ collectedAt: NOW.toISOString(), targets: [{ name: "vite", groups: [{ ids: ["GHSA-vite-0001"], sources: [
+      { source: "repository", lookup: "incomplete" }, { source: "github", lookup: "checked", records: [] }, { source: "osv", lookup: "checked", records: [] },
+    ] }] }] });
+    expect(body).toContain("> **The reviewed advisories read after the comparison don't back this fix as the comparison did.**");
+    expect(body).toContain("> | ⚠ GHSA-vite-0001 | `vite` 8.3.1 → 8.3.3 | couldn't be fully checked: its source repository can't be found: registry lookup of vite@8.3.1 failed with HTTP 404 | not found | not found |");
   });
 
   it("holds whatever the comparison holds, even in a PR planned as aged", async () => {

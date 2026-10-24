@@ -19,6 +19,11 @@
  * nearest clean version at least `releaseAgeDays` old, newer in its line
  * first, then older in its line, then newer lines.
  *
+ * A version ruled out only by advisories no reviewed source corroborates (on
+ * the carrier, or on a bundled package no copy of that name in its bundle
+ * corroborates) is recorded with the choice as a veto, among the versions the
+ * search read: the rule still skips it.
+ *
  * Bundles are read lazily, in that order, and only as far as the decision
  * needs: every version before the first fix, then only aged versions in its
  * line. A version whose bundle can't be read, or whose publish time is
@@ -34,7 +39,7 @@ import type { NpmRegistry } from "./npm-registry.ts";
 import type { PackageName, PackageVersion } from "./package-version.ts";
 import type { Snapshot } from "./snapshot.ts";
 import { versionScheme } from "./versions.ts";
-import { compatibleLine, fixes, groupsOf, type VersionCatalog } from "./young-fixes.ts";
+import { compatibleLine, fixes, groupsOf, reviewedGroups, unreviewedGroups, type VersionCatalog, type Veto } from "./young-fixes.ts";
 
 const DAY_MS = 86_400_000;
 /** Bundles read before each new advisory snapshot. */
@@ -74,7 +79,11 @@ export interface CarrierServices {
 }
 
 export type CarrierChoice =
-  | { readonly kind: "chosen"; readonly version: string; readonly line: string; readonly aged: boolean; readonly bundle: CompleteBundle; readonly snapshot: Snapshot }
+  | {
+    readonly kind: "chosen"; readonly version: string; readonly line: string; readonly aged: boolean; readonly bundle: CompleteBundle; readonly snapshot: Snapshot;
+    /** Read versions ruled out only by unreviewed advisories (file header), in search order. */
+    readonly vetoed: ReadonlyArray<Veto>;
+  }
   | { readonly kind: "none"; readonly reason: string }
   | { readonly kind: "incomplete"; readonly reason: string };
 
@@ -172,7 +181,14 @@ class SearchState {
   chosen(version: string, line: string, aged: boolean): CarrierChoice {
     const bundle = this.#bundles.get(version);
     if (bundle === undefined || !bundle.complete || this.#snapshot === undefined) throw new Error(`${this.#search.carrier}@${version} was chosen unread`);
-    return { kind: "chosen", version, line, aged, bundle, snapshot: this.#snapshot };
+    const snapshot = this.#snapshot;
+    const vetoed = this.#search.versions.flatMap((other) => {
+      const read = this.#bundles.get(other);
+      if (other === version || read === undefined || !read.complete) return [];
+      const veto = carrierVeto(this.#search, other, read, snapshot);
+      return veto === undefined ? [] : [veto];
+    });
+    return { kind: "chosen", version, line, aged, bundle, snapshot, vetoed };
   }
 
   #covered(): PackageVersion[] {
@@ -183,15 +199,62 @@ class SearchState {
   }
 }
 
-/** The predicate in the file header, on one snapshot covering both bundles and both carrier versions. */
-export function carrierFixes(search: Pick<CarrierSearch, "carrier" | "from" | "fromBundle" | "carried" | "own">, version: string, bundle: CompleteBundle, snapshot: Snapshot): boolean {
+/** What a carrier version carries only from unreviewed advisories: its own groups, and bundled `name|group` pairs. */
+interface Unreviewed {
+  readonly own: ReadonlySet<string>;
+  readonly pairs: ReadonlySet<string>;
+}
+
+const NOTHING: Unreviewed = { own: new Set(), pairs: new Set() };
+
+/**
+ * The predicate in the file header, on one snapshot covering both bundles and both carrier versions. What `ignore`
+ * names doesn't count against the version (malware always does): what a veto by it alone looks like.
+ */
+export function carrierFixes(search: Pick<CarrierSearch, "carrier" | "from" | "fromBundle" | "carried" | "own">, version: string, bundle: CompleteBundle, snapshot: Snapshot, ignore: Unreviewed = NOTHING): boolean {
   const name = carrierName(search);
-  if (!fixes(snapshot, name, search.from, search.own.map((id) => snapshot.group(id)), version)) return false;
+  if (!fixes(snapshot, name, search.from, search.own.map((id) => snapshot.group(id)), version, ignore.own)) return false;
   const before = bundlePairs(search.fromBundle, snapshot);
   const after = bundlePairs(bundle, snapshot);
   if (after.malicious) return false;
-  if ([...after.pairs].some((pair) => !before.pairs.has(pair))) return false;
-  return search.carried.every((target) => !after.pairs.has(`${target.name}|${snapshot.group(target.advisory)}`));
+  const counted = (pair: string) => after.pairs.has(pair) && !ignore.pairs.has(pair);
+  if ([...after.pairs].some((pair) => counted(pair) && !before.pairs.has(pair))) return false;
+  return search.carried.every((target) => !counted(`${target.name}|${snapshot.group(target.advisory)}`));
+}
+
+/**
+ * `version` as a veto: it fails `carrierFixes`, but passes it with its unreviewed advisories ignored. Names only the
+ * blocking ones, as `vetoesOf` does: on the carrier, an own target or a group `from` lacks; in the bundle, a carried
+ * target or a pair `fromBundle` lacks.
+ */
+function carrierVeto(search: CarrierSearch, version: string, bundle: CompleteBundle, snapshot: Snapshot): Veto | undefined {
+  const unreviewed = unreviewedOf(search, version, bundle, snapshot);
+  if (unreviewed.own.size === 0 && unreviewed.pairs.size === 0) return undefined;
+  if (carrierFixes(search, version, bundle, snapshot) || !carrierFixes(search, version, bundle, snapshot, unreviewed)) return undefined;
+  const carrier = { ...carrierName(search), version };
+  const ownTargets = new Set(search.own.map((id) => snapshot.group(id)));
+  const ownBefore = groupsOf(snapshot, { ...carrier, version: search.from });
+  const carried = new Set(search.carried.map((target) => `${target.name}|${snapshot.group(target.advisory)}`));
+  const pairsBefore = bundlePairs(search.fromBundle, snapshot).pairs;
+  const ids = [
+    ...snapshot.advisories(carrier).filter((advisory) => {
+      const group = snapshot.group(advisory.id);
+      return unreviewed.own.has(group) && (ownTargets.has(group) || !ownBefore.has(group));
+    }),
+    ...bundle.packages.flatMap((pkg) => snapshot.advisories({ ecosystem: "npm", name: pkg.name, version: pkg.version }).filter((advisory) => {
+      const pair = `${pkg.name}|${snapshot.group(advisory.id)}`;
+      return unreviewed.pairs.has(pair) && (carried.has(pair) || !pairsBefore.has(pair));
+    })),
+  ].flatMap((advisory) => advisory.ids);
+  return { version, advisories: [...new Set(ids)].sort() };
+}
+
+/** A bundled pair is unreviewed only when no copy of that name in the bundle has the group from a reviewed source. */
+function unreviewedOf(search: CarrierSearch, version: string, bundle: CompleteBundle, snapshot: Snapshot): Unreviewed {
+  const own = unreviewedGroups(snapshot, { ...carrierName(search), version });
+  const corroborated = new Set(bundle.packages.flatMap((pkg) => [...reviewedGroups(snapshot, { ecosystem: "npm", name: pkg.name, version: pkg.version })].map((group) => `${pkg.name}|${group}`)));
+  const pairs = new Set([...bundlePairs(bundle, snapshot).pairs].filter((pair) => !corroborated.has(pair)));
+  return { own, pairs };
 }
 
 /** Each bundled package's advisory groups as `name|group`, and whether any is malware. */

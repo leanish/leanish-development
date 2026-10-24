@@ -274,7 +274,7 @@ describe("gate", { timeout: 20_000 }, () => {
       },
       [affects("v4.2.2", "reviewed")]: { body: [] },
       [affects("v4.2.2", "malware")]: { body: [] },
-      [affects("v7.0.1", "reviewed")]: { body: [{ ghsa_id: "GHSA-new-in-v7", summary: "made up", severity: "low" }] },
+      [affects("v7.0.1", "reviewed")]: { body: [{ ghsa_id: "GHSA-new-in-v7", type: "reviewed", summary: "made up", severity: "low" }] },
       [affects("v7.0.1", "malware")]: { body: [] },
       [`${api}/repos/actions/checkout/security-advisories?state=published&per_page=100`]: { body: [] },
     };

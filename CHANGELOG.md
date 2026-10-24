@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Changed
+
+- A project's own repository advisories, unreviewed and published at will by whoever controls the repository, no
+  longer trigger a fix nor justify a young version: they still detect (a finding, a PR adding one fails) and rule
+  versions out. Only reviewed advisories (OSV, or GitHub's database for Actions) make secure-it plan a fix and make a
+  young version the rule-picked fix, a bundle fix or a required npm dependency. A version affected only by unreviewed
+  advisories is reported, not fixed, until a reviewed source lists it. An unreviewed advisory can still rule out the
+  version the rule would take and steer it to another, even a young one (held); secure-it's plan notes each such
+  candidate, carrier versions included. A required npm dependency's version is set by its requirement, so a veto
+  there refuses the fix, and the refusal now names each advisory it adds, marked when unreviewed. A `releaseAge` exception may still name one: the owner's override. The rules are in the gate's README
+  ("How each source counts"). GitHub's Actions advisories that aren't `reviewed` or `malware` now fail the run.
+
+### Added
+
+- secure-it's cooldown warning now says where the advisories behind each held security or bundle fix appear: the
+  dependency's own repository advisories, GitHub's database and OSV, each read after the verification and shown as
+  that source says (its declared fix, and whether its ranges put each replaced and proposed version among the affected
+  ones). A fixed line opens the warning: that a reviewed record (OSV, or GitHub's reviewed database) still backs every
+  fix as read now, or, marking the rows, that none does for some. A lookup that fails is shown as such, never as "not
+  found". The gate's comparison report records, for each held fix,
+  the advisories behind it (`targets`); nothing in the evidence changes a verdict.
+- When verification refuses an edit the agent wrote, bump-it and secure-it now ask the agent once more, from the base,
+  with the refusal (`rejected` in the skill input); a second refusal fails the unit as before, and secure-it's
+  existing retry without the named package groups still follows. A review's adaptation isn't restarted this way. The
+  run report lists the first refusal (`rejected`). On kryptovero, the agent replaced a planned Gradle floor with a
+  move of its parent, which the gate refused, and the critical fix was never proposed.
+
+### Fixed
+
+- The gate refuses a repository advisory list's next page off GitHub's API host instead of sending the token there,
+  and reads at most 20 pages (either one fails the run, as an unreadable list does); a source repository named `.` or `..` (in a manifest, a POM or the config) names none, so it can't
+  walk the API path the token is sent to.
+
 ## 0.7.5 - 2026-10-23
 
 ### Fixed

@@ -23,6 +23,15 @@ describe("batch retry", () => {
     expect(planOf(planSection(retry.plan!))?.coupled).toEqual(original.coupled);
   });
 
+  it("keeps the remaining moves' vetoes and every other note when it omits a package", () => {
+    const vetoed = { ...move("lib"), vetoed: [{ version: "1.0.0.1", advisories: ["GHSA-repo"] }] };
+    const original = { ...plan(vetoed, move("other")), notes: ["lib@2.0.0 is affected by GHSA-x, only in the project's repository advisories"] };
+    const retry = retryWithoutNamed(original, ["other at node_modules/other is gone, not 1.0.1"]);
+    expect(retry.plan?.moves).toEqual([vetoed]);
+    expect(retry.plan?.notes).toEqual(original.notes);
+    expect(planSection(retry.plan!)).toContain("- lib 1.0.0.1 was ruled out by GHSA-repo, not corroborated by the sources this decision used; this takes 1.0.1.");
+  });
+
   it("attributes a failed required child to its security root and leaves unrelated npm work", () => {
     const root = { name: "lib", version: "1.0.1", path: "node_modules/lib" };
     const target = { name: "child", version: "2.0.0", path: "node_modules/child", lockfile: "package-lock.json", root, parent: root, key: "child", range: "^2", exempt: true, reason: "forced young child" };

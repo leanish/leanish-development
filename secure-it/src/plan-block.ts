@@ -7,9 +7,11 @@
  */
 import { createHash } from "node:crypto";
 
+import { isAdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import { heldEntry, heldUntil } from "@leanish/gate/cooldown";
 import { assertBodyFits, planPayload, planSection as sectionOf, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
 
+import { advisoryNotice } from "./advisory-notice.ts";
 import { floorIdentity, validRemoval } from "./floor-removal.ts";
 import type { ChangePlan, PlannedHold, PlannedMove } from "./plan.ts";
 
@@ -42,6 +44,7 @@ export function planSection(plan: ChangePlan): string {
     "|---|---|---|---|---|---|",
     ...rows,
     ...omittedSection(plan),
+    ...plan.moves.flatMap(vetoLines),
     ...(plan.notes ?? []).map((note) => `- ${note.replace(/\s+/g, " ")}`),
   ].join("\n");
   const footer = "Security targets are the versions the supply-chain gate's rule picks (`supply-chain candidates --rule security`); code chose any required direct-peer companions at their lowest safe compatible versions. The gate verified the change before it was published.";
@@ -73,6 +76,12 @@ function fixesLabel(plan: ChangePlan, move: PlannedMove): string {
   if (plan.requiredNpm?.some((target) => target.name === move.name && target.version === move.to)) return "required dependency compatibility";
   const coupled = plan.coupled?.some((set) => set.includes(`${move.ecosystem}|${move.name}`));
   return coupled ? "direct peer compatibility" : "";
+}
+
+/** A fixed line per candidate the gate ruled out only by advisories no reviewed source corroborates. */
+function vetoLines(move: PlannedMove): string[] {
+  return (move.vetoed ?? []).map((veto) =>
+    `- ${move.name} ${veto.version} was ruled out by ${veto.advisories.join(", ")}, not corroborated by the sources this decision used; this takes ${move.to}.`);
 }
 
 /** Omissions are visible to reviewers as well as the command report and persisted plan. */
@@ -117,15 +126,19 @@ export function cooldownWarning(held: ReadonlyArray<PlannedHold>): string | unde
   const why = { "security-fix": "the security fix the version rule picks", "bundle-fix": "the carrier version the rule picks for advisories in its bundle", required: "required by a security fix", exception: "a release-age exception", unjustified: "not justified: the gate fails it" } as const;
   const rows = held.map((entry) =>
     `> | ${entry.ecosystem} \`${cell(entry.name)}\` | ${entry.replaced.length === 0 ? "new" : cell(entry.replaced.join(", "))} → ${cell(entry.version)} | ${minute(entry.published)} | ${minute(entry.eligibleAt)} | ${why[entry.justification]} | ${cell(entry.signals.join("; ")) || "—"} |`);
+  const notice = advisoryNotice(held);
+  const quoted = (lines: ReadonlyArray<string>) => lines.map((line) => (line === "" ? ">" : `> ${line}`));
   return [
     WARNING_START,
     "> [!WARNING]",
     "> **Release-age cooldown bypassed.** This PR takes versions published less than the release-age wait ago. Needing them for a security fix, and passing every check, doesn't rule out malware: whoever controls a publisher can ship it inside a real fix, whatever the advisory's severity.",
     ">",
+    ...notice.paragraphs.flatMap((paragraph) => [`> ${paragraph}`, ">"]),
     "> | Package | Version | Published (UTC) | Held until (UTC) | Why | Signals |",
     "> |---|---|---|---|---|---|",
     ...rows,
     ">",
+    ...(notice.details.length === 0 ? [] : [...quoted(notice.details), ">"]),
     `> secure-it keeps this PR a draft, and the supply-chain gate's \`cooldown\` check stays red, until ${minute(until)} UTC. Then secure-it closes it and its next run opens a freshly verified PR (held again only if something in it is still young).`,
     ">",
     "> To take it earlier, a person decides: every other check green, the reason written in a PR comment, then an admin merge past the red `cooldown` check (where no ruleset enforces it, a merge with the same written reason).",
@@ -158,7 +171,14 @@ function isMove(move: unknown): move is PlannedMove {
   if (typeof move !== "object" || move === null) return false;
   const m = move as Record<string, unknown>;
   return typeof m["name"] === "string" && typeof m["from"] === "string" && typeof m["to"] === "string" && typeof m["mechanism"] === "string" && Array.isArray(m["locations"]) &&
-    (m["carries"] === undefined || (Array.isArray(m["carries"]) && m["carries"].every(isCarried)));
+    (m["carries"] === undefined || (Array.isArray(m["carries"]) && m["carries"].every(isCarried))) &&
+    (m["vetoed"] === undefined || (Array.isArray(m["vetoed"]) && m["vetoed"].every(isVeto)));
+}
+
+function isVeto(entry: unknown): boolean {
+  if (typeof entry !== "object" || entry === null) return false;
+  const v = entry as Record<string, unknown>;
+  return typeof v["version"] === "string" && Array.isArray(v["advisories"]) && v["advisories"].every((id) => typeof id === "string");
 }
 
 function isCarried(entry: unknown): boolean {
@@ -176,7 +196,8 @@ function validHolds(held: unknown): boolean {
     } catch {
       return false;
     }
-    const signals = (entry as PlannedHold).signals;
-    return Array.isArray(signals) && signals.every((signal) => typeof signal === "string");
+    const { signals, evidence, evidenceFailure } = entry as PlannedHold;
+    return Array.isArray(signals) && signals.every((signal) => typeof signal === "string")
+      && (evidence === undefined || isAdvisoryEvidence(evidence)) && (evidenceFailure === undefined || typeof evidenceFailure === "string");
   });
 }
