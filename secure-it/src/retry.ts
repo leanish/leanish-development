@@ -33,11 +33,14 @@ export function retryWithoutNamed(plan: ChangePlan, problems: ReadonlyArray<stri
   const moves = plan.moves.filter((move) => !keys.has(moveKey(move)));
   if (moves.length === 0) return { plan: undefined, named, leftOut };
   const requiredNpm = plan.requiredNpm?.filter((target) => !keys.has(`npm|${target.root.name}`));
-  // Every other note stays (the gate's, a fix's); only the omitted required targets' reasons go with them, unless a
-  // kept target shares the reason (same requiring package and version, one deduplicated note).
+  // The omitted moves' notes go with them: the required targets' reasons, unless a kept target shares the reason (same
+  // requiring package and version, one deduplicated note), and any other note naming an omitted move or a package it
+  // carries (a floor, an override, an advisory note) but no kept one. The rest stays (the gate's, a kept fix's).
   const keptReasons = new Set((requiredNpm ?? []).map((target) => target.reason));
   const omittedReasons = new Set((plan.requiredNpm ?? []).map((target) => target.reason).filter((reason) => !keptReasons.has(reason)));
-  const kept = (plan.notes ?? []).filter((note) => !omittedReasons.has(note));
+  const omitted = plan.moves.filter((move) => keys.has(moveKey(move)));
+  const kept = (plan.notes ?? []).filter((note) =>
+    keptReasons.has(note) || (!omittedReasons.has(note) && (!aboutAny(note, omitted) || aboutAny(note, moves))));
   const notes = plan.notes === undefined ? undefined : kept;
   return { plan: { ...plan, moves, requiredNpm, notes, packages: plan.packages.filter((key) => !keys.has(key)), leftOut: [...(plan.leftOut ?? []), ...leftOut] }, named, leftOut };
 }
@@ -50,6 +53,10 @@ export function namedProblems(plan: ChangePlan, problems: ReadonlyArray<string>)
 }
 
 const moveKey = (move: PlannedMove) => `${move.ecosystem}|${move.name}`;
+
+/** Whether `note` names one of `moves`, or a package one of them carries. */
+const aboutAny = (note: string, moves: ReadonlyArray<PlannedMove>) =>
+  moves.some((move) => namesMove(note, move) || (move.carries ?? []).some((carried) => namesMove(note, { ...move, name: carried.name })));
 
 function namesMove(problem: string, move: PlannedMove): boolean {
   const name = move.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

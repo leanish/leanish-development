@@ -1282,6 +1282,25 @@ describe("the cooldown hold", () => {
     ] });
   });
 
+  it("fails only the held units when an own PR's journal can't be read, and reads none without a held unit", async () => {
+    // #7's head moved past its recorded state, so its journal is read, and that read fails.
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security", headSha: PUSHED_SHA, body: withMarker(RULES, "Fixes left-pad.", { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const broken = (h: ReturnType<typeof harness>) => {
+      h.journal.last = async () => { throw new Error("leanish__widget/7.json isn't a journal"); };
+    };
+    const both = harness({ prs: [pr], fixes: [leftPad({ name: "aged-pad" }), YOUNG_VITE()] });
+    broken(both);
+    expect(await secureIt({ ...both.deps, verify: holdingVerify }).run(both.context)).toMatchObject({ units: [
+      { topic: "security", outcome: expect.not.stringMatching(/^failed$/) },
+      { topic: "security-cooldown-vite", outcome: "failed", detail: "leanish__widget/7.json isn't a journal" },
+    ] });
+    const aged = harness({ prs: [pr], fixes: [leftPad({ name: "aged-pad" })] });
+    let reads = 0;
+    aged.journal.last = async () => { reads += 1; throw new Error("leanish__widget/7.json isn't a journal"); };
+    expect(await secureIt(aged.deps).run(aged.context)).not.toMatchObject({ outcome: "failed" });
+    expect(reads).toBe(0);
+  });
+
   it("gives two held units whose topics cut to one branch name a branch each", async () => {
     const lock = JSON.stringify({ lockfileVersion: 3, packages: { "": { name: "widget" }, "node_modules/a/b": { version: "1.0.0" }, "node_modules/a-b": { version: "1.0.0" } } });
     const young = (name: string) => leftPad({ name, locations: [`node_modules/${name}`], to: { version: "1.0.1", line: "1", aged: false, major: false, blockers: [] } });

@@ -269,10 +269,12 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   const own = await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base);
   const results: Readonly<Record<string, unknown>>[] = [];
   const units = await holdRequiredYoung(execution, selection.units, base);
-  const claims = heldClaims(units, await claimable(context, execution.publication, own));
+  const claims = await heldClaimsOf(context, execution.publication, units, own);
   for (const unit of units) {
     try {
-      results.push(await runUnit(execution, unit, base, own, claims.get(unit.topic)));
+      // Held units need every own PR's claim, or two PRs could stand for one: they fail when those can't be read.
+      if (claims instanceof Error && isHeldUnit(unit)) throw claims;
+      results.push(await runUnit(execution, unit, base, own, claims instanceof Error ? undefined : claims.get(unit.topic)));
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       context.logger.warn("secure-it: a unit failed", { topic: unit.topic, error: detail });
@@ -456,7 +458,7 @@ async function holdRequiredYoung(execution: Execution, units: ReadonlyArray<Secu
  * a unit with none opens its own.
  */
 export function heldClaims(units: ReadonlyArray<SecurityUnit>, own: ReadonlyArray<GitHubPullRequest>): Map<string, number> {
-  const held = units.filter((unit) => unit.kind === "routine" && isHeldTopic(unit.topic));
+  const held = units.filter(isHeldUnit);
   const pairs = own.flatMap((pr) => {
     const previous = planOf(pr.body);
     if (previous === undefined || !isHeldPlan(previous)) return [];
@@ -473,6 +475,21 @@ export function heldClaims(units: ReadonlyArray<SecurityUnit>, own: ReadonlyArra
     taken.add(pair.number);
   }
   return claims;
+}
+
+const isHeldUnit = (unit: SecurityUnit) => unit.kind === "routine" && isHeldTopic(unit.topic);
+
+/**
+ * The held units' claims, read only when some unit is held (each other unit reads its own PRs, as before); what made
+ * them unreadable (an own PR's journal, say) instead of a throw, so that fails the held units alone, not the run.
+ */
+async function heldClaimsOf(context: ToolRunContext, publication: PublicationContext, units: ReadonlyArray<SecurityUnit>, own: ReadonlyArray<GitHubPullRequest>): Promise<ReadonlyMap<string, number> | Error> {
+  if (!units.some(isHeldUnit)) return new Map();
+  try {
+    return heldClaims(units, await claimable(context, publication, own));
+  } catch (err) {
+    return err instanceof Error ? err : new Error(String(err));
+  }
 }
 
 /**
