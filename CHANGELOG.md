@@ -52,6 +52,11 @@
   them into a block, so the tool's own block stays the first one read. secure-it's warning and veto lines also escape
   `<` in what they quote, so a quoted HTML comment can't hide the rest. Before, an advisory's text in the new warning
   could replace a held PR's verified plan for later runs and reviews.
+- secure-it reads its open PRs' journals for held units only when a unit is held, and an unreadable one fails just
+  the held units instead of the whole run.
+- A secure-it retry that leaves moves out drops their notes too (a floor, an override, an advisory note on a package
+  they carry), keeping the gate's and the kept moves' notes; before, the PR could still describe a floor it no longer
+  added.
 - A secure-it plan without a topic, or whose packages aren't a list of names, no longer reads: a review leaves that PR
   open with an error, and matching held PRs passes over it instead of failing the whole run.
 - The gate refuses a repository advisory list's next page off GitHub's API host instead of sending the token there,

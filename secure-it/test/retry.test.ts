@@ -23,6 +23,22 @@ describe("batch retry", () => {
     expect(planOf(planSection(retry.plan!))?.coupled).toEqual(original.coupled);
   });
 
+  it("drops the notes of the moves it omits, a package one carries included, and keeps the rest", () => {
+    const floor: PlannedMove = { ...move("g:foo"), ecosystem: "Maven" };
+    const carrier: PlannedMove = { ...move("carrier"), carries: [{ name: "brace", from: ["5.0.9"], locations: ["node_modules/carrier/node_modules/brace"], advisories: ["GHSA-b"], to: [] }] };
+    const notes = [
+      "g:foo@1.0.0 gets a floor: gradle/libs.versions.toml names it",
+      "brace@5.0.9 is affected by GHSA-r: these advisories alone don't trigger an update",
+      "carrier@1.0.1 at node_modules/carrier keeps an override: the parent's range admits it",
+      "kept@1.0.0 is affected by GHSA-k: these advisories alone don't trigger an update",
+      "g:foo@1.0.0 and kept@1.0.0 share GHSA-s",
+      "a gate note",
+    ];
+    const retry = retryWithoutNamed({ ...plan(floor, carrier, move("kept")), notes }, ["g:foo at gradle/libs.versions.toml is gone, not 1.0.1", "carrier at node_modules/carrier is gone, not 1.0.1"]);
+    expect(retry.plan?.moves.map((kept) => kept.name)).toEqual(["kept"]);
+    expect(retry.plan?.notes).toEqual(notes.slice(3));
+  });
+
   it("keeps the remaining moves' vetoes and every other note when it omits a package", () => {
     const vetoed = { ...move("lib"), vetoed: [{ version: "1.0.0.1", advisories: ["GHSA-repo"] }] };
     const original = { ...plan(vetoed, move("other")), notes: ["lib@2.0.0 is affected by GHSA-x, only in the project's repository advisories"] };
