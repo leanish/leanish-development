@@ -9,7 +9,11 @@ import { type Advisory, Snapshot } from "../src/snapshot.ts";
 const NOW = new Date("2026-10-10T12:00:00Z");
 const DAY = 86_400_000;
 
-const advisory = (id: string): Advisory => ({ id, ids: [id], source: "osv", malicious: id.startsWith("MAL-"), summary: undefined, severity: undefined });
+/** `repo:GHSA-x` is GHSA-x as only the project's repository advisories publish it. */
+const advisory = (label: string): Advisory => {
+  const id = label.replace(/^repo:/, "");
+  return { id, ids: [id], source: label.startsWith("repo:") ? "repository" : "osv", malicious: id.startsWith("MAL-"), summary: undefined, severity: undefined };
+};
 
 /** `name@version` → advisory ids, for every version any test reads. */
 const ADVISORIES: Record<string, string[]> = {
@@ -19,6 +23,10 @@ const ADVISORIES: Record<string, string[]> = {
   "evil@1.0.0": ["MAL-evil"],
   "cdk@2.9.0": ["GHSA-cdk-own"],
   "cdk@2.12.0": ["GHSA-cdk-new"],
+  "cdk@2.15.0": ["repo:GHSA-cdk-repo"],
+  "glob@2.0.0": ["repo:GHSA-glob-repo"],
+  "glob@2.0.1": ["GHSA-glob-repo"],
+  "fresh@1.0.0": ["repo:GHSA-fresh-repo", "MAL-fresh"],
 };
 
 function bundle(...packages: string[]): CompleteBundle {
@@ -206,6 +214,39 @@ describe("choosing a carrier version", () => {
       const { services } = setup({ "2.10.0": { days: 1, bundle: clean } });
       expect(await chooseCarrier(malwareSearch(["2.10.0"]), services)).toMatchObject({ kind: "none" });
     });
+  });
+});
+
+describe("carrier versions ruled out only by unreviewed advisories", () => {
+  it("records a bundle that adds one, and the carrier's own, taking the next fix", async () => {
+    const { services } = setup({
+      "2.10.0": { days: 30, bundle: bundle("brace@5.0.12", "minimatch@10.2.5", "glob@2.0.0") },
+      "2.15.0": { days: 30, bundle: fixed },
+      "2.16.0": { days: 30, bundle: fixed },
+    });
+    expect(await chooseCarrier(search(["2.10.0", "2.15.0", "2.16.0"]), services)).toMatchObject({
+      kind: "chosen", version: "2.16.0",
+      vetoed: [{ version: "2.10.0", advisories: ["GHSA-glob-repo"] }, { version: "2.15.0", advisories: ["GHSA-cdk-repo"] }],
+    });
+  });
+
+  it("doesn't ignore a pair another copy of that name in the bundle corroborates", async () => {
+    const { services } = setup({
+      "2.10.0": { days: 30, bundle: bundle("brace@5.0.12", "minimatch@10.2.5", "glob@2.0.0", "node_modules/x/node_modules/glob=glob@2.0.1") },
+      "2.11.0": { days: 30, bundle: fixed },
+    });
+    expect(await chooseCarrier(search(["2.10.0", "2.11.0"]), services)).toMatchObject({ kind: "chosen", version: "2.11.0", vetoed: [] });
+  });
+
+  it("names nothing inherited, and never ignores malware", async () => {
+    const inherited = bundle("brace@5.0.9", "minimatch@10.2.5", "glob@2.0.0");
+    const { services } = setup({
+      "2.10.0": { days: 30, bundle: bundle("brace@5.0.12", "minimatch@10.2.5", "glob@2.0.0") },
+      "2.11.0": { days: 30, bundle: bundle("brace@5.0.12", "fresh@1.0.0") },
+      "2.12.1": { days: 30, bundle: fixed },
+    });
+    expect(await chooseCarrier(search(["2.10.0"], { fromBundle: inherited }), services)).toMatchObject({ kind: "chosen", version: "2.10.0", vetoed: [] });
+    expect(await chooseCarrier(search(["2.11.0", "2.12.1"]), services)).toMatchObject({ kind: "chosen", version: "2.12.1", vetoed: [] });
   });
 });
 

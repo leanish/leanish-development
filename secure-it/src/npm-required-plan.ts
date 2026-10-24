@@ -2,6 +2,7 @@
 import { type Config, isOwnPackage } from "@leanish/gate/config";
 import type { Exceptions } from "@leanish/gate/exceptions";
 import type { Snapshot } from "@leanish/gate/snapshot";
+import type { PackageVersion } from "@leanish/gate/package-version";
 import { ActionsGitHub } from "@leanish/gate/actions-github";
 import { type GateEnvironment, readSettings, snapshotOptions } from "@leanish/gate/gate";
 import { npmLocation } from "@leanish/gate/inventory";
@@ -14,7 +15,7 @@ import { registryConstraints } from "@leanish/gate/npm-required-gate";
 import { requiredClosure, requiredPath, requiredVersions, type RequiredTarget, type RequiredNode, type RequiredProof } from "@leanish/gate/npm-required";
 import { takeSnapshot } from "@leanish/gate/take-snapshot";
 import type { Tree } from "@leanish/gate/tree";
-import { compatibleLine, groupsOf } from "@leanish/gate/young-fixes";
+import { compatibleLine, groupsOf, reviewedGroups } from "@leanish/gate/young-fixes";
 import { lockfilesOf } from "@leanish/tool-runtime/inventories";
 import { NpmGraph } from "@leanish/tool-runtime/npm-graph";
 
@@ -126,13 +127,31 @@ async function assertSafeTarget(target: PlannedRequirement, baseline: ReadonlyAr
   const pkg = { ecosystem: "npm" as const, name: target.name, version: target.version };
   const previous = baseline.filter((copy) => copy.name === target.name);
   const inherited = new Set(previous.flatMap((copy) => [...groupsOf(snapshot, { ...pkg, version: copy.version })]));
-  if (snapshot.advisories(pkg).some((advisory) => advisory.malicious || !inherited.has(snapshot.group(advisory.id)))) throw new Error(`${target.reason}; lowest required version adds an advisory or malware`);
+  const problem = addedAdvisories(snapshot, pkg, inherited);
+  if (problem !== undefined) throw new Error(`${target.reason}; ${problem}`);
   const doc = await registry.packument(target.name);
   const manifest = doc.versions[target.version] as { dist?: { integrity?: string; tarball?: string } };
   const identity = await registry.identityProblems({ name: target.name, version: target.version, path: target.path, bundled: false,
     integrity: manifest.dist?.integrity, resolved: manifest.dist?.tarball }, new Map(previous.map((copy) => [copy.version, copy.integrity])), exceptions, now.toISOString().slice(0, 10));
   if (identity.length > 0) throw new Error(`${target.reason}; ${identity.join("; ")}`);
   assertDirectLine(target, locks.get(target.lockfile), config);
+}
+
+/**
+ * What a required version brings that its base copies don't: malware (even inherited), and each new advisory group,
+ * marked when only the project's repository advisories publish it. No other version is tried: the requirement names it.
+ */
+export function addedAdvisories(snapshot: Snapshot, pkg: PackageVersion, inherited: ReadonlySet<string>): string | undefined {
+  const advisories = snapshot.advisories(pkg);
+  const malware = [...new Set(advisories.filter((advisory) => advisory.malicious).flatMap((advisory) => advisory.ids))].sort();
+  const reviewed = reviewedGroups(snapshot, pkg);
+  const added = [...new Set(advisories.filter((advisory) => !advisory.malicious).map((advisory) => snapshot.group(advisory.id)))].filter((group) => !inherited.has(group)).sort();
+  const groups = added.map((group) => {
+    const ids = [...new Set(advisories.filter((advisory) => snapshot.group(advisory.id) === group).flatMap((advisory) => advisory.ids))].sort().join(", ");
+    return reviewed.has(group) ? ids : `${ids} (only in the project's repository advisories, not corroborated by the sources this decision used)`;
+  });
+  const parts = [...(malware.length === 0 ? [] : [`malware (${malware.join(", ")})`]), ...groups];
+  return parts.length === 0 ? undefined : `required version ${pkg.name}@${pkg.version} adds ${parts.join("; ")}`;
 }
 
 function assertDirectLine(target: PlannedRequirement, lock: unknown, config: Config): void {

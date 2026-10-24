@@ -17,7 +17,7 @@ import type { LockedPackage } from "./npm-lock.ts";
 import type { NpmRegistry } from "./npm-registry.ts";
 import { type PackageVersion, versionKey } from "./package-version.ts";
 import type { Snapshot } from "./snapshot.ts";
-import { compatibleLine, fixes, movesFrom, type VersionCatalog } from "./young-fixes.ts";
+import { compatibleLine, fixes, movesFrom, type VersionCatalog, type Veto } from "./young-fixes.ts";
 
 /** A bundled package a carrier move replaces. */
 export interface CarriedPackage {
@@ -112,6 +112,8 @@ export interface CarrierDecision {
   readonly unfixable: ReadonlyArray<string>;
   readonly to: { readonly version: string; readonly line: string; readonly aged: boolean; readonly major: boolean; readonly blockers: ReadonlyArray<string> } | undefined;
   readonly problem: string | undefined;
+  /** Carrier versions the search read and ruled out only by unreviewed advisories (`carrier-fixes.ts`). */
+  readonly vetoed?: ReadonlyArray<Veto>;
 }
 
 /** The carrier move for `group`, fixing `own` (its own failing advisory groups) too. */
@@ -166,5 +168,6 @@ export async function decideCarrier(group: CarrierGroup, own: ReadonlyArray<stri
     unfixable,
     to: { version: choice.version, line: choice.line, aged: choice.aged, major: line(choice.version) !== line(group.version), blockers: await context.identity(pkg, choice.version) },
     problem: undefined,
+    ...(choice.vetoed.length === 0 ? {} : { vetoed: choice.vetoed }),
   };
 }

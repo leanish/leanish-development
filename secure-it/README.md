@@ -131,7 +131,9 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
 
    Advisories only the project's own repository publishes (unreviewed) plan no fix: such a version is reported, and
    waits for a reviewed source. They still rule candidates out, and the plan notes each candidate ruled out that way
-   ("ruled out by …, not corroborated by the sources this decision used"). See
+   ("ruled out by …, not corroborated by the sources this decision used"), carrier versions included. A required npm
+   dependency's version is set by its requirement, so there a veto refuses the fix, and the refusal names each advisory
+   the version adds, marked when unreviewed. See
    [how each source counts](../core/gate/README.md#how-each-source-counts).
 
    Before that reduction, a first refusal gets the agent asked once more for the same plan, from the base, with the

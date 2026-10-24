@@ -22,7 +22,7 @@
  * Bumps (`bumpCandidates`): see there.
  */
 import { actionGaps } from "./actions-changes.ts";
-import { type CarriedPackage, type CarrierContext, type CarrierGroup, decideCarrier, splitBundled } from "./carrier-candidates.ts";
+import { type CarriedPackage, type CarrierContext, type CarrierDecision, type CarrierGroup, decideCarrier, splitBundled } from "./carrier-candidates.ts";
 import { type Config, isOwnPackage } from "./config.ts";
 import { type Exceptions, unexcusedProblem } from "./exceptions.ts";
 import { type Finding, findingKey, findingsOf, type Located } from "./findings.ts";
@@ -273,7 +273,7 @@ function unreviewedReports(unreviewed: ReadonlyArray<Finding>, triggers: Readonl
 /** A carrier version's fix; a decision that can't be made (an archive, a scan) is the fix's problem, not the run's. */
 async function carrierFix(group: CarrierGroup, own: FailingVersion | undefined, context: CarrierContext): Promise<SecurityFix> {
   const malicious = group.malicious || own?.malicious === true;
-  const decision = await decideCarrier(group, own?.advisories ?? [], malicious, context).catch((error: unknown) => ({
+  const decision: CarrierDecision = await decideCarrier(group, own?.advisories ?? [], malicious, context).catch((error: unknown) => ({
     from: group.version, locations: [], carries: [], unfixable: [], to: undefined,
     problem: `${group.name}@${group.version}'s carrier move can't be decided: ${error instanceof Error ? error.message : String(error)}`,
   }));
@@ -289,6 +289,7 @@ async function carrierFix(group: CarrierGroup, own: FailingVersion | undefined, 
     to: decision.to,
     problem: decision.problem,
     carries: decision.carries,
+    ...(decision.vetoed === undefined ? {} : { vetoed: decision.vetoed }),
   };
 }
 
