@@ -417,8 +417,38 @@ async function runRemoval(execution: Execution, removal: ComputedRemoval, base: 
  * a fix of its own still joins them). Held work is then grouped again (`heldUnits`).
  * Moving roots only drops requirements, so one pass leaves the rest aged.
  * Kept on purpose: docs/simplification-candidates.md#reviewed-and-kept-2026-10-16.
+ * Then held units that can't be planned apart are planned together (`plannableHeld`). Runs and reviews both split here.
  */
 async function holdRequiredYoung(execution: Execution, units: ReadonlyArray<SecurityUnit>, base: PlanBase): Promise<SecurityUnit[]> {
+  return plannableHeld(execution, await withRequiredYoung(execution, units, base), base);
+}
+
+/**
+ * The held units, regrouped when some can't be planned apart: two young roots that require one exact companion each
+ * keep the other's old requirement when planned alone. The failing units are tried together first, then every held
+ * unit together (v0.7's single held batch); the first group that plans replaces its units. Otherwise they stay apart
+ * and each reports its own failure. The fallback gathers units that plan alone too, and the joined PR waits for its
+ * youngest version; a failure that only happened once (a registry error) can still gather them, so each is logged.
+ */
+async function plannableHeld(execution: Execution, units: ReadonlyArray<SecurityUnit>, base: PlanBase): Promise<SecurityUnit[]> {
+  const held = units.filter(isHeldUnit);
+  if (held.length < 2) return [...units];
+  const plans = async (unit: SecurityUnit) => planUnit(execution, unit, base).then(() => true, (err: unknown) => {
+    execution.context.logger.warn("secure-it: a held unit doesn't plan alone", { topic: unit.topic, error: err instanceof Error ? err.message : String(err) });
+    return false;
+  });
+  const failing: SecurityUnit[] = [];
+  for (const unit of held) if (!(await plans(unit))) failing.push(unit);
+  if (failing.length === 0) return [...units];
+  for (const group of failing.length > 1 && failing.length < held.length ? [failing, held] : [held]) {
+    const [joined] = heldUnits(group.flatMap((unit) => unit.work), group.flatMap((unit) => unit.coupled ?? []), [group.flatMap((unit) => unit.work.map(packageKey))]);
+    if (joined !== undefined && (await plans(joined))) return [...units.filter((unit) => !group.includes(unit)), joined];
+  }
+  return [...units];
+}
+
+/** The aged unit's fixes that need a young required npm companion, held with it (the first step of `holdRequiredYoung`). */
+async function withRequiredYoung(execution: Execution, units: ReadonlyArray<SecurityUnit>, base: PlanBase): Promise<SecurityUnit[]> {
   const aged = units.find((unit) => unit.kind === "routine" && unit.held !== true);
   if (aged === undefined) return [...units];
   let plan: ChangePlan;

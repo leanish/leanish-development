@@ -26,6 +26,8 @@ import { type ChangePlan, planFor, type SecurityUnit } from "../src/plan.ts";
 import { verifyPlan, type VerifyInputs } from "../src/verify.ts";
 import { computedNpmProblems } from "@leanish/tool-runtime/npm-file-checks";
 import { materializeInCopy } from "../src/npm-materialize.ts";
+import { requiredNpmPlan } from "../src/npm-required-plan.ts";
+import { environment, OLD, postcss, securityBatch } from "@leanish/gate/test/required-fixture";
 import { preservedFloors } from "../src/floor-checks.ts";
 import { defaultDeps, heldClaims, retirementOf, RULES, type SecureItDeps, secureIt, unitOf } from "../src/secure-it.ts";
 
@@ -1230,6 +1232,78 @@ describe("the cooldown hold", () => {
       ["secure-it/2026-10-07-security-cooldown-left-pad", ["npm|left-pad"]],
       ["secure-it/2026-10-07-security-cooldown-vite", ["npm|vite"]],
     ]);
+  });
+
+  /** Planning a held unit that holds one of vite and left-pad without the other fails: each keeps the other's old requirement. */
+  const apartFails: SecureItDeps["requiredNpm"] = async (_base, plan) => {
+    const held = plan.topic.startsWith("security-cooldown");
+    if (held && plan.packages.includes("npm|vite") !== plan.packages.includes("npm|left-pad")) throw new Error(`${plan.topic} keeps the other root's requirement`);
+    return plan;
+  };
+
+  it("plans two young fixes together when neither can be planned apart", async () => {
+    const h = harness({ fixes: [YOUNG_VITE(), YOUNG_PAD()] });
+    const result = await secureIt({ ...h.deps, requiredNpm: apartFails, verify: holdingVerify }).run(h.context);
+    expect(result).toMatchObject({ topic: "security-cooldown-left-pad", packages: ["npm|left-pad", "npm|vite"], outcome: "published" });
+    expect([...h.github.prs.values()].map((pr) => planOf(pr.body)?.members)).toEqual([["npm|left-pad", "npm|vite"]]);
+  });
+
+  it.each([false, true])("plans two young roots together when each requires one exact companion, as planning proves it (aged companion: %s)", async (aged) => {
+    // securityBatch: vite and bundler 8.3.3 each require postcss 8.5.29 exactly, and 8.3.2 requires 8.5.28 exactly, so
+    // requiredNpmPlan can plan neither while the other stays at 8.3.2.
+    const batch = securityBatch();
+    const registry = environment({ ...batch, docs: aged ? { ...batch.docs, postcss: { ...postcss, time: { ...postcss.time, "8.5.29": OLD } } } : batch.docs });
+    const young = (name: string) => vite({ name, from: "8.3.2", locations: [`node_modules/${name}`], to: { version: "8.3.3", line: "8", aged: false, major: false, blockers: [] } });
+    const h = harness({ fixes: [young("vite"), young("bundler")], files: batch.base });
+    const requiredNpm: SecureItDeps["requiredNpm"] = (base, plan) => requiredNpmPlan(base, plan, registry.env);
+    const result = await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context);
+    expect(result).toMatchObject({ topic: "security-cooldown-bundler", packages: ["npm|bundler", "npm|vite"], outcome: "published" });
+  });
+
+  it("plans a young fix together with the aged fix its young requirement held, when they can't be planned apart", async () => {
+    // left-pad is aged, but its young requirement c holds it; then it can't be planned without vite, nor vite without it.
+    const h = harness({ fixes: [YOUNG_VITE(), leftPad()] });
+    const young = { exempt: true, name: "c", version: "1.0.1", root: { name: "left-pad", version: "1.0.1", path: "node_modules/left-pad" } };
+    const requiredNpm: SecureItDeps["requiredNpm"] = async (base, plan, env) => {
+      const planned = await apartFails(base, plan, env);
+      return plan.packages.includes("npm|left-pad") ? { ...planned, requiredNpm: [young] as never } : planned;
+    };
+    const result = await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context);
+    expect(result).toMatchObject({ topic: "security-cooldown-left-pad", packages: ["npm|left-pad", "npm|vite"], outcome: "published" });
+  });
+
+  it("falls back to every held fix together, gathering one that plans alone, when only one can't be planned apart", async () => {
+    // vite needs left-pad's fix; other plans alone, yet the fallback, v0.7's single held batch, takes it too.
+    const other = leftPad({ name: "other", locations: ["node_modules/other"], to: { version: "1.0.1", line: "1", aged: false, major: false, blockers: [] } });
+    const h = harness({ fixes: [YOUNG_VITE(), YOUNG_PAD(), other] });
+    const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => {
+      if (plan.packages.includes("npm|vite") && !plan.packages.includes("npm|left-pad")) throw new Error("vite needs left-pad's fix");
+      return plan;
+    };
+    expect(await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context)).toMatchObject({
+      topic: "security-cooldown-left-pad", packages: ["npm|left-pad", "npm|other", "npm|vite"], outcome: "published",
+    });
+  });
+
+  it("keeps a held fix that can't be planned apart from one that can, so the other still opens", async () => {
+    const h = harness({ fixes: [YOUNG_VITE(), YOUNG_PAD()] });
+    const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => {
+      if (plan.packages.includes("npm|vite")) throw new Error("vite's requirement can't be met");
+      return plan;
+    };
+    expect(await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context)).toMatchObject({ outcome: "completed", units: [
+      { topic: "security-cooldown-left-pad", packages: ["npm|left-pad"], outcome: "published" },
+      { topic: "security-cooldown-vite", outcome: "failed", detail: "vite's requirement can't be met" },
+    ] });
+  });
+
+  it("reviews a held PR as the joint unit a run would plan, when its fix can't be planned apart any more", async () => {
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite",
+      body: withMarker(RULES, withPlanSection("Fixes vite.", { ...await heldPlan(YOUNG_VITE()), cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pr], baseSha: "f".repeat(40), fixes: [YOUNG_VITE(), YOUNG_PAD()] });
+    h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
+    expect(await secureIt({ ...h.deps, requiredNpm: apartFails, verify: holdingVerify }).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "rebased" }] });
+    expect(planOf(h.github.prs.get(7)!.body)).toMatchObject({ topic: "security-cooldown-left-pad", members: ["npm|left-pad", "npm|vite"] });
   });
 
   it("reuses v0.7's single held PR for the unit holding its lowest package, and opens the other", async () => {
