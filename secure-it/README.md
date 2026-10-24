@@ -158,7 +158,8 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
 
    Before that reduction, a first refusal gets the agent asked once more for the same plan, from the base, with the
    refusal (`rejected`): an agent that moved a parent instead of the planned floor, say. The reduction then works
-   from the second attempt's problems; the run report keeps the first (`rejected`). A review's adaptation is never
+   from the second attempt's problems, or from the first refusal's when that attempt couldn't apply or failed before
+   its verification; the run report keeps the first (`rejected`). A review's adaptation is never
    restarted this way, since a restart from the base would lose it.
 7. **Publishes** draft PRs: `secure-it/<date>-security` for the routine, `secure-it/<date>-<package>-major` for each
    major, or `secure-it/<date>-malware`. Each unit starts from the scanned base and publishes at most one new or

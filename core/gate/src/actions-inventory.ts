@@ -15,6 +15,7 @@
 import { isAlias, isMap, isScalar, isSeq, parseDocument } from "yaml";
 
 import type { ActionsGitHub } from "./actions-github.ts";
+import { isDotSegment } from "./source-repos.ts";
 import type { Tree } from "./tree.ts";
 
 export interface ActionUse {
@@ -40,6 +41,12 @@ export interface ActionsInventory {
 }
 
 const USES = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)(\/[^@\s]+)?@([^@\s]+)$/;
+
+/** A remote action reference; a `.` or `..` owner or repo names none, and would walk every API path the token is sent to. */
+function remoteAction(value: string): RegExpExecArray | undefined {
+  const match = USES.exec(value);
+  return match === null || isDotSegment(match[1]!) || isDotSegment(match[2]!) ? undefined : match;
+}
 /** A local reusable workflow: GitHub only calls them from `.github/workflows` itself. */
 const LOCAL_WORKFLOW = /^\.github\/workflows\/[^/]+\.ya?ml$/;
 
@@ -92,8 +99,8 @@ export function parseUses(text: string, file: string): { uses: ActionUse[]; loca
     if (value.startsWith("./")) local.push(value);
     else if (value.startsWith("docker://")) docker.push(`${value} (${file})`);
     else {
-      const match = USES.exec(value);
-      if (match === null) throw new Error(`${file}: can't read \`uses: ${value}\``);
+      const match = remoteAction(value);
+      if (match === undefined) throw new Error(`${file}: can't read \`uses: ${value}\``);
       uses.push({ name: `${match[1]}/${match[2]}`.toLowerCase(), path: match[3]?.slice(1), ref: match[4]!, comment, file });
     }
   };
@@ -103,7 +110,7 @@ export function parseUses(text: string, file: string): { uses: ActionUse[]; loca
 
 /** Whether a value outside a job or step reads as an action reference, so counting it errs toward checking more. */
 function readsAsAction(value: string): boolean {
-  return value.startsWith("./") || value.startsWith("docker://") || USES.test(value);
+  return value.startsWith("./") || value.startsWith("docker://") || remoteAction(value) !== undefined;
 }
 
 /** Every `uses:` in the tree's workflows and actions, local actions followed. */

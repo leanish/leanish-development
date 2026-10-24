@@ -34,7 +34,8 @@ export async function sourceRepositories(
 export async function sourceRepository(pkg: PackageVersion, options: SourceRepoOptions): Promise<string | undefined> {
   const override = options.overrides.get(packageKey(pkg));
   if (override !== undefined) return override.toLowerCase();
-  if (pkg.ecosystem === "GitHub Actions") return pkg.name.toLowerCase();
+  // An action names its repository itself; `uses: ../..@v1` parses, but names none, as in githubRepository.
+  if (pkg.ecosystem === "GitHub Actions") return pkg.name.split("/").some(isDotSegment) ? undefined : pkg.name.toLowerCase();
   return pkg.ecosystem === "npm" ? npmRepository(pkg, options.fetch) : mavenRepository(pkg, options, 0);
 }
 

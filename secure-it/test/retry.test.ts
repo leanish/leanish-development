@@ -43,6 +43,17 @@ describe("batch retry", () => {
     expect(retry.leftOut[0]?.problems).toEqual(["compare: child@2.0.0 adds an advisory"]);
   });
 
+  it("keeps a reason an omitted target shares with a kept one, and drops only the omitted target's own", () => {
+    const lib = { name: "lib", version: "1.0.1", path: "node_modules/lib" };
+    const app = { name: "app", version: "1.0.1", path: "node_modules/app" };
+    const shared = "parent@1.0.0 requires child ^2; aged child@2.0.0 anchors its required-dependency proof";
+    const target = (root: typeof lib, name: string, reason: string) => ({ name, version: "2.0.0", path: `node_modules/${name}`, lockfile: "package-lock.json", root, parent: root, key: name, range: "^2", exempt: false, reason });
+    const original = { ...plan(move("lib"), move("app"), move("other")), requiredNpm: [target(lib, "child", shared), target(lib, "own", "lib's own reason"), target(app, "child", shared)], notes: ["a gate note", shared, "lib's own reason"] };
+    const retry = retryWithoutNamed(original, ["lib at node_modules/lib is gone, not 1.0.1"]);
+    expect(retry.plan?.packages).toEqual(["npm|app", "npm|other"]);
+    expect(retry.plan?.notes).toEqual(["a gate note", shared]);
+  });
+
   it("attributes a carried package's problem to its carrier, and keeps the carrier in the plan's text and block", () => {
     const carried = { name: "brace", from: ["5.0.9"], locations: ["node_modules/carrier/node_modules/brace"], advisories: ["GHSA-brace"], to: ["5.0.12"] };
     const carrier: PlannedMove = { ...move("carrier"), mechanism: "npm-direct", advisories: [], carries: [carried] };

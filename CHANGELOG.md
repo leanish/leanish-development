@@ -35,16 +35,20 @@
   found". The gate's comparison report records, for each held fix,
   the advisories behind it (`targets`); nothing in the evidence changes a verdict.
 - When verification refuses an edit the agent wrote, bump-it and secure-it now ask the agent once more, from the base,
-  with the refusal (`rejected` in the skill input); a second refusal fails the unit as before, and secure-it's
-  existing retry without the named package groups still follows. A review's adaptation isn't restarted this way. The
-  run report lists the first refusal (`rejected`). On kryptovero, the agent replaced a planned Gradle floor with a
-  move of its parent, which the gate refused, and the critical fix was never proposed.
+  with the refusal (`rejected` in the skill input). In bump-it a second refusal fails the unit as before; in secure-it
+  the existing retry without the named package groups still follows, from the second refusal, or from the first when
+  the second attempt never reached a verification. A review's adaptation isn't restarted this way. The run report
+  lists the first refusal (`rejected`) and, when the unit still fails, why the second attempt stopped short of a
+  verification. On kryptovero, the agent replaced a planned Gradle floor with a move of its parent, which the gate
+  refused, and the critical fix was never proposed.
 
 ### Fixed
 
 - The gate refuses a repository advisory list's next page off GitHub's API host instead of sending the token there,
   and reads at most 20 pages (either one fails the run, as an unreadable list does); a source repository named `.` or
-  `..` (in a manifest, a POM or the config) names none, so it can't walk the API path the token is sent to.
+  `..` (in a manifest, a POM or the config) names none, and a remote action whose owner or repo is `.` or `..` can't
+  be read in a job or step (`uses:`) and no longer counts as one elsewhere, so no lookup walks the API path the token
+  is sent to.
 
 ## 0.7.5 - 2026-10-23
 
