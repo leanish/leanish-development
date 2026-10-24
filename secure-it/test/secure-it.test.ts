@@ -1376,6 +1376,9 @@ describe("which open PR a held unit is", () => {
     expect(unitOf(planOf(own[2]!.body)!, units, claims, 12)).toBeUndefined();
     expect(retirementOf(planOf(own[2]!.body)!, units, claims, 12)).toBe("The remaining overlapping held work is assigned to #10, #11; this draft is superseded.");
     expect(retirementOf(planOf(own[2]!.body)!, [unit("d")], new Map(), 12)).toBe("None of this draft's fixes is held on the default branch any more; a run plans whatever still needs fixing. Blocked fixes are reported by secure-it.");
+    // Held work no open PR claims yet is still held: a run opens a PR for it.
+    expect(retirementOf(planOf(own[2]!.body)!, units, new Map([["security-cooldown-a", 10]]), 12)).toBe("The remaining overlapping held work is assigned to #10, and a run opens a PR for the rest; this draft is superseded.");
+    expect(retirementOf(planOf(own[2]!.body)!, units, new Map(), 12)).toBe("The overlapping held work isn't assigned to an open PR yet; a run opens one for it, so this draft is superseded.");
     const routine: ChangePlan = { kind: "routine", topic: "security", malware: false, packages: ["npm|a"], moves: [], severity: undefined };
     expect(retirementOf(routine, [], new Map(), 13)).toBe("No actionable fixes remain for this security unit on the default branch. Blocked fixes are reported by secure-it.");
   });

@@ -930,14 +930,18 @@ export function unitOf(previous: ChangePlan, units: ReadonlyArray<SecurityUnit>,
 
 /**
  * Why review retires an open PR no unit is left for. A held one may only have lost its claim: the held work it
- * overlaps went to other PRs (a claim says which PR will carry it, not that it does yet), or none of it is held any
- * more, which doesn't mean nothing needs fixing (it may be in the aged batch now).
+ * overlaps went to other PRs (a claim says which PR will carry it, not that it does yet) or to none yet (a run opens
+ * one), or none of it is held any more, which doesn't mean nothing needs fixing (it may be in the aged batch now).
  */
 export function retirementOf(previous: ChangePlan, units: ReadonlyArray<SecurityUnit>, claims: ReadonlyMap<string, number>, number: number): string {
   if (!isHeldPlan(previous)) return "No actionable fixes remain for this security unit on the default branch. Blocked fixes are reported by secure-it.";
-  const others = [...new Set(units.filter((unit) => unit.kind === "routine" && isHeldTopic(unit.topic) && heldOverlap(previous, unit) !== undefined)
-    .map((unit) => claims.get(unit.topic)).filter((claim): claim is number => claim !== undefined && claim !== number))].sort((a, b) => a - b);
-  if (others.length > 0) return `The remaining overlapping held work is assigned to ${others.map((claim) => `#${claim}`).join(", ")}; this draft is superseded.`;
+  const overlapping = units.filter((unit) => unit.kind === "routine" && isHeldTopic(unit.topic) && heldOverlap(previous, unit) !== undefined);
+  const others = [...new Set(overlapping.map((unit) => claims.get(unit.topic)).filter((claim): claim is number => claim !== undefined && claim !== number))].sort((a, b) => a - b);
+  const unassigned = overlapping.some((unit) => claims.get(unit.topic) === undefined);
+  if (others.length > 0) {
+    return `The remaining overlapping held work is assigned to ${others.map((claim) => `#${claim}`).join(", ")}${unassigned ? ", and a run opens a PR for the rest" : ""}; this draft is superseded.`;
+  }
+  if (unassigned) return "The overlapping held work isn't assigned to an open PR yet; a run opens one for it, so this draft is superseded.";
   return "None of this draft's fixes is held on the default branch any more; a run plans whatever still needs fixing. Blocked fixes are reported by secure-it.";
 }
 

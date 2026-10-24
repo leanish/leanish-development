@@ -200,10 +200,11 @@ export async function securityCandidates(head: Tree, env: GateEnvironment, gradl
     }
   }
   found.push(...carried, ...unreviewed.reports);
-  // A package with a reviewed fix carries its other versions' unreviewed findings as notes, not as blocking reports;
-  // one whose reviewed fix is blocked anyway reports them like the rest.
+  // A package a reviewed fix moves (its own, or a carrier's for a bundled copy) gets its unreviewed findings as notes
+  // on that fix, not as blocking reports; one whose reviewed fix is blocked anyway reports them like the rest.
   for (const [pkg, notes] of unreviewed.notes) {
-    const index = found.findIndex((fix) => `${fix.ecosystem}|${fix.name}` === pkg && fix.to !== undefined);
+    const moves = (fix: SecurityFix) => `${fix.ecosystem}|${fix.name}` === pkg || (fix.carries ?? []).some((carried) => `${fix.ecosystem}|${carried.name}` === pkg);
+    const index = found.findIndex((fix) => fix.to !== undefined && moves(fix));
     if (index >= 0) found[index] = { ...found[index]!, notes: [...found[index]!.notes ?? [], ...notes] };
     else found.push(...unreviewed.held.get(pkg) ?? []);
   }
