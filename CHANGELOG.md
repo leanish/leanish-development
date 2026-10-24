@@ -12,7 +12,10 @@
   so neither waits for the other. The aged batch, majors and malware are unchanged. Held units are matched to open PRs
   by their own packages (`members` in the plan), the same way in runs and reviews, so v0.7's single held PR is taken
   over by one group and the others open their own; a PR someone else pushed to, or a held one a person marked ready,
-  is never claimed. Branches created in one run no longer collide when two topics cut to the same name.
+  is never claimed. Branches created in one run no longer collide when two topics cut to the same name. Held groups
+  that can't be planned apart (two young roots that each require one exact companion keep the other's old requirement
+  when planned alone) are planned and opened together: the failing groups first, then every held group, v0.7's single
+  held batch, which can gather groups that would have planned alone; otherwise each stays apart and reports its failure.
 
 - A project's own repository advisories, unreviewed and published at will by whoever controls the repository, no
   longer trigger a fix nor justify a young version: they still detect (a finding, a PR adding one fails) and rule

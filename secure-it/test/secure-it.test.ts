@@ -1232,6 +1232,53 @@ describe("the cooldown hold", () => {
     ]);
   });
 
+  /** Planning a held unit that holds one of vite and left-pad without the other fails: each keeps the other's old requirement. */
+  const apartFails: SecureItDeps["requiredNpm"] = async (_base, plan) => {
+    const held = plan.topic.startsWith("security-cooldown");
+    if (held && plan.packages.includes("npm|vite") !== plan.packages.includes("npm|left-pad")) throw new Error(`${plan.topic} keeps the other root's requirement`);
+    return plan;
+  };
+
+  it("plans two young fixes together when neither can be planned apart", async () => {
+    const h = harness({ fixes: [YOUNG_VITE(), YOUNG_PAD()] });
+    const result = await secureIt({ ...h.deps, requiredNpm: apartFails, verify: holdingVerify }).run(h.context);
+    expect(result).toMatchObject({ topic: "security-cooldown-left-pad", packages: ["npm|left-pad", "npm|vite"], outcome: "published" });
+    expect([...h.github.prs.values()].map((pr) => planOf(pr.body)?.members)).toEqual([["npm|left-pad", "npm|vite"]]);
+  });
+
+  it("plans a young fix together with the aged fix its young requirement held, when they can't be planned apart", async () => {
+    // left-pad is aged, but its young requirement c holds it; then it can't be planned without vite, nor vite without it.
+    const h = harness({ fixes: [YOUNG_VITE(), leftPad()] });
+    const young = { exempt: true, name: "c", version: "1.0.1", root: { name: "left-pad", version: "1.0.1", path: "node_modules/left-pad" } };
+    const requiredNpm: SecureItDeps["requiredNpm"] = async (base, plan, env) => {
+      const planned = await apartFails(base, plan, env);
+      return plan.packages.includes("npm|left-pad") ? { ...planned, requiredNpm: [young] as never } : planned;
+    };
+    const result = await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context);
+    expect(result).toMatchObject({ topic: "security-cooldown-left-pad", packages: ["npm|left-pad", "npm|vite"], outcome: "published" });
+  });
+
+  it("keeps a held fix that can't be planned apart from one that can, so the other still opens", async () => {
+    const h = harness({ fixes: [YOUNG_VITE(), YOUNG_PAD()] });
+    const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => {
+      if (plan.packages.includes("npm|vite")) throw new Error("vite's requirement can't be met");
+      return plan;
+    };
+    expect(await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context)).toMatchObject({ outcome: "completed", units: [
+      { topic: "security-cooldown-left-pad", packages: ["npm|left-pad"], outcome: "published" },
+      { topic: "security-cooldown-vite", outcome: "failed", detail: "vite's requirement can't be met" },
+    ] });
+  });
+
+  it("reviews a held PR as the joint unit a run would plan, when its fix can't be planned apart any more", async () => {
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite",
+      body: withMarker(RULES, withPlanSection("Fixes vite.", { ...await heldPlan(YOUNG_VITE()), cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pr], baseSha: "f".repeat(40), fixes: [YOUNG_VITE(), YOUNG_PAD()] });
+    h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
+    expect(await secureIt({ ...h.deps, requiredNpm: apartFails, verify: holdingVerify }).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "rebased" }] });
+    expect(planOf(h.github.prs.get(7)!.body)).toMatchObject({ topic: "security-cooldown-left-pad", members: ["npm|left-pad", "npm|vite"] });
+  });
+
   it("reuses v0.7's single held PR for the unit holding its lowest package, and opens the other", async () => {
     const legacy = await planFor([YOUNG_PAD(), YOUNG_VITE()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined },
       { kind: "routine", topic: "security-cooldown" });
