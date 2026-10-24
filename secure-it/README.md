@@ -66,9 +66,11 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
        the other's review rebases it.
      - **Rejoined, groups that can't be planned apart:** each held group is then planned alone. When some fail (two
        young roots that each require one exact companion keep the other's old requirement when planned alone), the
-       failing groups are planned together, then, if that fails too, every held group together (v0.7's single held
-       batch). The first that plans replaces its groups; otherwise each stays apart and reports its own failure. That
-       fallback can gather groups that would have planned alone. Runs and reviews regroup the same way.
+       failing groups are planned together when there are several, then every held group together (v0.7's single
+       held batch). The first that plans replaces its groups; otherwise each stays apart and reports its own failure.
+       That fallback can gather groups that would have planned alone, even those apart on purpose above, and their PR
+       waits for its youngest version; a failure that happens only once (a registry error) can gather them too, so
+       each is logged. Runs and reviews regroup the same way.
 
      A major or malware unit with a young version stays whole and is held. What the PR finally holds is the
      verifying comparison's call, not this prediction.

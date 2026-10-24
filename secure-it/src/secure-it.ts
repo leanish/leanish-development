@@ -427,12 +427,16 @@ async function holdRequiredYoung(execution: Execution, units: ReadonlyArray<Secu
  * The held units, regrouped when some can't be planned apart: two young roots that require one exact companion each
  * keep the other's old requirement when planned alone. The failing units are tried together first, then every held
  * unit together (v0.7's single held batch); the first group that plans replaces its units. Otherwise they stay apart
- * and each reports its own failure. Units that plan alone stay alone unless a failing one needs them.
+ * and each reports its own failure. The fallback gathers units that plan alone too, and the joined PR waits for its
+ * youngest version; a failure that only happened once (a registry error) can still gather them, so each is logged.
  */
 async function plannableHeld(execution: Execution, units: ReadonlyArray<SecurityUnit>, base: PlanBase): Promise<SecurityUnit[]> {
   const held = units.filter(isHeldUnit);
   if (held.length < 2) return [...units];
-  const plans = async (unit: SecurityUnit) => planUnit(execution, unit, base).then(() => true, () => false);
+  const plans = async (unit: SecurityUnit) => planUnit(execution, unit, base).then(() => true, (err: unknown) => {
+    execution.context.logger.warn("secure-it: a held unit doesn't plan alone", { topic: unit.topic, error: err instanceof Error ? err.message : String(err) });
+    return false;
+  });
   const failing: SecurityUnit[] = [];
   for (const unit of held) if (!(await plans(unit))) failing.push(unit);
   if (failing.length === 0) return [...units];

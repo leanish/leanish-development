@@ -1272,6 +1272,19 @@ describe("the cooldown hold", () => {
     expect(result).toMatchObject({ topic: "security-cooldown-left-pad", packages: ["npm|left-pad", "npm|vite"], outcome: "published" });
   });
 
+  it("falls back to every held fix together, gathering one that plans alone, when only one can't be planned apart", async () => {
+    // vite needs left-pad's fix; other plans alone, yet the fallback, v0.7's single held batch, takes it too.
+    const other = leftPad({ name: "other", locations: ["node_modules/other"], to: { version: "1.0.1", line: "1", aged: false, major: false, blockers: [] } });
+    const h = harness({ fixes: [YOUNG_VITE(), YOUNG_PAD(), other] });
+    const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => {
+      if (plan.packages.includes("npm|vite") && !plan.packages.includes("npm|left-pad")) throw new Error("vite needs left-pad's fix");
+      return plan;
+    };
+    expect(await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context)).toMatchObject({
+      topic: "security-cooldown-left-pad", packages: ["npm|left-pad", "npm|other", "npm|vite"], outcome: "published",
+    });
+  });
+
   it("keeps a held fix that can't be planned apart from one that can, so the other still opens", async () => {
     const h = harness({ fixes: [YOUNG_VITE(), YOUNG_PAD()] });
     const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => {

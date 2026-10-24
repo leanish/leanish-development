@@ -15,7 +15,8 @@
   is never claimed. Branches created in one run no longer collide when two topics cut to the same name. Held groups
   that can't be planned apart (two young roots that each require one exact companion keep the other's old requirement
   when planned alone) are planned and opened together: the failing groups first, then every held group, v0.7's single
-  held batch, which can gather groups that would have planned alone; otherwise each stays apart and reports its failure.
+  held batch, which can gather groups that would have planned alone (their PR then waits for its youngest version);
+  otherwise each stays apart and reports its failure. Each group that doesn't plan alone is logged.
 
 - A project's own repository advisories, unreviewed and published at will by whoever controls the repository, no
   longer trigger a fix nor justify a young version: they still detect (a finding, a PR adding one fails) and rule
