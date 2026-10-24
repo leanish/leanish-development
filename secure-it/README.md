@@ -50,9 +50,22 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
    | Gradle | a transitive one, or one only a plugin declares, that a dependency the sources declare brings in every affected configuration | first, that declaration's lowest version in its own line, past the wait, that brings a fixed version (proved by a reference resolution, at most 6 per vulnerable module; the declaration moves wherever it's declared, `carries` in the plan) |
    | Gradle | otherwise, or when no such version is proved | a floor: an explicit dependency with `because(...)`, plus its entry in `.github/dependency-floors.json` (the PR notes why no parent could move) |
    | Actions | any | pin to the tag's commit |
-   - **Young fixes go apart.** Fixes whose target is younger than the release-age wait, everything coupled to them,
-     and any fix whose required npm dependency is young form their own routine unit (topic `security-cooldown`), so
-     the aged fixes aren't held back. A major or malware unit with a young version stays whole and is held.
+   - **Young fixes go apart, each group in its own PR.** Fixes whose target is younger than the release-age wait,
+     everything coupled to them, and any fix whose required npm dependency is young leave the aged batch, so the aged
+     fixes aren't held back. They're then split as far as they can be, one held routine unit (topic
+     `security-cooldown-<package>`, after its lowest package) per group, so no young fix waits for another and each
+     can be taken when it ages or by a person's call:
+     - **Always together, the couplings known when splitting:** coupled npm peers, a carrier and its carried package,
+       and what planning the aged batch finds (a root that needs another root's fix). Planning a held group can find
+       more; those don't rejoin groups already split, and each PR proves what it moves alone.
+     - **Together, roots that only wait for the same young npm companion:** fixes that are aged themselves but require
+       one young dependency wait for it alike, so one PR moves it for all.
+     - **Apart on purpose, young fixes that share a young companion:** joined, each would wait for the other's
+       version too. Each PR chooses and verifies the companion version its own requirements prove; when one merges,
+       the other's review rebases it.
+
+     A major or malware unit with a young version stays whole and is held. What the PR finally holds is the
+     verifying comparison's call, not this prediction.
 4. **Looks at its open PRs first.**
    - An open PR for the same routine/major/malware unit, with an identical plan and a recognised head: keep its
      commits and refresh the plan section if its notes changed; its review owns further work. The unit reports
@@ -62,6 +75,13 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
      prepared as a clean base checkout for the new plan, so nothing the old plan did lingers. After verification,
      the tool appends the verified tree to the existing PR history as a normal commit.
    - One someone else pushed to: the fix goes in a PR of its own.
+   - A held unit is recognised by its packages, not its name (a group's lowest package can change as members age or
+     join): it takes the open held PR sharing most of its own packages (`members` in the plan; companions planning
+     adds don't count), strongest pairs first across all units, each PR going to one unit at most; a review gives a
+     held PR the same unit a run would. v0.7's single `security-cooldown` PR is taken over this way by one group; the
+     others open their own. A PR someone else pushed to, or one a person marked ready, is never claimed. A held PR
+     left without a unit (two groups merged, or none of its packages is held any more) is retired when a review
+     recomputes it, after the default branch moves; until then it waits or graduates as any held PR does.
 5. **The tool resolves npm; the agent applies non-npm moves** (skill [`secure-it`](skills/secure-it/SKILL.md)).
    - **npm, by the tool.** In a sandboxed export of base, before any agent work, the tool pins every planned direct
      and peer companion to its exact target at once (unplanned directs keep base versions), installs, restores the

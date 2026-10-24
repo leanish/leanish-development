@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { SecurityFix } from "@leanish/gate/candidates";
 import type { GradleInventory } from "@leanish/gate/gradle";
-import { coupledWork, planFor, selectWork, splitByAge, withUnsupportedCarriers } from "../src/plan.ts";
+import { coupledWork, heldUnits, isHeldTopic, planFor, selectWork, splitByAge, withUnsupportedCarriers } from "../src/plan.ts";
 
 function fix(overrides: Partial<SecurityFix> & Pick<SecurityFix, "name" | "from">): SecurityFix {
   return {
@@ -220,7 +220,7 @@ describe("packages tied by a carried target", () => {
 
   it("go to the held unit together when one of them is young", async () => {
     const { units } = await coupledWork([carrier(), brace(false), fix({ name: "other", from: "1.0.0" })]);
-    expect(units.map((unit) => [unit.topic, unit.work.map((entry) => entry.name).sort()])).toEqual([["security", ["other"]], ["security-cooldown", ["brace", "carrier"]]]);
+    expect(units.map((unit) => [unit.topic, unit.work.map((entry) => entry.name).sort()])).toEqual([["security", ["other"]], ["security-cooldown-brace", ["brace", "carrier"]]]);
   });
 
   it("go to one major unit together when either needs a major", async () => {
@@ -242,7 +242,7 @@ describe("splitByAge", () => {
     const selected = await coupledWork([young("vite"), fix({ name: "left-pad", from: "1.0.0" })], peers);
     expect(selected.units.map((unit) => [unit.topic, unit.held, names(unit.work), unit.coupled])).toEqual([
       ["security", false, ["left-pad"], []],
-      ["security-cooldown", true, ["vite", "peer"], [["npm|vite", "npm|peer"]]],
+      ["security-cooldown-peer", true, ["vite", "peer"], [["npm|vite", "npm|peer"]]],
     ]);
   });
 
@@ -255,7 +255,29 @@ describe("splitByAge", () => {
     expect(splitByAge(malware)).toEqual([{ ...malware, held: true }]);
   });
 
-  it("holds the whole batch when every fix is young", () => {
-    expect(splitByAge({ kind: "routine", topic: "security", work: [young("a"), young("b")] }).map((unit) => [unit.topic, names(unit.work)])).toEqual([["security-cooldown", ["a", "b"]]]);
+  it("holds each young fix apart when nothing couples them, so none waits for another", () => {
+    expect(splitByAge({ kind: "routine", topic: "security", work: [young("b"), young("a")] }).map((unit) => [unit.topic, names(unit.work)]))
+      .toEqual([["security-cooldown-a", ["a"]], ["security-cooldown-b", ["b"]]]);
   });
+
+  it("keeps transitively coupled young fixes in one held unit, named after its lowest package", () => {
+    const units = splitByAge({ kind: "routine", topic: "security", work: [young("c"), young("a"), young("b"), young("d")], coupled: [["npm|c", "npm|b"], ["npm|b", "npm|a"]] });
+    expect(units.map((unit) => [unit.topic, names(unit.work).sort(), unit.coupled])).toEqual([
+      ["security-cooldown-a", ["a", "b", "c"], [["npm|c", "npm|b"], ["npm|b", "npm|a"]]],
+      ["security-cooldown-d", ["d"], undefined],
+    ]);
+  });
+});
+
+describe("heldUnits", () => {
+  const young = (name: string) => fix({ name, from: "1.0.0", to: { version: "1.0.1", line: "1", aged: false, major: false, blockers: [] } });
+
+  it("joins fixes through a bridge key that has no fix of its own, and records only members", async () => {
+    const units = heldUnits([young("a"), young("b"), young("x")], [], [["npm|a", "npm|c"], ["npm|b", "npm|c"]]);
+    expect(units.map((unit) => [unit.topic, names(unit.work).sort()])).toEqual([["security-cooldown-a", ["a", "b"]], ["security-cooldown-x", ["x"]]]);
+    const plan = await planFor(units[0]!.work, { lockfiles: new Map([["package-lock.json", { packages: { "node_modules/a": { version: "1.0.0" }, "node_modules/b": { version: "1.0.0" } } }]]), gradle: undefined, named: undefined, tagCommit: async () => undefined }, units[0]);
+    expect(plan.members).toEqual(["npm|a", "npm|b"]);
+    expect(isHeldTopic(plan.topic) && !isHeldTopic("security") && isHeldTopic("security-cooldown")).toBe(true);
+  });
+
 });

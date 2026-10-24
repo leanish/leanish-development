@@ -241,7 +241,7 @@ describe("npm parents, second round", () => {
     } };
     const fixes = await run([fixOf("x", "1.0.0", "1.1.0"), fixOf("parent", "1.0.0", "1.1.0", false)], registry, locks({ x: "~1.0.0" }));
     const { units } = await coupledWork(fixes);
-    expect(units.map((unit) => [unit.topic, unit.work.map((fix) => fix.name).sort()])).toEqual([["security-cooldown", ["parent", "x"]]]);
+    expect(units.map((unit) => [unit.topic, unit.work.map((fix) => fix.name).sort()])).toEqual([["security-cooldown-parent", ["parent", "x"]]]);
   });
 
   it("anchors the direct-peer closure on a chosen parent", async () => {

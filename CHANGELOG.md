@@ -4,15 +4,26 @@
 
 ### Changed
 
+- secure-it opens one held PR per group of young fixes that can move apart (topic `security-cooldown-<package>`),
+  instead of one for all: a young version, or an advisory a person doubts, no longer holds the other young fixes, and
+  each can be taken when it ages. The couplings known when splitting (coupled npm peers, a carrier and what it
+  carries, and what planning the aged batch finds, such as a root that needs another root's fix) stay in one PR, and
+  so do aged fixes that only wait for the same young npm companion; young fixes sharing a young companion stay apart,
+  so neither waits for the other. The aged batch, majors and malware are unchanged. Held units are matched to open PRs
+  by their own packages (`members` in the plan), the same way in runs and reviews, so v0.7's single held PR is taken
+  over by one group and the others open their own; a PR someone else pushed to, or a held one a person marked ready,
+  is never claimed. Branches created in one run no longer collide when two topics cut to the same name.
+
 - A project's own repository advisories, unreviewed and published at will by whoever controls the repository, no
   longer trigger a fix nor justify a young version: they still detect (a finding, a PR adding one fails) and rule
   versions out. Only reviewed advisories (OSV, or GitHub's database for Actions) make secure-it plan a fix and make a
   young version the rule-picked fix, a bundle fix or a required npm dependency. A version affected only by unreviewed
   advisories is reported, not fixed, until a reviewed source lists it. An unreviewed advisory can still rule out the
   version the rule would take and steer it to another, even a young one (held); secure-it's plan notes each such
-  candidate, carrier versions included. A required npm dependency's version is set by its requirement, so a veto
-  there refuses the fix, and the refusal now names each advisory it adds, marked when unreviewed. A `releaseAge` exception may still name one: the owner's override. The rules are in the gate's README
-  ("How each source counts"). GitHub's Actions advisories that aren't `reviewed` or `malware` now fail the run.
+  candidate, carrier versions included. A required npm dependency's version is set by its requirement, so a veto there
+  refuses the fix, and the refusal now names each advisory it adds, marked when unreviewed. A `releaseAge` exception
+  may still name one: the owner's override. The rules are in the gate's README ("How each source counts"). GitHub's
+  Actions advisories that aren't `reviewed` or `malware` now fail the run.
 
 ### Added
 
@@ -32,8 +43,8 @@
 ### Fixed
 
 - The gate refuses a repository advisory list's next page off GitHub's API host instead of sending the token there,
-  and reads at most 20 pages (either one fails the run, as an unreadable list does); a source repository named `.` or `..` (in a manifest, a POM or the config) names none, so it can't
-  walk the API path the token is sent to.
+  and reads at most 20 pages (either one fails the run, as an unreadable list does); a source repository named `.` or
+  `..` (in a manifest, a POM or the config) names none, so it can't walk the API path the token is sent to.
 
 ## 0.7.5 - 2026-10-23
 
