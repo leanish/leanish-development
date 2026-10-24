@@ -1,6 +1,6 @@
 # What supply-chain handles
 
-This guide describes supply-chain 0.6.0. The [changelog](../CHANGELOG.md) lists what changed in each release.
+This guide describes the current release. The [changelog](../CHANGELOG.md) lists what changed in each release and what's unreleased.
 
 - **The gate** checks a pull request (PR) whenever it changes. It also scans the
   default branch each day with current advisories.
@@ -264,8 +264,8 @@ Each tool reviews its own open PRs on later runs:
 - **The base moved:** the tool recomputes the plan and updates the PR, merging the
   new base or redoing the change if the plan changed.
 - **CI is green:** the draft is marked ready. **Held by the cooldown:** it waits.
-  A secure-it PR held for young versions is retired once they have all aged; the
-  next run plans a fresh one. A held draft a person marked ready is theirs.
+  secure-it holds young fixes in one draft per group that can move apart; each is
+  retired once its versions have aged, and the next run plans a fresh one. A held draft a person marked ready is theirs.
 - **CI failed:** the agent adapts the PR, **at most twice**; an attempt counts even
   if it changes nothing. If CI still fails after the second, the next review closes
   the PR and deletes its branch, and a later run starts over. A run that replans an
@@ -285,8 +285,9 @@ moves run dependency verification without invoking the agent or running the
 repository's own tests; they rely on the PR's CI. For a major, the agent links the
 release notes or changelog it read, or says it couldn't read them.
 
-Verification failures are different from CI failures. When secure-it's own
-verification of a routine batch fails, it retries once without the package groups
+Verification failures are different from CI failures. When verification refuses
+an edit the agent wrote, both tools ask the agent once more, from the base, with
+the refusal. When secure-it's own verification of a routine batch still fails, it retries once without the package groups
 named by the problems; malware and major fixes are never reduced.
 
 Order matters when not everything fits in one run. secure-it handles malware

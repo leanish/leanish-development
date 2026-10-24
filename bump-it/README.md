@@ -162,7 +162,7 @@ it.
 Use `~/.config/leanish/bump-it/agent.yaml`, with explicit repository opt-in; the
 [config reference](../docs/tool-configuration.md) covers every field.
 [Adopting the tools](../docs/adopting-tools.md) covers prerequisites, Keychain permissions, the read-only candidate
-preview, the first live run, and four complete launchd examples (weekly bump-it run, review every four hours). Nothing
+preview, the first live run, and four complete launchd examples (a run and a review for each tool). Nothing
 merges itself.
 
 **npm 11.17.0 or later is required whenever the final age-exclusion list is non-empty**: own npm scopes or
