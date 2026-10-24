@@ -48,11 +48,12 @@
 
 - No text a tool writes in a PR body can carry a plan block of its own any more: bump-it's and secure-it's plan
   sections, secure-it's cooldown warning and every published body defuse any `<!-- leanish:plan` they quote (from an
-  advisory, a name, an error or a cleaned path), so the tool's own block stays the first one read. secure-it's warning
-  also escapes `<` in what it quotes, so a quoted HTML comment can't hide the rest of it. Before, an advisory's text
-  in the new warning could replace a held PR's verified plan for later runs and reviews.
-- secure-it passes over an open PR of its own whose plan reads but has no topic, or no list of packages, instead of
-  failing the whole run when matching held PRs.
+  advisory, a name, an error or a cleaned path), and replacing a body's state markers never joins the text around
+  them into a block, so the tool's own block stays the first one read. secure-it's warning and veto lines also escape
+  `<` in what they quote, so a quoted HTML comment can't hide the rest. Before, an advisory's text in the new warning
+  could replace a held PR's verified plan for later runs and reviews.
+- A secure-it plan without a topic, or whose packages aren't a list of names, no longer reads: a review leaves that PR
+  open with an error, and matching held PRs passes over it instead of failing the whole run.
 - The gate refuses a repository advisory list's next page off GitHub's API host instead of sending the token there,
   and reads at most 20 pages (either one fails the run, as an unreadable list does); a source repository named `.` or
   `..` (in a manifest, a POM or the config) names none, and a remote action whose owner or repo is `.` or `..` can't

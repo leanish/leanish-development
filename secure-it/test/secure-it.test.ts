@@ -1384,12 +1384,14 @@ describe("which open PR a held unit is", () => {
     expect(retirementOf(routine, [], new Map(), 13)).toBe("No actionable fixes remain for this security unit on the default branch. Blocked fixes are reported by secure-it.");
   });
 
-  it("passes over an own PR whose plan reads but has no topic or no list of members, as a run did before", () => {
+  it("passes over an own PR whose plan has no topic, or packages that aren't names, instead of failing every claim", () => {
     const pr = (number: number, payload: unknown) => ownPr({ number, body: withMarker(RULES, `Held.\n\n${planBlock(payload)}`, { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
-    const own = [pr(5, { kind: "routine", malware: false, packages: ["npm|a"], moves: [] }), pr(6, { kind: "routine", topic: "security-cooldown-a", malware: false, packages: 42, moves: [] })];
-    expect(own.every((found) => planOf(found.body) !== undefined)).toBe(true);
+    const held = { kind: "routine", topic: "security-cooldown-a", malware: false, moves: [] };
+    const own = [pr(5, { kind: "routine", malware: false, packages: ["npm|a"], moves: [] }), pr(6, { ...held, packages: 42 }), pr(7, { ...held, packages: ["npm|a", 5] })];
+    // None of them reads: a review leaves such a PR open with an error, as for any plan it can't read.
+    expect(own.map((found) => planOf(found.body))).toEqual([undefined, undefined, undefined]);
     expect(heldClaims([unit("a")], own)).toEqual(new Map());
-    expect(retirementOf(planOf(own[1]!.body)!, [unit("a")], new Map(), 6)).toContain("None of this draft's fixes is held");
+    expect(heldClaims([unit("a")], [...own, recorded(8, ["npm|a"])])).toEqual(new Map([["security-cooldown-a", 8]]));
   });
 
   it("reviews the other kinds by topic, as before", () => {

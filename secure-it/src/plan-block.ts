@@ -78,10 +78,13 @@ function fixesLabel(plan: ChangePlan, move: PlannedMove): string {
   return coupled ? "direct peer compatibility" : "";
 }
 
+/** Text from elsewhere in a line of the plan's section: `<` escaped, so it can't open a comment hiding what follows. */
+const quoted = (text: string) => text.replaceAll("<", "&lt;").replace(/\s+/g, " ");
+
 /** A fixed line per candidate the gate ruled out only by advisories no reviewed source corroborates. */
 function vetoLines(move: PlannedMove): string[] {
   return (move.vetoed ?? []).map((veto) =>
-    `- ${move.name} ${veto.version} was ruled out by ${veto.advisories.join(", ")}, not corroborated by the sources this decision used; this takes ${move.to}.`);
+    `- ${quoted(move.name)} ${quoted(veto.version)} was ruled out by ${quoted(veto.advisories.join(", "))}, not corroborated by the sources this decision used; this takes ${move.to}.`);
 }
 
 /** Omissions are visible to reviewers as well as the command report and persisted plan. */
@@ -161,12 +164,15 @@ export function planOf(body: string): ChangePlan | undefined {
 function validMetadata(plan: ChangePlan): boolean {
   if (plan.kind === "floor-removal") return plan.topic === "floor-removal" && plan.malware === false && plan.moves.length === 0 && validRemoval(plan.floorRemoval);
   if (plan.floorRemoval !== undefined) return false;
+  // Every plan since v0.4 has one; runs and reviews tell which PR is whose by it.
+  if (typeof plan.topic !== "string") return false;
   if (plan.notes !== undefined && (!Array.isArray(plan.notes) || !plan.notes.every((note) => typeof note === "string"))) return false;
   if (plan.cooldown !== undefined && !validHolds(plan.cooldown)) return false;
   if (plan.requiredNpm !== undefined && (!Array.isArray(plan.requiredNpm) || !plan.requiredNpm.every((target) =>
     target !== null && typeof target === "object" && typeof target.exempt === "boolean" && [target.name, target.version, target.path, target.lockfile, target.key, target.range, target.reason, target.parent?.name, target.parent?.version, target.parent?.path, target.root?.name, target.root?.version, target.root?.path].every((value) => typeof value === "string")))) return false;
   if (plan.kind !== undefined && !["routine", "major", "malware"].includes(plan.kind)) return false;
   if (plan.members !== undefined && (!Array.isArray(plan.members) || !plan.members.every((key: unknown) => typeof key === "string"))) return false;
+  if (plan.packages !== undefined && (!Array.isArray(plan.packages) || !plan.packages.every((key: unknown) => typeof key === "string"))) return false;
   if (plan.coupled !== undefined && (!Array.isArray(plan.coupled) || !plan.coupled.every((set) => Array.isArray(set) && set.every((name: unknown) => typeof name === "string")))) return false;
   if (plan.leftOut === undefined) return true;
   return Array.isArray(plan.leftOut) && plan.leftOut.every((entry) =>
