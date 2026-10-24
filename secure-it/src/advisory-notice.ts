@@ -11,6 +11,7 @@
  * affected among the affected ones and none of the proposed versions.
  */
 import { backsFix, type EvidenceRecord, type GroupEvidence, type SourceEvidence, type TargetEvidence } from "@leanish/gate/advisory-evidence";
+import { versionScheme } from "@leanish/gate/versions";
 
 import type { PlannedHold } from "./plan.ts";
 
@@ -101,11 +102,12 @@ function differsFor(rows: ReadonlyArray<{ readonly entry: PlannedHold; readonly 
   // Told apart by the whole move, shown cut: two long names alike for their first characters are still two moves.
   const moves = new Map<string, string>();
   for (const { entry, target } of rows) {
-    const identity = JSON.stringify([target.name, target.proposed, target.bundled ? [entry.name, entry.version] : null]);
+    const proposed = newestFirst(target);
+    const identity = JSON.stringify([target.name, proposed, target.bundled ? [entry.name, entry.version] : null]);
     if (moves.has(identity)) continue;
-    // A bundle can propose hundreds of versions: a few are shown, the rest counted (the plan's block has them all).
-    const more = target.proposed.length > VERSIONS_SHOWN ? ` (+${target.proposed.length - VERSIONS_SHOWN})` : "";
-    const to = target.proposed.length === 0 ? "removed" : `${target.proposed.slice(0, VERSIONS_SHOWN).map((version) => bounded(version, VERSION_LIMIT)).join(", ")}${more}`;
+    // A bundle can propose hundreds of versions: the newest few are shown, the rest counted (the plan's block has them all).
+    const more = proposed.length > VERSIONS_SHOWN ? ` (+${proposed.length - VERSIONS_SHOWN} older)` : "";
+    const to = proposed.length === 0 ? "removed" : `${proposed.slice(0, VERSIONS_SHOWN).map((version) => bounded(version, VERSION_LIMIT)).join(", ")}${more}`;
     const carrier = target.bundled ? ` (bundled in \`${bounded(entry.name, NAME_LIMIT)}\` ${bounded(entry.version, VERSION_LIMIT)})` : "";
     moves.set(identity, `\`${bounded(target.name, NAME_LIMIT)}\` → ${to}${carrier}`);
   }
@@ -113,6 +115,19 @@ function differsFor(rows: ReadonlyArray<{ readonly entry: PlannedHold; readonly 
   const shown = names.slice(0, NAMED_LIMIT).join("; ");
   const more = names.length > NAMED_LIMIT ? ` and ${names.length - NAMED_LIMIT} more` : "";
   return `**The reviewed advisories read after the comparison don't back this fix as the comparison did** for ${shown}${more}: no reviewed record (OSV, or GitHub's reviewed advisory database) lists the replaced versions as affected and the proposed one as not, or one was withdrawn or couldn't be read. The comparison's verdict stands; look into these before taking this early.`;
+}
+
+/**
+ * The proposed versions by the ecosystem's order, newest first: the stored lists are sorted as text (1.10.0 before
+ * 1.9.0). One the scheme can't read leaves the stored order, which only changes which few are shown.
+ */
+function newestFirst(target: TargetEvidence): ReadonlyArray<string> {
+  const scheme = versionScheme(target.ecosystem);
+  try {
+    return [...target.proposed].sort((a, b) => scheme.compare(b, a));
+  } catch {
+    return target.proposed;
+  }
 }
 
 /** `text` escaped for a cell, at most `limit` characters, cut by code point before escaping, so no surrogate pair or `\|` is split. */
