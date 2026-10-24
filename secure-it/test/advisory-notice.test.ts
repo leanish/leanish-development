@@ -131,6 +131,13 @@ describe("the advisory notice on a held PR", () => {
     const bundled = evidence([checked("repository"), checked("github"), checked("osv")], { ecosystem: "npm", name: "brace", bundled: true, replaced: ["5.0.9"], proposed: [] });
     expect(advisoryNotice([hold({ ecosystem: "npm", name: "carrier", version: "1.1.0", justification: "bundle-fix", evidence: bundled })], { table: false }).paragraphs[0])
       .toContain("for `brace` → removed (bundled in `carrier` 1.1.0):");
+    // A carrier move proposing hundreds of bundled versions shows a few and counts the rest, so 20 of them stay short.
+    const proposed = Array.from({ length: 400 }, (_, i) => `5.1.${i}`);
+    const carriers = Array.from({ length: 20 }, (_, i) => hold({ ecosystem: "npm", name: `carrier${i}`, version: "1.1.0", justification: "bundle-fix",
+      evidence: evidence([checked("repository"), checked("github"), checked("osv")], { ecosystem: "npm", name: "brace", bundled: true, replaced: ["5.0.9"], proposed }) }));
+    const compact = advisoryNotice(carriers, { table: false }).paragraphs[0]!;
+    expect(compact).toContain("`brace` → 5.1.0, 5.1.1, 5.1.2 (+397) (bundled in `carrier0` 1.1.0)");
+    expect(compact.length).toBeLessThan(3_000);
     // Past 20 moves the rest are counted, not named.
     const many = Array.from({ length: 23 }, (_, i) => hold({ name: `g:lib${i}`, evidence: evidence([checked("repository", [record()]), checked("github"), checked("osv")], { name: `g:lib${i}` }) }));
     const counted = advisoryNotice(many, { table: false }).paragraphs[0]!;

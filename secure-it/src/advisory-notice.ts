@@ -31,6 +31,7 @@ export const TABLE_LEFT_OUT = "The table of where each advisory appears is left 
 
 /** The ⚠ packages named in place of the table's rows, the unchecked fixes listed, and a reason's length (in characters), before the rest is counted. */
 const NAMED_LIMIT = 20;
+const VERSIONS_SHOWN = 3;
 const LISTED_LIMIT = 10;
 const REASON_LIMIT = 300;
 
@@ -91,7 +92,9 @@ function uncheckedOf(entry: PlannedHold): string[] {
  */
 function differsFor(rows: ReadonlyArray<{ readonly entry: PlannedHold; readonly target: TargetEvidence; readonly group: GroupEvidence }>): string {
   const names = [...new Set(rows.map(({ entry, target }) => {
-    const to = target.proposed.length === 0 ? "removed" : target.proposed.map(cell).join(", ");
+    // A bundle can propose hundreds of versions: a few are shown, the rest counted (the plan's block has them all).
+    const more = target.proposed.length > VERSIONS_SHOWN ? ` (+${target.proposed.length - VERSIONS_SHOWN})` : "";
+    const to = target.proposed.length === 0 ? "removed" : `${target.proposed.slice(0, VERSIONS_SHOWN).map(cell).join(", ")}${more}`;
     return `\`${cell(target.name)}\` → ${to}${target.bundled ? ` (bundled in \`${cell(entry.name)}\` ${cell(entry.version)})` : ""}`;
   }))];
   const shown = names.slice(0, NAMED_LIMIT).join("; ");
