@@ -54,7 +54,7 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
      everything coupled to them, and any fix whose required npm dependency is young leave the aged batch, so the aged
      fixes aren't held back. They're then split as far as they can be: one held routine unit (topic
      `security-cooldown-<package>`, after its lowest package) per group that must move together (coupled npm peers, a
-     carrier and its carried package, roots that require one npm companion), so no young fix waits for another and
+     carrier and its carried package, roots that require one young npm companion), so no young fix waits for another and
      each can be taken when it ages or by a person's call. A major or malware unit with a young version stays whole
      and is held. What the PR finally holds is the verifying comparison's call, not this prediction.
 4. **Looks at its open PRs first.**
@@ -68,10 +68,9 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
    - One someone else pushed to: the fix goes in a PR of its own.
    - A held unit is recognised by its packages, not its name (a group's lowest package can change as members age or
      join): it takes the open held PR sharing most of its own packages (`members` in the plan; companions planning
-     adds don't count), strongest pairs first across the run, each PR going to one unit at most. v0.7's single
-     `security-cooldown` PR is taken over this way by one group; the others open their own. When two groups merge,
-     both their PRs may stand for the merged one for a while: each is verified alone, and once one merges, the other's
-     next review plans what's left and retires it if nothing is.
+     adds don't count), strongest pairs first across all units, each PR going to one unit at most; a review gives a
+     held PR the same unit a run would. v0.7's single `security-cooldown` PR is taken over this way by one group; the
+     others open their own. When two groups merge, the PR left without a unit is retired at its next review.
 5. **The tool resolves npm; the agent applies non-npm moves** (skill [`secure-it`](skills/secure-it/SKILL.md)).
    - **npm, by the tool.** In a sandboxed export of base, before any agent work, the tool pins every planned direct
      and peer companion to its exact target at once (unplanned directs keep base versions), installs, restores the

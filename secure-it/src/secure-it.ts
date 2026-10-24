@@ -411,8 +411,8 @@ async function runRemoval(execution: Execution, removal: ComputedRemoval, base: 
 /**
  * A routine fix whose required npm dependency is younger than the wait can't
  * wait either: it moves to a held unit with every package the aged plan couples
- * to it, companions included (a key without a fix of its own still joins two
- * roots that require it). Held work is then grouped again (`heldUnits`).
+ * to it, and with every root requiring the same young companion (a key without
+ * a fix of its own still joins them). Held work is then grouped again (`heldUnits`).
  * Moving roots only drops requirements, so one pass leaves the rest aged.
  * Kept on purpose: docs/simplification-candidates.md#reviewed-and-kept-2026-10-16.
  */
@@ -428,8 +428,9 @@ async function holdRequiredYoung(execution: Execution, units: ReadonlyArray<Secu
   }
   const moved = new Set((plan.requiredNpm ?? []).filter((target) => target.exempt).map((target) => `npm|${target.root.name}`));
   if (moved.size === 0) return [...units];
-  // requiredNpmPlan's coupled sets keep only moved packages: each requirement joins its root and target here instead.
-  const bridges = (plan.requiredNpm ?? []).map((target) => [`npm|${target.root.name}`, `npm|${target.name}`]);
+  // requiredNpmPlan's coupled sets keep only moved packages: each young requirement joins its root and target here
+  // instead, so roots requiring one young companion move together. An aged companion joins nothing: it holds no one.
+  const bridges = (plan.requiredNpm ?? []).filter((target) => target.exempt).map((target) => [`npm|${target.root.name}`, `npm|${target.name}`]);
   for (;;) {
     const size = moved.size;
     for (const set of [...(plan.coupled ?? []), ...bridges]) if (set.some((key) => moved.has(key))) for (const key of set) moved.add(key);
@@ -456,7 +457,7 @@ export function heldClaims(units: ReadonlyArray<SecurityUnit>, own: ReadonlyArra
   const held = units.filter((unit) => unit.kind === "routine" && isHeldTopic(unit.topic));
   const pairs = own.flatMap((pr) => {
     const previous = planOf(pr.body);
-    if (previous?.kind !== "routine" || !isHeldTopic(previous.topic)) return [];
+    if (previous === undefined || !isHeldPlan(previous)) return [];
     return held.flatMap((unit) => {
       const match = heldOverlap(previous, unit);
       return match === undefined ? [] : [{ topic: unit.topic, number: pr.number, ...match }];
@@ -782,7 +783,10 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       const { units, blocked } = await reviewUnits(previous, planned.fixes, planned.peers);
       if (blocked.length > 0) notes.push({ number: pr.number, blocked });
       // Split exactly as a run would, required-dependency moves included, before telling which unit is this PR's.
-      const unit = unitOf(previous, await holdRequiredYoung(execution, units, { tree: base, gradle: baseGradle }));
+      const split = await holdRequiredYoung(execution, units, { tree: base, gradle: baseGradle });
+      // A held PR is the unit a run would give it, so a run and a review never disagree on which PR is whose.
+      const claims = isHeldPlan(previous) ? heldClaims(split, await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base)) : new Map<string, number>();
+      const unit = unitOf(previous, split, claims, pr.number);
       if (unit === undefined) {
         await closeAndDelete(publication, pr.number, pr.headSha, "No actionable fixes remain for this security unit on the default branch. Blocked fixes are reported by secure-it.");
         return "retired";
@@ -874,16 +878,16 @@ async function reviewUnits(previous: ChangePlan, fixes: ReadonlyArray<SecurityFi
 
 /**
  * The recomputed unit an open PR stands for: several routine units can exist (the aged one and each held one). A held
- * PR stands for the held unit sharing the most of its packages (ties: the one holding the lowest shared package), so a
- * unit whose name changed keeps its PR; the others, by topic.
+ * PR (`number`) stands for the held unit `heldClaims` gives it among the open PRs, so a unit whose name changed keeps
+ * its PR and no two PRs stand for one unit; the others, by topic.
  */
-export function unitOf(previous: ChangePlan, units: ReadonlyArray<SecurityUnit>): SecurityUnit | undefined {
+export function unitOf(previous: ChangePlan, units: ReadonlyArray<SecurityUnit>, claims: ReadonlyMap<string, number>, number: number): SecurityUnit | undefined {
   const kind = previous.malware ? "malware" : previous.kind;
   if (kind === undefined) return units[0];
-  if (kind !== "routine" || !isHeldTopic(previous.topic)) return units.find((unit) => unit.kind === kind && (kind !== "routine" || unit.topic === previous.topic));
-  const matches = units.filter((unit) => unit.kind === "routine" && isHeldTopic(unit.topic)).flatMap((unit) => {
-    const match = heldOverlap(previous, unit);
-    return match === undefined ? [] : [{ unit, ...match }];
-  }).sort((a, b) => b.shared - a.shared || (a.lowest < b.lowest ? -1 : a.lowest > b.lowest ? 1 : 0));
-  return matches[0]?.unit;
+  if (!isHeldPlan(previous)) return units.find((unit) => unit.kind === kind && (kind !== "routine" || unit.topic === previous.topic));
+  return units.find((unit) => unit.kind === "routine" && isHeldTopic(unit.topic) && claims.get(unit.topic) === number);
+}
+
+function isHeldPlan(plan: ChangePlan): boolean {
+  return !plan.malware && plan.kind === "routine" && isHeldTopic(plan.topic);
 }

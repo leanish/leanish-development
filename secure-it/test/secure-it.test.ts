@@ -1135,8 +1135,8 @@ describe("the cooldown hold", () => {
     expect(result).toMatchObject({ units: [{ topic: "security-cooldown-left-pad", packages: ["npm|left-pad", "npm|vite"] }] });
   });
 
-  it("keeps two roots that require one companion together, though the companion has no fix of its own", async () => {
-    // Only vite's requirement of c is young; left-pad requires the same c, so moving it apart would move c twice.
+  it("doesn't hold an aged fix because it shares an aged companion with a held one", async () => {
+    // Only vite's requirement of c is young; left-pad's is aged, so left-pad goes out with the aged batch.
     const h = harness({ fixes: [vite(), leftPad()] });
     const target = (root: string, version: string, exempt: boolean) => ({ exempt, name: "c", version: "1.0.1", root: { name: root, version, path: `node_modules/${root}` } });
     const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => ({ ...plan, requiredNpm: [
@@ -1144,7 +1144,7 @@ describe("the cooldown hold", () => {
       ...plan.packages.includes("npm|left-pad") ? [target("left-pad", "1.0.1", false)] : [],
     ] as never });
     const result = await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context);
-    expect(result).toMatchObject({ units: [{ topic: "security-cooldown-left-pad", packages: ["npm|left-pad", "npm|vite"] }] });
+    expect(result).toMatchObject({ units: [{ topic: "security", packages: ["npm|left-pad"] }, { topic: "security-cooldown-vite", packages: ["npm|vite"] }] });
   });
 
   const YOUNG_PAD = () => leftPad({ to: { version: "1.0.1", line: "1", aged: false, major: false, blockers: [] } });
@@ -1256,10 +1256,18 @@ describe("which open PR a held unit is", () => {
     expect(heldClaims([unit("c"), unit("b")], [recorded(9, ["npm|a", "npm|b", "npm|c"])])).toEqual(new Map([["security-cooldown-b", 9]]));
   });
 
-  it("reviews a held PR as the unit sharing most of it, whatever it's named now", () => {
-    const previous = planOf(recorded(7, ["npm|a", "npm|b", "npm|c"]).body)!;
-    expect(unitOf(previous, [unit("c"), unit("b")])?.topic).toBe("security-cooldown-b");
-    expect(unitOf(previous, [unit("d"), unit("b", "c")])?.topic).toBe("security-cooldown-b");
-    expect(unitOf(previous, [unit("d")])).toBeUndefined();
+  it("reviews a held PR as the unit a run would give it, so two PRs never stand for one unit", () => {
+    // #10 shares a and b with the first unit; #11 shares b with it too, but c only with the second.
+    const units = [unit("a", "b"), unit("c")];
+    const own = [recorded(10, ["npm|a", "npm|b", "npm|c"]), recorded(11, ["npm|b", "npm|c"])];
+    const claims = heldClaims(units, own);
+    expect(own.map((pr) => unitOf(planOf(pr.body)!, units, claims, pr.number)?.topic)).toEqual(["security-cooldown-a", "security-cooldown-c"]);
+    expect(unitOf(planOf(own[1]!.body)!, [unit("d")], heldClaims([unit("d")], own), 11)).toBeUndefined();
+  });
+
+  it("reviews the other kinds by topic, as before", () => {
+    const plan: ChangePlan = { kind: "routine", topic: "security", malware: false, packages: ["npm|a"], moves: [], severity: undefined };
+    const aged: SecurityUnit = { kind: "routine", topic: "security", work: [vite({ name: "a" })] };
+    expect(unitOf(plan, [unit("a"), aged], new Map([["security-cooldown-a", 7]]), 7)).toBe(aged);
   });
 });
