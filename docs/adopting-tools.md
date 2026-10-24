@@ -193,8 +193,9 @@ Run one opted-in repository interactively before installing schedules. These
 commands may open/update draft PRs; review may also mark them ready or close
 them. Neither merges. secure-it holds versions younger than the release-age wait
 in draft PRs, one per group of young fixes, each with a warning on top, until it
-retires them once they've aged; require the gate's `supply-chain / cooldown`
-check too (see the gate's [adoption steps](../core/gate/README.md#adopting-the-gate)).
+retires each draft once its versions have aged; require the gate's
+`supply-chain / cooldown` check too (see the gate's
+[adoption steps](../core/gate/README.md#adopting-the-gate)).
 
 ```bash
 cd "$HOME/dev/supply-chain"
