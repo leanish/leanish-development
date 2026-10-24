@@ -55,13 +55,14 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
      fixes aren't held back. They're then split as far as they can be, one held routine unit (topic
      `security-cooldown-<package>`, after its lowest package) per group, so no young fix waits for another and each
      can be taken when it ages or by a person's call:
-     - **Always together, what must move together:** coupled npm peers, a carrier and its carried package, and a root
-       that needs another root's fix.
+     - **Always together, the couplings known when splitting:** coupled npm peers, a carrier and its carried package,
+       and what planning the aged batch finds (a root that needs another root's fix). Planning a held group can find
+       more; those don't rejoin groups already split, and each PR proves what it moves alone.
      - **Together, roots that only wait for the same young npm companion:** fixes that are aged themselves but require
        one young dependency wait for it alike, so one PR moves it for all.
      - **Apart on purpose, young fixes that share a young companion:** joined, each would wait for the other's
-       version too. Each PR moves the companion to the same version and is verified alone; when one merges, the
-       other's review rebases it.
+       version too. Each PR chooses and verifies the companion version its own requirements prove; when one merges,
+       the other's review rebases it.
 
      A major or malware unit with a young version stays whole and is held. What the PR finally holds is the
      verifying comparison's call, not this prediction.
