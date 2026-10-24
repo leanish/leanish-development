@@ -70,7 +70,8 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
      join): it takes the open held PR sharing most of its own packages (`members` in the plan; companions planning
      adds don't count), strongest pairs first across all units, each PR going to one unit at most; a review gives a
      held PR the same unit a run would. v0.7's single `security-cooldown` PR is taken over this way by one group; the
-     others open their own. When two groups merge, the PR left without a unit is retired at its next review.
+     others open their own. A PR someone else pushed to is never claimed. A held PR left without a unit (two groups
+     merged, or none of its packages is held any more) is retired at its next review.
 5. **The tool resolves npm; the agent applies non-npm moves** (skill [`secure-it`](skills/secure-it/SKILL.md)).
    - **npm, by the tool.** In a sandboxed export of base, before any agent work, the tool pins every planned direct
      and peer companion to its exact target at once (unplanned directs keep base versions), installs, restores the

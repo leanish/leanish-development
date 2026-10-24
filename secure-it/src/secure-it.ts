@@ -269,7 +269,7 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   const own = await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base);
   const results: Readonly<Record<string, unknown>>[] = [];
   const units = await holdRequiredYoung(execution, selection.units, base);
-  const claims = heldClaims(units, own);
+  const claims = heldClaims(units, await stillOurs(context, execution.publication, own));
   for (const unit of units) {
     try {
       results.push(await runUnit(execution, unit, base, own, claims.get(unit.topic)));
@@ -471,6 +471,19 @@ export function heldClaims(units: ReadonlyArray<SecurityUnit>, own: ReadonlyArra
     taken.add(pair.number);
   }
   return claims;
+}
+
+/**
+ * The open PRs whose head is still the tool's, read-only (the body's recorded head, or the journal's): only these can
+ * be claimed, or a PR someone pushed to would keep its unit from the PR the tool opens instead, run after run.
+ */
+async function stillOurs(context: ToolRunContext, publication: PublicationContext, own: ReadonlyArray<GitHubPullRequest>): Promise<GitHubPullRequest[]> {
+  const ours: GitHubPullRequest[] = [];
+  for (const pr of own) {
+    if (topicOf(RULES, pr.headRef) === undefined) continue;
+    if (stateOf(pr.body)?.head === pr.headSha || (await publication.journal.last(context.repo.repo, pr.number))?.head === pr.headSha) ours.push(pr);
+  }
+  return ours;
 }
 
 /** How many of a held unit's packages a held plan shares, and the lowest shared one; undefined when none. */
@@ -785,7 +798,8 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       // Split exactly as a run would, required-dependency moves included, before telling which unit is this PR's.
       const split = await holdRequiredYoung(execution, units, { tree: base, gradle: baseGradle });
       // A held PR is the unit a run would give it, so a run and a review never disagree on which PR is whose.
-      const claims = isHeldPlan(previous) ? heldClaims(split, await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base)) : new Map<string, number>();
+      const open = isHeldPlan(previous) ? await stillOurs(context, publication, await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base)) : [];
+      const claims = heldClaims(split, open);
       const unit = unitOf(previous, split, claims, pr.number);
       if (unit === undefined) {
         await closeAndDelete(publication, pr.number, pr.headSha, "No actionable fixes remain for this security unit on the default branch. Blocked fixes are reported by secure-it.");

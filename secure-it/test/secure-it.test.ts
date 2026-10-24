@@ -1177,6 +1177,17 @@ describe("the cooldown hold", () => {
     expect(planOf(h.github.prs.get(7)!.body)).toMatchObject({ topic: "security-cooldown-left-pad", members: ["npm|left-pad"] });
   });
 
+  it("doesn't claim a held PR someone pushed to, so the PR it opens instead is reused on the next run", async () => {
+    const plan = await planFor([YOUNG_VITE()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined },
+      { kind: "routine", topic: "security-cooldown-vite" });
+    const pushed = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite", headSha: "9".repeat(40), body: withMarker(RULES, withPlanSection("Fixes vite.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pushed], fixes: [YOUNG_VITE()] });
+    expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({ topic: "security-cooldown-vite", outcome: "published" });
+    expect(h.github.prs.size).toBe(2);
+    expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({ topic: "security-cooldown-vite", outcome: "already-open" });
+    expect(h.github.prs.size).toBe(2);
+  });
+
   it("gives two held units whose topics cut to one branch name a branch each", async () => {
     const lock = JSON.stringify({ lockfileVersion: 3, packages: { "": { name: "widget" }, "node_modules/a/b": { version: "1.0.0" }, "node_modules/a-b": { version: "1.0.0" } } });
     const young = (name: string) => leftPad({ name, locations: [`node_modules/${name}`], to: { version: "1.0.1", line: "1", aged: false, major: false, blockers: [] } });
