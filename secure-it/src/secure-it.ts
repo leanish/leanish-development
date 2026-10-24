@@ -828,7 +828,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       const claims = heldClaims(split, open);
       const unit = unitOf(previous, split, claims, pr.number);
       if (unit === undefined) {
-        await closeAndDelete(publication, pr.number, pr.headSha, "No actionable fixes remain for this security unit on the default branch. Blocked fixes are reported by secure-it.");
+        await closeAndDelete(publication, pr.number, pr.headSha, retirementOf(previous, split, claims, pr.number));
         return "retired";
       }
       const recomputed = await planUnit(execution, unit, { tree: base, gradle: baseGradle });
@@ -926,6 +926,19 @@ export function unitOf(previous: ChangePlan, units: ReadonlyArray<SecurityUnit>,
   if (kind === undefined) return units[0];
   if (!isHeldPlan(previous)) return units.find((unit) => unit.kind === kind && (kind !== "routine" || unit.topic === previous.topic));
   return units.find((unit) => unit.kind === "routine" && isHeldTopic(unit.topic) && claims.get(unit.topic) === number);
+}
+
+/**
+ * Why review retires an open PR no unit is left for. A held one may only have lost its claim: the held work it
+ * overlaps went to other PRs (a claim says which PR will carry it, not that it does yet), or none of it is held any
+ * more, which doesn't mean nothing needs fixing (it may be in the aged batch now).
+ */
+export function retirementOf(previous: ChangePlan, units: ReadonlyArray<SecurityUnit>, claims: ReadonlyMap<string, number>, number: number): string {
+  if (!isHeldPlan(previous)) return "No actionable fixes remain for this security unit on the default branch. Blocked fixes are reported by secure-it.";
+  const others = [...new Set(units.filter((unit) => unit.kind === "routine" && isHeldTopic(unit.topic) && heldOverlap(previous, unit) !== undefined)
+    .map((unit) => claims.get(unit.topic)).filter((claim): claim is number => claim !== undefined && claim !== number))].sort((a, b) => a - b);
+  if (others.length > 0) return `The remaining overlapping held work is assigned to ${others.map((claim) => `#${claim}`).join(", ")}; this draft is superseded.`;
+  return "None of this draft's fixes is held on the default branch any more; a run plans whatever still needs fixing. Blocked fixes are reported by secure-it.";
 }
 
 function isHeldPlan(plan: ChangePlan): boolean {

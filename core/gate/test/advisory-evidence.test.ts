@@ -148,6 +148,30 @@ describe("the evidence behind a held version", () => {
     expect(await verdicts({ ranges: [{ type: "ECOSYSTEM", events: [{ introduced: "0" }, { last_affected: "3.2.3" }] }] })).toEqual({ "3.2.3": "affected", "3.2.4": "not-affected" });
   });
 
+  it("reads each OSV range as OSV does, whatever the events' order", async () => {
+    const osv = async (ranges: unknown[]) => {
+      const found = await evidence({ [REPO_LIST]: { body: [] }, "https://api.osv.dev/v1/vulns/GHSA-m8xf-2cr7-77ph": { body: {
+        id: "GHSA-m8xf-2cr7-77ph", affected: [{ package: { ecosystem: "Maven", name: PKG }, ranges: ranges.map((events) => ({ type: "ECOSYSTEM", events })) }],
+      } } });
+      return { record: source(found.targets[0]!.groups, "osv").records[0]!, found };
+    };
+    const verdicts = async (...ranges: unknown[]) => (await osv(ranges)).record.verdicts;
+    // A second `introduced` doesn't restart the span: 3.2.4 is affected from 3.2.0 on.
+    expect(await verdicts([{ introduced: "3.2.0" }, { introduced: "3.3.0" }, { fixed: "3.4.0" }])).toEqual({ "3.2.3": "affected", "3.2.4": "affected" });
+    expect(await verdicts([{ fixed: "3.2.4" }, { introduced: "3.2.0" }])).toEqual({ "3.2.3": "affected", "3.2.4": "not-affected" });
+    // An end with nothing open, or the same end twice, changes nothing.
+    expect(await verdicts([{ introduced: "3.2.0" }, { fixed: "3.2.1" }, { fixed: "3.2.4" }])).toEqual({ "3.2.3": "not-affected", "3.2.4": "not-affected" });
+    expect(await verdicts([{ introduced: "3.2.0" }, { fixed: "3.2.4" }, { fixed: "3.2.4" }])).toEqual({ "3.2.3": "affected", "3.2.4": "not-affected" });
+    // A start and an end at the same version can't tell.
+    expect(await verdicts([{ introduced: "3.2.4" }, { fixed: "3.2.4" }])).toEqual({ "3.2.3": "not-affected", "3.2.4": "unknown" });
+    expect(await verdicts([{ introduced: "3.2.0" }, { last_affected: "3.2.3" }, { introduced: "3.2.3" }])).toEqual({ "3.2.3": "affected", "3.2.4": "unknown" });
+    // Ranges are judged apart: one that clears 3.2.4 doesn't hide another that still covers it, so the record
+    // doesn't back the proposed version.
+    const { record, found } = await osv([[{ introduced: "3.2.3" }, { fixed: "3.2.4" }], [{ introduced: "3.2.0" }, { introduced: "3.3.0" }, { fixed: "3.4.0" }]]);
+    expect(record.verdicts).toEqual({ "3.2.3": "affected", "3.2.4": "affected" });
+    expect(backsFix(record, found.targets[0]!.groups[0]!, found.targets[0]!)).toBe(false);
+  });
+
   it("doesn't ask GitHub without a GHSA id, nor a repository it can't name", async () => {
     const found = await evidence({}, held(["CVE-2026-1"]), new Map());
     const groups = found.targets[0]!.groups;

@@ -26,7 +26,7 @@ import { verifyPlan, type VerifyInputs } from "../src/verify.ts";
 import { computedNpmProblems } from "@leanish/tool-runtime/npm-file-checks";
 import { materializeInCopy } from "../src/npm-materialize.ts";
 import { preservedFloors } from "../src/floor-checks.ts";
-import { defaultDeps, heldClaims, RULES, type SecureItDeps, secureIt, unitOf } from "../src/secure-it.ts";
+import { defaultDeps, heldClaims, retirementOf, RULES, type SecureItDeps, secureIt, unitOf } from "../src/secure-it.ts";
 
 // Keep local security verification real; replace only the external scan.
 vi.mock("@leanish/gate/gate", async (original) => ({ ...await original<object>(), runCompare: vi.fn() }));
@@ -1367,6 +1367,17 @@ describe("which open PR a held unit is", () => {
     const claims = heldClaims(units, own);
     expect(own.map((pr) => unitOf(planOf(pr.body)!, units, claims, pr.number)?.topic)).toEqual(["security-cooldown-a", "security-cooldown-c"]);
     expect(unitOf(planOf(own[1]!.body)!, [unit("d")], heldClaims([unit("d")], own), 11)).toBeUndefined();
+  });
+
+  it("says why a held PR is retired: its work went to other PRs, or none of it is held any more", () => {
+    const units = [unit("a", "b"), unit("c")];
+    const own = [recorded(10, ["npm|a", "npm|b"]), recorded(11, ["npm|c"]), recorded(12, ["npm|a", "npm|c"])];
+    const claims = heldClaims(units, own);
+    expect(unitOf(planOf(own[2]!.body)!, units, claims, 12)).toBeUndefined();
+    expect(retirementOf(planOf(own[2]!.body)!, units, claims, 12)).toBe("The remaining overlapping held work is assigned to #10, #11; this draft is superseded.");
+    expect(retirementOf(planOf(own[2]!.body)!, [unit("d")], new Map(), 12)).toBe("None of this draft's fixes is held on the default branch any more; a run plans whatever still needs fixing. Blocked fixes are reported by secure-it.");
+    const routine: ChangePlan = { kind: "routine", topic: "security", malware: false, packages: ["npm|a"], moves: [], severity: undefined };
+    expect(retirementOf(routine, [], new Map(), 13)).toBe("No actionable fixes remain for this security unit on the default branch. Blocked fixes are reported by secure-it.");
   });
 
   it("reviews the other kinds by topic, as before", () => {

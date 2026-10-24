@@ -257,6 +257,23 @@ describe("securityCandidates and repository-only advisories", () => {
     expect(fixes[0]?.notes).toEqual([expect.stringContaining("lib@2.0.0 is affected by GHSA-repo, only in the project's repository advisories")]);
   });
 
+  it("notes an unreviewed advisory on the very version a reviewed fix moves, whether the move leaves it or not", async () => {
+    const note = "lib@1.0.0 is affected by GHSA-repo, only in the project's repository advisories (not corroborated by the sources this decision used): these advisories alone don't trigger an update";
+    for (const range of ["< 1.0.1", "< 2.0.0"]) {
+      const env = withRepositoryAdvisories(environment({ "lib@1.0.0": ["GHSA-a"] }, { lib: { "1.0.0": OLD, "1.0.1": OLD } }), [repositoryAdvisory("GHSA-repo", range)]);
+      const fixes = (await securityCandidates(await tree({ lib: "1.0.0" }), env)).fixes;
+      expect(moves(fixes)).toEqual([["lib@1.0.0", "1.0.1", undefined]]);
+      expect(fixes[0]?.notes).toEqual([note]);
+    }
+    // With the reviewed fix blocked, it's reported like the rest.
+    const blocked = withRepositoryAdvisories(environment({ "lib@1.0.0": ["GHSA-a"] }, { lib: { "1.0.0": OLD } }), [repositoryAdvisory("GHSA-repo", "< 2.0.0")]);
+    const reported = (await securityCandidates(await tree({ lib: "1.0.0" }), blocked)).fixes;
+    expect(reported.map((fix) => fix.problem)).toEqual([
+      expect.stringContaining("no version above 1.0.0 fixes"),
+      "lib@1.0.0 is affected by GHSA-repo, only in the project's repository advisories (not corroborated by the sources this decision used): no fix is proposed until a reviewed source lists it",
+    ]);
+  });
+
   it("lets one rule a candidate out, records the veto, and may steer to a young version", async () => {
     const registry = { lib: { "1.0.0": OLD, "1.0.1": OLD, "1.0.2": YESTERDAY } };
     const env = withRepositoryAdvisories(environment({ "lib@1.0.0": ["GHSA-a"] }, registry), [repositoryAdvisory("GHSA-b", ">= 1.0.1, < 1.0.2")]);
