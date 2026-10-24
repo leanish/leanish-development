@@ -114,6 +114,8 @@ jobs:
     const read = parseUses("steps:\n  - uses: acme/.github/deploy@v1\n  - uses: ./.github/actions/build\n", "ci.yml");
     expect(read.uses.map((use) => [use.name, use.path])).toEqual([["acme/.github", "deploy"]]);
     expect(read.local).toEqual(["./.github/actions/build"]);
+    // Outside a job or step such a value doesn't read as an action, so it's left alone as before.
+    expect(parseUses("env:\n  uses: acme/..@v1\nsteps:\n  - uses: acme/x@v1\n", "ci.yml").uses.map((use) => use.name)).toEqual(["acme/x"]);
   });
 });
 
