@@ -162,12 +162,13 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
    from the second attempt's problems, or from the first refusal's when that attempt couldn't apply or failed before
    its verification; the run report keeps the first (`rejected`). A review's adaptation is never
    restarted this way, since a restart from the base would lose it.
-7. **Publishes** draft PRs: `secure-it/<date>-security` for the routine, `secure-it/<date>-<package>-major` for each
-   major, or `secure-it/<date>-malware`. Each unit starts from the scanned base and publishes at most one new or
-   updated PR. A failed unit is reported and doesn't stop other major units. The tool appends the move table and the
-   hidden plan for later runs to the agent's description, and keeps local paths out of the title, description and
-   commit message ([`publication-text.ts`](../core/tool-runtime/src/publication-text.ts)). Multi-unit reports use `units`;
-   a single unit keeps its outcome at the top level too.
+7. **Publishes** draft PRs: `secure-it/<date>-security` for the routine, `secure-it/<date>-security-cooldown-<package>`
+   for each held group, `secure-it/<date>-<package>-major` for each major, or `secure-it/<date>-malware`. Each unit
+   starts from the scanned base and publishes at most one new or updated PR. A failed unit is reported and doesn't stop
+   other major units. The tool appends the move table and the hidden plan for later runs to the agent's description, and
+   keeps local paths out of the title, description and commit message
+   ([`publication-text.ts`](../core/tool-runtime/src/publication-text.ts)). Multi-unit reports use `units`; a single
+   unit keeps its outcome at the top level too.
 
 ## Removing redundant security floors
 
