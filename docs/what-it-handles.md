@@ -287,10 +287,11 @@ repository's own tests; they rely on the PR's CI. For a major, the agent links t
 release notes or changelog it read, or says it couldn't read them.
 
 Verification failures are different from CI failures. When verification refuses
-an edit the agent wrote, both tools ask the agent once more, from the base, with
-the refusal. When secure-it's own verification of a routine batch still fails,
-it retries once without the package groups named by the problems; malware and
-major fixes are never reduced.
+an edit the agent wrote for a new or updated plan, both tools ask the agent once
+more, from the base, with the refusal (a review's adaptation isn't restarted this
+way). When secure-it's own verification of a routine batch still fails, it
+retries once without the package groups named by the problems; malware and major
+fixes are never reduced.
 
 Order matters when not everything fits in one run. secure-it handles malware
 first, then fixes by highest severity. bump-it opens at most three new major PRs
