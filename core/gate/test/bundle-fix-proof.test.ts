@@ -243,6 +243,27 @@ describe("a young carrier proved as a bundled fix", () => {
     expect(alone[0]!.targets?.map((target) => target.name)).toEqual(["carrier"]);
   });
 
+  it("names a bundled group by the aliases a later candidate's scan learned", async () => {
+    // Only 1.0.5's bundle (read while searching) has the record linking the replaced copy's CVE to its GHSA.
+    const linking = (env: GateEnvironment): GateEnvironment => ({ ...env, run: async (command, args, options) => {
+      const result = await env.run(command, args, options);
+      if (command !== "osv-scanner" || args[0] === "--version") return result;
+      const output = JSON.parse(result.stdout) as { results: Array<{ packages: Array<{ package: { name: string; version: string }; vulnerabilities: object[] }> }> };
+      for (const entry of output.results[0]!.packages) {
+        if (entry.package.name === "brace" && entry.package.version === "5.0.11") entry.vulnerabilities = [{ id: "GHSA-b", aliases: ["CVE-B"], summary: "GHSA-b summary" }];
+      }
+      return { ...result, stdout: JSON.stringify(output) };
+    } });
+    const outcome = await compare({
+      "1.0.0": { published: OLD, bundles: VULNERABLE },
+      "1.0.5": { published: daysAgo(30), bundles: ["brace@5.0.11", "minimatch@10.2.5"] },
+      "1.1.0": { published: daysAgo(1), bundles: FIXED },
+    }, "1.0.0", "1.1.0", { affected: { "brace@5.0.9": ["CVE-B"] }, scan: linking, routes: { "https://registry.npmjs.org/brace/5.0.11": { body: {} } } });
+    expect(ageFailures(outcome.failures)).toEqual([]);
+    const held = outcome.cooldown.evaluated ? outcome.cooldown.held : [];
+    expect(held[0]!.targets).toEqual([{ name: "brace", bundled: true, replaced: ["5.0.9"], proposed: ["5.0.12"], groups: [{ ids: ["CVE-B", "GHSA-b"], replaced: ["5.0.9"] }] }]);
+  });
+
   it("doesn't prove a young dependency the carrier needs: that one fails the comparison (known limitation)", async () => {
     const outcome = await compare(TWO, "1.0.0", "1.1.0", {
       dependencies: { ext: "^2.0.0" },
