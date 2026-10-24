@@ -666,6 +666,35 @@ describe("secure-it run", () => {
     expect(h.workspace.publications).toHaveLength(1);
   });
 
+  it.each([
+    ["can't apply", "cannot-apply", [], "retry could not apply: no room"],
+    ["throws", "throw", [], "retry failed: agent crashed"],
+    ["leaves problems", "applied", ["vite at node_modules/vite is 8.3.2, not 8.3.3"], "vite at node_modules/vite is 8.3.2, not 8.3.3"],
+    ["can't evaluate the cooldown", "applied", "unevaluated", "the cooldown can't be evaluated: base's settings don't parse"],
+  ] as const)("keeps why asking again stopped when the reduced attempt %s", async (_case, reduced, reducedProblems, problem) => {
+    const refusal = "compare: new: left-pad@1.0.1: GHSA-new has no exception";
+    const h = harness({ fixes: [vite(), leftPad()] });
+    const deps = { ...h.deps, verify: async (input: VerifyInputs) => {
+      if (input.plan.packages.includes("npm|left-pad")) return [refusal];
+      if (reducedProblems !== "unevaluated") return [...reducedProblems];
+      input.cooldown?.({ evaluated: false, reason: "base's settings don't parse" });
+      return [];
+    } };
+    let calls = 0;
+    const context = { ...h.context, agent: (async (request: Parameters<ToolRunContext["agent"]>[0]) => {
+      if (++calls === 2) return { outcome: "cannot-apply", summary: "the floor needs a parent move" };
+      if (calls === 3 && reduced === "cannot-apply") return { outcome: "cannot-apply", summary: "no room" };
+      if (calls === 3 && reduced === "throw") throw new Error("agent crashed");
+      return h.context.agent(request);
+    }) as ToolRunContext["agent"] };
+    expect(await secureIt(deps).run(context)).toMatchObject({
+      outcome: "verification-failed", rejected: [refusal],
+      problems: [problem, "asked again with that refusal, the agent couldn't apply: the floor needs a parent move"],
+    });
+    expect(calls).toBe(3);
+    expect(h.workspace.publications).toEqual([]);
+  });
+
   it("keeps the first refusal when the reduced attempt throws", async () => {
     const h = harness({ fixes: [vite(), leftPad()], problems: ["compare: new: left-pad@1.0.1: GHSA-new has no exception"] });
     let calls = 0;

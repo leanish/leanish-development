@@ -45,8 +45,8 @@
 
 - The gate refuses a repository advisory list's next page off GitHub's API host instead of sending the token there,
   and reads at most 20 pages (either one fails the run, as an unreadable list does); a source repository named `.` or
-  `..` (in a manifest, a POM, the config or an action's own name) names none, so the repository advisory lookup
-  can't walk the API path the token is sent to.
+  `..` (in a manifest, a POM or the config) names none, and a remote action whose owner or repo is `.` or `..` can't
+  be read (`uses:`), so no lookup walks the API path the token is sent to.
 
 ## 0.7.5 - 2026-10-23
 

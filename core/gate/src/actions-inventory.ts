@@ -15,6 +15,7 @@
 import { isAlias, isMap, isScalar, isSeq, parseDocument } from "yaml";
 
 import type { ActionsGitHub } from "./actions-github.ts";
+import { isDotSegment } from "./source-repos.ts";
 import type { Tree } from "./tree.ts";
 
 export interface ActionUse {
@@ -93,7 +94,8 @@ export function parseUses(text: string, file: string): { uses: ActionUse[]; loca
     else if (value.startsWith("docker://")) docker.push(`${value} (${file})`);
     else {
       const match = USES.exec(value);
-      if (match === null) throw new Error(`${file}: can't read \`uses: ${value}\``);
+      // A `.` or `..` owner or repo names no action, and would walk every API path the token is sent to.
+      if (match === null || isDotSegment(match[1]!) || isDotSegment(match[2]!)) throw new Error(`${file}: can't read \`uses: ${value}\``);
       uses.push({ name: `${match[1]}/${match[2]}`.toLowerCase(), path: match[3]?.slice(1), ref: match[4]!, comment, file });
     }
   };

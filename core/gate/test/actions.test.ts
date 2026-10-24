@@ -105,6 +105,16 @@ jobs:
     expect(() => parseUses("steps:\n  - uses: not-an-action\n", "odd.yml")).toThrow("odd.yml: can't read `uses: not-an-action`");
     expect(() => parseUses("steps:\n  - uses: [a]\n", "odd.yml")).toThrow("odd.yml: a `uses:` isn't a string");
   });
+
+  it("can't read a remote action whose owner or repo is `.` or `..`, but reads dot-led names and local actions", () => {
+    const sha = "a".repeat(40);
+    for (const value of [`../..@${sha}`, "acme/..@v1", "acme/.@v1", "../checkout@v1"]) {
+      expect(() => parseUses(`steps:\n  - uses: ${value}\n`, "odd.yml")).toThrow(`odd.yml: can't read \`uses: ${value}\``);
+    }
+    const read = parseUses("steps:\n  - uses: acme/.github/deploy@v1\n  - uses: ./.github/actions/build\n", "ci.yml");
+    expect(read.uses.map((use) => [use.name, use.path])).toEqual([["acme/.github", "deploy"]]);
+    expect(read.local).toEqual(["./.github/actions/build"]);
+  });
 });
 
 describe("resolving uses", () => {

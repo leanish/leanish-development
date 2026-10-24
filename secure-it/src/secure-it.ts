@@ -606,9 +606,10 @@ async function verifyWithRetry(execution: Execution, base: PlanBase, plan: Chang
         unverified = `the agent couldn't apply: ${again.summary}`;
       } else {
         assertNoPlanMarker(again.publication.body);
-        content = again.publication;
         cooldown = undefined;
         problems = await verifyEdit(context, deps, plan, env, inventories, base.tree, base.gradle, execution.npmFiles, heard);
+        // Only once verified, so the problems and the publication are always the same attempt's.
+        content = again.publication;
       }
     } catch (error) {
       unverified = `the attempt failed: ${error instanceof Error ? error.message : String(error)}`;
@@ -620,12 +621,11 @@ async function verifyWithRetry(execution: Execution, base: PlanBase, plan: Chang
       return withCooldown(env, base.tree, { plan, content, problems, named: [], leftOut: plan.leftOut ?? [], ...rejected }, cooldown);
     }
   }
+  // A failed outcome keeps what stopped the attempt with the refusal; a passing one is never touched.
+  const noted = (batch: VerifiedBatch): VerifiedBatch =>
+    unverified === undefined || batch.problems.length === 0 ? batch : { ...batch, problems: [...batch.problems, `asked again with that refusal, ${unverified}`] };
   const retry = retryWithoutNamed(plan, problems);
-  if (retry.plan === undefined) {
-    // The report keeps the refusal that started the retry, and what stopped the attempt with it.
-    const reported = unverified === undefined ? problems : [...problems, `asked again with that refusal, ${unverified}`];
-    return { plan, content, problems: reported, named: retry.named, leftOut: retry.leftOut, ...rejected };
-  }
+  if (retry.plan === undefined) return noted({ plan, content, problems, named: retry.named, leftOut: retry.leftOut, ...rejected });
   context.logger.warn("secure-it: retrying the routine without named package groups", { leftOut: retry.leftOut });
   let answer: SkillAnswer;
   let remaining: string[];
@@ -635,7 +635,7 @@ async function verifyWithRetry(execution: Execution, base: PlanBase, plan: Chang
       entrypoint: "secure-it", input: await agentInput(execution, retry.plan, base.tree, "apply"),
     });
     if (answer.outcome !== "applied" || answer.publication == null) {
-      return { plan: retry.plan, content, problems: [`retry could not apply: ${answer.summary}`], named: retry.named, leftOut: retry.plan.leftOut ?? [], ...rejected };
+      return noted({ plan: retry.plan, content, problems: [`retry could not apply: ${answer.summary}`], named: retry.named, leftOut: retry.plan.leftOut ?? [], ...rejected });
     }
     assertNoPlanMarker(answer.publication.body);
     cooldown = undefined;
@@ -643,10 +643,10 @@ async function verifyWithRetry(execution: Execution, base: PlanBase, plan: Chang
   } catch (error) {
     // After a feedback attempt, the report keeps its refusal whatever stopped the reduced one; otherwise as before.
     if (rejected.rejected === undefined) throw error;
-    return { plan: retry.plan, content, problems: [`retry failed: ${error instanceof Error ? error.message : String(error)}`], named: retry.named, leftOut: retry.plan.leftOut ?? [], ...rejected };
+    return noted({ plan: retry.plan, content, problems: [`retry failed: ${error instanceof Error ? error.message : String(error)}`], named: retry.named, leftOut: retry.plan.leftOut ?? [], ...rejected });
   }
   const batch = { plan: retry.plan, content: answer.publication!, problems: remaining, named: [...retry.named, ...namedProblems(retry.plan, remaining)], leftOut: retry.plan.leftOut ?? [], ...rejected };
-  return remaining.length === 0 ? withCooldown(env, base.tree, batch, cooldown) : batch;
+  return noted(remaining.length === 0 ? await withCooldown(env, base.tree, batch, cooldown) : batch);
 }
 
 /**
