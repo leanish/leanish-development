@@ -146,6 +146,19 @@ describe("the advisory notice on a held PR", () => {
     expect(advisoryNotice([hold({ evidence: reviewed })], { table: false })).toEqual({ paragraphs: [REVIEWED], details: [TABLE_LEFT_OUT] });
   });
 
+  it("keeps the table-less notice bounded with every shown field at its worst", () => {
+    // Names and versions that escape to twice their length, and astral characters that take two UTF-16 units.
+    const long = (i: number, length: number) => `${i}|😀`.repeat(length);
+    const proposed = Array.from({ length: 400 }, (_, i) => long(i, 500));
+    const differing = Array.from({ length: 25 }, (_, i) => hold({ ecosystem: "npm", name: long(i, 500), version: long(i, 500), justification: "bundle-fix",
+      evidence: evidence([checked("repository"), checked("github"), checked("osv")], { ecosystem: "npm", name: long(i, 500), bundled: true, replaced: ["5.0.9"], proposed }) }));
+    const unchecked = Array.from({ length: 25 }, (_, i) => hold({ name: long(i + 100, 500), version: long(i, 500), evidenceFailure: long(i, 500) }));
+    const notice = advisoryNotice([...differing, ...unchecked], { table: false });
+    expect(notice.paragraphs).toHaveLength(2);
+    expect([...notice.paragraphs, ...notice.details].join("\n").length).toBeLessThan(40_000);
+    expect(notice.details.at(-1)).toBe("- and 15 more");
+  });
+
   it("opens the cooldown warning with the paragraphs and puts the table after the holds", () => {
     const warning = cooldownWarning([hold({ evidence: reviewed })])!;
     const lines = warning.split("\n");

@@ -29,11 +29,16 @@ export const NOT_RECORDED = "not recorded for this plan";
 /** Where the table went when it was left out; the plan's block keeps the evidence either way. */
 export const TABLE_LEFT_OUT = "The table of where each advisory appears is left out: with it, this PR's body would exceed GitHub's limit. The plan's block keeps all of it.";
 
-/** The ⚠ packages named in place of the table's rows, the unchecked fixes listed, and a reason's length (in characters), before the rest is counted. */
+/**
+ * What the notice shows without its table, so the warning stays bounded: the ⚠ moves named and each one's proposed
+ * versions, the unchecked fixes listed, and the length (in characters) of a reason, a name and a version shown.
+ */
 const NAMED_LIMIT = 20;
 const VERSIONS_SHOWN = 3;
 const LISTED_LIMIT = 10;
 const REASON_LIMIT = 300;
+const NAME_LIMIT = 120;
+const VERSION_LIMIT = 40;
 
 const JUSTIFIED = new Set<PlannedHold["justification"]>(["security-fix", "bundle-fix"]);
 const COLUMNS: ReadonlyArray<SourceEvidence["source"]> = ["repository", "github", "osv"];
@@ -53,7 +58,7 @@ export function advisoryNotice(held: ReadonlyArray<PlannedHold>, options: { read
   const table = options.table ?? true;
   const fixes = held.filter((entry) => JUSTIFIED.has(entry.justification));
   const rows = fixes.flatMap((entry) => (entry.evidence?.targets ?? []).flatMap((target) => target.groups.map((group) => ({ entry, target, group }))));
-  const unchecked = fixes.flatMap((entry) => uncheckedOf(entry).map((reason) => `- ${cell(entry.name)}@${cell(entry.version)}: ${bounded(reason)}`));
+  const unchecked = fixes.flatMap((entry) => uncheckedOf(entry).map((reason) => `- ${bounded(entry.name, NAME_LIMIT)}@${bounded(entry.version, VERSION_LIMIT)}: ${bounded(reason, REASON_LIMIT)}`));
   const differing = rows.filter(({ target, group }) => !backed(target, group));
   const paragraphs: string[] = [];
   if (differing.length > 0) paragraphs.push(table ? EVIDENCE_DIFFERS : differsFor(differing));
@@ -83,7 +88,8 @@ function uncheckedOf(entry: PlannedHold): string[] {
   if (entry.evidenceFailure !== undefined) return [entry.evidenceFailure];
   if (entry.evidence === undefined) return [NOT_RECORDED];
   if (entry.evidence.targets.length === 0) return ["no advisory recorded for it"];
-  return entry.evidence.targets.filter((target) => target.groups.length === 0).map((target) => `no advisory recorded for \`${cell(target.name)}\``);
+  // Unescaped: the reason is bounded and escaped once where it's shown.
+  return entry.evidence.targets.filter((target) => target.groups.length === 0).map((target) => `no advisory recorded for \`${target.name}\``);
 }
 
 /**
@@ -94,18 +100,19 @@ function differsFor(rows: ReadonlyArray<{ readonly entry: PlannedHold; readonly 
   const names = [...new Set(rows.map(({ entry, target }) => {
     // A bundle can propose hundreds of versions: a few are shown, the rest counted (the plan's block has them all).
     const more = target.proposed.length > VERSIONS_SHOWN ? ` (+${target.proposed.length - VERSIONS_SHOWN})` : "";
-    const to = target.proposed.length === 0 ? "removed" : `${target.proposed.slice(0, VERSIONS_SHOWN).map(cell).join(", ")}${more}`;
-    return `\`${cell(target.name)}\` → ${to}${target.bundled ? ` (bundled in \`${cell(entry.name)}\` ${cell(entry.version)})` : ""}`;
+    const to = target.proposed.length === 0 ? "removed" : `${target.proposed.slice(0, VERSIONS_SHOWN).map((version) => bounded(version, VERSION_LIMIT)).join(", ")}${more}`;
+    const carrier = target.bundled ? ` (bundled in \`${bounded(entry.name, NAME_LIMIT)}\` ${bounded(entry.version, VERSION_LIMIT)})` : "";
+    return `\`${bounded(target.name, NAME_LIMIT)}\` → ${to}${carrier}`;
   }))];
   const shown = names.slice(0, NAMED_LIMIT).join("; ");
   const more = names.length > NAMED_LIMIT ? ` and ${names.length - NAMED_LIMIT} more` : "";
   return `**The reviewed advisories read after the comparison don't back this fix as the comparison did** for ${shown}${more}: no reviewed record (OSV, or GitHub's reviewed advisory database) lists the replaced versions as affected and the proposed one as not, or one was withdrawn or couldn't be read. The comparison's verdict stands; look into these before taking this early.`;
 }
 
-/** At most REASON_LIMIT characters, cut by code point before escaping, so no surrogate pair or `\|` is split. */
-function bounded(reason: string): string {
-  const characters = Array.from(reason.replace(/\s+/g, " "));
-  return characters.length <= REASON_LIMIT ? cell(reason) : `${cell(characters.slice(0, REASON_LIMIT).join(""))}…`;
+/** `text` escaped for a cell, at most `limit` characters, cut by code point before escaping, so no surrogate pair or `\|` is split. */
+function bounded(text: string, limit: number): string {
+  const characters = Array.from(text.replace(/\s+/g, " "));
+  return characters.length <= limit ? cell(text) : `${cell(characters.slice(0, limit).join(""))}…`;
 }
 
 /** Some reviewed record, read now, still backs the fix the comparison proved: OSV's, or a GitHub-reviewed one. */
