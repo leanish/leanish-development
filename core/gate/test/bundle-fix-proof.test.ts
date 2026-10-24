@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { affectedVersions } from "../src/bundle-fix-proof.ts";
+import { groupIds, mergedTargets } from "../src/release-age.ts";
 import { type GateEnvironment, runCompare } from "../src/gate.ts";
 import { runProcess, type RunProcess } from "../src/process.ts";
 import { type Advisory, Snapshot } from "../src/snapshot.ts";
@@ -225,6 +226,44 @@ describe("a young carrier proved as a bundled fix", () => {
     expect(outcome.cooldown).toMatchObject({ held: [expect.objectContaining({ version: "1.2.0", justification: "bundle-fix" })] });
   });
 
+  it("holds a carrier proved both ways with its own and its bundle's targets, its own once", async () => {
+    const outcome = await compare({ "1.0.0": { published: OLD, bundles: VULNERABLE }, "1.1.0": { published: daysAgo(1), bundles: FIXED } }, "1.0.0", "1.1.0",
+      { affected: { "brace@5.0.9": ["GHSA-brace"], "carrier@1.0.0": ["GHSA-own"] } });
+    expect(ageFailures(outcome.failures)).toEqual([]);
+    const held = outcome.cooldown.evaluated ? outcome.cooldown.held : [];
+    expect(held).toMatchObject([{ version: "1.1.0", justification: "security-fix" }]);
+    expect(held[0]!.targets?.map((target) => [target.name, target.bundled, target.groups.map((group) => group.ids)])).toEqual([
+      ["carrier", false, [["GHSA-own"]]],
+      ["brace", true, [["GHSA-brace"]]],
+    ]);
+    // A bundle that drops nothing proves nothing: the carrier's own fix alone is held.
+    const own = await compare({ "1.0.0": { published: OLD, bundles: VULNERABLE }, "1.1.0": { published: daysAgo(1), bundles: VULNERABLE } }, "1.0.0", "1.1.0",
+      { affected: { "brace@5.0.9": ["GHSA-brace"], "carrier@1.0.0": ["GHSA-own"] } });
+    const alone = own.cooldown.evaluated ? own.cooldown.held : [];
+    expect(alone[0]!.targets?.map((target) => target.name)).toEqual(["carrier"]);
+  });
+
+  it("names a bundled group by the aliases a later candidate's scan learned", async () => {
+    // Only 1.0.5's bundle (read while searching) has the record linking the replaced copy's CVE to its GHSA.
+    const linking = (env: GateEnvironment): GateEnvironment => ({ ...env, run: async (command, args, options) => {
+      const result = await env.run(command, args, options);
+      if (command !== "osv-scanner" || args[0] === "--version") return result;
+      const output = JSON.parse(result.stdout) as { results: Array<{ packages: Array<{ package: { name: string; version: string }; vulnerabilities: object[] }> }> };
+      for (const entry of output.results[0]!.packages) {
+        if (entry.package.name === "brace" && entry.package.version === "5.0.11") entry.vulnerabilities = [{ id: "GHSA-b", aliases: ["CVE-B"], summary: "GHSA-b summary" }];
+      }
+      return { ...result, stdout: JSON.stringify(output) };
+    } });
+    const outcome = await compare({
+      "1.0.0": { published: OLD, bundles: VULNERABLE },
+      "1.0.5": { published: daysAgo(30), bundles: ["brace@5.0.11", "minimatch@10.2.5"] },
+      "1.1.0": { published: daysAgo(1), bundles: FIXED },
+    }, "1.0.0", "1.1.0", { affected: { "brace@5.0.9": ["CVE-B"] }, scan: linking, routes: { "https://registry.npmjs.org/brace/5.0.11": { body: {} } } });
+    expect(ageFailures(outcome.failures)).toEqual([]);
+    const held = outcome.cooldown.evaluated ? outcome.cooldown.held : [];
+    expect(held[0]!.targets).toEqual([{ name: "brace", bundled: true, replaced: ["5.0.9"], proposed: ["5.0.12"], groups: [{ ids: ["CVE-B", "GHSA-b"], replaced: ["5.0.9"] }] }]);
+  });
+
   it("doesn't prove a young dependency the carrier needs: that one fails the comparison (known limitation)", async () => {
     const outcome = await compare(TWO, "1.0.0", "1.1.0", {
       dependencies: { ext: "^2.0.0" },
@@ -242,6 +281,32 @@ describe("a young carrier proved as a bundled fix", () => {
     const other = archive([{ path: "package/package.json", body: manifest("carrier", "1.1.0") }]).integrity;
     const outcome = await compare({ "1.0.0": { published: OLD, bundles: VULNERABLE }, "1.1.0": { published: daysAgo(1), bundles: FIXED } }, "1.0.0", "1.1.0", { headIntegrity: other });
     expect(ageFailures(outcome.failures)).toEqual([expect.stringContaining("isn't the registry's archive")]);
+  });
+});
+
+describe("a held fix's advisory groups", () => {
+  const advisory = (id: string, ids: string[]): Advisory => ({ id, ids, source: "osv", malicious: false, summary: undefined, severity: undefined });
+
+  it("carry every alias the package's own advisories name, another version's included, not another package's", () => {
+    // 5.0.9's own record names only its CVE; another scanned version's links it to a GHSA. Another package's advisory in
+    // the same alias group (sharing the GHSA) is another advisory: its CVE stays out of brace's row.
+    const snapshot = new Snapshot(new Map([
+      ["npm|brace|5.0.9", [advisory("CVE-1", ["CVE-1"])]],
+      ["npm|brace|5.0.10", [advisory("GHSA-x", ["GHSA-x", "CVE-1"])]],
+      ["npm|other|1.0.0", [advisory("CVE-2", ["CVE-2", "GHSA-x"])]],
+    ]), [], new Date(0));
+    const brace = { ecosystem: "npm", name: "brace" } as const;
+    expect(snapshot.aliases("CVE-1", brace)).toEqual(["CVE-1", "GHSA-x"]);
+    expect(snapshot.aliases("CVE-1", { ecosystem: "npm", name: "other" })).toEqual(["CVE-2", "GHSA-x"]);
+    expect(snapshot.aliases("GHSA-unknown", brace)).toEqual([]);
+    expect(groupIds(snapshot, [{ ...brace, version: "5.0.9" }], () => true)).toEqual([{ ids: ["CVE-1", "GHSA-x"], replaced: ["5.0.9"] }]);
+  });
+
+  it("merge when proofs name a group by different aliases", () => {
+    const target = (ids: string[], replaced: string) => ({ name: "carrier", bundled: false, replaced: [replaced], proposed: ["1.1.0"], groups: [{ ids, replaced: [replaced] }] });
+    expect(mergedTargets([target(["CVE-1"], "1.0.0"), target(["CVE-1", "GHSA-x"], "1.0.1")])).toEqual([
+      { name: "carrier", bundled: false, replaced: ["1.0.0", "1.0.1"], proposed: ["1.1.0"], groups: [{ ids: ["CVE-1", "GHSA-x"], replaced: ["1.0.0", "1.0.1"] }] },
+    ]);
   });
 });
 

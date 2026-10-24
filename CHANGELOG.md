@@ -46,6 +46,10 @@
 
 ### Fixed
 
+- The evidence in secure-it's cooldown warning covers every advisory a held fix brings: a young carrier proved both as
+  the fix for its own advisory and for its bundle's now lists both, and each advisory group carries every alias the
+  package's own records name (another version's record linking a CVE to its GHSA included), so a backed fix isn't
+  flagged as having no GHSA id, and the "every advisory is backed" line no longer leaves a bundled one unchecked.
 - No text a tool writes in a PR body can carry a plan block of its own any more: bump-it's and secure-it's plan
   sections, secure-it's cooldown warning and every published body defuse any `<!-- leanish:plan` they quote (from an
   advisory, a name, an error or a cleaned path), and replacing a body's state markers never joins the text around
