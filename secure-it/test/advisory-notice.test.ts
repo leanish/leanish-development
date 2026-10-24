@@ -139,6 +139,14 @@ describe("the advisory notice on a held PR", () => {
     const compact = advisoryNotice(carriers, { table: false }).paragraphs[0]!;
     expect(compact).toContain("`brace` → 5.1.399, 5.1.398, 5.1.397 (+397 older) (bundled in `carrier0` 1.1.0)");
     expect(compact.length).toBeLessThan(3_000);
+    // A version the scheme can't read leaves the text order, and the rest aren't called older.
+    const unordered = evidence([checked("repository"), checked("github"), checked("osv")], { ecosystem: "npm", name: "brace", bundled: true, replaced: ["5.0.9"], proposed: ["1.9.0", "x", "1.10.0", "99.0.0"] });
+    expect(advisoryNotice([hold({ ecosystem: "npm", name: "carrier", version: "1.1.0", justification: "bundle-fix", evidence: unordered })], { table: false }).paragraphs[0])
+      .toContain("`brace` → 1.10.0, 1.9.0, 99.0.0 (+1 more, not in version order)");
+    // The same set stored in another order, ties of equal precedence included, is one move.
+    const maven = (proposed: string[]) => hold({ evidence: evidence([checked("repository", [record()]), checked("github"), checked("osv")], { proposed }) });
+    expect(advisoryNotice([maven(["1.0", "1.0.0", "2.0"]), maven(["2.0", "1.0.0", "1.0"])], { table: false }).paragraphs[0])
+      .toContain("for `tools.jackson.core:jackson-databind` → 2.0, 1.0, 1.0.0:");
     // Past 20 moves the rest are counted, not named.
     const many = Array.from({ length: 23 }, (_, i) => hold({ name: `g:lib${i}`, evidence: evidence([checked("repository", [record()]), checked("github"), checked("osv")], { name: `g:lib${i}` }) }));
     const counted = advisoryNotice(many, { table: false }).paragraphs[0]!;

@@ -102,12 +102,13 @@ function differsFor(rows: ReadonlyArray<{ readonly entry: PlannedHold; readonly 
   // Told apart by the whole move, shown cut: two long names alike for their first characters are still two moves.
   const moves = new Map<string, string>();
   for (const { entry, target } of rows) {
-    const proposed = newestFirst(target);
-    const identity = JSON.stringify([target.name, proposed, target.bundled ? [entry.name, entry.version] : null]);
+    // Sorted as text, so the same set is one move whatever order it was stored in; versions only shown are ordered below.
+    const identity = JSON.stringify([target.name, [...target.proposed].sort(), target.bundled ? [entry.name, entry.version] : null]);
     if (moves.has(identity)) continue;
     // A bundle can propose hundreds of versions: the newest few are shown, the rest counted (the plan's block has them all).
-    const more = proposed.length > VERSIONS_SHOWN ? ` (+${proposed.length - VERSIONS_SHOWN} older)` : "";
-    const to = proposed.length === 0 ? "removed" : `${proposed.slice(0, VERSIONS_SHOWN).map((version) => bounded(version, VERSION_LIMIT)).join(", ")}${more}`;
+    const { versions, rest } = newestFirst(target);
+    const more = versions.length > VERSIONS_SHOWN ? ` (+${versions.length - VERSIONS_SHOWN} ${rest})` : "";
+    const to = versions.length === 0 ? "removed" : `${versions.slice(0, VERSIONS_SHOWN).map((version) => bounded(version, VERSION_LIMIT)).join(", ")}${more}`;
     const carrier = target.bundled ? ` (bundled in \`${bounded(entry.name, NAME_LIMIT)}\` ${bounded(entry.version, VERSION_LIMIT)})` : "";
     moves.set(identity, `\`${bounded(target.name, NAME_LIMIT)}\` → ${to}${carrier}`);
   }
@@ -119,14 +120,16 @@ function differsFor(rows: ReadonlyArray<{ readonly entry: PlannedHold; readonly 
 
 /**
  * The proposed versions by the ecosystem's order, newest first: the stored lists are sorted as text (1.10.0 before
- * 1.9.0). One the scheme can't read leaves the stored order, which only changes which few are shown.
+ * 1.9.0), and versions of equal precedence (Maven's 1.0 and 1.0.0) stay as text sorts them. One the scheme can't
+ * read leaves the text order, and the rest are then counted without calling them older.
  */
-function newestFirst(target: TargetEvidence): ReadonlyArray<string> {
+function newestFirst(target: TargetEvidence): { readonly versions: ReadonlyArray<string>; readonly rest: string } {
   const scheme = versionScheme(target.ecosystem);
+  const text = [...target.proposed].sort();
   try {
-    return [...target.proposed].sort((a, b) => scheme.compare(b, a));
+    return { versions: text.sort((a, b) => scheme.compare(b, a)), rest: "older" };
   } catch {
-    return target.proposed;
+    return { versions: [...target.proposed].sort(), rest: "more, not in version order" };
   }
 }
 
