@@ -263,8 +263,8 @@ stands either way. A fix's targets are reviewed advisories by the time it's prop
 [the gate's rules](../core/gate/README.md#how-each-source-counts).
 
 When the table would push the PR body past GitHub's limit, only the table is left out, with a line saying so: the
-plan's block keeps the whole evidence, the ⚠ packages are named in the opening line, each with its newest proposed versions, and the rest of the
-warning stays.
+plan's block keeps the whole evidence, the ⚠ packages are named in the opening line, each with its newest proposed
+versions, and the rest of the warning stays.
 
 The agent never writes any of this.
 
