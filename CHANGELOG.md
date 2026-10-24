@@ -31,8 +31,10 @@
   dependency's own repository advisories, GitHub's database and OSV, each read after the verification and shown as
   that source says (its declared fix, and whether its ranges put each replaced and proposed version among the affected
   ones). A fixed line opens the warning: that a reviewed record (OSV, or GitHub's reviewed database) still backs every
-  fix as read now, or, marking the rows, that none does for some. A lookup that fails is shown as such, never as "not
-  found". The gate's comparison report records, for each held fix,
+  fix as read now, or, marking the rows, that none does for some; a fix it couldn't check gets its own line and is
+  listed. A lookup that fails is shown as such, never as "not found". When the table would push the PR body past
+  GitHub's limit, only the table is left out, with a line saying so, and the plan's block keeps the evidence. The
+  gate's comparison report records, for each held fix,
   the advisories behind it (`targets`); nothing in the evidence changes a verdict.
 - When verification refuses an edit the agent wrote, bump-it and secure-it now ask the agent once more, from the base,
   with the refusal (`rejected` in the skill input). In bump-it a second refusal fails the unit as before; in secure-it

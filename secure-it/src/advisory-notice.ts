@@ -11,6 +11,7 @@
  * affected among the affected ones and none of the proposed versions.
  */
 import { backsFix, type EvidenceRecord, type GroupEvidence, type SourceEvidence, type TargetEvidence } from "@leanish/gate/advisory-evidence";
+import { versionScheme } from "@leanish/gate/versions";
 
 import type { PlannedHold } from "./plan.ts";
 
@@ -20,7 +21,26 @@ export const REVIEWED =
 export const EVIDENCE_DIFFERS =
   "**The reviewed advisories read after the comparison don't back this fix as the comparison did.** For the rows marked ⚠ below, no reviewed record (OSV, or GitHub's reviewed advisory database) lists the replaced versions as affected and the proposed one as not, or one was withdrawn or couldn't be read. The comparison's verdict stands; check the table before taking this early.";
 
-export const NOT_RECORDED = "Where these advisories appear wasn't recorded for this plan.";
+export const INCOMPLETE =
+  "**Some of these fixes couldn't be checked**, as listed below, so this notice can't say a reviewed record still backs every fix. The comparison's verdict stands; check those before taking this early.";
+
+/** Why a fix's evidence is missing, for the list INCOMPLETE points to. */
+export const NOT_RECORDED = "not recorded for this plan";
+
+/** Where the table went when it was left out; the plan's block keeps the evidence either way. */
+export const TABLE_LEFT_OUT = "The table of where each advisory appears is left out: with it, this PR's body would exceed GitHub's limit. The plan's block keeps all of it.";
+
+/**
+ * What the notice shows without its table, so the notice itself stays bounded (the warning's hold rows are as before):
+ * the ⚠ moves named and each one's proposed versions, the unchecked fixes listed, and the length (in characters) of a
+ * reason, a name and a version shown.
+ */
+const NAMED_LIMIT = 20;
+const VERSIONS_SHOWN = 3;
+const LISTED_LIMIT = 10;
+const REASON_LIMIT = 300;
+const NAME_LIMIT = 120;
+const VERSION_LIMIT = 40;
 
 const JUSTIFIED = new Set<PlannedHold["justification"]>(["security-fix", "bundle-fix"]);
 const COLUMNS: ReadonlyArray<SourceEvidence["source"]> = ["repository", "github", "osv"];
@@ -31,15 +51,24 @@ export interface AdvisoryNotice {
   readonly details: ReadonlyArray<string>;
 }
 
-/** Empty when no hold is a security or bundle fix. */
-export function advisoryNotice(held: ReadonlyArray<PlannedHold>): AdvisoryNotice {
+/**
+ * Empty when no hold is a security or bundle fix. Each claim covers every fix: one whose evidence failed, wasn't
+ * recorded, or has a target with no advisory group is unchecked, so the notice never says all are backed. Without
+ * `table`, the rows give way (the PR body is too long) and the ⚠ packages are named instead.
+ */
+export function advisoryNotice(held: ReadonlyArray<PlannedHold>, options: { readonly table?: boolean } = {}): AdvisoryNotice {
+  const table = options.table ?? true;
   const fixes = held.filter((entry) => JUSTIFIED.has(entry.justification));
   const rows = fixes.flatMap((entry) => (entry.evidence?.targets ?? []).flatMap((target) => target.groups.map((group) => ({ entry, target, group }))));
+  const unchecked = fixes.flatMap((entry) => uncheckedOf(entry).map((reason) => `- ${bounded(entry.name, NAME_LIMIT)}@${bounded(entry.version, VERSION_LIMIT)}: ${bounded(reason, REASON_LIMIT)}`));
+  const differing = rows.filter(({ target, group }) => !backed(target, group));
   const paragraphs: string[] = [];
-  if (rows.some(({ target, group }) => !backed(target, group))) paragraphs.push(EVIDENCE_DIFFERS);
-  else if (rows.length > 0) paragraphs.push(REVIEWED);
+  if (differing.length > 0) paragraphs.push(table ? EVIDENCE_DIFFERS : differsFor(differing));
+  if (unchecked.length > 0) paragraphs.push(INCOMPLETE);
+  if (paragraphs.length === 0 && rows.length > 0) paragraphs.push(REVIEWED);
   const details: string[] = [];
-  if (rows.length > 0) {
+  if (rows.length > 0 && !table) details.push(TABLE_LEFT_OUT);
+  if (rows.length > 0 && table) {
     const collected = fixes.flatMap((entry) => (entry.evidence === undefined ? [] : [entry.evidence.collectedAt])).sort()[0]!;
     details.push(`**Where the advisories behind these versions appear**, as read during this verification (${collected.slice(0, 10)} ${collected.slice(11, 16)} UTC), each source as it says:`, "");
     details.push("| Advisory | Package | Project's repository | GitHub database | OSV |", "|---|---|---|---|---|");
@@ -49,10 +78,65 @@ export function advisoryNotice(held: ReadonlyArray<PlannedHold>): AdvisoryNotice
       details.push(`| ${mark}${cell(group.ids.join(", "))} | ${packageCell(entry, group, target)} | ${sources.join(" | ")} |`);
     }
   }
-  const failures = fixes.flatMap((entry) => (entry.evidenceFailure === undefined ? [] : [`- ${entry.name}@${entry.version}: ${cell(entry.evidenceFailure)}`]));
-  if (failures.length > 0) details.push(...(details.length === 0 ? [] : [""]), "Where these advisories appear couldn't be read for:", ...failures);
-  if (fixes.some((entry) => entry.evidence === undefined && entry.evidenceFailure === undefined)) details.push(...(details.length === 0 ? [] : [""]), NOT_RECORDED);
+  if (unchecked.length > 0) {
+    const more = unchecked.length > LISTED_LIMIT ? [`- and ${unchecked.length - LISTED_LIMIT} more`] : [];
+    details.push(...(details.length === 0 ? [] : [""]), "These fixes couldn't be checked:", ...unchecked.slice(0, LISTED_LIMIT), ...more);
+  }
   return { paragraphs, details };
+}
+
+/** Why a fix's evidence doesn't cover it: none at all, or a target the evidence has no advisory group for. */
+function uncheckedOf(entry: PlannedHold): string[] {
+  if (entry.evidenceFailure !== undefined) return [entry.evidenceFailure];
+  if (entry.evidence === undefined) return [NOT_RECORDED];
+  if (entry.evidence.targets.length === 0) return ["no advisory recorded for it"];
+  // Unescaped: the reason is bounded and escaped once where it's shown.
+  return entry.evidence.targets.filter((target) => target.groups.length === 0).map((target) => `no advisory recorded for \`${target.name}\``);
+}
+
+/**
+ * EVIDENCE_DIFFERS without the table it points to: the ⚠ moves, each named once by the version it proposes, not by
+ * the versions it replaces (a package's groups can each list hundreds); a bundled one with its carrier.
+ */
+function differsFor(rows: ReadonlyArray<{ readonly entry: PlannedHold; readonly target: TargetEvidence; readonly group: GroupEvidence }>): string {
+  // Told apart by the whole move, shown cut: two long names alike for their first characters are still two moves.
+  const moves = new Map<string, string>();
+  for (const { entry, target } of rows) {
+    // Sorted as text, so the same set is one move whatever order it was stored in; versions only shown are ordered below.
+    const identity = JSON.stringify([target.name, [...target.proposed].sort(), target.bundled ? [entry.name, entry.version] : null]);
+    if (moves.has(identity)) continue;
+    // A bundle can propose hundreds of versions: the newest few are shown, the rest counted (the plan's block has them all).
+    const { versions, rest } = newestFirst(target);
+    const more = versions.length > VERSIONS_SHOWN ? ` (+${versions.length - VERSIONS_SHOWN} ${rest})` : "";
+    const to = versions.length === 0 ? "removed" : `${versions.slice(0, VERSIONS_SHOWN).map((version) => bounded(version, VERSION_LIMIT)).join(", ")}${more}`;
+    const carrier = target.bundled ? ` (bundled in \`${bounded(entry.name, NAME_LIMIT)}\` ${bounded(entry.version, VERSION_LIMIT)})` : "";
+    moves.set(identity, `\`${bounded(target.name, NAME_LIMIT)}\` → ${to}${carrier}`);
+  }
+  const names = [...moves.values()];
+  const shown = names.slice(0, NAMED_LIMIT).join("; ");
+  const more = names.length > NAMED_LIMIT ? ` and ${names.length - NAMED_LIMIT} more` : "";
+  return `**The reviewed advisories read after the comparison don't back this fix as the comparison did** for ${shown}${more}: no reviewed record (OSV, or GitHub's reviewed advisory database) lists the replaced versions as affected and the proposed one as not, or one was withdrawn or couldn't be read. The comparison's verdict stands; look into these before taking this early.`;
+}
+
+/**
+ * The proposed versions by the ecosystem's order, newest first: the stored lists are sorted as text (1.10.0 before
+ * 1.9.0), and versions of equal precedence (Maven's 1.0 and 1.0.0) stay as text sorts them. One the scheme can't
+ * read leaves the text order, and the rest are then counted without calling them older.
+ */
+function newestFirst(target: TargetEvidence): { readonly versions: ReadonlyArray<string>; readonly rest: string } {
+  const scheme = versionScheme(target.ecosystem);
+  const text = [...target.proposed].sort();
+  try {
+    return { versions: text.sort((a, b) => scheme.compare(b, a)), rest: "older" };
+  } catch {
+    return { versions: [...target.proposed].sort(), rest: "more, not in version order" };
+  }
+}
+
+/** `text` escaped for a cell, at most `limit` characters, cut by code point before escaping, so no surrogate pair or `\|` is split. */
+function bounded(text: string, limit: number): string {
+  const characters = Array.from(text.replace(/\s+/g, " "));
+  return characters.length <= limit ? cell(text) : `${cell(characters.slice(0, limit).join(""))}…`;
 }
 
 /** Some reviewed record, read now, still backs the fix the comparison proved: OSV's, or a GitHub-reviewed one. */

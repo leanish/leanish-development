@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 
 import { isAdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import { heldEntry, heldUntil } from "@leanish/gate/cooldown";
-import { assertBodyFits, planPayload, planSection as sectionOf, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
+import { assertBodyFits, BODY_LIMIT, planPayload, planSection as sectionOf, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
 
 import { advisoryNotice } from "./advisory-notice.ts";
 import { floorIdentity, validRemoval } from "./floor-removal.ts";
@@ -102,12 +102,16 @@ function omittedSection(plan: ChangePlan): string[] {
 
 /** `body` with its plan section replaced by `plan`'s (or `plan`'s appended when it has none), and the cooldown warning on top while it holds. */
 export function withPlanSection(body: string, plan: ChangePlan): string {
-  const warning = cooldownWarning(plan.cooldown ?? []);
+  const held = plan.cooldown ?? [];
+  const warning = cooldownWarning(held);
   const rest = replaced(withoutWarning(body), HEADING, planSection(plan));
   if (warning === undefined) return rest;
   const warned = `${warning}\n\n${rest}`;
-  assertBodyFits(warned);
-  return warned;
+  if (warned.length <= BODY_LIMIT) return warned;
+  // Only the evidence table gives way: the plan's block below keeps the evidence, and the rest of the warning stays.
+  const shorter = `${cooldownWarning(held, { table: false })!}\n\n${rest}`;
+  assertBodyFits(shorter);
+  return shorter;
 }
 
 function withoutWarning(body: string): string {
@@ -117,8 +121,8 @@ function withoutWarning(body: string): string {
   return `${body.slice(0, start)}${body.slice(end + WARNING_END.length)}`.replace(/^\s+/, "");
 }
 
-/** The warning a held PR opens with: what came early, why, what to check, and how the hold ends. */
-export function cooldownWarning(held: ReadonlyArray<PlannedHold>): string | undefined {
+/** The warning a held PR opens with: what came early, why, what to check, and how the hold ends; `table` as in advisoryNotice. */
+export function cooldownWarning(held: ReadonlyArray<PlannedHold>, options: { readonly table?: boolean } = {}): string | undefined {
   const until = heldUntil(held);
   if (until === undefined) return undefined;
   const cell = (text: string) => text.replaceAll("|", "\\|").replace(/\s+/g, " ");
@@ -126,7 +130,7 @@ export function cooldownWarning(held: ReadonlyArray<PlannedHold>): string | unde
   const why = { "security-fix": "the security fix the version rule picks", "bundle-fix": "the carrier version the rule picks for advisories in its bundle", required: "required by a security fix", exception: "a release-age exception", unjustified: "not justified: the gate fails it" } as const;
   const rows = held.map((entry) =>
     `> | ${entry.ecosystem} \`${cell(entry.name)}\` | ${entry.replaced.length === 0 ? "new" : cell(entry.replaced.join(", "))} → ${cell(entry.version)} | ${minute(entry.published)} | ${minute(entry.eligibleAt)} | ${why[entry.justification]} | ${cell(entry.signals.join("; ")) || "—"} |`);
-  const notice = advisoryNotice(held);
+  const notice = advisoryNotice(held, options);
   const quoted = (lines: ReadonlyArray<string>) => lines.map((line) => (line === "" ? ">" : `> ${line}`));
   return [
     WARNING_START,
