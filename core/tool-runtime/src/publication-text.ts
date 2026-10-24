@@ -2,6 +2,7 @@ import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 
 import { escape } from "./manifest-spec.ts";
+import { defused } from "./plan-blocks.ts";
 import type { PullRequestContent } from "./publication.ts";
 
 /** Where a published text's local paths come from: the working copy, and the rest of the machine. */
@@ -53,9 +54,13 @@ export function cleanContent(content: PullRequestContent, roots: LocalRoots): Pu
   };
 }
 
-/** A body's text cleaned the same way, outside its HTML comments. */
+/**
+ * A body's text cleaned the same way, outside its HTML comments. Cleaning can turn a path into a plan marker
+ * (`<!-- /working/copy/leanish:plan … -->` loses its root), so what it leaves is defused: the only blocks are the
+ * ones the tool's own sections carry.
+ */
 export function cleanBody(body: string, roots: LocalRoots): string {
-  return outsideComments(body, (text) => withoutNoise(cleanText(text, roots)));
+  return outsideComments(body, (text) => defused(withoutNoise(cleanText(text, roots))));
 }
 
 /** Web links stay whole, a path in their query included: they point elsewhere, not at this machine. */

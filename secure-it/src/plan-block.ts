@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 
 import { isAdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import { heldEntry, heldUntil } from "@leanish/gate/cooldown";
-import { assertBodyFits, BODY_LIMIT, planPayload, planSection as sectionOf, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
+import { assertBodyFits, BODY_LIMIT, defused, planPayload, planSection as sectionOf, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
 
 import { advisoryNotice } from "./advisory-notice.ts";
 import { floorIdentity, validRemoval } from "./floor-removal.ts";
@@ -125,14 +125,16 @@ function withoutWarning(body: string): string {
 export function cooldownWarning(held: ReadonlyArray<PlannedHold>, options: { readonly table?: boolean } = {}): string | undefined {
   const until = heldUntil(held);
   if (until === undefined) return undefined;
-  const cell = (text: string) => text.replaceAll("|", "\\|").replace(/\s+/g, " ");
+  // `<` too: a name or signal from elsewhere can't open a comment that hides the rest, or end the warning early.
+  const cell = (text: string) => text.replaceAll("|", "\\|").replaceAll("<", "&lt;").replace(/\s+/g, " ");
   const minute = (instant: string) => `${instant.slice(0, 10)} ${instant.slice(11, 16)}`;
   const why = { "security-fix": "the security fix the version rule picks", "bundle-fix": "the carrier version the rule picks for advisories in its bundle", required: "required by a security fix", exception: "a release-age exception", unjustified: "not justified: the gate fails it" } as const;
   const rows = held.map((entry) =>
     `> | ${entry.ecosystem} \`${cell(entry.name)}\` | ${entry.replaced.length === 0 ? "new" : cell(entry.replaced.join(", "))} → ${cell(entry.version)} | ${minute(entry.published)} | ${minute(entry.eligibleAt)} | ${why[entry.justification]} | ${cell(entry.signals.join("; ")) || "—"} |`);
   const notice = advisoryNotice(held, options);
   const quoted = (lines: ReadonlyArray<string>) => lines.map((line) => (line === "" ? ">" : `> ${line}`));
-  return [
+  // Above the plan's section, so its block must stay the body's first: the advisory text in it comes from elsewhere.
+  return defused([
     WARNING_START,
     "> [!WARNING]",
     "> **Release-age cooldown bypassed.** This PR takes versions published less than the release-age wait ago. Needing them for a security fix, and passing every check, doesn't rule out malware: whoever controls a publisher can ship it inside a real fix, whatever the advisory's severity.",
@@ -147,7 +149,7 @@ export function cooldownWarning(held: ReadonlyArray<PlannedHold>, options: { rea
     ">",
     "> To take it earlier, a person decides: every other check green, the reason written in a PR comment, then an admin merge past the red `cooldown` check (where no ruleset enforces it, a merge with the same written reason).",
     WARNING_END,
-  ].join("\n");
+  ].join("\n"));
 }
 
 /** The plan a PR's body carries, if it has one that parses. */

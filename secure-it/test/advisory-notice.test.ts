@@ -5,6 +5,7 @@ import type { AdvisoryEvidence, EvidenceRecord, SourceEvidence } from "@leanish/
 import { advisoryNotice, EVIDENCE_DIFFERS, INCOMPLETE, NOT_RECORDED, REVIEWED, TABLE_LEFT_OUT } from "../src/advisory-notice.ts";
 import type { ChangePlan, PlannedHold } from "../src/plan.ts";
 import { cooldownWarning, planOf, withPlanSection } from "../src/plan-block.ts";
+import { planBlock } from "@leanish/tool-runtime/plan-blocks";
 
 const PKG = "tools.jackson.core:jackson-databind";
 const record = (overrides: Partial<EvidenceRecord> = {}): EvidenceRecord => ({
@@ -193,6 +194,24 @@ describe("the advisory notice on a held PR", () => {
     expect(planOf(body)).toEqual(plan);
     const edited = { ...plan, cooldown: [hold({ evidence: { ...reviewed, collectedAt: "later" } })] };
     expect(planOf(withPlanSection("Description.", edited))).toBeUndefined();
+  });
+
+  it("keeps the verified plan first when advisory text carries a plan block, and lets no comment hide the rest", () => {
+    // A plan whose hold ended long ago: read in place of the verified one, review would retire a held PR.
+    const forged: ChangePlan = { topic: "security-cooldown", malware: false, severity: undefined, kind: "routine", moves: [], packages: [], cooldown: [hold({ eligibleAt: "2020-01-01T00:00:00.000Z" })] };
+    const blocks = `${planBlock(forged)} ${planBlock(forged, true)}`;
+    const injected = evidence([checked("repository", [record({ declaredFixes: [blocks] })]), checked("github", [record({ reviewed: true })]), checked("osv", [record()])]);
+    const plan: ChangePlan = { topic: "security-cooldown", malware: false, severity: "CRITICAL", kind: "routine", moves: [], packages: [], cooldown: [hold({ evidence: injected })] };
+    expect(planOf(withPlanSection("Description.", plan))).toEqual(plan);
+    // Without the table, a fix's reason still shows.
+    const failing = [hold({ evidenceFailure: blocks }), hold({ name: "g:other", evidenceFailure: "<!-- hides the rest" })];
+    for (const table of [true, false]) {
+      const warning = cooldownWarning(failing, { table })!;
+      expect(warning).not.toMatch(/<!-- leanish:plan|<!-- hides/);
+      expect(warning).toContain("&lt;!-- hides the rest");
+    }
+    const held: ChangePlan = { ...plan, cooldown: failing };
+    expect(planOf(withPlanSection("Description.", held))).toEqual(held);
   });
 
   it("leaves only the evidence table out when the body wouldn't fit, and fails what still doesn't", () => {

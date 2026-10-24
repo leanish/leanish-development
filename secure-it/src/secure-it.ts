@@ -502,7 +502,10 @@ async function journaled(context: ToolRunContext, publication: PublicationContex
 
 /** How many of a held unit's packages a held plan shares, and the lowest shared one; undefined when none. */
 function heldOverlap(previous: ChangePlan, unit: SecurityUnit): { readonly shared: number; readonly lowest: string } | undefined {
-  const members = new Set(heldMembers(previous));
+  const listed: unknown = heldMembers(previous);
+  // Read from a PR body: a plan whose members aren't names stands for no held unit, rather than failing every claim.
+  if (!Array.isArray(listed) || !listed.every((key) => typeof key === "string")) return undefined;
+  const members = new Set<string>(listed);
   const shared = [...new Set(unit.work.map(packageKey))].filter((key) => members.has(key)).sort();
   return shared.length === 0 ? undefined : { shared: shared.length, lowest: shared[0]! };
 }
