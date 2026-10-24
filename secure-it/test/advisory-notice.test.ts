@@ -119,18 +119,23 @@ describe("the advisory notice on a held PR", () => {
     const differs = evidence([checked("repository", [record()]), checked("github"), checked("osv")]);
     const notice = advisoryNotice([hold({ evidence: differs })], { table: false });
     expect(notice.paragraphs).toHaveLength(1);
-    expect(notice.paragraphs[0]).toContain("for `tools.jackson.core:jackson-databind`:");
+    expect(notice.paragraphs[0]).toContain("for `tools.jackson.core:jackson-databind` → 3.2.4:");
     expect(notice.paragraphs[0]).not.toMatch(/below|the table/);
     expect(notice.details).toEqual([TABLE_LEFT_OUT]);
-    // Many ⚠ groups of one package, each over hundreds of versions, still name it once and stay short.
+    // Many ⚠ groups of one move, each over hundreds of versions, still name it once and stay short.
     const replaced = Array.from({ length: 400 }, (_, i) => `3.1.${i}`);
     const groups = Array.from({ length: 20 }, (_, i) => ({ ids: [`GHSA-${i}`], replaced: replaced.filter((_, j) => j !== i), sources: [checked("repository", [record()]), checked("github"), checked("osv")] }));
     const wide = advisoryNotice([hold({ evidence: evidence([], { replaced, groups }) })], { table: false }).paragraphs[0]!;
-    expect(wide).toContain("for `tools.jackson.core:jackson-databind`:");
+    expect(wide).toContain("for `tools.jackson.core:jackson-databind` → 3.2.4:");
     expect(wide.length).toBeLessThan(600);
     const bundled = evidence([checked("repository"), checked("github"), checked("osv")], { ecosystem: "npm", name: "brace", bundled: true, replaced: ["5.0.9"], proposed: [] });
     expect(advisoryNotice([hold({ ecosystem: "npm", name: "carrier", version: "1.1.0", justification: "bundle-fix", evidence: bundled })], { table: false }).paragraphs[0])
-      .toContain("for `brace` (bundled in `carrier` 1.1.0):");
+      .toContain("for `brace` → removed (bundled in `carrier` 1.1.0):");
+    // Past 20 moves the rest are counted, not named.
+    const many = Array.from({ length: 23 }, (_, i) => hold({ name: `g:lib${i}`, evidence: evidence([checked("repository", [record()]), checked("github"), checked("osv")], { name: `g:lib${i}` }) }));
+    const counted = advisoryNotice(many, { table: false }).paragraphs[0]!;
+    expect(counted).toContain("`g:lib19` → 3.2.4 and 3 more:");
+    expect(counted).not.toContain("g:lib20");
     expect(advisoryNotice([hold({ evidence: reviewed })], { table: false })).toEqual({ paragraphs: [REVIEWED], details: [TABLE_LEFT_OUT] });
   });
 

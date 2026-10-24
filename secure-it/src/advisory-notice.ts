@@ -86,11 +86,14 @@ function uncheckedOf(entry: PlannedHold): string[] {
 }
 
 /**
- * EVIDENCE_DIFFERS without the table it points to: the ⚠ packages, named once each without their versions (a
- * package's groups can each list hundreds), a bundled one with its carrier.
+ * EVIDENCE_DIFFERS without the table it points to: the ⚠ moves, each named once by the version it proposes, not by
+ * the versions it replaces (a package's groups can each list hundreds); a bundled one with its carrier.
  */
 function differsFor(rows: ReadonlyArray<{ readonly entry: PlannedHold; readonly target: TargetEvidence; readonly group: GroupEvidence }>): string {
-  const names = [...new Set(rows.map(({ entry, target }) => (target.bundled ? `\`${cell(target.name)}\` (bundled in \`${cell(entry.name)}\` ${cell(entry.version)})` : `\`${cell(target.name)}\``)))];
+  const names = [...new Set(rows.map(({ entry, target }) => {
+    const to = target.proposed.length === 0 ? "removed" : target.proposed.map(cell).join(", ");
+    return `\`${cell(target.name)}\` → ${to}${target.bundled ? ` (bundled in \`${cell(entry.name)}\` ${cell(entry.version)})` : ""}`;
+  }))];
   const shown = names.slice(0, NAMED_LIMIT).join("; ");
   const more = names.length > NAMED_LIMIT ? ` and ${names.length - NAMED_LIMIT} more` : "";
   return `**The reviewed advisories read after the comparison don't back this fix as the comparison did** for ${shown}${more}: no reviewed record (OSV, or GitHub's reviewed advisory database) lists the replaced versions as affected and the proposed one as not, or one was withdrawn or couldn't be read. The comparison's verdict stands; look into these before taking this early.`;
