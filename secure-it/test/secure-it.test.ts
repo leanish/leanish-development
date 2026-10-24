@@ -21,12 +21,12 @@ import { MemoryJournal } from "@leanish/tool-runtime/test/memory-journal";
 import { branchFor, stateOf, withMarker } from "@leanish/tool-runtime/own-pr";
 import { BASE_SHA, FakeGitHub, GREEN, HEAD_SHA, ownPr, PUSHED_SHA, RED } from "@leanish/tool-runtime/test/fake-github";
 import { planOf, planSection, withPlanSection } from "../src/plan-block.ts";
-import { planFor } from "../src/plan.ts";
+import { type ChangePlan, planFor, type SecurityUnit } from "../src/plan.ts";
 import { verifyPlan, type VerifyInputs } from "../src/verify.ts";
 import { computedNpmProblems } from "@leanish/tool-runtime/npm-file-checks";
 import { materializeInCopy } from "../src/npm-materialize.ts";
 import { preservedFloors } from "../src/floor-checks.ts";
-import { defaultDeps, RULES, type SecureItDeps, secureIt } from "../src/secure-it.ts";
+import { defaultDeps, heldClaims, RULES, type SecureItDeps, secureIt, unitOf } from "../src/secure-it.ts";
 
 // Keep local security verification real; replace only the external scan.
 vi.mock("@leanish/gate/gate", async (original) => ({ ...await original<object>(), runCompare: vi.fn() }));
@@ -1068,7 +1068,7 @@ describe("the cooldown hold", () => {
   it("opens young fixes in a held PR of their own, warned, while the aged ones go out as usual", async () => {
     const h = harness({ fixes: [YOUNG_VITE(), leftPad()] });
     const result = await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context);
-    expect(result).toMatchObject({ outcome: "completed", units: [{ topic: "security", outcome: "published" }, { topic: "security-cooldown", outcome: "published" }] });
+    expect(result).toMatchObject({ outcome: "completed", units: [{ topic: "security", outcome: "published" }, { topic: "security-cooldown-vite", outcome: "published" }] });
     expect(h.agentCalls.map((call) => (call.input["moves"] as Array<{ name: string }>).map((move) => move.name))).toEqual([["left-pad"], ["vite"]]);
     const [aged, held] = [...h.github.prs.values()];
     expect(aged!.body).not.toContain("[!WARNING]");
@@ -1119,7 +1119,7 @@ describe("the cooldown hold", () => {
       ? { ...plan, requiredNpm: [{ exempt: true, name: "postcss", version: "8.5.29", root: { name: "vite", version: "8.3.3", path: "node_modules/vite" } }] as never }
       : plan;
     const result = await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context);
-    expect(result).toMatchObject({ units: [{ topic: "security", packages: ["npm|left-pad"] }, { topic: "security-cooldown", packages: ["npm|vite"] }] });
+    expect(result).toMatchObject({ units: [{ topic: "security", packages: ["npm|left-pad"] }, { topic: "security-cooldown-vite", packages: ["npm|vite"] }] });
   });
 
   it("holds an aged fix with the aged fix it requires when that one requires a young dependency", async () => {
@@ -1132,7 +1132,58 @@ describe("the cooldown hold", () => {
       ...plan.packages.includes("npm|left-pad") ? [target("left-pad", "1.0.1", "node_modules/left-pad")] : [],
     ] as never });
     const result = await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context);
-    expect(result).toMatchObject({ units: [{ topic: "security-cooldown", packages: ["npm|left-pad", "npm|vite"] }] });
+    expect(result).toMatchObject({ units: [{ topic: "security-cooldown-left-pad", packages: ["npm|left-pad", "npm|vite"] }] });
+  });
+
+  it("keeps two roots that require one companion together, though the companion has no fix of its own", async () => {
+    // Only vite's requirement of c is young; left-pad requires the same c, so moving it apart would move c twice.
+    const h = harness({ fixes: [vite(), leftPad()] });
+    const target = (root: string, version: string, exempt: boolean) => ({ exempt, name: "c", version: "1.0.1", root: { name: root, version, path: `node_modules/${root}` } });
+    const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => ({ ...plan, requiredNpm: [
+      ...plan.packages.includes("npm|vite") ? [target("vite", "8.3.3", true)] : [],
+      ...plan.packages.includes("npm|left-pad") ? [target("left-pad", "1.0.1", false)] : [],
+    ] as never });
+    const result = await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context);
+    expect(result).toMatchObject({ units: [{ topic: "security-cooldown-left-pad", packages: ["npm|left-pad", "npm|vite"] }] });
+  });
+
+  const YOUNG_PAD = () => leftPad({ to: { version: "1.0.1", line: "1", aged: false, major: false, blockers: [] } });
+
+  it("opens one held PR per young fix that can be separated, so none waits for another", async () => {
+    const h = harness({ fixes: [YOUNG_VITE(), YOUNG_PAD()] });
+    const result = await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context);
+    expect(result).toMatchObject({ outcome: "completed", units: [
+      { topic: "security-cooldown-left-pad", packages: ["npm|left-pad"], outcome: "published" },
+      { topic: "security-cooldown-vite", packages: ["npm|vite"], outcome: "published" },
+    ] });
+    const prs = [...h.github.prs.values()];
+    expect(prs.map((pr) => [pr.headRef, planOf(pr.body)?.members])).toEqual([
+      ["secure-it/2026-10-07-security-cooldown-left-pad", ["npm|left-pad"]],
+      ["secure-it/2026-10-07-security-cooldown-vite", ["npm|vite"]],
+    ]);
+  });
+
+  it("reuses v0.7's single held PR for the unit holding its lowest package, and opens the other", async () => {
+    const legacy = await planFor([YOUNG_PAD(), YOUNG_VITE()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined },
+      { kind: "routine", topic: "security-cooldown" });
+    const { members: _members, ...recorded } = legacy;
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown", body: withMarker(RULES, withPlanSection("Fixes both.", recorded), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pr], fixes: [YOUNG_VITE(), YOUNG_PAD()] });
+    h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
+    expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({ units: [
+      { topic: "security-cooldown-left-pad", outcome: "updated", pullRequest: "https://github.com/leanish/widget/pull/7" },
+      { topic: "security-cooldown-vite", outcome: "published" },
+    ] });
+    expect(planOf(h.github.prs.get(7)!.body)).toMatchObject({ topic: "security-cooldown-left-pad", members: ["npm|left-pad"] });
+  });
+
+  it("gives two held units whose topics cut to one branch name a branch each", async () => {
+    const lock = JSON.stringify({ lockfileVersion: 3, packages: { "": { name: "widget" }, "node_modules/a/b": { version: "1.0.0" }, "node_modules/a-b": { version: "1.0.0" } } });
+    const young = (name: string) => leftPad({ name, locations: [`node_modules/${name}`], to: { version: "1.0.1", line: "1", aged: false, major: false, blockers: [] } });
+    // Synthetic names: `a/b` and `a-b` both cut to the branch topic `security-cooldown-a-b`.
+    const h = harness({ fixes: [young("a/b"), young("a-b")], files: { "package-lock.json": lock } });
+    expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({ outcome: "completed" });
+    expect([...h.github.prs.values()].map((pr) => pr.headRef)).toEqual(["secure-it/2026-10-07-security-cooldown-a-b", "secure-it/2026-10-07-security-cooldown-a-b-2"]);
   });
 
   it("keeps a waiting held PR a draft on green CI, and retires it once everything has aged", async () => {
@@ -1184,5 +1235,31 @@ describe("the cooldown hold", () => {
     h.github.checks = GREEN;
     expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "error" }] });
     expect(h.github.prs.get(7)?.isDraft).toBe(true);
+  });
+});
+
+describe("which open PR a held unit is", () => {
+  const unit = (...names: string[]): SecurityUnit => ({ kind: "routine", topic: `security-cooldown-${names[0]}`, held: true, work: names.map((name) => vite({ name })) });
+  const recorded = (number: number, packages: string[], members?: string[]): GitHubPullRequest => {
+    const plan: ChangePlan = { kind: "routine", topic: "security-cooldown-x", malware: false, packages, ...(members === undefined ? {} : { members }), moves: [], severity: undefined };
+    return ownPr({ number, body: withMarker(RULES, withPlanSection("Held.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+  };
+
+  it("matches by the unit's own packages, so a companion a plan added doesn't take another unit's PR", () => {
+    // PR 7 is a's, with companion c in its packages; b's unit planned c too but holds only b.
+    expect(heldClaims([unit("b"), unit("a")], [recorded(7, ["npm|a", "npm|c"], ["npm|a"])])).toEqual(new Map([["security-cooldown-a", 7]]));
+  });
+
+  it("gives the strongest overlap first across units, then the lowest shared package, then the lower PR", () => {
+    const claims = heldClaims([unit("c"), unit("b", "d")], [recorded(7, ["npm|a", "npm|b", "npm|c"]), recorded(8, ["npm|b", "npm|d"], ["npm|b", "npm|d"])]);
+    expect(claims).toEqual(new Map([["security-cooldown-b", 8], ["security-cooldown-c", 7]]));
+    expect(heldClaims([unit("c"), unit("b")], [recorded(9, ["npm|a", "npm|b", "npm|c"])])).toEqual(new Map([["security-cooldown-b", 9]]));
+  });
+
+  it("reviews a held PR as the unit sharing most of it, whatever it's named now", () => {
+    const previous = planOf(recorded(7, ["npm|a", "npm|b", "npm|c"]).body)!;
+    expect(unitOf(previous, [unit("c"), unit("b")])?.topic).toBe("security-cooldown-b");
+    expect(unitOf(previous, [unit("d"), unit("b", "c")])?.topic).toBe("security-cooldown-b");
+    expect(unitOf(previous, [unit("d")])).toBeUndefined();
   });
 });

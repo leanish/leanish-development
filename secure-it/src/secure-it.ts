@@ -51,7 +51,7 @@ import { requiredNpmPlan } from "./npm-required-plan.ts";
 import { npmWindowFor } from "./npm-window.ts";
 import { assertBodyFits, assertNoPlanMarker } from "@leanish/tool-runtime/plan-blocks";
 import { planDigest, planOf, planSection, withPlanSection } from "./plan-block.ts";
-import { type ChangePlan, coupledWork, type FixWork, HELD_TOPIC, packageKey, planFor, type PlannedHold, type SecurityUnit, withUnsupportedCarriers } from "./plan.ts";
+import { type ChangePlan, coupledWork, type FixWork, heldMembers, heldUnits, isHeldTopic, packageKey, planFor, type PlannedHold, type SecurityUnit, withUnsupportedCarriers } from "./plan.ts";
 import { namedProblems, retryWithoutNamed, type ProblemMoves } from "./retry.ts";
 import { referencePlan, verifyPlan, type VerifyInputs } from "./verify.ts";
 
@@ -242,6 +242,8 @@ interface Execution {
   readonly inventories: GradleInventories;
   readonly publication: PublicationContext;
   readonly npmFiles: Map<string, string>;
+  /** Branches this run created, on top of the open PRs' ones: two units' topics can cut to the same branch name. */
+  readonly branches: Set<string>;
 }
 
 interface PlanBase {
@@ -263,12 +265,14 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   const selection = await coupledWork(planned.fixes, planned.peers);
   const waiting = selection.blocked.flatMap((group) => group.reasons);
 
-  const execution = { context, deps, env, inventories, publication: publicationOf(context, deps), npmFiles: new Map<string, string>() };
+  const execution = { context, deps, env, inventories, publication: publicationOf(context, deps), npmFiles: new Map<string, string>(), branches: new Set<string>() };
   const own = await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base);
   const results: Readonly<Record<string, unknown>>[] = [];
-  for (const unit of await holdRequiredYoung(execution, selection.units, base)) {
+  const units = await holdRequiredYoung(execution, selection.units, base);
+  const claims = heldClaims(units, own);
+  for (const unit of units) {
     try {
-      results.push(await runUnit(execution, unit, base, own));
+      results.push(await runUnit(execution, unit, base, own, claims.get(unit.topic)));
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       context.logger.warn("secure-it: a unit failed", { topic: unit.topic, error: detail });
@@ -392,7 +396,7 @@ async function runRemoval(execution: Execution, removal: ComputedRemoval, base: 
     return { ...report, outcome: "already-open", pullRequest: already.url };
   }
   const reusable = owned[0];
-  const prepared = await preparePlan(execution.context, execution.deps, plan, reusable, own, base.tree.id);
+  const prepared = await preparePlan(execution.context, execution.deps, plan, reusable, own, base.tree.id, execution.branches);
   const content = await applyRemoval(execution, removal);
   const problems = await verifyEdit(execution.context, execution.deps, plan, execution.env, execution.inventories, base.tree, base.gradle);
   if (problems.length > 0) return { ...report, outcome: "verification-failed", problems };
@@ -406,7 +410,9 @@ async function runRemoval(execution: Execution, removal: ComputedRemoval, base: 
 
 /**
  * A routine fix whose required npm dependency is younger than the wait can't
- * wait either: it moves to the held unit with every package coupled to it.
+ * wait either: it moves to a held unit with every package the aged plan couples
+ * to it, companions included (a key without a fix of its own still joins two
+ * roots that require it). Held work is then grouped again (`heldUnits`).
  * Moving roots only drops requirements, so one pass leaves the rest aged.
  * Kept on purpose: docs/simplification-candidates.md#reviewed-and-kept-2026-10-16.
  */
@@ -422,22 +428,55 @@ async function holdRequiredYoung(execution: Execution, units: ReadonlyArray<Secu
   }
   const moved = new Set((plan.requiredNpm ?? []).filter((target) => target.exempt).map((target) => `npm|${target.root.name}`));
   if (moved.size === 0) return [...units];
+  // requiredNpmPlan's coupled sets keep only moved packages: each requirement joins its root and target here instead.
+  const bridges = (plan.requiredNpm ?? []).map((target) => [`npm|${target.root.name}`, `npm|${target.name}`]);
   for (;;) {
     const size = moved.size;
-    for (const set of aged.coupled ?? []) if (set.some((key) => moved.has(key))) for (const key of set) moved.add(key);
+    for (const set of [...(plan.coupled ?? []), ...bridges]) if (set.some((key) => moved.has(key))) for (const key of set) moved.add(key);
     if (moved.size === size) break;
   }
-  const held = units.find((unit) => unit.kind === "routine" && unit.held === true);
+  const held = units.filter((unit) => unit.kind === "routine" && unit.held === true);
   const stays = aged.work.filter((fix) => !moved.has(packageKey(fix)));
-  const joined: SecurityUnit = {
-    kind: "routine",
-    topic: HELD_TOPIC,
-    held: true,
-    work: [...(held?.work ?? []), ...aged.work.filter((fix) => moved.has(packageKey(fix)))],
-    coupled: [...(held?.coupled ?? []), ...(aged.coupled ?? []).filter((set) => set.some((key) => moved.has(key)))],
-  };
+  const joined = heldUnits(
+    [...held.flatMap((unit) => unit.work), ...aged.work.filter((fix) => moved.has(packageKey(fix)))],
+    [...held.flatMap((unit) => unit.coupled ?? []), ...(aged.coupled ?? []).filter((set) => set.some((key) => moved.has(key)))],
+    bridges,
+  );
   const rest = stays.length === 0 ? [] : [{ ...aged, work: stays, coupled: (aged.coupled ?? []).filter((set) => !set.some((key) => moved.has(key))) }];
-  return [...units.filter((unit) => unit !== aged && unit !== held), ...rest, joined];
+  return [...units.filter((unit) => unit !== aged && !held.includes(unit)), ...rest, ...joined];
+}
+
+/**
+ * Which open held PR each held unit of this run takes (topic → PR number): the one sharing the most of its packages,
+ * strongest pairs first across all units, so the order units run in never decides which PR changes purpose. Ties go
+ * to the pair whose lowest shared package sorts first, then to the lower PR number. Each PR goes to one unit at most;
+ * a unit with none opens its own.
+ */
+export function heldClaims(units: ReadonlyArray<SecurityUnit>, own: ReadonlyArray<GitHubPullRequest>): Map<string, number> {
+  const held = units.filter((unit) => unit.kind === "routine" && isHeldTopic(unit.topic));
+  const pairs = own.flatMap((pr) => {
+    const previous = planOf(pr.body);
+    if (previous?.kind !== "routine" || !isHeldTopic(previous.topic)) return [];
+    return held.flatMap((unit) => {
+      const match = heldOverlap(previous, unit);
+      return match === undefined ? [] : [{ topic: unit.topic, number: pr.number, ...match }];
+    });
+  }).sort((a, b) => b.shared - a.shared || (a.lowest < b.lowest ? -1 : a.lowest > b.lowest ? 1 : 0) || a.number - b.number);
+  const claims = new Map<string, number>();
+  const taken = new Set<number>();
+  for (const pair of pairs) {
+    if (claims.has(pair.topic) || taken.has(pair.number)) continue;
+    claims.set(pair.topic, pair.number);
+    taken.add(pair.number);
+  }
+  return claims;
+}
+
+/** How many of a held unit's packages a held plan shares, and the lowest shared one; undefined when none. */
+function heldOverlap(previous: ChangePlan, unit: SecurityUnit): { readonly shared: number; readonly lowest: string } | undefined {
+  const members = new Set(heldMembers(previous));
+  const shared = [...new Set(unit.work.map(packageKey))].filter((key) => members.has(key)).sort();
+  return shared.length === 0 ? undefined : { shared: shared.length, lowest: shared[0]! };
 }
 
 async function planUnit(execution: Execution, unit: SecurityUnit, base: PlanBase): Promise<ChangePlan> {
@@ -448,10 +487,10 @@ async function planUnit(execution: Execution, unit: SecurityUnit, base: PlanBase
   return execution.deps.requiredNpm(base.tree, plan, execution.env);
 }
 
-async function runUnit(execution: Execution, unit: SecurityUnit, base: PlanBase, own: ReadonlyArray<GitHubPullRequest>): Promise<Readonly<Record<string, unknown>>> {
+async function runUnit(execution: Execution, unit: SecurityUnit, base: PlanBase, own: ReadonlyArray<GitHubPullRequest>, claimed: number | undefined): Promise<Readonly<Record<string, unknown>>> {
   const { context, deps, publication } = execution;
   const plan = await planUnit(execution, unit, base);
-  const owned = await recognisedPlans(context, publication, own, plan);
+  const owned = await recognisedPlans(context, publication, own, plan, claimed);
   const already = owned.find((pr) => {
     const previous = planOf(pr.body);
     return stateOf(pr.body)?.head === pr.headSha && previous !== undefined && planDigest(previous) === planDigest(plan);
@@ -462,7 +501,7 @@ async function runUnit(execution: Execution, unit: SecurityUnit, base: PlanBase,
     return { ...details, outcome: "already-open", pullRequest: already.url };
   }
   const reusable = owned[0];
-  const prepared = await preparePlan(context, deps, plan, reusable, own, base.tree.id);
+  const prepared = await preparePlan(context, deps, plan, reusable, own, base.tree.id, execution.branches);
   const input = await agentInput(execution, plan, base.tree, "apply");
   const answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({ entrypoint: "secure-it", input });
   if (answer.outcome !== "applied" || answer.publication == null) return { ...details, outcome: "cannot-apply", summary: answer.summary };
@@ -484,10 +523,11 @@ async function runUnit(execution: Execution, unit: SecurityUnit, base: PlanBase,
     : { ...checked, outcome: "published", pullRequest: created.url };
 }
 
-async function preparePlan(context: ToolRunContext, deps: SecureItDeps, plan: ChangePlan, reusable: GitHubPullRequest | undefined, own: ReadonlyArray<GitHubPullRequest>, baseSha: string): Promise<PreparedBranch> {
+async function preparePlan(context: ToolRunContext, deps: SecureItDeps, plan: ChangePlan, reusable: GitHubPullRequest | undefined, own: ReadonlyArray<GitHubPullRequest>, baseSha: string, created: Set<string>): Promise<PreparedBranch> {
   if (reusable !== undefined) return reconcileBranch(context, deps, reusable, baseSha);
-  const taken = new Set(own.map((pr) => pr.headRef));
+  const taken = new Set([...own.map((pr) => pr.headRef), ...created]);
   const branch = freeBranch(RULES, context.now, plan.topic, taken);
+  created.add(branch);
   await clearLeftoverBranch(context.github, RULES, context.repo.repo, branch);
   const fresh = await context.workspace.prepareBranch(context.workingCopy, { branch, start: "default" });
   if (fresh.kind !== "prepared") throw new Error(`${branch} couldn't be prepared`);
@@ -612,13 +652,17 @@ async function recognisedPlans(
   publication: PublicationContext,
   own: ReadonlyArray<GitHubPullRequest>,
   plan: ChangePlan,
+  claimed?: number,
 ): Promise<GitHubPullRequest[]> {
   const owned: GitHubPullRequest[] = [];
+  const held = plan.kind === "routine" && isHeldTopic(plan.topic);
   for (const candidate of own) {
     // The recorded plan names the unit, not the branch: branch topics are cut and made branch-safe, so two packages can
     // share one (`@scope/foo` and `scope-foo`), and a numbered branch (`…-2`, next to one a human took over) is cut shorter.
     const previous = planOf(candidate.body);
-    if (previous === undefined || previous.kind !== plan.kind || previous.topic !== plan.topic) continue;
+    if (previous === undefined || previous.kind !== plan.kind) continue;
+    // A held unit's PR is the one `heldClaims` gave it, whatever its topic says now.
+    if (held ? candidate.number !== claimed || !isHeldTopic(previous.topic) : previous.topic !== plan.topic) continue;
     if (topicOf(RULES, candidate.headRef) === undefined) continue;
     const journaled = await publication.journal.last(context.repo.repo, candidate.number);
     // Legacy entries prove only the head: reconcile a freshly computed plan rather than trusting the body.
@@ -692,7 +736,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
   const env = await deps.gate(context);
   const inventories = deps.gradle(context);
   const publication = publicationOf(context, deps);
-  const execution = { context, deps, env, inventories, publication, npmFiles: new Map<string, string>() };
+  const execution = { context, deps, env, inventories, publication, npmFiles: new Map<string, string>(), branches: new Set<string>() };
   const notes: Array<Readonly<Record<string, unknown>>> = [];
   const planFrom = (pr: GitHubPullRequest): ChangePlan => {
     const plan = planOf(pr.body);
@@ -828,9 +872,18 @@ async function reviewUnits(previous: ChangePlan, fixes: ReadonlyArray<SecurityFi
   return coupledWork(scoped, peers);
 }
 
-/** The recomputed unit an open PR stands for: two routine units can exist (aged and held), so its topic says which. */
-function unitOf(previous: ChangePlan, units: ReadonlyArray<SecurityUnit>): SecurityUnit | undefined {
+/**
+ * The recomputed unit an open PR stands for: several routine units can exist (the aged one and each held one). A held
+ * PR stands for the held unit sharing the most of its packages (ties: the one holding the lowest shared package), so a
+ * unit whose name changed keeps its PR; the others, by topic.
+ */
+export function unitOf(previous: ChangePlan, units: ReadonlyArray<SecurityUnit>): SecurityUnit | undefined {
   const kind = previous.malware ? "malware" : previous.kind;
   if (kind === undefined) return units[0];
-  return units.find((unit) => unit.kind === kind && (kind !== "routine" || unit.topic === previous.topic));
+  if (kind !== "routine" || !isHeldTopic(previous.topic)) return units.find((unit) => unit.kind === kind && (kind !== "routine" || unit.topic === previous.topic));
+  const matches = units.filter((unit) => unit.kind === "routine" && isHeldTopic(unit.topic)).flatMap((unit) => {
+    const match = heldOverlap(previous, unit);
+    return match === undefined ? [] : [{ unit, ...match }];
+  }).sort((a, b) => b.shared - a.shared || (a.lowest < b.lowest ? -1 : a.lowest > b.lowest ? 1 : 0));
+  return matches[0]?.unit;
 }
