@@ -159,6 +159,14 @@ describe("the advisory notice on a held PR", () => {
     expect(notice.details.at(-1)).toBe("- and 15 more");
   });
 
+  it("tells moves apart by their whole names, though it shows them cut", () => {
+    const prefix = "g:".padEnd(130, "x");
+    const alike = [`${prefix}a`, `${prefix}b`].map((name) => hold({ name, evidence: evidence([checked("repository", [record()]), checked("github"), checked("osv")], { name }) }));
+    const paragraph = advisoryNotice(alike, { table: false }).paragraphs[0]!;
+    const shown = `\`${prefix.slice(0, 120)}…\` → 3.2.4`;
+    expect(paragraph).toContain(`for ${shown}; ${shown}:`);
+  });
+
   it("opens the cooldown warning with the paragraphs and puts the table after the holds", () => {
     const warning = cooldownWarning([hold({ evidence: reviewed })])!;
     const lines = warning.split("\n");

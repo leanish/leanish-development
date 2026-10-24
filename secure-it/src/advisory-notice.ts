@@ -30,8 +30,9 @@ export const NOT_RECORDED = "not recorded for this plan";
 export const TABLE_LEFT_OUT = "The table of where each advisory appears is left out: with it, this PR's body would exceed GitHub's limit. The plan's block keeps all of it.";
 
 /**
- * What the notice shows without its table, so the warning stays bounded: the ⚠ moves named and each one's proposed
- * versions, the unchecked fixes listed, and the length (in characters) of a reason, a name and a version shown.
+ * What the notice shows without its table, so the notice itself stays bounded (the warning's hold rows are as before):
+ * the ⚠ moves named and each one's proposed versions, the unchecked fixes listed, and the length (in characters) of a
+ * reason, a name and a version shown.
  */
 const NAMED_LIMIT = 20;
 const VERSIONS_SHOWN = 3;
@@ -97,13 +98,18 @@ function uncheckedOf(entry: PlannedHold): string[] {
  * the versions it replaces (a package's groups can each list hundreds); a bundled one with its carrier.
  */
 function differsFor(rows: ReadonlyArray<{ readonly entry: PlannedHold; readonly target: TargetEvidence; readonly group: GroupEvidence }>): string {
-  const names = [...new Set(rows.map(({ entry, target }) => {
+  // Told apart by the whole move, shown cut: two long names alike for their first characters are still two moves.
+  const moves = new Map<string, string>();
+  for (const { entry, target } of rows) {
+    const identity = JSON.stringify([target.name, target.proposed, target.bundled ? [entry.name, entry.version] : null]);
+    if (moves.has(identity)) continue;
     // A bundle can propose hundreds of versions: a few are shown, the rest counted (the plan's block has them all).
     const more = target.proposed.length > VERSIONS_SHOWN ? ` (+${target.proposed.length - VERSIONS_SHOWN})` : "";
     const to = target.proposed.length === 0 ? "removed" : `${target.proposed.slice(0, VERSIONS_SHOWN).map((version) => bounded(version, VERSION_LIMIT)).join(", ")}${more}`;
     const carrier = target.bundled ? ` (bundled in \`${bounded(entry.name, NAME_LIMIT)}\` ${bounded(entry.version, VERSION_LIMIT)})` : "";
-    return `\`${bounded(target.name, NAME_LIMIT)}\` → ${to}${carrier}`;
-  }))];
+    moves.set(identity, `\`${bounded(target.name, NAME_LIMIT)}\` → ${to}${carrier}`);
+  }
+  const names = [...moves.values()];
   const shown = names.slice(0, NAMED_LIMIT).join("; ");
   const more = names.length > NAMED_LIMIT ? ` and ${names.length - NAMED_LIMIT} more` : "";
   return `**The reviewed advisories read after the comparison don't back this fix as the comparison did** for ${shown}${more}: no reviewed record (OSV, or GitHub's reviewed advisory database) lists the replaced versions as affected and the proposed one as not, or one was withdrawn or couldn't be read. The comparison's verdict stands; look into these before taking this early.`;
