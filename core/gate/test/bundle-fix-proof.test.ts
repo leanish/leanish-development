@@ -287,16 +287,19 @@ describe("a young carrier proved as a bundled fix", () => {
 describe("a held fix's advisory groups", () => {
   const advisory = (id: string, ids: string[]): Advisory => ({ id, ids, source: "osv", malicious: false, summary: undefined, severity: undefined });
 
-  it("carry every alias the snapshot knows, another version's advisory and a chain of them included", () => {
-    // 5.0.9's own record names only its CVE; another scanned version's links it to a GHSA, and that GHSA to a second CVE.
+  it("carry every alias the package's own advisories name, another version's included, not another package's", () => {
+    // 5.0.9's own record names only its CVE; another scanned version's links it to a GHSA. Another package's advisory in
+    // the same alias group (sharing the GHSA) is another advisory: its CVE stays out of brace's row.
     const snapshot = new Snapshot(new Map([
       ["npm|brace|5.0.9", [advisory("CVE-1", ["CVE-1"])]],
       ["npm|brace|5.0.10", [advisory("GHSA-x", ["GHSA-x", "CVE-1"])]],
       ["npm|other|1.0.0", [advisory("CVE-2", ["CVE-2", "GHSA-x"])]],
     ]), [], new Date(0));
-    expect(snapshot.aliases("CVE-1")).toEqual(["CVE-1", "CVE-2", "GHSA-x"]);
-    expect(snapshot.aliases("GHSA-unknown")).toEqual(["GHSA-unknown"]);
-    expect(groupIds(snapshot, [{ ecosystem: "npm", name: "brace", version: "5.0.9" }], () => true)).toEqual([{ ids: ["CVE-1", "CVE-2", "GHSA-x"], replaced: ["5.0.9"] }]);
+    const brace = { ecosystem: "npm", name: "brace" } as const;
+    expect(snapshot.aliases("CVE-1", brace)).toEqual(["CVE-1", "GHSA-x"]);
+    expect(snapshot.aliases("CVE-1", { ecosystem: "npm", name: "other" })).toEqual(["CVE-2", "GHSA-x"]);
+    expect(snapshot.aliases("GHSA-unknown", brace)).toEqual([]);
+    expect(groupIds(snapshot, [{ ...brace, version: "5.0.9" }], () => true)).toEqual([{ ids: ["CVE-1", "GHSA-x"], replaced: ["5.0.9"] }]);
   });
 
   it("merge when proofs name a group by different aliases", () => {

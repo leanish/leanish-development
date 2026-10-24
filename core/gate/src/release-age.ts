@@ -185,8 +185,8 @@ export function groupIds(snapshot: Snapshot, versions: ReadonlyArray<PackageVers
       const group = snapshot.group(advisory.id);
       if (!targets.has(group)) continue;
       const entry = groups.get(group) ?? { ids: new Set<string>(), replaced: new Set<string>() };
-      // Every alias the snapshot knows, another version's advisory included: the evidence looks a group up by them.
-      for (const id of [...advisory.ids, ...snapshot.aliases(group)]) entry.ids.add(id);
+      // Every alias the package's own advisories name, another version's included: the evidence looks a group up by them.
+      for (const id of [...advisory.ids, ...snapshot.aliases(group, version)]) entry.ids.add(id);
       entry.replaced.add(version.version);
       groups.set(group, entry);
     }
