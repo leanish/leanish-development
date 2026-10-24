@@ -358,9 +358,9 @@ function readableEvents(events: ReadonlyArray<unknown>): boolean {
 
 /**
  * OSV's affected-version rule over one package's entries: an explicit `versions` list, or `ECOSYSTEM`/`SEMVER`
- * ranges read as intervals from each `introduced` to the next `fixed` (exclusive) or `last_affected` (inclusive).
- * A range of another type, one that can't be read or carries a `limit`, an entry with neither ranges nor versions,
- * or a version that doesn't compare makes a "not affected" answer unknown.
+ * ranges, each judged on its own (`rangeVerdict`). A range of another type, one that can't be read or carries a
+ * `limit`, an entry with neither ranges nor versions, or a range that can't tell makes a "not affected" answer
+ * unknown.
  */
 function osvVerdict(entries: ReadonlyArray<Record<string, unknown>>, ecosystem: Ecosystem, version: string): RangeVerdict {
   const scheme = versionScheme(ecosystem);
@@ -382,43 +382,41 @@ function osvVerdict(entries: ReadonlyArray<Record<string, unknown>>, ecosystem: 
         unknown = true;
         continue;
       }
-      let start: string | undefined;
-      for (const event of range.events) {
-        if (typeof event["introduced"] === "string") {
-          start = event["introduced"];
-          continue;
-        }
-        const end = typeof event["fixed"] === "string" ? { at: event["fixed"], inclusive: false }
-          : typeof event["last_affected"] === "string" ? { at: event["last_affected"], inclusive: true } : undefined;
-        if (end === undefined || start === undefined) continue;
-        const inside = within(compare, version, start, end);
-        if (inside === undefined) unknown = true;
-        else if (inside) return "affected";
-        start = undefined;
-      }
-      if (start !== undefined) {
-        const inside = within(compare, version, start, undefined);
-        if (inside === undefined) unknown = true;
-        else if (inside) return "affected";
-      }
+      const verdict = rangeVerdict(compare, range.events, version);
+      if (verdict === "affected") return "affected";
+      if (verdict === "unknown") unknown = true;
     }
   }
   return unknown ? "unknown" : "not-affected";
 }
 
-function within(
-  compare: (a: string, b: string) => number | undefined,
-  version: string,
-  start: string,
-  end: { readonly at: string; readonly inclusive: boolean } | undefined,
-): boolean | undefined {
-  const fromStart = start === "0" ? 1 : compare(version, start);
-  if (fromStart === undefined) return undefined;
-  if (fromStart < 0) return false;
-  if (end === undefined) return true;
-  const toEnd = compare(version, end.at);
-  if (toEnd === undefined) return undefined;
-  return end.inclusive ? toEnd <= 0 : toEnd < 0;
+/**
+ * One range as OSV evaluates it, whatever the events' order: `introduced` makes a version affected, `fixed`
+ * (exclusive) or `last_affected` (inclusive) makes it not, so the highest event the version has reached decides
+ * (`introduced: "0"` is reached by every version). Reaching none means not affected. A version that doesn't compare,
+ * or a start and an end at that same highest version, is unknown.
+ */
+function rangeVerdict(compare: (a: string, b: string) => number | undefined, events: ReadonlyArray<Record<string, unknown>>, version: string): RangeVerdict {
+  let highest: { readonly at: string; readonly starts: boolean; readonly ends: boolean } | undefined;
+  for (const event of events) {
+    const introduced = typeof event["introduced"] === "string" ? event["introduced"] : undefined;
+    const fixed = typeof event["fixed"] === "string" ? event["fixed"] : undefined;
+    const last = typeof event["last_affected"] === "string" ? event["last_affected"] : undefined;
+    const at = introduced ?? fixed ?? last;
+    if (at === undefined) continue;
+    const origin = introduced === "0";
+    const past = origin ? 1 : compare(version, at);
+    if (past === undefined) return "unknown";
+    // A `last_affected` is reached only once the version is past it; the others at it.
+    if (last !== undefined ? past <= 0 : past < 0) continue;
+    const order = highest === undefined ? 1 : origin ? -1 : highest.at === "0" && highest.starts ? 1 : compare(at, highest.at);
+    if (order === undefined) return "unknown";
+    if (order > 0) highest = { at, starts: introduced !== undefined, ends: introduced === undefined };
+    else if (order === 0) highest = { at: highest!.at, starts: highest!.starts || introduced !== undefined, ends: highest!.ends || introduced === undefined };
+  }
+  if (highest === undefined) return "not-affected";
+  if (highest.starts && highest.ends) return "unknown";
+  return highest.starts ? "affected" : "not-affected";
 }
 
 const SOURCES: ReadonlySet<string> = new Set<EvidenceSource>(["repository", "github", "osv"]);

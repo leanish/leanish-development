@@ -257,6 +257,23 @@ describe("securityCandidates and repository-only advisories", () => {
     expect(fixes[0]?.notes).toEqual([expect.stringContaining("lib@2.0.0 is affected by GHSA-repo, only in the project's repository advisories")]);
   });
 
+  it("notes an unreviewed advisory on the very version a reviewed fix moves, whether the move leaves it or not", async () => {
+    const note = "lib@1.0.0 is affected by GHSA-repo, only in the project's repository advisories (not corroborated by the sources this decision used): these advisories alone don't trigger an update";
+    for (const range of ["< 1.0.1", "< 2.0.0"]) {
+      const env = withRepositoryAdvisories(environment({ "lib@1.0.0": ["GHSA-a"] }, { lib: { "1.0.0": OLD, "1.0.1": OLD } }), [repositoryAdvisory("GHSA-repo", range)]);
+      const fixes = (await securityCandidates(await tree({ lib: "1.0.0" }), env)).fixes;
+      expect(moves(fixes)).toEqual([["lib@1.0.0", "1.0.1", undefined]]);
+      expect(fixes[0]?.notes).toEqual([note]);
+    }
+    // With the reviewed fix blocked, it's reported like the rest.
+    const blocked = withRepositoryAdvisories(environment({ "lib@1.0.0": ["GHSA-a"] }, { lib: { "1.0.0": OLD } }), [repositoryAdvisory("GHSA-repo", "< 2.0.0")]);
+    const reported = (await securityCandidates(await tree({ lib: "1.0.0" }), blocked)).fixes;
+    expect(reported.map((fix) => fix.problem)).toEqual([
+      expect.stringContaining("no version above 1.0.0 fixes"),
+      "lib@1.0.0 is affected by GHSA-repo, only in the project's repository advisories (not corroborated by the sources this decision used): no fix is proposed until a reviewed source lists it",
+    ]);
+  });
+
   it("lets one rule a candidate out, records the veto, and may steer to a young version", async () => {
     const registry = { lib: { "1.0.0": OLD, "1.0.1": OLD, "1.0.2": YESTERDAY } };
     const env = withRepositoryAdvisories(environment({ "lib@1.0.0": ["GHSA-a"] }, registry), [repositoryAdvisory("GHSA-b", ">= 1.0.1, < 1.0.2")]);
@@ -586,6 +603,19 @@ describe("securityCandidates, bundled copies", () => {
     const stuck = withArchives(environment({ "carrier@1.0.0": ["GHSA-own"], "carrier@1.1.0": ["GHSA-own"] }, registry, [], carrierManifests));
     const unfixed = await securityCandidates(await head(), { ...stuck, fetch: async (url, init) => (url.includes("brace") ? fetch(url, init) : stuck.fetch(url, init)) });
     expect(unfixed.fixes.find((fix) => fix.name === "carrier")).toMatchObject({ to: undefined, unfixable: ["GHSA-own"], problem: "no version of carrier fixes GHSA-own" });
+  });
+
+  it("notes a bundled copy's unreviewed advisory on the carrier move its reviewed one triggers, never as a report", async () => {
+    const env = withArchives(environment({ "brace@5.0.9": ["GHSA-brace"] }, registry, [], carrierManifests));
+    const advisories = [{ ghsa_id: "GHSA-brace-repo", state: "published", vulnerabilities: [{ package: { ecosystem: "npm", name: "brace" }, vulnerable_version_range: "< 5.0.12" }] }];
+    const fetch: GateEnvironment["fetch"] = async (url, init) => {
+      if (url === "https://registry.npmjs.org/brace/5.0.9") return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ repository: "github:acme/brace" }), text: async () => "" };
+      if (url === "https://api.github.com/repos/acme/brace/security-advisories?state=published&per_page=100") return { ok: true, status: 200, headers: { get: () => null }, json: async () => advisories, text: async () => "" };
+      return env.fetch(url, init);
+    };
+    const found = await securityCandidates(await head(), { ...env, fetch });
+    expect(moves(found.fixes)).toEqual([["carrier@1.0.0", "1.1.0", undefined]]);
+    expect(found.fixes[0]?.notes).toEqual([expect.stringContaining("brace@5.0.9 is affected by GHSA-brace-repo, only in the project's repository advisories")]);
   });
 
   it("leaves the carrier's own advisory no version fixes, without holding back the bundled fix", async () => {

@@ -200,10 +200,11 @@ export async function securityCandidates(head: Tree, env: GateEnvironment, gradl
     }
   }
   found.push(...carried, ...unreviewed.reports);
-  // A package with a reviewed fix carries its other versions' unreviewed findings as notes, not as blocking reports;
-  // one whose reviewed fix is blocked anyway reports them like the rest.
+  // A package a reviewed fix moves (its own, or a carrier's for a bundled copy) gets its unreviewed findings as notes
+  // on that fix, not as blocking reports; one whose reviewed fix is blocked anyway reports them like the rest.
   for (const [pkg, notes] of unreviewed.notes) {
-    const index = found.findIndex((fix) => `${fix.ecosystem}|${fix.name}` === pkg && fix.to !== undefined);
+    const moves = (fix: SecurityFix) => `${fix.ecosystem}|${fix.name}` === pkg || (fix.carries ?? []).some((carried) => `${fix.ecosystem}|${carried.name}` === pkg);
+    const index = found.findIndex((fix) => fix.to !== undefined && moves(fix));
     if (index >= 0) found[index] = { ...found[index]!, notes: [...found[index]!.notes ?? [], ...notes] };
     else found.push(...unreviewed.held.get(pkg) ?? []);
   }
@@ -232,9 +233,9 @@ function triggeredOnly(group: CarrierGroup, triggers: ReadonlyArray<Finding>): C
 }
 
 /**
- * A version failing only on advisories no reviewed source corroborates gets no move: a fixed note. A package with no
- * reviewed finding anywhere reports it like any fix that can't be made; one with a reviewed finding on another version
- * gets it as a note on that fix instead (a report there would block the package's whole group).
+ * Advisories no reviewed source corroborates trigger no move: a fixed note. A package with no reviewed finding
+ * anywhere reports them like any fix that can't be made; one with a reviewed finding, on this version or another,
+ * gets them as a note on that fix instead (a report there would block the package's whole group).
  */
 function unreviewedReports(unreviewed: ReadonlyArray<Finding>, triggers: ReadonlyArray<Finding>): {
   readonly reports: SecurityFix[];
@@ -245,7 +246,6 @@ function unreviewedReports(unreviewed: ReadonlyArray<Finding>, triggers: Readonl
   const byVersion = new Map<string, Finding[]>();
   for (const finding of unreviewed) {
     const key = versionKey(finding as PackageVersion);
-    if (triggers.some((trigger) => versionKey(trigger as PackageVersion) === key)) continue;
     byVersion.set(key, [...byVersion.get(key) ?? [], finding]);
   }
   const reports: SecurityFix[] = [];
@@ -254,7 +254,8 @@ function unreviewedReports(unreviewed: ReadonlyArray<Finding>, triggers: Readonl
   for (const group of byVersion.values()) {
     const [first] = group as [Finding, ...Finding[]];
     const ids = [...new Set(group.flatMap((finding) => finding.ids))].sort();
-    const problem = `${first.name}@${first.version} is affected by ${ids.join(", ")}, only in the project's repository advisories (not corroborated by the sources this decision used): no fix is proposed until a reviewed source lists it`;
+    const finding = `${first.name}@${first.version} is affected by ${ids.join(", ")}, only in the project's repository advisories (not corroborated by the sources this decision used)`;
+    const problem = `${finding}: no fix is proposed until a reviewed source lists it`;
     const report: SecurityFix = {
       ecosystem: first.ecosystem as Ecosystem, name: first.name, from: first.version, locations: [...new Set(group.flatMap((finding) => finding.locations))].sort(),
       targets: [], unfixable: [], malicious: false, severity: highestSeverity(group.map((finding) => finding.severity)), to: undefined, problem,
@@ -264,7 +265,8 @@ function unreviewedReports(unreviewed: ReadonlyArray<Finding>, triggers: Readonl
       reports.push(report);
       continue;
     }
-    notes.set(pkg, [...notes.get(pkg) ?? [], problem]);
+    // On a reviewed fix's PR, which moves the package anyway: what these advisories don't do on their own.
+    notes.set(pkg, [...notes.get(pkg) ?? [], `${finding}: these advisories alone don't trigger an update`]);
     held.set(pkg, [...held.get(pkg) ?? [], report]);
   }
   return { reports, notes, held };

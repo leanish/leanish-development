@@ -81,7 +81,8 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
      held PR the same unit a run would. v0.7's single `security-cooldown` PR is taken over this way by one group; the
      others open their own. A PR someone else pushed to, or one a person marked ready, is never claimed. A held PR
      left without a unit (two groups merged, or none of its packages is held any more) is retired when a review
-     recomputes it, after the default branch moves; until then it waits or graduates as any held PR does.
+     recomputes it, after the default branch moves; until then it waits or graduates as any held PR does. Its closing
+     comment names the PRs its held work went to, or says none of it is held any more.
 5. **The tool resolves npm; the agent applies non-npm moves** (skill [`secure-it`](skills/secure-it/SKILL.md)).
    - **npm, by the tool.** In a sandboxed export of base, before any agent work, the tool pins every planned direct
      and peer companion to its exact target at once (unplanned directs keep base versions), installs, restores the
@@ -150,7 +151,7 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
    run reconsiders omitted fixes.
 
    Advisories only the project's own repository publishes (unreviewed) plan no fix: such a version is reported, and
-   waits for a reviewed source. They still rule candidates out, and the plan notes each candidate ruled out that way
+   waits for a reviewed source; when a reviewed fix moves the package anyway, they're a note on that fix instead. They still rule candidates out, and the plan notes each candidate ruled out that way
    ("ruled out by …, not corroborated by the sources this decision used"), carrier versions included. A required npm
    dependency's version is set by its requirement, so there a veto refuses the fix, and the refusal names each advisory
    the version adds, marked when unreviewed. See
