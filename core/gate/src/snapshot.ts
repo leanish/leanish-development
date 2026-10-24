@@ -31,12 +31,16 @@ export function isMalware(ids: ReadonlyArray<string>, cweIds: ReadonlyArray<stri
 export class Snapshot {
   private readonly affecting: ReadonlyMap<string, ReadonlyArray<Advisory>>;
   private readonly groups: ReadonlyMap<string, string>;
+  private readonly members: ReadonlyMap<string, ReadonlyArray<string>>;
   readonly gaps: ReadonlyArray<string>;
   readonly takenAt: Date;
 
   constructor(affecting: ReadonlyMap<string, ReadonlyArray<Advisory>>, gaps: ReadonlyArray<string>, takenAt: Date) {
     this.affecting = affecting;
     this.groups = aliasGroups([...affecting.values()].flat());
+    const members = new Map<string, string[]>();
+    for (const [id, group] of this.groups) members.set(group, [...(members.get(group) ?? []), id]);
+    this.members = new Map([...members].map(([group, ids]) => [group, ids.sort()]));
     this.gaps = gaps;
     this.takenAt = takenAt;
   }
@@ -55,6 +59,11 @@ export class Snapshot {
   /** The canonical id of the alias group `id` belongs to; an id no advisory mentions is its own group. */
   group(id: string): string {
     return this.groups.get(id) ?? id;
+  }
+
+  /** Every id of `id`'s alias group, sorted, whichever advisory or package version brought it; `id` alone when none does. */
+  aliases(id: string): ReadonlyArray<string> {
+    return this.members.get(this.group(id)) ?? [id];
   }
 }
 

@@ -138,8 +138,11 @@ async function judgeYoung(change: ChangedVersion, context: AgeContext): Promise<
     context.config,
     context.now,
   );
-  if (proof === undefined) return { justification: "security-fix", targets: [ownTarget(change, context.snapshot)] };
   const bundle = context.bundleFixes?.get(versionKey(pkg));
+  // A carrier proved both ways fixes its bundle's advisories too: the evidence covers every one it fixes.
+  if (proof === undefined) {
+    return { justification: "security-fix", targets: mergedTargets([ownTarget(change, context.snapshot), ...(bundle?.problem === undefined ? bundle?.targets ?? [] : [])]) };
+  }
   if (bundle !== undefined && bundle.problem === undefined) return { justification: "bundle-fix", targets: bundle.targets };
   const bundled = bundle?.problem;
   const exception = context.exceptions.releaseAge.find(
@@ -182,12 +185,42 @@ export function groupIds(snapshot: Snapshot, versions: ReadonlyArray<PackageVers
       const group = snapshot.group(advisory.id);
       if (!targets.has(group)) continue;
       const entry = groups.get(group) ?? { ids: new Set<string>(), replaced: new Set<string>() };
-      for (const id of advisory.ids) entry.ids.add(id);
+      // Every alias the snapshot knows, another version's advisory included: the evidence looks a group up by them.
+      for (const id of [...advisory.ids, ...snapshot.aliases(group)]) entry.ids.add(id);
       entry.replaced.add(version.version);
       groups.set(group, entry);
     }
   }
   return [...groups.keys()].sort().map((group) => ({ ids: [...groups.get(group)!.ids].sort(), replaced: [...groups.get(group)!.replaced].sort() }));
+}
+
+/**
+ * One target per package and side, every occurrence's versions and groups together. Groups sharing an id are one
+ * (proofs read on different snapshots may know different aliases of it): their ids and replaced versions merge.
+ */
+export function mergedTargets(targets: ReadonlyArray<HeldTarget>): HeldTarget[] {
+  const merged = new Map<string, { name: string; bundled: boolean; replaced: Set<string>; proposed: Set<string>; groups: Array<{ ids: Set<string>; replaced: Set<string> }> }>();
+  for (const target of targets) {
+    const key = `${target.bundled ? "bundled" : "own"}|${target.name}`;
+    const entry = merged.get(key) ?? { name: target.name, bundled: target.bundled, replaced: new Set(), proposed: new Set(), groups: [] };
+    for (const version of target.replaced) entry.replaced.add(version);
+    for (const version of target.proposed) entry.proposed.add(version);
+    for (const group of target.groups) {
+      // Each group keeps the replaced versions it affects, across occurrences.
+      const sharing = entry.groups.filter((known) => group.ids.some((id) => known.ids.has(id)));
+      const into = { ids: new Set(group.ids), replaced: new Set(group.replaced) };
+      for (const known of sharing) {
+        for (const id of known.ids) into.ids.add(id);
+        for (const version of known.replaced) into.replaced.add(version);
+      }
+      entry.groups = [...entry.groups.filter((known) => !sharing.includes(known)), into];
+    }
+    merged.set(key, entry);
+  }
+  return [...merged.values()].map((entry) => ({
+    name: entry.name, bundled: entry.bundled, replaced: [...entry.replaced].sort(), proposed: [...entry.proposed].sort(),
+    groups: entry.groups.map((group) => ({ ids: [...group.ids].sort(), replaced: [...group.replaced].sort() })).sort((a, b) => (a.ids[0]! < b.ids[0]! ? -1 : 1)),
+  }));
 }
 
 /**

@@ -31,7 +31,7 @@ import { type BundleReader, bundleMismatches } from "./npm-bundles.ts";
 import type { NpmRegistry } from "./npm-registry.ts";
 import type { PackageVersion } from "./package-version.ts";
 import { versionKey } from "./package-version.ts";
-import { type ChangedVersion, groupIds, type HeldTarget } from "./release-age.ts";
+import { type ChangedVersion, groupIds, type HeldTarget, mergedTargets } from "./release-age.ts";
 import type { Snapshot } from "./snapshot.ts";
 
 export interface BundleFixInputs {
@@ -159,23 +159,26 @@ async function occurrenceProof(pkg: PackageVersion, occurrence: Occurrence, inpu
   if (choice.version !== pkg.version) {
     return `${at}: ${choice.version} ${choice.aged ? `ships a bundle without ${describe(carried)} too and is at least ${config.releaseAgeDays} days old` : `is the lowest version whose bundle drops ${describe(carried)}`} (line ${choice.line})`;
   }
-  const carriedGroups = new Set(carried.map((target) => target.advisory));
+  // The search's last snapshot covers every version read here and may know more aliases: the targets' groups come from
+  // it, the groups proved above named by its canonical ids.
+  const final = choice.snapshot;
+  const carriedGroups = new Set(carried.map((target) => final.group(target.advisory)));
   const bundledTargets = [...new Set(carried.map((target) => target.name))].sort().map((name): HeldTarget => {
     const versions = (bundle: typeof fromBundle) => [...new Set(bundle.packages.filter((entry) => entry.name === name).map((entry) => entry.version))].sort();
-    const ofName = new Set(carried.filter((target) => target.name === name).map((target) => target.advisory));
-    const replaced = affectedVersions(snapshot, name, versions(fromBundle), ofName);
+    const ofName = new Set(carried.filter((target) => target.name === name).map((target) => final.group(target.advisory)));
+    const replaced = affectedVersions(final, name, versions(fromBundle), ofName);
     return {
       name,
       bundled: true,
       replaced,
       proposed: versions(toBundle),
-      groups: groupIds(snapshot, replaced.map((version): PackageVersion => ({ ecosystem: "npm", name, version })), (group) => carriedGroups.has(group) && ofName.has(group)),
+      groups: groupIds(final, replaced.map((version): PackageVersion => ({ ecosystem: "npm", name, version })), (group) => carriedGroups.has(group) && ofName.has(group)),
     };
   });
-  const ownGroups = new Set(own);
+  const ownGroups = new Set(own.map((group) => final.group(group)));
   const carrier: HeldTarget[] = own.length === 0 ? [] : [{
     name: pkg.name, bundled: false, replaced: [occurrence.from], proposed: [pkg.version],
-    groups: groupIds(snapshot, [{ ...pkg, version: occurrence.from }], (group) => ownGroups.has(group)),
+    groups: groupIds(final, [{ ...pkg, version: occurrence.from }], (group) => ownGroups.has(group)),
   }];
   return [...carrier, ...bundledTargets];
 }
@@ -183,28 +186,6 @@ async function occurrenceProof(pkg: PackageVersion, occurrence: Occurrence, inpu
 /** The old copies a carried advisory affects: another copy of the package in the bundle isn't what the fix replaced. */
 export function affectedVersions(snapshot: Snapshot, name: string, versions: ReadonlyArray<string>, groups: ReadonlySet<string>): string[] {
   return versions.filter((version) => [...groupsOf(snapshot, { ecosystem: "npm", name, version })].some((group) => groups.has(group)));
-}
-
-/** One target per package and side, every occurrence's versions and groups together. */
-function mergedTargets(targets: ReadonlyArray<HeldTarget>): HeldTarget[] {
-  const merged = new Map<string, { name: string; bundled: boolean; replaced: Set<string>; proposed: Set<string>; groups: Map<string, { ids: string[]; replaced: Set<string> }> }>();
-  for (const target of targets) {
-    const key = `${target.bundled ? "bundled" : "own"}|${target.name}`;
-    const entry = merged.get(key) ?? { name: target.name, bundled: target.bundled, replaced: new Set(), proposed: new Set(), groups: new Map() };
-    for (const version of target.replaced) entry.replaced.add(version);
-    for (const version of target.proposed) entry.proposed.add(version);
-    for (const group of target.groups) {
-      // Each group keeps the replaced versions it affects, across occurrences.
-      const known = entry.groups.get(group.ids.join(" ")) ?? { ids: [...group.ids], replaced: new Set<string>() };
-      for (const version of group.replaced) known.replaced.add(version);
-      entry.groups.set(group.ids.join(" "), known);
-    }
-    merged.set(key, entry);
-  }
-  return [...merged.values()].map((entry) => ({
-    name: entry.name, bundled: entry.bundled, replaced: [...entry.replaced].sort(), proposed: [...entry.proposed].sort(),
-    groups: [...entry.groups.values()].map((group) => ({ ids: group.ids, replaced: [...group.replaced].sort() })),
-  }));
 }
 
 function lockfileOf(inventory: Inventory, path: string) {

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { affectedVersions } from "../src/bundle-fix-proof.ts";
+import { groupIds, mergedTargets } from "../src/release-age.ts";
 import { type GateEnvironment, runCompare } from "../src/gate.ts";
 import { runProcess, type RunProcess } from "../src/process.ts";
 import { type Advisory, Snapshot } from "../src/snapshot.ts";
@@ -225,6 +226,23 @@ describe("a young carrier proved as a bundled fix", () => {
     expect(outcome.cooldown).toMatchObject({ held: [expect.objectContaining({ version: "1.2.0", justification: "bundle-fix" })] });
   });
 
+  it("holds a carrier proved both ways with its own and its bundle's targets, its own once", async () => {
+    const outcome = await compare({ "1.0.0": { published: OLD, bundles: VULNERABLE }, "1.1.0": { published: daysAgo(1), bundles: FIXED } }, "1.0.0", "1.1.0",
+      { affected: { "brace@5.0.9": ["GHSA-brace"], "carrier@1.0.0": ["GHSA-own"] } });
+    expect(ageFailures(outcome.failures)).toEqual([]);
+    const held = outcome.cooldown.evaluated ? outcome.cooldown.held : [];
+    expect(held).toMatchObject([{ version: "1.1.0", justification: "security-fix" }]);
+    expect(held[0]!.targets?.map((target) => [target.name, target.bundled, target.groups.map((group) => group.ids)])).toEqual([
+      ["carrier", false, [["GHSA-own"]]],
+      ["brace", true, [["GHSA-brace"]]],
+    ]);
+    // A bundle that drops nothing proves nothing: the carrier's own fix alone is held.
+    const own = await compare({ "1.0.0": { published: OLD, bundles: VULNERABLE }, "1.1.0": { published: daysAgo(1), bundles: VULNERABLE } }, "1.0.0", "1.1.0",
+      { affected: { "brace@5.0.9": ["GHSA-brace"], "carrier@1.0.0": ["GHSA-own"] } });
+    const alone = own.cooldown.evaluated ? own.cooldown.held : [];
+    expect(alone[0]!.targets?.map((target) => target.name)).toEqual(["carrier"]);
+  });
+
   it("doesn't prove a young dependency the carrier needs: that one fails the comparison (known limitation)", async () => {
     const outcome = await compare(TWO, "1.0.0", "1.1.0", {
       dependencies: { ext: "^2.0.0" },
@@ -242,6 +260,29 @@ describe("a young carrier proved as a bundled fix", () => {
     const other = archive([{ path: "package/package.json", body: manifest("carrier", "1.1.0") }]).integrity;
     const outcome = await compare({ "1.0.0": { published: OLD, bundles: VULNERABLE }, "1.1.0": { published: daysAgo(1), bundles: FIXED } }, "1.0.0", "1.1.0", { headIntegrity: other });
     expect(ageFailures(outcome.failures)).toEqual([expect.stringContaining("isn't the registry's archive")]);
+  });
+});
+
+describe("a held fix's advisory groups", () => {
+  const advisory = (id: string, ids: string[]): Advisory => ({ id, ids, source: "osv", malicious: false, summary: undefined, severity: undefined });
+
+  it("carry every alias the snapshot knows, another version's advisory and a chain of them included", () => {
+    // 5.0.9's own record names only its CVE; another scanned version's links it to a GHSA, and that GHSA to a second CVE.
+    const snapshot = new Snapshot(new Map([
+      ["npm|brace|5.0.9", [advisory("CVE-1", ["CVE-1"])]],
+      ["npm|brace|5.0.10", [advisory("GHSA-x", ["GHSA-x", "CVE-1"])]],
+      ["npm|other|1.0.0", [advisory("CVE-2", ["CVE-2", "GHSA-x"])]],
+    ]), [], new Date(0));
+    expect(snapshot.aliases("CVE-1")).toEqual(["CVE-1", "CVE-2", "GHSA-x"]);
+    expect(snapshot.aliases("GHSA-unknown")).toEqual(["GHSA-unknown"]);
+    expect(groupIds(snapshot, [{ ecosystem: "npm", name: "brace", version: "5.0.9" }], () => true)).toEqual([{ ids: ["CVE-1", "CVE-2", "GHSA-x"], replaced: ["5.0.9"] }]);
+  });
+
+  it("merge when proofs name a group by different aliases", () => {
+    const target = (ids: string[], replaced: string) => ({ name: "carrier", bundled: false, replaced: [replaced], proposed: ["1.1.0"], groups: [{ ids, replaced: [replaced] }] });
+    expect(mergedTargets([target(["CVE-1"], "1.0.0"), target(["CVE-1", "GHSA-x"], "1.0.1")])).toEqual([
+      { name: "carrier", bundled: false, replaced: ["1.0.0", "1.0.1"], proposed: ["1.1.0"], groups: [{ ids: ["CVE-1", "GHSA-x"], replaced: ["1.0.0", "1.0.1"] }] },
+    ]);
   });
 });
 
