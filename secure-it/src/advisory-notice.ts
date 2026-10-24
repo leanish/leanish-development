@@ -20,7 +20,18 @@ export const REVIEWED =
 export const EVIDENCE_DIFFERS =
   "**The reviewed advisories read after the comparison don't back this fix as the comparison did.** For the rows marked ⚠ below, no reviewed record (OSV, or GitHub's reviewed advisory database) lists the replaced versions as affected and the proposed one as not, or one was withdrawn or couldn't be read. The comparison's verdict stands; check the table before taking this early.";
 
-export const NOT_RECORDED = "Where these advisories appear wasn't recorded for this plan.";
+export const INCOMPLETE =
+  "**Where the advisories behind some of these versions appear couldn't be read**, as listed below, so this notice can't say a reviewed record still backs every fix. The comparison's verdict stands; check those before taking this early.";
+
+/** Why a fix's evidence is missing, for the list INCOMPLETE points to. */
+export const NOT_RECORDED = "not recorded for this plan";
+
+/** Where the table went when it was left out; the plan's block keeps the evidence either way. */
+export const TABLE_LEFT_OUT = "The table of where each advisory appears is left out: with it, this PR's body would pass GitHub's limit. The plan's block keeps all of it.";
+
+/** The ⚠ packages named in place of the table's rows, and a reason's length, before the rest is counted. */
+const NAMED_LIMIT = 20;
+const REASON_LIMIT = 300;
 
 const JUSTIFIED = new Set<PlannedHold["justification"]>(["security-fix", "bundle-fix"]);
 const COLUMNS: ReadonlyArray<SourceEvidence["source"]> = ["repository", "github", "osv"];
@@ -31,15 +42,24 @@ export interface AdvisoryNotice {
   readonly details: ReadonlyArray<string>;
 }
 
-/** Empty when no hold is a security or bundle fix. */
-export function advisoryNotice(held: ReadonlyArray<PlannedHold>): AdvisoryNotice {
+/**
+ * Empty when no hold is a security or bundle fix. Each claim covers every fix: one whose evidence failed, wasn't
+ * recorded, or has a target with no advisory group is unchecked, so the notice never says all are backed. Without
+ * `table`, the rows give way (the PR body is too long) and the ⚠ packages are named instead.
+ */
+export function advisoryNotice(held: ReadonlyArray<PlannedHold>, options: { readonly table?: boolean } = {}): AdvisoryNotice {
+  const table = options.table ?? true;
   const fixes = held.filter((entry) => JUSTIFIED.has(entry.justification));
   const rows = fixes.flatMap((entry) => (entry.evidence?.targets ?? []).flatMap((target) => target.groups.map((group) => ({ entry, target, group }))));
+  const unchecked = fixes.flatMap((entry) => uncheckedOf(entry).map((reason) => `- ${cell(entry.name)}@${cell(entry.version)}: ${bounded(reason)}`));
+  const differing = rows.filter(({ target, group }) => !backed(target, group));
   const paragraphs: string[] = [];
-  if (rows.some(({ target, group }) => !backed(target, group))) paragraphs.push(EVIDENCE_DIFFERS);
-  else if (rows.length > 0) paragraphs.push(REVIEWED);
+  if (differing.length > 0) paragraphs.push(table ? EVIDENCE_DIFFERS : differsFor(differing));
+  if (unchecked.length > 0) paragraphs.push(INCOMPLETE);
+  if (paragraphs.length === 0 && rows.length > 0) paragraphs.push(REVIEWED);
   const details: string[] = [];
-  if (rows.length > 0) {
+  if (rows.length > 0 && !table) details.push(TABLE_LEFT_OUT);
+  if (rows.length > 0 && table) {
     const collected = fixes.flatMap((entry) => (entry.evidence === undefined ? [] : [entry.evidence.collectedAt])).sort()[0]!;
     details.push(`**Where the advisories behind these versions appear**, as read during this verification (${collected.slice(0, 10)} ${collected.slice(11, 16)} UTC), each source as it says:`, "");
     details.push("| Advisory | Package | Project's repository | GitHub database | OSV |", "|---|---|---|---|---|");
@@ -49,10 +69,29 @@ export function advisoryNotice(held: ReadonlyArray<PlannedHold>): AdvisoryNotice
       details.push(`| ${mark}${cell(group.ids.join(", "))} | ${packageCell(entry, group, target)} | ${sources.join(" | ")} |`);
     }
   }
-  const failures = fixes.flatMap((entry) => (entry.evidenceFailure === undefined ? [] : [`- ${entry.name}@${entry.version}: ${cell(entry.evidenceFailure)}`]));
-  if (failures.length > 0) details.push(...(details.length === 0 ? [] : [""]), "Where these advisories appear couldn't be read for:", ...failures);
-  if (fixes.some((entry) => entry.evidence === undefined && entry.evidenceFailure === undefined)) details.push(...(details.length === 0 ? [] : [""]), NOT_RECORDED);
+  if (unchecked.length > 0) details.push(...(details.length === 0 ? [] : [""]), "Where these advisories appear couldn't be read for:", ...unchecked);
   return { paragraphs, details };
+}
+
+/** Why a fix's evidence doesn't cover it: none at all, or a target the evidence has no advisory group for. */
+function uncheckedOf(entry: PlannedHold): string[] {
+  if (entry.evidenceFailure !== undefined) return [entry.evidenceFailure];
+  if (entry.evidence === undefined) return [NOT_RECORDED];
+  if (entry.evidence.targets.length === 0) return ["no advisory recorded for it"];
+  return entry.evidence.targets.filter((target) => target.groups.length === 0).map((target) => `no advisory recorded for \`${cell(target.name)}\``);
+}
+
+/** EVIDENCE_DIFFERS without the table it points to: the ⚠ packages, named. */
+function differsFor(rows: ReadonlyArray<{ readonly entry: PlannedHold; readonly target: TargetEvidence; readonly group: GroupEvidence }>): string {
+  const names = [...new Set(rows.map(({ entry, group, target }) => packageCell(entry, group, target)))];
+  const shown = names.slice(0, NAMED_LIMIT).join("; ");
+  const more = names.length > NAMED_LIMIT ? ` and ${names.length - NAMED_LIMIT} more` : "";
+  return `**The reviewed advisories read after the comparison don't back this fix as the comparison did** for ${shown}${more}: no reviewed record (OSV, or GitHub's reviewed advisory database) lists the replaced versions as affected and the proposed one as not, or one was withdrawn or couldn't be read. The comparison's verdict stands; look into these before taking this early.`;
+}
+
+function bounded(reason: string): string {
+  const text = cell(reason);
+  return text.length <= REASON_LIMIT ? text : `${text.slice(0, REASON_LIMIT)}…`;
 }
 
 /** Some reviewed record, read now, still backs the fix the comparison proved: OSV's, or a GitHub-reviewed one. */

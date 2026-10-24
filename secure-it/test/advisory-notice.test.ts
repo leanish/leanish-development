@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { AdvisoryEvidence, EvidenceRecord, SourceEvidence } from "@leanish/gate/advisory-evidence";
 
-import { advisoryNotice, EVIDENCE_DIFFERS, NOT_RECORDED, REVIEWED } from "../src/advisory-notice.ts";
+import { advisoryNotice, EVIDENCE_DIFFERS, INCOMPLETE, NOT_RECORDED, REVIEWED, TABLE_LEFT_OUT } from "../src/advisory-notice.ts";
 import type { ChangePlan, PlannedHold } from "../src/plan.ts";
 import { cooldownWarning, planOf, withPlanSection } from "../src/plan-block.ts";
 
@@ -88,9 +88,35 @@ describe("the advisory notice on a held PR", () => {
   });
 
   it("reports evidence it couldn't read, or never recorded, and stays out of other holds", () => {
-    expect(advisoryNotice([hold({ evidenceFailure: "boom" })]).details).toEqual(["Where these advisories appear couldn't be read for:", `- ${PKG}@3.2.4: boom`]);
-    expect(advisoryNotice([hold()]).details).toEqual([NOT_RECORDED]);
+    expect(advisoryNotice([hold({ evidenceFailure: "boom" })])).toEqual({ paragraphs: [INCOMPLETE], details: ["Where these advisories appear couldn't be read for:", `- ${PKG}@3.2.4: boom`] });
+    expect(advisoryNotice([hold()])).toEqual({ paragraphs: [INCOMPLETE], details: ["Where these advisories appear couldn't be read for:", `- ${PKG}@3.2.4: ${NOT_RECORDED}`] });
     expect(advisoryNotice([hold({ justification: "required" }), hold({ justification: "exception" })])).toEqual({ paragraphs: [], details: [] });
+  });
+
+  it("never says every advisory is backed while some fix couldn't be checked", () => {
+    const other = (overrides: Partial<PlannedHold>) => hold({ name: "g:other", version: "2.0.0", ...overrides });
+    const noGroups = evidence([], { name: "g:other", groups: [] });
+    for (const unchecked of [other({ evidenceFailure: "HTTP 502" }), other({}), other({ evidence: noGroups }), other({ evidence: { ...reviewed, targets: [] } })]) {
+      const notice = advisoryNotice([hold({ evidence: reviewed }), unchecked]);
+      expect(notice.paragraphs).toEqual([INCOMPLETE]);
+      expect(notice.details.at(-1)).toMatch(/^- g:other@2\.0\.0: /);
+    }
+    // A bundle's other target with no advisory group isn't covered by the first target's rows.
+    const bundle: AdvisoryEvidence = { ...reviewed, targets: [reviewed.targets[0]!, { ...reviewed.targets[0]!, name: "brace", bundled: true, groups: [] }] };
+    expect(advisoryNotice([hold({ evidence: bundle })]).details.at(-1)).toBe(`- ${PKG}@3.2.4: no advisory recorded for \`brace\``);
+    // Both warnings together, when a row differs and another fix is unchecked.
+    const differs = evidence([checked("repository", [record()]), checked("github"), checked("osv")]);
+    expect(advisoryNotice([hold({ evidence: differs }), other({ evidenceFailure: "HTTP 502" })]).paragraphs).toEqual([EVIDENCE_DIFFERS, INCOMPLETE]);
+  });
+
+  it("leaves the table out on request, naming the ⚠ packages instead of pointing at rows", () => {
+    const differs = evidence([checked("repository", [record()]), checked("github"), checked("osv")]);
+    const notice = advisoryNotice([hold({ evidence: differs })], { table: false });
+    expect(notice.paragraphs).toHaveLength(1);
+    expect(notice.paragraphs[0]).toContain("for `tools.jackson.core:jackson-databind` 3.2.3 → 3.2.4:");
+    expect(notice.paragraphs[0]).not.toMatch(/below|the table/);
+    expect(notice.details).toEqual([TABLE_LEFT_OUT]);
+    expect(advisoryNotice([hold({ evidence: reviewed })], { table: false })).toEqual({ paragraphs: [REVIEWED], details: [TABLE_LEFT_OUT] });
   });
 
   it("opens the cooldown warning with the paragraphs and puts the table after the holds", () => {
@@ -110,5 +136,29 @@ describe("the advisory notice on a held PR", () => {
     expect(planOf(body)).toEqual(plan);
     const edited = { ...plan, cooldown: [hold({ evidence: { ...reviewed, collectedAt: "later" } })] };
     expect(planOf(withPlanSection("Description.", edited))).toBeUndefined();
+  });
+
+  it("leaves only the evidence table out when the body wouldn't fit, and fails what still doesn't", () => {
+    const plan = (evidence: AdvisoryEvidence): ChangePlan => ({ topic: "security-cooldown", malware: false, severity: "CRITICAL", kind: "routine", moves: [], packages: [], cooldown: [hold({ evidence })] });
+    const fitting = withPlanSection("Description.", plan(reviewed));
+    expect(fitting).toContain("> | Advisory | Package | Project's repository | GitHub database | OSV |");
+    // 60 groups over 20 replaced versions: the rendered table alone passes GitHub's body limit.
+    const replaced = Array.from({ length: 20 }, (_, i) => `3.1.${i}`);
+    const verdicts = Object.fromEntries([...replaced.map((version) => [version, "affected"] as const), ["3.2.4", "not-affected"] as const]);
+    const groups = Array.from({ length: 60 }, (_, i) => {
+      const found = record({ id: `GHSA-${String(i).padStart(4, "0")}-aaaa-bbbb`, verdicts });
+      return { ids: [found.id], replaced, sources: [checked("repository", [found]), checked("github", [{ ...found, reviewed: true }]), checked("osv", [found])] };
+    });
+    const large = plan({ collectedAt: "2026-10-23T16:57:12.000Z", targets: [{ ecosystem: "Maven", name: PKG, bundled: false, replaced, proposed: ["3.2.4"], groups }] });
+    const body = withPlanSection("Description.", large);
+    expect(body.length).toBeLessThanOrEqual(65_536);
+    expect(body).toContain(`> ${REVIEWED}`);
+    expect(body).toContain(`> ${TABLE_LEFT_OUT}`);
+    expect(body).not.toContain("| Advisory | Package |");
+    expect(body).toContain("> | Package | Version | Published (UTC) | Held until (UTC) | Why | Signals |");
+    expect(planOf(body)).toEqual(large);
+    // Rewriting it keeps one warning, the same one.
+    expect(withPlanSection(body, large)).toBe(body);
+    expect(() => withPlanSection("x".repeat(70_000), plan(reviewed))).toThrow("over GitHub's 65536");
   });
 });

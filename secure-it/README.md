@@ -257,8 +257,14 @@ bundled, and a removal as a removal. A lookup that fails reads "couldn't be full
 
 A fixed line opens the warning: that a reviewed record (OSV, or GitHub's reviewed database) still backs every fix as
 read now, or, with those rows marked ⚠, that none does for some (withdrawn since, ranges that changed, or sources that
-couldn't be read). The comparison's verdict stands either way. A fix's targets are reviewed advisories by the time
-it's proposed; how each source counts is in [the gate's rules](../core/gate/README.md#how-each-source-counts).
+couldn't be read). A fix whose evidence couldn't be read, wasn't recorded, or covers only some of its targets gets
+its own line and is listed: the notice never says every fix is backed while one is unchecked. The comparison's verdict
+stands either way. A fix's targets are reviewed advisories by the time it's proposed; how each source counts is in
+[the gate's rules](../core/gate/README.md#how-each-source-counts).
+
+When the table would push the PR body past GitHub's limit, only the table is left out, with a line saying so: the
+plan's block keeps the whole evidence, the ⚠ packages are named in the opening line, and the rest of the warning
+stays.
 
 The agent never writes any of this.
 
