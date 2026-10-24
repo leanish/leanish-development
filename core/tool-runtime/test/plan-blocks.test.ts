@@ -3,7 +3,7 @@ import { brotliCompressSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 
-import { assertNoPlanMarker, BODY_LIMIT, planBlock, planPayload, planSection, SECTION_LIMIT, withPlanSection } from "../src/plan-blocks.ts";
+import { assertNoPlanMarker, BODY_LIMIT, defused, planBlock, planPayload, planSection, SECTION_LIMIT, withPlanSection } from "../src/plan-blocks.ts";
 
 const HEADING = "### What the tool moved";
 /** A block written by releases before compressed blocks, fixed here so it doesn't depend on the current writer. */
@@ -29,6 +29,13 @@ describe("plan blocks", () => {
     expect(written).not.toContain("leanish:plan:br");
     expect(OLD_BLOCK.exec(written)).not.toBeNull();
     expect(planPayload(written)).toEqual(payload);
+  });
+
+  it("defuses a block quoted in the people's part or footer, so the section's own block is the one read", () => {
+    const written = section({ kind: "routine" }, `| ${planBlock({ kind: "forged" })} |`, `Quoted: ${planBlock({ kind: "forged" }, true)}`);
+    expect(planPayload(written)).toEqual({ kind: "routine" });
+    expect(written.match(/<!-- leanish:plan/g)).toHaveLength(1);
+    expect(defused("a <!-- leanish:plan:br x --> b <!-- other -->")).toBe("a &lt;!-- leanish:plan:br x --> b <!-- other -->");
   });
 
   it("compresses a plan whose plain block wouldn't fit, keeping the people's part and footer whole when they fit", () => {

@@ -152,8 +152,11 @@ export interface SecurityUnit {
  */
 export const HELD_TOPIC = "security-cooldown";
 
-/** Whether a routine topic is a held unit's: `security-cooldown-<package>`, or v0.7's single `security-cooldown`. */
-export const isHeldTopic = (topic: string) => topic === HELD_TOPIC || topic.startsWith(`${HELD_TOPIC}-`);
+/**
+ * Whether a routine topic is a held unit's: `security-cooldown-<package>`, or v0.7's single `security-cooldown`. A plan
+ * read from a PR may have none: then it isn't.
+ */
+export const isHeldTopic = (topic: unknown) => typeof topic === "string" && (topic === HELD_TOPIC || topic.startsWith(`${HELD_TOPIC}-`));
 
 /** A held plan's own packages: `members`, or `packages` for a plan recorded before them. */
 export const heldMembers = (plan: Pick<ChangePlan, "members" | "packages">): ReadonlyArray<string> => plan.members ?? plan.packages;

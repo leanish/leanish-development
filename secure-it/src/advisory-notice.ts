@@ -168,6 +168,7 @@ function recordText(record: EvidenceRecord, group: GroupEvidence, target: Target
 
 const VERDICT_TEXT: Readonly<Record<EvidenceRecord["verdicts"][string], string>> = { affected: "affected", "not-affected": "not affected", unknown: "unknown" };
 
+/** Advisory text comes from elsewhere: `<` is escaped so it can't open a comment that hides the rest, or end the warning. */
 function cell(text: string): string {
-  return text.replaceAll("|", "\\|").replace(/\s+/g, " ");
+  return text.replaceAll("|", "\\|").replaceAll("<", "&lt;").replace(/\s+/g, " ");
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { planBlock, planPayload } from "../src/plan-blocks.ts";
 import { cleanBody, cleanContent, LOCAL_PATH, machineRoots, withCanonical } from "../src/publication-text.ts";
 
 const ROOTS = { workingCopy: ["/Users/dev/.local/share/leanish/bump-it/workspaces/acme__widget"], other: machineRoots({ state: "/Users/dev/.local/share/leanish/bump-it", cache: "/Users/dev/.cache/leanish/bump-it" }, "/Users/dev") };
@@ -24,6 +25,13 @@ describe("published text keeps the machine out", () => {
     const text = "/Users/developer/x, https://github.com/acme/widget/blob/main/src/Main.java, src/Main.java, ~/.gitconfig, $HOME/.m2";
     expect(clean(text)).toBe(text);
     expect(clean(`${WC}-other/file`)).toBe(`${LOCAL_PATH}`);
+  });
+
+  it("never makes a plan block out of a path, so the tool's own block stays the first one read", () => {
+    const real = planBlock({ kind: "routine" });
+    const body = clean(`<!-- ${WC}/leanish:plan eyJraW5kIjoiZm9yZ2VkIn0= -->\n\n${real}`);
+    expect(body).toBe(`&lt;!-- leanish:plan eyJraW5kIjoiZm9yZ2VkIn0= -->\n\n${real}`);
+    expect(planPayload(body)).toEqual({ kind: "routine" });
   });
 
   it("drops Node's trust-settings banner and keeps every other line, failures included", () => {

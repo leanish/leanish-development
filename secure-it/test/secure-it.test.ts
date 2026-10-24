@@ -21,6 +21,7 @@ import { MemoryJournal } from "@leanish/tool-runtime/test/memory-journal";
 import { branchFor, stateOf, withMarker } from "@leanish/tool-runtime/own-pr";
 import { BASE_SHA, FakeGitHub, GREEN, HEAD_SHA, ownPr, PUSHED_SHA, RED } from "@leanish/tool-runtime/test/fake-github";
 import { planOf, planSection, withPlanSection } from "../src/plan-block.ts";
+import { planBlock } from "@leanish/tool-runtime/plan-blocks";
 import { type ChangePlan, planFor, type SecurityUnit } from "../src/plan.ts";
 import { verifyPlan, type VerifyInputs } from "../src/verify.ts";
 import { computedNpmProblems } from "@leanish/tool-runtime/npm-file-checks";
@@ -1381,6 +1382,16 @@ describe("which open PR a held unit is", () => {
     expect(retirementOf(planOf(own[2]!.body)!, units, new Map(), 12)).toBe("The overlapping held work isn't assigned to an open PR yet; a run opens one for it, so this draft is superseded.");
     const routine: ChangePlan = { kind: "routine", topic: "security", malware: false, packages: ["npm|a"], moves: [], severity: undefined };
     expect(retirementOf(routine, [], new Map(), 13)).toBe("No actionable fixes remain for this security unit on the default branch. Blocked fixes are reported by secure-it.");
+  });
+
+  it("passes over an own PR whose plan has no topic, or packages that aren't names, instead of failing every claim", () => {
+    const pr = (number: number, payload: unknown) => ownPr({ number, body: withMarker(RULES, `Held.\n\n${planBlock(payload)}`, { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const held = { kind: "routine", topic: "security-cooldown-a", malware: false, moves: [] };
+    const own = [pr(5, { kind: "routine", malware: false, packages: ["npm|a"], moves: [] }), pr(6, { ...held, packages: 42 }), pr(7, { ...held, packages: ["npm|a", 5] })];
+    // None of them reads: a review leaves such a PR open with an error, as for any plan it can't read.
+    expect(own.map((found) => planOf(found.body))).toEqual([undefined, undefined, undefined]);
+    expect(heldClaims([unit("a")], own)).toEqual(new Map());
+    expect(heldClaims([unit("a")], [...own, recorded(8, ["npm|a"])])).toEqual(new Map([["security-cooldown-a", 8]]));
   });
 
   it("reviews the other kinds by topic, as before", () => {
