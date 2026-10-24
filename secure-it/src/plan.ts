@@ -110,7 +110,8 @@ export interface ChangePlan {
   readonly topic: string;
   /**
    * A held routine unit's own packages (`ecosystem|name` of its fixes), without the companions planning adds to
-   * `packages`: what tells which open PR stands for which held unit (`heldMembers`).
+   * `packages`: what tells which open PR stands for which held unit (`heldMembers`). A retry that leaves moves out
+   * keeps them: the PR still stands for the whole unit.
    */
   readonly members?: ReadonlyArray<string>;
   readonly malware: boolean;
