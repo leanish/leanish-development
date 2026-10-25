@@ -13,11 +13,11 @@
   by their own packages (`members` in the plan), the same way in runs and reviews, so v0.7's single held PR is taken
   over by one group and the others open their own; a PR someone else pushed to, or a held one a person marked ready,
   is never claimed. Branches created in one run no longer collide when two topics cut to the same name. Held groups
-  that can't be planned apart (two young roots that each require one exact companion keep the other's old requirement
-  when planned alone) are planned and opened together: the failing groups when there are several, then every held
-  group, v0.7's single held batch, which can gather groups that would have planned alone (their PR then waits for
-  its youngest version); otherwise each stays apart and reports its failure. Each group that doesn't plan alone is
-  logged.
+  whose planning or Gradle reference resolution fails apart (npm roots keeping each other's old requirements, or
+  Gradle declarations that must move together) are tried together before publication: the failing groups when there
+  are several, then every held group, v0.7's single held batch, which can gather groups that would have passed alone
+  (their PR then waits for its youngest version); otherwise each stays apart and reports its failure. Each preflight
+  failure is logged with its unit and reason.
 
 - A project's own repository advisories, unreviewed and published at will by whoever controls the repository, no
   longer trigger a fix nor justify a young version: they still detect (a finding, a PR adding one fails) and rule
@@ -54,6 +54,16 @@
   refused, and the critical fix was never proposed.
 
 ### Fixed
+
+- Held Gradle fixes that resolve only together no longer fail in separate PRs: preflight checks the planned reference
+  resolution as well as plan construction before assigning PRs, using the same regrouping in runs and base-movement
+  reviews. It runs only with two or more held routine units and resolves only plans with Maven moves. Normal edit
+  verification still runs before publication. For Gradle, only recorded reference problems regroup units; a thrown
+  execution error or missing inventory makes grouping unknown for all held routine units, including npm-only ones.
+  All fail for that run; base-movement reviews error for all held routine PRs without closing them, since any could
+  have joined the failing group in the all-held fallback. Other run units and PR rebases continue. Preflight results
+  (including errors) are shared by base commit and plan identity for one run/review tick;
+  verification is not cached. The existing fallback for npm planning errors stays; each preflight failure is logged.
 
 - Both tools now check the actual cleaned title (nonblank, at most 256 UTF-16 units) and marked body (at most 65,536)
   against the client's limits before a push or a text-only API update, instead of letting the client refuse them after

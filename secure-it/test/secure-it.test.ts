@@ -8,7 +8,7 @@ import { ConsoleLogger } from "@leanish/agent-runtime/logger/console-logger";
 import type { GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
 import type { WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
 import { InMemoryWorkspace } from "@leanish/agent-runtime/working-copy/in-memory-workspace";
-import type { GradleInventory } from "@leanish/gate/gradle";
+import { gradleResolutionProblems, type GradleInventory } from "@leanish/gate/gradle";
 import type { AdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import type { SecurityFix } from "@leanish/gate/candidates";
 import { FLOORS_PATH, parseFloors } from "@leanish/gate/floors";
@@ -25,7 +25,8 @@ import { cooldownWarning, planOf, planSection, withPlanSection } from "../src/pl
 import { EVIDENCE_DIFFERS, EVIDENCE_LEFT_OUT } from "../src/advisory-notice.ts";
 import { planBlock } from "@leanish/tool-runtime/plan-blocks";
 import { type ChangePlan, planFor, type SecurityUnit } from "../src/plan.ts";
-import { verifyPlan, type VerifyInputs } from "../src/verify.ts";
+import { referencePlan, verifyPlan, type VerifyInputs } from "../src/verify.ts";
+import { referenceProblems } from "@leanish/tool-runtime/gradle-reference";
 import { computedNpmProblems } from "@leanish/tool-runtime/npm-file-checks";
 import { materializeInCopy } from "../src/npm-materialize.ts";
 import { requiredNpmPlan } from "../src/npm-required-plan.ts";
@@ -1345,6 +1346,242 @@ describe("the cooldown hold", () => {
     ] as never });
     const result = await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context);
     expect(result).toMatchObject({ units: [{ topic: "security", packages: ["npm|left-pad"] }, { topic: "security-cooldown-vite", packages: ["npm|vite"] }] });
+  });
+
+  /** Base declarations are independent to the planner; Gradle refuses either half of this aligned pair. */
+  function heldGradle(options: { independent?: boolean; single?: boolean; extra?: boolean; broken?: "throw" | "missing" | "unresolved" | "declarations" } = {}) {
+    const allNames = ["a", "b", ...options.extra ? ["c"] : []];
+    const fixes = allNames.slice(0, options.single ? 1 : allNames.length).map((name) => vite({ ecosystem: "Maven", name: `g:${name}`, from: "1.0.0", locations: [":runtimeClasspath"],
+      to: { version: "1.0.1", line: "1", aged: false, major: false, blockers: [] } }));
+    const files = { "build.gradle": `dependencies { ${allNames.map((name) => `implementation "g:${name}:1.0.0"`).join("; ")} }` };
+    const base: GradleInventory = { schemaVersion: 3, tree: BASE_SHA, builds: [{ build: ".", configurations: [{ id: ":runtimeClasspath", kind: "project", error: undefined, unresolved: [],
+      declared: allNames.map((name) => ({ group: "g", name, version: "1.0.0", reason: undefined })),
+      resolved: allNames.map((name) => ({ group: "g", name, version: "1.0.0" })),
+    }] }] };
+    const h = harness({ fixes, files });
+    const probes: string[][] = [];
+    const inventories: ReturnType<SecureItDeps["gradle"]> = {
+      ofWorkingTree: async () => base,
+      ofCommit: async (_tree, change) => {
+        if (change?.transform === undefined) return base;
+        const { moves } = change.transform.content("/fixture") as { moves: Array<{ name: string; to: string }> };
+        const names = moves.map((move) => move.name).sort();
+        probes.push(names);
+        if (options.broken === "throw" && names.includes("g:a")) throw new Error("reference unavailable");
+        if (options.broken === "missing" && names.includes("g:a")) return undefined;
+        const failed = options.independent !== true && names.includes("g:a") !== names.includes("g:b");
+        return { ...base, builds: [{ build: ".", configurations: base.builds[0]!.configurations.map((configuration) => ({ ...configuration,
+          error: failed ? "conflict between g:b:1.0.0 and g:b:1.0.1" : undefined,
+          unresolved: options.broken === "unresolved" && names.includes("g:a") ? [{ requested: "g:a:1.0.1", failure: "not found" }] : [],
+          declared: configuration.declared.map((entry) => names.includes(`g:${entry.name}`) && !(options.broken === "declarations" && entry.name === "a")
+            ? { ...entry, version: "1.0.1", moved: true as const } : entry),
+        })) }] };
+      },
+    };
+    const verify: SecureItDeps["verify"] = async (inputs) => {
+      if (inputs.reference === undefined) return ["no Gradle reference"];
+      const planned = referencePlan(inputs.plan, inputs.gradle.base);
+      const problems = [...planned.problems, ...referenceProblems(inputs.gradle.base, inputs.reference, planned.moves, planned.floors), ...gradleResolutionProblems(inputs.reference, [])];
+      if (problems.length === 0) inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: inputs.plan.moves.map((move) => ({ ...HELD, ecosystem: "Maven", name: move.name, version: move.to, replaced: [move.from] })) });
+      return problems;
+    };
+    const fixtureTree = (id: string): Tree => ({ ...tree(id, files), list: async () => Object.keys(files) });
+    const deps: SecureItDeps = { ...h.deps, gradle: () => inventories, verify,
+      trees: { commit: async (_wc, sha) => fixtureTree(sha), working: () => fixtureTree("worktree") } };
+    return { ...h, base, fixes, probes, deps };
+  }
+
+  it("joins held Gradle fixes that plan alone but whose references only resolve together", async () => {
+    const h = heldGradle();
+    const result = await secureIt(h.deps).run(h.context);
+    expect(result, JSON.stringify(result)).toMatchObject({ outcome: "published", topic: "security-cooldown-g:a", packages: ["Maven|g:a", "Maven|g:b"] });
+    expect(h.probes.slice(0, 3)).toEqual([["g:a"], ["g:b"], ["g:a", "g:b"]]);
+    expect(h.agentCalls).toHaveLength(1);
+    expect(planOf(h.github.prs.get(42)!.body)?.moves.map((move) => move.name)).toEqual(["g:a", "g:b"]);
+  });
+
+  it("tries only the failing Gradle groups together before gathering every held group", async () => {
+    const h = heldGradle({ extra: true });
+    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ units: [
+      { packages: ["Maven|g:c"], outcome: "published" }, { packages: ["Maven|g:a", "Maven|g:b"], outcome: "published" },
+    ] });
+    expect(h.probes.slice(0, 4)).toEqual([["g:a"], ["g:b"], ["g:c"], ["g:a", "g:b"]]);
+    expect(h.probes).not.toContainEqual(["g:a", "g:b", "g:c"]);
+    expect(h.agentCalls).toHaveLength(2);
+  });
+
+  it.each(["aged", "major", "malware"] as const)("resolves only verification references for %s units, jointly except for majors", async (kind) => {
+    const h = heldGradle({ independent: true });
+    const fixes = h.fixes.map((fix) => ({ ...fix, malicious: kind === "malware", to: { ...fix.to!, aged: kind !== "major", major: kind === "major" } }));
+    const found = await h.deps.candidates(tree(BASE_SHA), await h.deps.gate(h.context), {});
+    await secureIt({ ...h.deps, candidates: async () => ({ ...found, fixes }) }).run(h.context);
+    expect(h.probes).toEqual(kind === "major" ? [["g:a"], ["g:b"]] : [["g:a", "g:b"]]);
+  });
+
+  it("keeps independent held Gradle fixes apart", async () => {
+    const h = heldGradle({ independent: true });
+    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ units: [
+      { topic: "security-cooldown-g:a", outcome: "published" }, { topic: "security-cooldown-g:b", outcome: "published" },
+    ] });
+    expect(h.probes).toEqual([["g:a"], ["g:b"], ["g:a"], ["g:b"]]);
+    expect(h.agentCalls).toHaveLength(2);
+  });
+
+  it.each(["unresolved", "declarations"] as const)("leaves a healthy held Gradle fix independent when a %s reference also prevents the joint preflight", async (broken) => {
+    const h = heldGradle({ independent: true, broken });
+    const warn = vi.spyOn(h.context.logger, "warn");
+    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ units: [
+      { topic: "security-cooldown-g:a", outcome: "verification-failed" }, { topic: "security-cooldown-g:b", outcome: "published" },
+    ] });
+    expect(h.probes.slice(0, 3)).toEqual([["g:a"], ["g:b"], ["g:a", "g:b"]]);
+    expect(warn).toHaveBeenCalledWith("secure-it: a held unit's preflight failed", expect.objectContaining({ topic: "security-cooldown-g:a", error: expect.any(String) }));
+    expect([...h.github.prs.values()].map((pr) => planOf(pr.body)?.packages)).toEqual([["Maven|g:b"]]);
+  });
+
+  it.each(["throw", "missing"] as const)("fails only held units when the Gradle preflight is %s, without regrouping", async (broken) => {
+    const h = heldGradle({ independent: true, broken, extra: true });
+    const found = await h.deps.candidates(tree(BASE_SHA), await h.deps.gate(h.context), {});
+    const fixes = h.fixes.map((fix) => fix.name === "g:c" ? { ...fix, to: { ...fix.to!, aged: true } } : fix);
+    expect(await secureIt({ ...h.deps, candidates: async () => ({ ...found, fixes }) }).run(h.context)).toMatchObject({ units: [
+      { topic: "security", outcome: "published" }, { topic: "security-cooldown-g:a", outcome: "failed" }, { topic: "security-cooldown-g:b", outcome: "failed" },
+    ] });
+    expect(h.probes).toEqual([["g:a"], ["g:c"]]);
+    expect(h.agentCalls).toHaveLength(1);
+    expect([...h.github.prs.values()].map((pr) => planOf(pr.body)?.packages)).toEqual([["Maven|g:c"]]);
+  });
+
+  it("fails npm-only and Maven held units on an unknown Gradle preflight while the aged unit still runs", async () => {
+    const h = heldGradle({ single: true, broken: "throw" });
+    const found = await h.deps.candidates(tree(BASE_SHA), await h.deps.gate(h.context), {});
+    const fixes = [...h.fixes, YOUNG_VITE(), leftPad()];
+    const withLockfile = (base: Tree): Tree => ({ ...base,
+      read: async (path) => path === "package-lock.json" ? LOCK : base.read(path),
+      list: async (dir) => [...await base.list(dir), "package-lock.json"],
+    });
+    const trees: SecureItDeps["trees"] = {
+      commit: async (wc, sha) => withLockfile(await h.deps.trees.commit(wc, sha)),
+      working: (wc) => withLockfile(h.deps.trees.working(wc)),
+    };
+    const result = await secureIt({ ...h.deps, trees, candidates: async () => ({ ...found, fixes }), verify: async () => [] }).run(h.context);
+    expect(result).toMatchObject({ units: [
+      { topic: "security", outcome: "published" },
+      { topic: "security-cooldown-g:a", outcome: "failed", detail: "reference unavailable" },
+      { topic: "security-cooldown-vite", outcome: "failed", detail: "reference unavailable" },
+    ] });
+    expect(h.probes).toEqual([["g:a"]]);
+    expect(h.agentCalls).toHaveLength(1);
+    expect([...h.github.prs.values()].map((pr) => planOf(pr.body)?.packages)).toEqual([["npm|left-pad"]]);
+    expect(h.workspace.pushes).toHaveLength(1); // Only the aged unit publishes; neither held unit reaches the agent.
+    expect(h.workspace.deletions).toEqual([]);
+    expect(h.github.calls.some((call) => call.startsWith("closePullRequest"))).toBe(false);
+  });
+
+  it("does no extra Gradle reference resolution for a single held unit or npm-only held units", async () => {
+    const single = heldGradle({ independent: true, single: true });
+    expect(await secureIt(single.deps).run(single.context)).toMatchObject({ outcome: "published" });
+    expect(single.probes).toEqual([["g:a"]]); // Verification's reference only.
+    const npm = harness({ fixes: [YOUNG_VITE(), leftPad({ to: { version: "1.0.1", line: "1", aged: false, major: false, blockers: [] } })] });
+    const inventories = single.deps.gradle(single.context);
+    await secureIt({ ...npm.deps, gradle: () => inventories, verify: holdingVerify }).run(npm.context);
+    expect(single.probes).toEqual([["g:a"]]);
+    expect(npm.agentCalls).toHaveLength(2);
+  });
+
+  it("still verifies the actual edit after the joint Gradle preflight passes", async () => {
+    const h = heldGradle();
+    expect(await secureIt({ ...h.deps, verify: async () => ["verification refused the edit"] }).run(h.context)).toMatchObject({ outcome: "verification-failed" });
+    expect(h.workspace.pushes).toEqual([]);
+    expect(h.github.prs.size).toBe(0);
+  });
+
+  async function seedSplitGradlePrs(h: ReturnType<typeof heldGradle>): Promise<void> {
+    for (const [i, fix] of h.fixes.entries()) {
+      const topic = fix.to!.aged ? "security" : `security-cooldown-${fix.name}`;
+      const plan = await planFor([fix], { lockfiles: new Map(), gradle: h.base, named: () => true, tagCommit: async () => undefined }, { kind: "routine", topic });
+      const pr = ownPr({ number: i + 7, nodeId: `node${i + 7}`, headRef: branchFor(RULES, new Date("2026-10-05T00:00:00Z"), topic), body: withMarker(RULES, withPlanSection("Fixes one.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+      h.github.prs.set(pr.number, pr);
+      h.workspace.setRemoteHead(pr.headRef, pr.headSha);
+    }
+  }
+
+  it("leaves both split Gradle PRs untouched after one transient preflight execution error", async () => {
+    const h = heldGradle();
+    await seedSplitGradlePrs(h);
+    const before = [...h.github.prs.values()];
+    h.github.before("updatePullRequest", () => h.github.push(7, PUSHED_SHA));
+    const inventories = h.deps.gradle(h.context);
+    let attempts = 0;
+    const gradle: SecureItDeps["gradle"] = () => ({ ...inventories, ofCommit: async (tree, change) => {
+      if (change?.transform !== undefined && attempts++ === 0) throw new Error("transient Gradle failure");
+      return inventories.ofCommit(tree, change);
+    } });
+    expect(await secureIt({ ...h.deps, gradle }).review({ ...h.context, workingCopy: { ...h.context.workingCopy, headSha: "f".repeat(40) } })).toMatchObject({ reviewed: [
+      { number: 7, outcome: "error", detail: "transient Gradle failure" }, { number: 8, outcome: "error", detail: "transient Gradle failure" },
+    ] });
+    expect([...h.github.prs.values()]).toEqual(before);
+    expect(h.workspace.pushes).toEqual([]);
+    expect(h.workspace.deletions).toEqual([]);
+    expect(h.agentCalls).toEqual([]);
+    expect(attempts).toBe(1); // The second PR shares the rejected preflight; it cannot regroup on a lucky retry.
+    // A later invocation retries instead of keeping the transient rejection indefinitely.
+    expect(await secureIt({ ...h.deps, gradle }).run(h.context)).toMatchObject({ outcome: "updated", packages: ["Maven|g:a", "Maven|g:b"] });
+  });
+
+  it("rebases an aged PR while both held PRs report an unknown Gradle preflight", async () => {
+    const h = heldGradle({ independent: true, extra: true });
+    const fixes = h.fixes.map((fix) => fix.name === "g:c" ? { ...fix, to: { ...fix.to!, aged: true } } : fix);
+    await seedSplitGradlePrs({ ...h, fixes });
+    const heldBefore = [h.github.prs.get(7), h.github.prs.get(8)];
+    const found = await h.deps.candidates(tree(BASE_SHA), await h.deps.gate(h.context), {});
+    const inventories = h.deps.gradle(h.context);
+    let attempts = 0;
+    const gradle: SecureItDeps["gradle"] = () => ({ ...inventories, ofCommit: async (tree, change) => {
+      if (change?.transform !== undefined && attempts++ === 0) throw new Error("transient Gradle failure");
+      return inventories.ofCommit(tree, change);
+    } });
+    const tool = secureIt({ ...h.deps, gradle, candidates: async () => ({ ...found, fixes }) });
+    expect(await tool.review({ ...h.context, workingCopy: { ...h.context.workingCopy, headSha: "f".repeat(40) } })).toMatchObject({ reviewed: [
+      { number: 7, outcome: "error", detail: "transient Gradle failure" },
+      { number: 8, outcome: "error", detail: "transient Gradle failure" },
+      { number: 9, outcome: "rebased" },
+    ] });
+    expect([h.github.prs.get(7), h.github.prs.get(8)]).toEqual(heldBefore);
+    expect(h.github.prs.get(9)?.state).toBe("open");
+    expect(h.workspace.pushes).toHaveLength(1);
+    expect(h.workspace.deletions).toEqual([]);
+    expect(h.probes).toEqual([["g:c"]]); // Only final verification resolves; the shared preflight rejected before returning an inventory.
+  });
+
+  it("reviews two split held Gradle PRs on a moved base as one joint unit", async () => {
+    const h = heldGradle();
+    await seedSplitGradlePrs(h);
+    // The next PR's claims must see the first PR's newly pushed head, as GitHub does once the push is visible.
+    h.github.before("updatePullRequest", () => h.github.push(7, PUSHED_SHA));
+    expect(await secureIt(h.deps).review({ ...h.context, workingCopy: { ...h.context.workingCopy, headSha: "f".repeat(40) } })).toMatchObject({ reviewed: [
+      { number: 7, outcome: "rebased" }, { number: 8, outcome: "retired" },
+    ] });
+    expect(planOf(h.github.prs.get(7)!.body)?.members).toEqual(["Maven|g:a", "Maven|g:b"]);
+    expect(h.github.prs.get(8)?.state).toBe("closed");
+    expect(h.agentCalls).toHaveLength(1);
+    // One tick shares the three preflight references across PRs; the final verification builds its own fourth one.
+    expect(h.probes).toEqual([["g:a"], ["g:b"], ["g:a", "g:b"], ["g:a", "g:b"]]);
+  });
+
+  it("does not share held Gradle preflight results across base commits in one review tick", async () => {
+    const h = heldGradle();
+    await seedSplitGradlePrs(h);
+    const prepare = h.workspace.prepareBranch.bind(h.workspace);
+    const secondBranch = h.github.prs.get(8)!.headRef;
+    h.workspace.prepareBranch = async (wc, args) => {
+      const prepared = await prepare(wc, args);
+      return args.branch === secondBranch && prepared.kind === "prepared"
+        ? { ...prepared, prepared: { ...prepared.prepared, baseSha: "d".repeat(40) } } : prepared;
+    };
+    h.github.before("updatePullRequest", () => h.github.push(7, PUSHED_SHA));
+    expect(await secureIt(h.deps).review({ ...h.context, workingCopy: { ...h.context.workingCopy, headSha: "f".repeat(40) } })).toMatchObject({ reviewed: [
+      { number: 7, outcome: "rebased" }, { number: 8, outcome: "retired" },
+    ] });
+    expect(h.probes).toEqual([["g:a"], ["g:b"], ["g:a", "g:b"], ["g:a", "g:b"], ["g:a"], ["g:b"], ["g:a", "g:b"]]);
   });
 
   const YOUNG_PAD = () => leftPad({ to: { version: "1.0.1", line: "1", aged: false, major: false, blockers: [] } });
