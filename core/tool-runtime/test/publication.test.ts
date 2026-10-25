@@ -4,8 +4,8 @@ import { ConsoleLogger } from "@leanish/agent-runtime/logger/console-logger";
 import type { PreparedBranch, WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
 import { InMemoryWorkspace } from "@leanish/agent-runtime/working-copy/in-memory-workspace";
 import { MemoryJournal } from "./memory-journal.ts";
-import { ownPullRequests, stateOf, withMarker } from "../src/own-pr.ts";
-import { clearLeftoverBranch, closeAndDelete, markReady, ownOpenPullRequests, publishNew, publishUpdate, recordState, recoverPublication, rewriteText, type PublicationContext } from "../src/publication.ts";
+import { markedLength, ownPullRequests, stateOf, withMarker } from "../src/own-pr.ts";
+import { clearLeftoverBranch, closeAndDelete, markReady, ownOpenPullRequests, publishedLength, publishNew, publishUpdate, recordState, recoverPublication, rewriteText, type PublicationContext } from "../src/publication.ts";
 import { BASE_SHA, FakeGitHub, HEAD_SHA, OWN_BRANCH, ownPr, PUSHED_SHA, RULES } from "./fake-github.ts";
 
 const WC: WorkingCopy = { projectId: "leanish/widget", path: "/synthetic/leanish/widget", branch: "main", headSha: BASE_SHA, gitDir: "/x/.git" };
@@ -138,6 +138,17 @@ describe("publication", () => {
     const rewritten = new FakeGitHub(ownPr({ body: withMarker(RULES, "old note", state) }));
     await rewriteText(context(rewritten), 7, HEAD_SHA, () => "new note from /Users/dev/state/plan.json");
     expect(rewritten.prs.get(7)!.body).toContain("new note from <local path>");
+  });
+
+  it("measures a body as it's published: cleaned, which can lengthen it, then marked", async () => {
+    const github = new FakeGitHub();
+    const short = { ...context(github), localRoots: ["/t"] };
+    const content = { ...CONTENT, body: "Ran it in /t/x first." };
+    await publishNew(short, fresh, content);
+    const sent = [...github.prs.values()][0]!.body;
+    expect(sent).toContain("Ran it in <local path> first.");
+    expect(publishedLength(short, content.body)).toBe(sent.length);
+    expect(publishedLength(short, content.body)).toBeGreaterThan(markedLength(RULES, content.body));
   });
 
   it("refuses to publish over a PR that moved or stopped being the tool's", async () => {

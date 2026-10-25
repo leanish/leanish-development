@@ -77,7 +77,7 @@ function cleanPaths(text: string, roots: LocalRoots): string {
     ...roots.other.map((root) => ({ root, relative: false })),
   ]
     .filter(({ root }) => root.startsWith("/") && root.length > 1)
-    .map(({ root, relative }) => ({ root: root.replace(/\/+$/, ""), relative }))
+    .map(({ root, relative }) => ({ root: withoutTrailingSlashes(root), relative }))
     // The most specific root first: the working copy usually sits under the home directory.
     .sort((a, b) => b.root.length - a.root.length || Number(b.relative) - Number(a.relative));
   let cleaned = text;
@@ -90,6 +90,13 @@ function cleanPaths(text: string, roots: LocalRoots): string {
     cleaned = cleaned.replace(new RegExp(`${TOKEN_START}(?:file://)?${at}(?=$|[/\\s"'\`)\\]>,;:])([^\\s"'\`)\\]>,;]*)`, "g"), (_, rest: string) => replacement(rest, relative));
   }
   return cleaned;
+}
+
+/** `path` without the slashes it ends with: a loop, as `/\/+$/` takes quadratic time on many slashes not at the end. */
+function withoutTrailingSlashes(path: string): string {
+  let end = path.length;
+  while (end > 0 && path[end - 1] === "/") end--;
+  return path.slice(0, end);
 }
 
 /** What may come right before a path: nothing, whitespace, a quote, a bracket or `=` (as in `NAME=/path`). */
@@ -111,9 +118,23 @@ function withoutNoise(text: string): string {
     .join("\n");
 }
 
+const OWN_COMMENT = "<!-- leanish:";
+const COMMENT_END = "-->";
+
+/**
+ * `body` with `clean` applied outside the tool's own comments (`<!-- leanish:` to the first `-->` after it). One scan
+ * with indexOf, not a lazy regex, which takes quadratic time on many unclosed `<!-- leanish:`. When one has no end, no
+ * later one can, so the rest is all text.
+ */
 function outsideComments(body: string, clean: (text: string) => string): string {
-  return body
-    .split(/(<!-- leanish:[\s\S]*?-->)/)
-    .map((part, i) => (i % 2 === 1 ? part : clean(part)))
-    .join("");
+  let cleaned = "";
+  let at = 0;
+  for (;;) {
+    const start = body.indexOf(OWN_COMMENT, at);
+    const end = start === -1 ? -1 : body.indexOf(COMMENT_END, start + OWN_COMMENT.length);
+    if (end === -1) break;
+    cleaned += clean(body.slice(at, start)) + body.slice(start, end + COMMENT_END.length);
+    at = end + COMMENT_END.length;
+  }
+  return cleaned + clean(body.slice(at));
 }

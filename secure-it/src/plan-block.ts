@@ -112,16 +112,17 @@ function omittedSection(plan: ChangePlan): string[] {
  * `body` with its plan section replaced by `plan`'s (or `plan`'s appended when it has none), and the cooldown warning on
  * top while it holds. The advisory evidence is for people and never changes a verdict, so when the body can't be written
  * with it (its plan, section or body over a limit), it gives way, never the fix: written again without any, each fix that
- * had some says why it's missing. What still can't be written, and any other failure, fails as before.
+ * had some says why it's missing. What still can't be written, and any other failure, fails as before. `measure` is the
+ * body's length as published; a publishing caller passes `publishedLength`, which also counts the cleaning.
  */
-export function withPlanSection(body: string, plan: ChangePlan): string {
+export function withPlanSection(body: string, plan: ChangePlan, measure: (text: string) => number = (text) => markedLength(RULES, text)): string {
   try {
-    return composed(body, plan);
+    return composed(body, plan, measure);
   } catch (error) {
     const lighter = error instanceof TooLargeError ? withoutEvidence(plan) : undefined;
     if (lighter === undefined) throw error;
     try {
-      return composed(body, lighter);
+      return composed(body, lighter, measure);
     } catch (retried) {
       throw retried instanceof TooLargeError ? error : retried;
     }
@@ -135,17 +136,18 @@ function withoutEvidence(plan: ChangePlan): ChangePlan | undefined {
   return { ...plan, cooldown: held.map(({ evidence, ...entry }) => (evidence === undefined ? entry : { ...entry, evidenceFailure: EVIDENCE_LEFT_OUT })) };
 }
 
-function composed(body: string, plan: ChangePlan): string {
+function composed(body: string, plan: ChangePlan, measure: (text: string) => number): string {
   const held = plan.cooldown ?? [];
   const rest = replaced(withoutWarning(body), HEADING, planSection(plan));
   if (cooldownWarning(held) === undefined) return rest;
   const warned = (rows?: number) => `${cooldownWarning(held, rows === undefined ? {} : { rows })!}\n\n${rest}`;
-  // Measured as published, marker included: a body filled up to the limit must still be accepted once marked.
-  const fits = (text: string) => markedLength(RULES, text) <= BODY_LIMIT;
+  // Measured as published (`measure`): a body filled up to the limit must still be accepted once cleaned and marked.
+  const fits = (text: string) => measure(text) <= BODY_LIMIT;
   const full = warned();
   if (fits(full)) return full;
   // Only the evidence table's last rows give way (the plan's block below keeps them all): the most that fit, found by
-  // halving, since one row fewer never makes the body longer (a row outweighs the extra digit in the count of those cut).
+  // halving, since one row fewer never makes the body longer (a row outweighs the extra digit in the count of those cut),
+  // cleaned or not: rows escape `<`, so none opens a comment span that publication's cleaning would leave alone.
   let low = 0;
   let high = tableRowCount(held) - 1;
   let most = 0;
@@ -161,7 +163,7 @@ function composed(body: string, plan: ChangePlan): string {
   const shorter = warned(most);
   // Too large even without rows: the evidence gives way next (withPlanSection), so this is a size, never a publication
   // GitHub refuses after the push.
-  if (!fits(shorter)) throw new TooLargeError(`the PR body would be ${markedLength(RULES, shorter)} characters once marked, over GitHub's ${BODY_LIMIT}`);
+  if (!fits(shorter)) throw new TooLargeError(`the PR body would be ${measure(shorter)} characters once published, over GitHub's ${BODY_LIMIT}`);
   return shorter;
 }
 
