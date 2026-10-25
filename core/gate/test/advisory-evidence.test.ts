@@ -81,6 +81,24 @@ describe("the evidence behind a held version", () => {
     expect(source((await github("unreviewed")).targets[0]!.groups, "github").records[0]!.reviewed).toBe(false);
   });
 
+  it("reads each group's records for its own replaced versions and the proposed ones only", async () => {
+    const osvRecord = (id: string, introduced: string, fixed: string) => ({ body: {
+      id, aliases: [], affected: [{ package: { ecosystem: "Maven", name: PKG }, ranges: [{ type: "ECOSYSTEM", events: [{ introduced }, { fixed }] }] }],
+    } });
+    const target = { ...held(), replaced: ["3.1.0", "3.2.3"], targets: [{ name: PKG, bundled: false, replaced: ["3.1.0", "3.2.3"], proposed: ["3.2.4"],
+      groups: [{ ids: ["GHSA-aaaa-aaaa-aaaa"], replaced: ["3.1.0"] }, { ids: ["GHSA-bbbb-bbbb-bbbb"], replaced: ["3.2.3"] }] }] };
+    const found = await evidence({
+      [REPO_LIST]: { body: [repositoryAdvisory({ ghsa_id: "GHSA-aaaa-aaaa-aaaa", cve_id: null })] },
+      "https://api.osv.dev/v1/vulns/GHSA-aaaa-aaaa-aaaa": osvRecord("GHSA-aaaa-aaaa-aaaa", "3.1.0", "3.1.1"),
+      "https://api.osv.dev/v1/vulns/GHSA-bbbb-bbbb-bbbb": osvRecord("GHSA-bbbb-bbbb-bbbb", "3.2.0", "3.2.4"),
+    }, target);
+    const [first, second] = found.targets[0]!.groups;
+    const verdicts = (group: typeof first, name: SourceEvidence["source"]) => group!.sources.find((entry) => entry.source === name)!.records.map((record) => record.verdicts);
+    expect(verdicts(first, "osv")).toEqual([{ "3.1.0": "affected", "3.2.4": "not-affected" }]);
+    expect(verdicts(first, "repository")).toEqual([{ "3.1.0": "not-affected", "3.2.4": "not-affected" }]);
+    expect(verdicts(second, "osv")).toEqual([{ "3.2.3": "affected", "3.2.4": "not-affected" }]);
+  });
+
   it("follows an alias a response names, looking each id up once", async () => {
     const requests: Array<{ url: string; headers: Record<string, string> }> = [];
     const routes: Record<string, FakeResponse> = {
