@@ -6,7 +6,8 @@
  * never does.
  *
  * A held fix's targets are reviewed advisories by the time it's proposed (one
- * only a project's repository publishes triggers nothing); this re-reads them.
+ * only a project's repository publishes triggers nothing), except the one a
+ * release-age exception names, whichever source lists it; this re-reads them.
  * A record "backs" a fix when it puts the replaced versions the comparison found
  * affected among the affected ones and none of the proposed versions.
  */
@@ -16,10 +17,10 @@ import { versionScheme } from "@leanish/gate/versions";
 import type { PlannedHold } from "./plan.ts";
 
 export const REVIEWED =
-  "Every advisory this fixes is still backed by a reviewed record as read now: OSV or GitHub's reviewed advisory database lists the replaced versions as affected and the proposed version, if any, as not. Candidates ruled out by advisories no reviewed source corroborates are noted in the plan below, where recorded.";
+  "Every advisory recorded for these held fixes is still backed by a reviewed record as read now: OSV or GitHub's reviewed advisory database lists the replaced versions as affected and the proposed version, if any, as not. Candidates ruled out by advisories no reviewed source corroborates are noted in the plan below, where recorded.";
 
 export const EVIDENCE_DIFFERS =
-  "**The reviewed advisories read after the comparison don't back this fix as the comparison did.** For the rows marked ⚠ below, no reviewed record (OSV, or GitHub's reviewed advisory database) lists the replaced versions as affected and the proposed one as not, or one was withdrawn or couldn't be read. The comparison's verdict stands; check the table before taking this early.";
+  "**Some advisories recorded for these held fixes are not backed by reviewed records as read now.** For the rows marked ⚠ below, no reviewed record (OSV, or GitHub's reviewed advisory database) lists the replaced versions as affected and the proposed one as not, or one was withdrawn or couldn't be read. The comparison's verdict stands; check the table before taking this early.";
 
 export const INCOMPLETE =
   "**Some of these fixes couldn't be checked**, as listed below, so this notice can't say a reviewed record still backs every fix. The comparison's verdict stands; check those before taking this early.";
@@ -55,13 +56,14 @@ export interface AdvisoryNotice {
 }
 
 /**
- * Empty when no hold is a security or bundle fix. Each claim covers every fix: one whose evidence failed, wasn't
+ * Empty when no hold fixes an advisory: a security or bundle fix, or a required version or exception recording the
+ * advisories it fixes (`targets`). Each claim covers every such fix: one whose evidence failed, wasn't
  * recorded, or has a target with no advisory group is unchecked, so the notice never says all are backed. Without
  * `table`, the rows give way (the PR body is too long) and the ⚠ packages are named instead.
  */
 export function advisoryNotice(held: ReadonlyArray<PlannedHold>, options: { readonly table?: boolean } = {}): AdvisoryNotice {
   const table = options.table ?? true;
-  const fixes = held.filter((entry) => JUSTIFIED.has(entry.justification));
+  const fixes = held.filter((entry) => JUSTIFIED.has(entry.justification) || (entry.targets?.length ?? 0) > 0);
   const rows = fixes.flatMap((entry) => (entry.evidence?.targets ?? []).flatMap((target) => target.groups.map((group) => ({ entry, target, group }))));
   const unchecked = fixes.flatMap((entry) => uncheckedOf(entry).map((reason) => `- ${bounded(entry.name, NAME_LIMIT)}@${bounded(entry.version, VERSION_LIMIT)}: ${bounded(reason, REASON_LIMIT)}`));
   const differing = rows.filter(({ target, group }) => !backed(target, group));
@@ -118,7 +120,7 @@ function differsFor(rows: ReadonlyArray<{ readonly entry: PlannedHold; readonly 
   const names = [...moves.values()];
   const shown = names.slice(0, NAMED_LIMIT).join("; ");
   const more = names.length > NAMED_LIMIT ? ` and ${names.length - NAMED_LIMIT} more` : "";
-  return `**The reviewed advisories read after the comparison don't back this fix as the comparison did** for ${shown}${more}: no reviewed record (OSV, or GitHub's reviewed advisory database) lists the replaced versions as affected and the proposed one as not, or one was withdrawn or couldn't be read. The comparison's verdict stands; look into these before taking this early.`;
+  return `**Some advisories recorded for these held fixes are not backed by reviewed records as read now**, for ${shown}${more}: no reviewed record (OSV, or GitHub's reviewed advisory database) lists the replaced versions as affected and the proposed one as not, or one was withdrawn or couldn't be read. The comparison's verdict stands; look into these before taking this early.`;
 }
 
 /**

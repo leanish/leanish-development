@@ -258,7 +258,9 @@ aged, and how a person takes it earlier: every other check green, the reason wri
 planned as aged that the comparison holds anyway is held the same way. A cooldown the comparison couldn't evaluate
 fails verification.
 
-For a security or bundle fix, the warning also says where the advisories behind it appear. After the verification,
+For a security or bundle fix, and for a required version or an exception that fixes advisories itself (the gate
+records them, and an exception's named one, reviewed or not), the warning also says where the advisories behind it
+appear. After the verification,
 secure-it reads each advisory, and every alias the responses name, from the dependency's own repository advisories,
 GitHub's database and OSV, fresh and only to inform. A table shows each source as it says: the fix it declares, and
 whether its ranges put each replaced and proposed version among the affected ones; a bundled package is named as
@@ -268,7 +270,8 @@ A fixed line opens the warning: that a reviewed record (OSV, or GitHub's reviewe
 read now, or, with those rows marked ⚠, that none does for some (withdrawn since, ranges that changed, or sources that
 couldn't be read). A fix whose evidence couldn't be read, wasn't recorded, or covers only some of its targets gets
 its own line and is listed: the notice never says every fix is backed while one is unchecked. The comparison's verdict
-stands either way. A fix's targets are reviewed advisories by the time it's proposed; how each source counts is in
+stands either way. A fix's targets are reviewed advisories by the time it's proposed, except the one a release-age
+exception names, which the owner's call lets in whichever source lists it; how each source counts is in
 [the gate's rules](../core/gate/README.md#how-each-source-counts).
 
 When the table would push the PR body past GitHub's limit, only the table is left out, with a line saying so: the

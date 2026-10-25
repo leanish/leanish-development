@@ -276,4 +276,21 @@ describe("the advisory notice on a held PR", () => {
     const unreadable = { ...reviewed, targets: [{ ...reviewed.targets[0]!, groups: [{ ids: ["GHSA-m8xf-2cr7-77ph"], replaced: ["3.2.3"] }] }] } as unknown as AdvisoryEvidence;
     expect(() => withPlanSection("Description.", plan(unreadable))).toThrow(TypeError);
   });
+
+  it("checks a required version or an exception that records advisories it fixes, and never one that records none", () => {
+    // A required companion that also fixes its own advisory, as the gate records it (`targets`).
+    const targets = [{ name: "g:companion", bundled: false, replaced: ["1.0.0"], proposed: ["1.0.1"], groups: [{ ids: ["GHSA-comp"], replaced: ["1.0.0"] }] }];
+    const companion = (overrides: Partial<PlannedHold>) => hold({ name: "g:companion", version: "1.0.1", replaced: ["1.0.0"], justification: "required", targets, ...overrides });
+    const backed = evidence([checked("github", [record({ id: "GHSA-comp", reviewed: true, verdicts: { "1.0.0": "affected", "1.0.1": "not-affected" } })])],
+      { name: "g:companion", replaced: ["1.0.0"], proposed: ["1.0.1"], groups: [{ ids: ["GHSA-comp"], replaced: ["1.0.0"], sources: [checked("github", [record({ id: "GHSA-comp", reviewed: true, verdicts: { "1.0.0": "affected", "1.0.1": "not-affected" } })])] }] });
+    const fix = hold({ evidence: reviewed });
+    expect(advisoryNotice([fix, companion({ evidence: backed })]).paragraphs).toEqual([REVIEWED]);
+    for (const unread of [companion({}), companion({ evidenceFailure: EVIDENCE_LEFT_OUT }), companion({ justification: "exception" })]) {
+      const notice = advisoryNotice([fix, unread]);
+      expect(notice.paragraphs).toEqual([INCOMPLETE]);
+      expect(notice.details).toContain(`- g:companion@1.0.1: ${unread.evidenceFailure ?? NOT_RECORDED}`);
+    }
+    // A pure companion fixes nothing: it neither blocks nor joins the assurance.
+    expect(advisoryNotice([fix, hold({ name: "g:pure", justification: "required" })]).paragraphs).toEqual([REVIEWED]);
+  });
 });

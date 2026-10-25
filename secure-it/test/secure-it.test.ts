@@ -22,7 +22,7 @@ import { MemoryJournal } from "@leanish/tool-runtime/test/memory-journal";
 import { branchFor, stateOf, withMarker } from "@leanish/tool-runtime/own-pr";
 import { BASE_SHA, FakeGitHub, GREEN, HEAD_SHA, ownPr, PUSHED_SHA, RED } from "@leanish/tool-runtime/test/fake-github";
 import { planOf, planSection, withPlanSection } from "../src/plan-block.ts";
-import { EVIDENCE_LEFT_OUT } from "../src/advisory-notice.ts";
+import { EVIDENCE_LEFT_OUT, REVIEWED } from "../src/advisory-notice.ts";
 import { planBlock } from "@leanish/tool-runtime/plan-blocks";
 import { type ChangePlan, planFor, type SecurityUnit } from "../src/plan.ts";
 import { verifyPlan, type VerifyInputs } from "../src/verify.ts";
@@ -1179,7 +1179,7 @@ describe("the cooldown hold", () => {
     expect(hold!.evidence).toMatchObject({ collectedAt: NOW.toISOString(), targets: [{ name: "vite", groups: [{ ids: ["GHSA-vite-0001"], sources: [
       { source: "repository", lookup: "incomplete" }, { source: "github", lookup: "checked", records: [] }, { source: "osv", lookup: "checked", records: [] },
     ] }] }] });
-    expect(body).toContain("> **The reviewed advisories read after the comparison don't back this fix as the comparison did.**");
+    expect(body).toContain("> **Some advisories recorded for these held fixes are not backed by reviewed records as read now.**");
     expect(body).toContain("> | ⚠ GHSA-vite-0001 | `vite` 8.3.1 → 8.3.3 | couldn't be fully checked: its source repository can't be found: registry lookup of vite@8.3.1 failed with HTTP 404 | not found | not found |");
   });
 
@@ -1201,6 +1201,21 @@ describe("the cooldown hold", () => {
     expect(hold).toMatchObject({ targets: targeted.targets, evidenceFailure: EVIDENCE_LEFT_OUT });
     expect(hold!.evidence).toBeUndefined();
     expect(pr.body).toContain(`vite@8.3.3: ${EVIDENCE_LEFT_OUT}`);
+  });
+
+  it("records the evidence of a required version that fixes advisories itself, so the warning checks it too", async () => {
+    const h = harness({ fixes: [vite()] });
+    const target = (name: string, from: string, to: string, id: string) => ({ name, bundled: false, replaced: [from], proposed: [to], groups: [{ ids: [id], replaced: [from] }] });
+    const required = { ...HELD, name: "postcss", version: "8.5.29", replaced: ["8.5.28"], justification: "required" as const, targets: [target("postcss", "8.5.28", "8.5.29", "GHSA-postcss-0001")] };
+    const verify = async (inputs: VerifyInputs) => {
+      inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: [{ ...HELD, targets: [target("vite", "8.3.1", "8.3.3", "GHSA-vite-0001")] }, required] });
+      return [];
+    };
+    expect(await secureIt({ ...h.deps, verify }).run(h.context)).toMatchObject({ outcome: "published" });
+    const body = h.github.prs.get(42)!.body;
+    expect(planOf(body)!.cooldown![1]!.evidence).toMatchObject({ targets: [{ name: "postcss", groups: [{ ids: ["GHSA-postcss-0001"] }] }] });
+    expect(body).toContain("| ⚠ GHSA-postcss-0001 | `postcss` 8.5.28 → 8.5.29 |");
+    expect(body).not.toContain(REVIEWED);
   });
 
   it("holds whatever the comparison holds, even in a PR planned as aged", async () => {
