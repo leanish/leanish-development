@@ -67,7 +67,7 @@ describe("published text keeps the machine out", () => {
     expect(clean(`/tmp/x <!-- leanish:open /tmp/y`)).toBe(`${LOCAL_PATH} <!-- leanish:open ${LOCAL_PATH}`);
     // Thousands of unclosed openings: a lazy regex would rescan the rest from each.
     const started = Date.now();
-    clean("<!-- leanish:".repeat(20_000));
+    clean("<!-- leanish:".repeat(100_000));
     expect(Date.now() - started).toBeLessThan(1_000);
   });
 
