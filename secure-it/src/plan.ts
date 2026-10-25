@@ -54,9 +54,9 @@ export interface PlannedMove {
   readonly unblocks?: ReadonlyArray<string>;
   /** A carrier move: the packages it replaces (bundled npm copies, or the Gradle module a parent brings), each with its advisories. */
   readonly carries?: ReadonlyArray<CarriedPackage>;
-  /** Candidates the gate ruled out only by advisories no reviewed source corroborates, for people: the nearest the choice passed over (`passedOver`). */
+  /** Candidates the gate ruled out only by advisories no reviewed source corroborates, for people: the ones nearest the choice (`nearestVetoes`). */
   readonly vetoed?: ReadonlyArray<Veto>;
-  /** How many more candidates the choice passed over that way, when there were more than `vetoed` shows. */
+  /** How many more candidates were ruled out that way, when there were more than `vetoed` shows. */
   readonly vetoesLeftOut?: number;
 }
 

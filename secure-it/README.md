@@ -159,12 +159,12 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
    run reconsiders omitted fixes.
 
    Advisories only the project's own repository publishes (unreviewed) plan no fix: such a version is reported, and
-   waits for a reviewed source; when a reviewed fix moves the package anyway, they're a note on that fix instead. They still rule candidates out, and the plan notes the ten candidates nearest the choice
-   that it passed over that way ("ruled out by …, not corroborated by the sources this decision used"), carrier
-   versions included, and counts the rest; a candidate after the choice explains nothing about it, so isn't noted. A required npm
-   dependency's version is set by its requirement, so there a veto refuses the fix, and the refusal names each advisory
-   the version adds, marked when unreviewed. See
-   [how each source counts](../core/gate/README.md#how-each-source-counts).
+   waits for a reviewed source; when a reviewed fix moves the package anyway, they're a note on that fix instead.
+   They still rule candidates out, and the plan notes the ten candidates ruled out that way nearest the choice, on
+   either side ("ruled out by …, not corroborated by the sources this decision used"), carrier versions included, and
+   counts the rest: a sample, not every veto that shaped the choice. A required npm dependency's version is set by
+   its requirement, so there a veto refuses the fix, and the refusal names each advisory the version adds, marked
+   when unreviewed. See [how each source counts](../core/gate/README.md#how-each-source-counts).
 
    Before that reduction, a first refusal gets the agent asked once more for the same plan, from the base, with the
    refusal (`rejected`): an agent that moved a parent instead of the planned floor, say. The reduction then works

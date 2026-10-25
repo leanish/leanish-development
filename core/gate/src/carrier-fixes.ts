@@ -39,7 +39,7 @@ import type { NpmRegistry } from "./npm-registry.ts";
 import type { PackageName, PackageVersion } from "./package-version.ts";
 import type { Snapshot } from "./snapshot.ts";
 import { versionScheme } from "./versions.ts";
-import { compatibleLine, fixes, groupsOf, passedOver, reviewedGroups, unreviewedGroups, type VersionCatalog, type Veto } from "./young-fixes.ts";
+import { compatibleLine, fixes, groupsOf, nearestVetoes, reviewedGroups, unreviewedGroups, type VersionCatalog, type Veto } from "./young-fixes.ts";
 
 const DAY_MS = 86_400_000;
 /** Bundles read before each new advisory snapshot. */
@@ -81,9 +81,9 @@ export interface CarrierServices {
 export type CarrierChoice =
   | {
     readonly kind: "chosen"; readonly version: string; readonly line: string; readonly aged: boolean; readonly bundle: CompleteBundle; readonly snapshot: Snapshot;
-    /** Read versions ruled out only by unreviewed advisories (file header) that the search passed over, the nearest ones, in search order. */
+    /** Read versions ruled out only by unreviewed advisories (file header), the ones nearest the choice, in search order. */
     readonly vetoed: ReadonlyArray<Veto>;
-    /** How many more it passed over (`passedOver`). */
+    /** How many more it read (`nearestVetoes`). */
     readonly vetoesLeftOut: number;
   }
   | { readonly kind: "none"; readonly reason: string }
@@ -180,7 +180,7 @@ class SearchState {
     return this.#snapshots;
   }
 
-  /** `version`, chosen after trying the versions before it in `order` (ascending, unless leaving malware). */
+  /** `version`, chosen among the versions in `order` as the search ranks them (ascending, unless leaving malware). */
   chosen(version: string, line: string, aged: boolean, order: ReadonlyArray<string> = this.#search.versions): CarrierChoice {
     const bundle = this.#bundles.get(version);
     if (bundle === undefined || !bundle.complete || this.#snapshot === undefined) throw new Error(`${this.#search.carrier}@${version} was chosen unread`);
@@ -191,7 +191,7 @@ class SearchState {
       const veto = carrierVeto(this.#search, other, read, snapshot);
       return veto === undefined ? [] : [veto];
     });
-    return { kind: "chosen", version, line, aged, bundle, snapshot, ...passedOver(vetoed, order, version) };
+    return { kind: "chosen", version, line, aged, bundle, snapshot, ...nearestVetoes(vetoed, order, version) };
   }
 
   #covered(): PackageVersion[] {

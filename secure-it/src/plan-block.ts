@@ -86,7 +86,7 @@ const quoted = (text: string) => text.replaceAll("<", "&lt;").replace(/\s+/g, " 
 /** A fixed line per candidate the gate ruled out only by advisories no reviewed source corroborates. */
 function vetoLines(move: PlannedMove): string[] {
   const left = move.vetoesLeftOut === undefined ? [] : [
-    `- ${quoted(move.name)}: ${move.vetoesLeftOut} additional candidates preceding ${move.to} in the selection order were ruled out the same way, by advisories not corroborated by the sources this decision used.`,
+    `- ${quoted(move.name)}: ${move.vetoesLeftOut} more candidates were ruled out the same way, by advisories not corroborated by the sources this decision used.`,
   ];
   return [...(move.vetoed ?? []).map((veto) =>
     `- ${quoted(move.name)} ${quoted(veto.version)} was ruled out by ${quoted(veto.advisories.join(", "))}, not corroborated by the sources this decision used; this takes ${move.to}.`), ...left];

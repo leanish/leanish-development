@@ -112,9 +112,9 @@ export interface CarrierDecision {
   readonly unfixable: ReadonlyArray<string>;
   readonly to: { readonly version: string; readonly line: string; readonly aged: boolean; readonly major: boolean; readonly blockers: ReadonlyArray<string> } | undefined;
   readonly problem: string | undefined;
-  /** Carrier versions the search read and ruled out only by unreviewed advisories (`carrier-fixes.ts`), the nearest it passed over. */
+  /** Carrier versions the search read and ruled out only by unreviewed advisories (`carrier-fixes.ts`), the ones nearest the choice. */
   readonly vetoed?: ReadonlyArray<Veto>;
-  /** How many more such versions the search passed over, when there were more than `vetoed` shows. */
+  /** How many more such versions the search read, when there were more than `vetoed` shows. */
   readonly vetoesLeftOut?: number;
 }
 

@@ -144,27 +144,32 @@ export function vetoesOf(snapshot: Snapshot, pkg: PackageName, from: string, tar
   });
 }
 
-/** At most this many vetoes are recorded with a choice, the ones nearest it; the rest are counted (`passedOver`). */
+/** At most this many vetoes are recorded with a choice, the ones nearest it; the rest are counted (`nearestVetoes`). */
 export const VETOES_SHOWN = 10;
 
-/** What a choice records of its vetoes: the candidates it passed over, nearest first kept, and how many more there were. */
+/** What a choice records of its vetoes: a bounded sample, the ones nearest it, and how many more there were. */
 export interface RecordedVetoes {
   readonly vetoed: ReadonlyArray<Veto>;
   readonly vetoesLeftOut: number;
 }
 
 /**
- * The vetoes of candidates before `chosen` in `order`, the order the choice tried them in: the VETOES_SHOWN nearest it,
- * in that order, and a count of the rest. A candidate after the choice explains nothing about it, so isn't recorded;
- * every move of a package would otherwise repeat them all (thousands, for one open-ended advisory).
+ * The VETOES_SHOWN vetoes nearest `chosen` in `order` (the candidates as the choice ranks them), on either side, the
+ * earlier first on a tie, kept in `order`'s order, and a count of the rest. Either side: the rule prefers an aged fix,
+ * so the one a veto took from it can sit above a young choice. A sample, not every veto that shaped the choice; without
+ * it, every move of a package would repeat them all (thousands, for one open-ended advisory). Only vetoes of
+ * candidates in `order` count, never the chosen version's own.
  */
-export function passedOver(vetoes: ReadonlyArray<Veto>, order: ReadonlyArray<string>, chosen: string): RecordedVetoes {
+export function nearestVetoes(vetoes: ReadonlyArray<Veto>, order: ReadonlyArray<string>, chosen: string): RecordedVetoes {
   const at = order.indexOf(chosen);
-  if (at === -1) throw new Error(`the chosen version ${chosen} isn't among the candidates the choice tried`);
-  const byVersion = new Map(vetoes.map((veto) => [veto.version, veto]));
-  const passed = order.slice(0, at).flatMap((version) => byVersion.get(version) ?? []);
-  const vetoed = passed.slice(-VETOES_SHOWN);
-  return { vetoed, vetoesLeftOut: passed.length - vetoed.length };
+  if (at === -1) throw new Error(`the chosen version ${chosen} isn't among the candidates the choice ranked`);
+  const position = new Map(order.map((version, i) => [version, i]));
+  const ranked = vetoes.flatMap((veto) => {
+    const i = position.get(veto.version);
+    return i === undefined || i === at ? [] : [{ veto, i }];
+  });
+  const nearest = [...ranked].sort((a, b) => Math.abs(a.i - at) - Math.abs(b.i - at) || a.i - b.i).slice(0, VETOES_SHOWN);
+  return { vetoed: nearest.sort((a, b) => a.i - b.i).map(({ veto }) => veto), vetoesLeftOut: ranked.length - nearest.length };
 }
 
 /** The fields a move carries for `recorded`: none of them when nothing was vetoed. */
