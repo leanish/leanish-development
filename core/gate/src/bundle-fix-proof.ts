@@ -22,7 +22,7 @@
  * A carrier proved this way doesn't seed required-dependency proofs: a young
  * non-bundled dependency it needs stays unjustified, and the comparison fails.
  */
-import { candidateVersions, groupsOf, targetsOf, type VersionCatalog } from "./young-fixes.ts";
+import { candidateVersions, groupsOf, reviewedGroups, targetsOf, type VersionCatalog } from "./young-fixes.ts";
 import { chooseCarrier, describe, removedTargets, registryIntegrity } from "./carrier-fixes.ts";
 import type { Config } from "./config.ts";
 import { isOwnPackage } from "./config.ts";
@@ -31,7 +31,7 @@ import { type BundleReader, bundleMismatches } from "./npm-bundles.ts";
 import type { NpmRegistry } from "./npm-registry.ts";
 import type { PackageVersion } from "./package-version.ts";
 import { versionKey } from "./package-version.ts";
-import type { ChangedVersion } from "./release-age.ts";
+import { type ChangedVersion, groupIds, type HeldTarget, mergedTargets } from "./release-age.ts";
 import type { Snapshot } from "./snapshot.ts";
 
 export interface BundleFixInputs {
@@ -45,25 +45,32 @@ export interface BundleFixInputs {
   readonly scan: (packages: ReadonlyArray<PackageVersion>) => Promise<Snapshot>;
 }
 
-/** Per young npm version (`versionKey`) that replaces a carrier in place: undefined when proved, else why not. */
-export async function bundleFixProofs(young: ReadonlyArray<ChangedVersion>, inputs: BundleFixInputs): Promise<ReadonlyMap<string, string | undefined>> {
-  const proofs = new Map<string, string | undefined>();
+/** A proved bundle fix and the advisories behind it, or why it isn't one. */
+export type BundleFixProof =
+  | { readonly problem: undefined; readonly targets: ReadonlyArray<HeldTarget> }
+  | { readonly problem: string };
+
+/** Per young npm version (`versionKey`) that replaces a carrier in place. */
+export async function bundleFixProofs(young: ReadonlyArray<ChangedVersion>, inputs: BundleFixInputs): Promise<ReadonlyMap<string, BundleFixProof>> {
+  const proofs = new Map<string, BundleFixProof>();
   for (const change of young) {
     if (change.pkg.ecosystem !== "npm" || change.replaced.length === 0) continue;
     const found = occurrences(change, inputs);
     if (found.length === 0) continue;
     // Every head copy of the version needs its own evidence: one proved copy can't vouch for another.
     if (found.some((occurrence) => occurrence === undefined)) {
-      proofs.set(versionKey(change.pkg), `${change.pkg.name}@${change.pkg.version} is also where it replaces no carrier copy in place`);
+      proofs.set(versionKey(change.pkg), { problem: `${change.pkg.name}@${change.pkg.version} is also where it replaces no carrier copy in place` });
       continue;
     }
     const reasons: string[] = [];
+    const targets: HeldTarget[] = [];
     for (const occurrence of found as Occurrence[]) {
-      const why = await proofProblem(change.pkg, occurrence, inputs).catch((error: unknown) =>
+      const proof = await occurrenceProof(change.pkg, occurrence, inputs).catch((error: unknown) =>
         `${occurrence.lockfile}: ${occurrence.path}: the bundle-fix justification could not be established: ${error instanceof Error ? error.message : String(error)}`);
-      if (why !== undefined) reasons.push(why);
+      if (typeof proof === "string") reasons.push(proof);
+      else targets.push(...proof);
     }
-    proofs.set(versionKey(change.pkg), reasons.length === 0 ? undefined : reasons.join("; "));
+    proofs.set(versionKey(change.pkg), reasons.length === 0 ? { problem: undefined, targets: mergedTargets(targets) } : { problem: reasons.join("; ") });
   }
   return proofs;
 }
@@ -97,7 +104,8 @@ function occurrences(change: ChangedVersion, inputs: Pick<BundleFixInputs, "base
   return found.some((occurrence) => occurrence !== undefined) ? found : [];
 }
 
-async function proofProblem(pkg: PackageVersion, occurrence: Occurrence, inputs: BundleFixInputs): Promise<string | undefined> {
+/** The occurrence's targets when it's proved, else why it isn't. */
+async function occurrenceProof(pkg: PackageVersion, occurrence: Occurrence, inputs: BundleFixInputs): Promise<HeldTarget[] | string> {
   const { reader, registry, config, now } = inputs;
   const at = `${occurrence.lockfile}: ${occurrence.path}`;
   const published = await registryIntegrity(registry, pkg.name, pkg.version);
@@ -115,11 +123,20 @@ async function proofProblem(pkg: PackageVersion, occurrence: Occurrence, inputs:
   const snapshot = await inputs.scan([
     { ...pkg, version: occurrence.from }, pkg, ...versionsOf(fromBundle), ...versionsOf(toBundle),
   ]);
-  const carried = removedTargets(fromBundle, toBundle, snapshot);
-  if (carried.length === 0) return `${at}: ${pkg.name}@${pkg.version}'s bundle fixes nothing ${occurrence.from}'s had`;
+  // Only reviewed advisories justify a young carrier: a bundled one or the carrier's own (vetoes still use them all).
+  const reviewedIn = (name: string, group: string) => fromBundle.packages.some((entry) => entry.name === name
+    && reviewedGroups(snapshot, { ecosystem: "npm", name, version: entry.version }).has(group));
+  const removed = removedTargets(fromBundle, toBundle, snapshot);
+  const carried = removed.filter((target) => reviewedIn(target.name, target.advisory));
   // The carrier's own advisories it fixes too: the combined choice secure-it makes, reconstructed from the trees.
   const after = groupsOf(snapshot, pkg);
-  const own = targetsOf(snapshot, { ...pkg, version: occurrence.from }).filter((group) => !after.has(group));
+  const ownReviewed = reviewedGroups(snapshot, { ...pkg, version: occurrence.from });
+  const own = targetsOf(snapshot, { ...pkg, version: occurrence.from }).filter((group) => !after.has(group) && ownReviewed.has(group));
+  if (carried.length === 0 && own.length === 0) {
+    return removed.length === 0
+      ? `${at}: ${pkg.name}@${pkg.version}'s bundle fixes nothing ${occurrence.from}'s had`
+      : `${at}: ${pkg.name}@${pkg.version}'s bundle fixes no reviewed advisory ${occurrence.from}'s had (${describe(removed)} only in the project's repository advisories, not corroborated by the sources this decision used)`;
+  }
   const listed = await inputs.catalog.versions(pkg);
   if (listed === undefined) return `${at}: the registry doesn't list ${pkg.name}'s versions, so the rule can't be checked`;
   const choice = await chooseCarrier({
@@ -142,7 +159,33 @@ async function proofProblem(pkg: PackageVersion, occurrence: Occurrence, inputs:
   if (choice.version !== pkg.version) {
     return `${at}: ${choice.version} ${choice.aged ? `ships a bundle without ${describe(carried)} too and is at least ${config.releaseAgeDays} days old` : `is the lowest version whose bundle drops ${describe(carried)}`} (line ${choice.line})`;
   }
-  return undefined;
+  // The search's last snapshot covers every version read here and may know more aliases: the targets' groups come from
+  // it, the groups proved above named by its canonical ids.
+  const final = choice.snapshot;
+  const carriedGroups = new Set(carried.map((target) => final.group(target.advisory)));
+  const bundledTargets = [...new Set(carried.map((target) => target.name))].sort().map((name): HeldTarget => {
+    const versions = (bundle: typeof fromBundle) => [...new Set(bundle.packages.filter((entry) => entry.name === name).map((entry) => entry.version))].sort();
+    const ofName = new Set(carried.filter((target) => target.name === name).map((target) => final.group(target.advisory)));
+    const replaced = affectedVersions(final, name, versions(fromBundle), ofName);
+    return {
+      name,
+      bundled: true,
+      replaced,
+      proposed: versions(toBundle),
+      groups: groupIds(final, replaced.map((version): PackageVersion => ({ ecosystem: "npm", name, version })), (group) => carriedGroups.has(group) && ofName.has(group)),
+    };
+  });
+  const ownGroups = new Set(own.map((group) => final.group(group)));
+  const carrier: HeldTarget[] = own.length === 0 ? [] : [{
+    name: pkg.name, bundled: false, replaced: [occurrence.from], proposed: [pkg.version],
+    groups: groupIds(final, [{ ...pkg, version: occurrence.from }], (group) => ownGroups.has(group)),
+  }];
+  return [...carrier, ...bundledTargets];
+}
+
+/** The old copies a carried advisory affects: another copy of the package in the bundle isn't what the fix replaced. */
+export function affectedVersions(snapshot: Snapshot, name: string, versions: ReadonlyArray<string>, groups: ReadonlySet<string>): string[] {
+  return versions.filter((version) => [...groupsOf(snapshot, { ecosystem: "npm", name, version })].some((group) => groups.has(group)));
 }
 
 function lockfileOf(inventory: Inventory, path: string) {

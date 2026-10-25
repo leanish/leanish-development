@@ -31,12 +31,26 @@ export function isMalware(ids: ReadonlyArray<string>, cweIds: ReadonlyArray<stri
 export class Snapshot {
   private readonly affecting: ReadonlyMap<string, ReadonlyArray<Advisory>>;
   private readonly groups: ReadonlyMap<string, string>;
+  /** Per package (`ecosystem|name`), per alias group: the ids its own advisories name, whichever version they affect. */
+  private readonly packageAliases: ReadonlyMap<string, ReadonlyMap<string, ReadonlyArray<string>>>;
   readonly gaps: ReadonlyArray<string>;
   readonly takenAt: Date;
 
   constructor(affecting: ReadonlyMap<string, ReadonlyArray<Advisory>>, gaps: ReadonlyArray<string>, takenAt: Date) {
     this.affecting = affecting;
     this.groups = aliasGroups([...affecting.values()].flat());
+    const byPackage = new Map<string, Map<string, Set<string>>>();
+    for (const [key, advisories] of affecting) {
+      const pkg = key.slice(0, key.lastIndexOf("|"));
+      const groups = byPackage.get(pkg) ?? new Map<string, Set<string>>();
+      for (const advisory of advisories) {
+        const ids = groups.get(this.group(advisory.id)) ?? new Set<string>();
+        for (const id of advisory.ids) ids.add(id);
+        groups.set(this.group(advisory.id), ids);
+      }
+      byPackage.set(pkg, groups);
+    }
+    this.packageAliases = new Map([...byPackage].map(([pkg, groups]) => [pkg, new Map([...groups].map(([group, ids]) => [group, [...ids].sort()]))]));
     this.gaps = gaps;
     this.takenAt = takenAt;
   }
@@ -55,6 +69,15 @@ export class Snapshot {
   /** The canonical id of the alias group `id` belongs to; an id no advisory mentions is its own group. */
   group(id: string): string {
     return this.groups.get(id) ?? id;
+  }
+
+  /**
+   * The ids of `id`'s alias group that `pkg`'s own advisories name, at any version the snapshot covers (another
+   * version's record may be what links a CVE to its GHSA), sorted; another package's ids are left out, being other
+   * advisories of the group. Empty when none of `pkg`'s does.
+   */
+  aliases(id: string, pkg: Pick<PackageVersion, "ecosystem" | "name">): ReadonlyArray<string> {
+    return this.packageAliases.get(`${pkg.ecosystem}|${pkg.name}`)?.get(this.group(id)) ?? [];
   }
 }
 

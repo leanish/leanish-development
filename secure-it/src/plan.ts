@@ -20,7 +20,9 @@ import { dirname } from "node:path";
 
 import semver from "semver";
 
+import type { AdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import { type SecurityFix, severityRank } from "@leanish/gate/candidates";
+import type { Veto } from "@leanish/gate/young-fixes";
 import type { CarriedPackage } from "@leanish/gate/carrier-candidates";
 import type { NpmPeerPlanner } from "@leanish/gate/npm-peers";
 import type { HeldVersion } from "@leanish/gate/release-age";
@@ -52,6 +54,8 @@ export interface PlannedMove {
   readonly unblocks?: ReadonlyArray<string>;
   /** A carrier move: the packages it replaces (bundled npm copies, or the Gradle module a parent brings), each with its advisories. */
   readonly carries?: ReadonlyArray<CarriedPackage>;
+  /** Candidates the gate ruled out only by advisories no reviewed source corroborates (`vetoesOf`), for people. */
+  readonly vetoed?: ReadonlyArray<Veto>;
 }
 
 /** A dependent that moves so its range admits a copy's security target (`npm-parents.ts`). */
@@ -84,6 +88,10 @@ export interface OmittedMoves {
 export interface PlannedHold extends HeldVersion {
   /** For people only (`releaseSignals`): provenance, publisher, install scripts. */
   readonly signals: ReadonlyArray<string>;
+  /** For people only: where the advisories behind a security or bundle fix appear, read after the verification. */
+  readonly evidence?: AdvisoryEvidence;
+  /** Why that evidence couldn't be read at all. */
+  readonly evidenceFailure?: string;
 }
 
 export interface ChangePlan {
@@ -98,8 +106,14 @@ export interface ChangePlan {
   readonly floorRemoval?: FloorRemoval;
   /** Absent in plans published before batching; those PRs retain per-package reviews. */
   readonly kind?: PlanKind;
-  /** For the branch name: `security`, `<package>-major`, `malware`, or `floor-removal`. */
+  /** For the branch name: `security`, `security-cooldown-<package>`, `<package>-major`, `malware`, or `floor-removal`. */
   readonly topic: string;
+  /**
+   * A held routine unit's own packages (`ecosystem|name` of its fixes), without the companions planning adds to
+   * `packages`: what tells which open PR stands for which held unit (`heldMembers`). A retry that leaves moves out
+   * keeps them: the PR still stands for the whole unit.
+   */
+  readonly members?: ReadonlyArray<string>;
   readonly malware: boolean;
   /** `ecosystem|name` of every package the plan moves or removes a floor for. */
   readonly packages: ReadonlyArray<string>;
@@ -132,8 +146,20 @@ export interface SecurityUnit {
   readonly held?: boolean;
 }
 
-/** The routine batch's topic for the fixes that can't wait: their own PR, so they don't hold the others back. */
+/**
+ * The prefix of the routine units for the fixes that can't wait: one PR per group of fixes that can be separated
+ * (`heldUnits`), so neither the aged fixes nor each other wait for the youngest. v0.7's single one was this topic.
+ */
 export const HELD_TOPIC = "security-cooldown";
+
+/**
+ * Whether a routine topic is a held unit's: `security-cooldown-<package>`, or v0.7's single `security-cooldown`. A plan
+ * read from a PR may have none: then it isn't.
+ */
+export const isHeldTopic = (topic: unknown) => typeof topic === "string" && (topic === HELD_TOPIC || topic.startsWith(`${HELD_TOPIC}-`));
+
+/** A held plan's own packages: `members`, or `packages` for a plan recorded before them. */
+export const heldMembers = (plan: Pick<ChangePlan, "members" | "packages">): ReadonlyArray<string> => plan.members ?? plan.packages;
 
 /**
  * Complete each unit's direct-peer set before an agent sees it (an
@@ -146,7 +172,10 @@ export async function coupledWork(fixes: ReadonlyArray<SecurityFix>, peers?: Npm
   return { ...completed, units: completed.units.flatMap(splitByAge) };
 }
 
-/** Young fixes and their coupled closure apart from the rest; majors and malware stay whole, held if anything is young. */
+/**
+ * Young fixes and their coupled closure apart from the rest, one held unit per group that can be separated
+ * (`heldUnits`); majors and malware stay whole, held if anything is young.
+ */
 export function splitByAge(unit: SecurityUnit): SecurityUnit[] {
   const young = new Set(unit.work.filter(isYoungTarget).map(packageKey));
   if (unit.kind !== "routine" || young.size === 0) return [{ ...unit, held: young.size > 0 }];
@@ -155,13 +184,36 @@ export function splitByAge(unit: SecurityUnit): SecurityUnit[] {
     for (const set of unit.coupled ?? []) if (set.some((key) => young.has(key))) for (const key of set) young.add(key);
     if (young.size === size) break;
   }
-  const part = (held: boolean): SecurityUnit | undefined => {
-    const work = unit.work.filter((fix) => young.has(packageKey(fix)) === held);
-    if (work.length === 0) return undefined;
-    const coupled = unit.coupled?.filter((set) => set.some((key) => young.has(key)) === held);
-    return { kind: "routine", topic: held ? HELD_TOPIC : unit.topic, work, held, ...(coupled === undefined ? {} : { coupled }) };
+  const work = unit.work.filter((fix) => !young.has(packageKey(fix)));
+  const coupled = unit.coupled?.filter((set) => !set.some((key) => young.has(key)));
+  const aged: SecurityUnit[] = work.length === 0 ? [] : [{ kind: "routine", topic: unit.topic, work, held: false, ...(coupled === undefined ? {} : { coupled }) }];
+  const heldWork = unit.work.filter((fix) => young.has(packageKey(fix)));
+  return [...aged, ...heldUnits(heldWork, (unit.coupled ?? []).filter((set) => set.some((key) => young.has(key))))];
+}
+
+/**
+ * One held routine unit per connected group of `work`: packages a `coupled` set joins move together, and so do
+ * packages a `bridges` set joins (keys there need no fix of their own: a companion two roots require). Each unit is
+ * named after its lowest package key and keeps the coupled sets touching it.
+ */
+export function heldUnits(work: ReadonlyArray<SecurityFix>, coupled: ReadonlyArray<ReadonlyArray<string>>, bridges: ReadonlyArray<ReadonlyArray<string>> = []): SecurityUnit[] {
+  const parent = new Map<string, string>();
+  const root = (key: string): string => {
+    const up = parent.get(key) ?? key;
+    if (up === key) return key;
+    const top = root(up);
+    parent.set(key, top);
+    return top;
   };
-  return [part(false), part(true)].filter((entry): entry is SecurityUnit => entry !== undefined);
+  for (const set of [...coupled, ...bridges]) for (const key of set.slice(1)) parent.set(root(key), root(set[0]!));
+  const groups = new Map<string, SecurityFix[]>();
+  for (const fix of work) groups.set(root(packageKey(fix)), [...(groups.get(root(packageKey(fix))) ?? []), fix]);
+  return [...groups.values()].map((group): SecurityUnit => {
+    const keys = new Set(group.map(packageKey));
+    const anchor = [...keys].sort()[0]!;
+    const touching = coupled.filter((set) => set.some((key) => keys.has(key)));
+    return { kind: "routine", topic: `${HELD_TOPIC}-${anchor.slice(anchor.indexOf("|") + 1)}`, work: group, held: true, ...(touching.length === 0 ? {} : { coupled: touching }) };
+  }).sort((a, b) => (a.topic < b.topic ? -1 : a.topic > b.topic ? 1 : 0));
 }
 
 /** A fix whose target the rule took though it's younger than the wait. */
@@ -297,7 +349,10 @@ export async function planFor(work: ReadonlyArray<FixWork>, inputs: PlanInputs, 
     // Only what can be fixed is a target: an advisory no version fixes stays, inherited (fixing A and leaving B).
     // A carrier's own targets only: what it carries stays with each carried package (`carries`).
     const advisories = fix.targets.filter((target) => !fix.unfixable.includes(target));
-    const base = { ecosystem: fix.ecosystem, name: fix.name, from: fix.from, to: to.version, advisories, major: to.major, ...(fix.carries === undefined ? {} : { carries: fix.carries }) };
+    const base = {
+      ecosystem: fix.ecosystem, name: fix.name, from: fix.from, to: to.version, advisories, major: to.major,
+      ...(fix.carries === undefined ? {} : { carries: fix.carries }), ...(fix.vetoed === undefined || fix.vetoed.length === 0 ? {} : { vetoed: fix.vetoed }),
+    };
     if (fix.ecosystem === "GitHub Actions") {
       const commitSha = await inputs.tagCommit(fix.name, to.version);
       if (commitSha === undefined) throw new Error(`${fix.name} has no tag ${to.version} to pin to`);
@@ -330,7 +385,8 @@ export async function planFor(work: ReadonlyArray<FixWork>, inputs: PlanInputs, 
   const kind = unit?.kind ?? (malware ? "malware" : moves.some((move) => move.major) ? "major" : "routine");
   const topic = unit?.topic ?? (kind === "malware" ? "malware" : kind === "routine" ? "security" : `${work[0]!.name}-major`);
   const notes = [...new Set(work.flatMap((fix) => fix.notes ?? []))];
-  return { kind, topic, malware, packages, moves, severity, ...(coupled.length === 0 ? {} : { coupled }), ...(notes.length === 0 ? {} : { notes }) };
+  const members = kind === "routine" && isHeldTopic(topic) ? { members: packages } : {};
+  return { kind, topic, malware, packages, ...members, moves, severity, ...(coupled.length === 0 ? {} : { coupled }), ...(notes.length === 0 ? {} : { notes }) };
 }
 
 /**

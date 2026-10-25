@@ -16,10 +16,11 @@
  */
 import { type Config, isOwnPackage } from "./config.ts";
 import type { Exceptions } from "./exceptions.ts";
+import type { BundleFixProof } from "./bundle-fix-proof.ts";
 import { label, type PackageVersion, versionKey } from "./package-version.ts";
 import type { Snapshot } from "./snapshot.ts";
 import type { Ecosystem } from "./versions.ts";
-import { type VersionCatalog, youngFixProblem } from "./young-fixes.ts";
+import { groupsOf, reviewedGroups, targetsOf, type VersionCatalog, youngFixProblem } from "./young-fixes.ts";
 
 const DAY_MS = 86_400_000;
 
@@ -40,8 +41,8 @@ export interface AgeContext {
   readonly required?: ReadonlySet<string>;
   /** `versionKey` of a young version → replaced version → its candidates, all in the snapshot. */
   readonly candidates: ReadonlyMap<string, ReadonlyMap<string, ReadonlyArray<string>>>;
-  /** `versionKey` of a young carrier version → undefined when its bundle fix is proved, else why it isn't. */
-  readonly bundleFixes?: ReadonlyMap<string, string | undefined>;
+  /** `versionKey` of a young carrier version → its bundle-fix proof, or why there's none. */
+  readonly bundleFixes?: ReadonlyMap<string, BundleFixProof>;
 }
 
 /** Under the wait and not an own package: what the proof or an exception must justify. */
@@ -52,6 +53,28 @@ export function isYoung(change: ChangedVersion, config: Config, now: Date): bool
 
 /** What let a young version through: the fix proof, the required-dependency proof, an exception; or nothing. */
 export type YoungJustification = "security-fix" | "bundle-fix" | "required" | "exception" | "unjustified";
+
+/**
+ * A package whose advisories a young version fixes: the version's own package, or one its bundle carries. Behind a
+ * `security-fix` or `bundle-fix` they're what justifies it; a `required` version or an `exception` records the ones it
+ * fixes too, and an exception its named advisory, reviewed or not. For people (and the evidence secure-it reads for
+ * them), never part of the verdict.
+ */
+export interface HeldTarget {
+  readonly name: string;
+  /** Whether the advisories are on a package bundled inside the held version rather than on the version itself. */
+  readonly bundled: boolean;
+  readonly replaced: ReadonlyArray<string>;
+  /** Its versions after the change; empty when the change removes it. */
+  readonly proposed: ReadonlyArray<string>;
+  readonly groups: ReadonlyArray<HeldGroup>;
+}
+
+/** One target advisory group: every id the comparison's snapshot knows for it, and the replaced versions it affects. */
+export interface HeldGroup {
+  readonly ids: ReadonlyArray<string>;
+  readonly replaced: ReadonlyArray<string>;
+}
 
 /** A version the change adds or changes that is still under the wait. */
 export interface HeldVersion {
@@ -64,6 +87,8 @@ export interface HeldVersion {
   /** When it turns `releaseAgeDays` old. */
   readonly eligibleAt: string;
   readonly justification: YoungJustification;
+  /** The advisories it fixes (`HeldTarget`): always for a `security-fix` or `bundle-fix`, when any for `required` and `exception`. */
+  readonly targets?: ReadonlyArray<HeldTarget>;
 }
 
 export interface ReleaseAgeReview {
@@ -87,6 +112,7 @@ export async function reviewReleaseAge(changes: ReadonlyArray<ChangedVersion>, c
       published: change.published.toISOString(),
       eligibleAt: new Date(change.published.getTime() + context.config.releaseAgeDays * DAY_MS).toISOString(),
       justification: judged.justification,
+      ...(judged.targets === undefined ? {} : { targets: judged.targets }),
     });
   }
   return { problems, held };
@@ -97,9 +123,20 @@ export async function releaseAgeProblems(changes: ReadonlyArray<ChangedVersion>,
   return [...(await reviewReleaseAge(changes, context)).problems];
 }
 
-async function judgeYoung(change: ChangedVersion, context: AgeContext): Promise<{ readonly justification: YoungJustification; readonly problem?: string }> {
+interface Judged {
+  readonly justification: YoungJustification;
+  readonly problem?: string;
+  readonly targets?: ReadonlyArray<HeldTarget>;
+}
+
+async function judgeYoung(change: ChangedVersion, context: AgeContext): Promise<Judged> {
   const { pkg } = change;
-  if (pkg.ecosystem === "npm" && context.required?.has(versionKey(pkg))) return { justification: "required" };
+  const bundle = context.bundleFixes?.get(versionKey(pkg));
+  const bundleTargets = bundle?.problem === undefined ? bundle?.targets ?? [] : [];
+  // Required either way, but what it fixes itself, or in a bundle proved both ways, is still for people to check.
+  if (pkg.ecosystem === "npm" && context.required?.has(versionKey(pkg))) {
+    return { justification: "required", ...recorded([ownTarget(change, context.snapshot), ...bundleTargets]) };
+  }
   const proof = await youngFixProblem(
     { pkg, replaced: change.replaced },
     context.candidates.get(versionKey(pkg)) ?? new Map(),
@@ -108,9 +145,10 @@ async function judgeYoung(change: ChangedVersion, context: AgeContext): Promise<
     context.config,
     context.now,
   );
-  if (proof === undefined) return { justification: "security-fix" };
-  const bundled = context.bundleFixes?.get(versionKey(pkg));
-  if (context.bundleFixes?.has(versionKey(pkg)) === true && bundled === undefined) return { justification: "bundle-fix" };
+  // A carrier proved both ways fixes its bundle's advisories too: the evidence covers every one it fixes.
+  if (proof === undefined) return { justification: "security-fix", targets: mergedTargets([ownTarget(change, context.snapshot), ...bundleTargets]) };
+  if (bundle !== undefined && bundle.problem === undefined) return { justification: "bundle-fix", targets: bundle.targets };
+  const bundled = bundle?.problem;
   const exception = context.exceptions.releaseAge.find(
     (entry) => (entry.ecosystem === undefined || entry.ecosystem === pkg.ecosystem) && entry.package === pkg.name && entry.version === pkg.version,
   );
@@ -127,7 +165,85 @@ async function judgeYoung(change: ChangedVersion, context: AgeContext): Promise<
     return { justification: "unjustified", problem: `${label(pkg)}: its release-age exception expired on ${exception.expires}` };
   }
   const why = advisoryEvidenceProblem(exception.advisory, pkg, change.replaced, context.snapshot);
-  return why === undefined ? { justification: "exception" } : { justification: "unjustified", problem: `${label(pkg)}: ${why}` };
+  if (why !== undefined) return { justification: "unjustified", problem: `${label(pkg)}: ${why}` };
+  return { justification: "exception", ...recorded([ownTarget(change, context.snapshot), namedTarget(change, exception.advisory, context.snapshot)]) };
+}
+
+/** `targets` merged, keeping only those with an advisory group; none when no group is left. */
+function recorded(targets: ReadonlyArray<HeldTarget>): Pick<Judged, "targets"> {
+  const kept = mergedTargets(targets.filter((target) => target.groups.length > 0));
+  return kept.length === 0 ? {} : { targets: kept };
+}
+
+/** The group an exception names, on the replaced versions it affects, whichever source lists it: the owner's call. */
+function namedTarget(change: ChangedVersion, advisory: string, snapshot: Snapshot): HeldTarget {
+  const named = snapshot.group(advisory);
+  return {
+    name: change.pkg.name,
+    bundled: false,
+    replaced: change.replaced,
+    proposed: [change.pkg.version],
+    groups: groupIds(snapshot, change.replaced.map((version) => ({ ...change.pkg, version })), (group) => group === named),
+  };
+}
+
+/** The reviewed groups a security fix leaves behind: affecting a replaced version and not the new one, malware aside. */
+function ownTarget(change: ChangedVersion, snapshot: Snapshot): HeldTarget {
+  const after = groupsOf(snapshot, change.pkg);
+  return {
+    name: change.pkg.name,
+    bundled: false,
+    replaced: change.replaced,
+    proposed: [change.pkg.version],
+    groups: groupIds(snapshot, change.replaced.map((version) => ({ ...change.pkg, version })), (group, version) => !after.has(group) && reviewedGroups(snapshot, version).has(group)),
+  };
+}
+
+/** Each target group of `versions` with every id the snapshot knows for it and the versions it affects, in a stable order. */
+export function groupIds(snapshot: Snapshot, versions: ReadonlyArray<PackageVersion>, keep: (group: string, version: PackageVersion) => boolean): HeldGroup[] {
+  const groups = new Map<string, { ids: Set<string>; replaced: Set<string> }>();
+  for (const version of versions) {
+    const targets = new Set(targetsOf(snapshot, version).filter((group) => keep(group, version)));
+    for (const advisory of snapshot.advisories(version)) {
+      const group = snapshot.group(advisory.id);
+      if (!targets.has(group)) continue;
+      const entry = groups.get(group) ?? { ids: new Set<string>(), replaced: new Set<string>() };
+      // Every alias the package's own advisories name, another version's included: the evidence looks a group up by them.
+      for (const id of [...advisory.ids, ...snapshot.aliases(group, version)]) entry.ids.add(id);
+      entry.replaced.add(version.version);
+      groups.set(group, entry);
+    }
+  }
+  return [...groups.keys()].sort().map((group) => ({ ids: [...groups.get(group)!.ids].sort(), replaced: [...groups.get(group)!.replaced].sort() }));
+}
+
+/**
+ * One target per package and side, every occurrence's versions and groups together. Groups sharing an id are one
+ * (proofs read on different snapshots may know different aliases of it): their ids and replaced versions merge.
+ */
+export function mergedTargets(targets: ReadonlyArray<HeldTarget>): HeldTarget[] {
+  const merged = new Map<string, { name: string; bundled: boolean; replaced: Set<string>; proposed: Set<string>; groups: Array<{ ids: Set<string>; replaced: Set<string> }> }>();
+  for (const target of targets) {
+    const key = `${target.bundled ? "bundled" : "own"}|${target.name}`;
+    const entry = merged.get(key) ?? { name: target.name, bundled: target.bundled, replaced: new Set(), proposed: new Set(), groups: [] };
+    for (const version of target.replaced) entry.replaced.add(version);
+    for (const version of target.proposed) entry.proposed.add(version);
+    for (const group of target.groups) {
+      // Each group keeps the replaced versions it affects, across occurrences.
+      const sharing = entry.groups.filter((known) => group.ids.some((id) => known.ids.has(id)));
+      const into = { ids: new Set(group.ids), replaced: new Set(group.replaced) };
+      for (const known of sharing) {
+        for (const id of known.ids) into.ids.add(id);
+        for (const version of known.replaced) into.replaced.add(version);
+      }
+      entry.groups = [...entry.groups.filter((known) => !sharing.includes(known)), into];
+    }
+    merged.set(key, entry);
+  }
+  return [...merged.values()].map((entry) => ({
+    name: entry.name, bundled: entry.bundled, replaced: [...entry.replaced].sort(), proposed: [...entry.proposed].sort(),
+    groups: entry.groups.map((group) => ({ ids: [...group.ids].sort(), replaced: [...group.replaced].sort() })).sort((a, b) => (a.ids[0]! < b.ids[0]! ? -1 : 1)),
+  }));
 }
 
 /**

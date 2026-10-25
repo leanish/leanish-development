@@ -86,14 +86,20 @@ function fold(work: ReadonlyArray<FixWork>, fix: FixWork, floored: ReadonlyArray
   const rest = fix.locations.filter((location) => !floored.includes(location));
   const own = work.find((entry) => entry.ecosystem === "Maven" && entry.name === parent.name);
   const to = { version: parent.to, line: parent.line, aged: true, major: false, blockers: [] };
+  // The parent's own vetoes were recorded for its own choice; this one is another, so they don't carry over.
   const carrier: FixWork = own === undefined
     ? { ecosystem: "Maven", name: parent.name, from: parent.from, locations: parent.locations, targets: [], unfixable: [], malicious: false, severity: fix.severity, to, problem: undefined, carries: parent.carries }
-    : { ...own, locations: [...new Set([...own.locations, ...parent.locations])], to, carries: parent.carries };
+    : { ...withoutVetoes(own), locations: [...new Set([...own.locations, ...parent.locations])], to, carries: parent.carries };
   return work.flatMap((entry) => {
     if (entry === fix) return rest.length === 0 ? [] : [{ ...fix, locations: rest }];
     if (entry === own) return [carrier];
     return [entry];
   }).concat(own === undefined ? [carrier] : []);
+}
+
+function withoutVetoes(fix: FixWork): FixWork {
+  const { vetoed: _vetoed, ...rest } = fix;
+  return rest;
 }
 
 async function parentFor(fix: FixWork, floored: ReadonlyArray<string>, work: ReadonlyArray<FixWork>, inputs: GradleParentInputs): Promise<Parent | string> {

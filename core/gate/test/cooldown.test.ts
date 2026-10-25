@@ -31,7 +31,7 @@ describe("the cooldown in a comparison", () => {
       evaluated: true,
       releaseAgeDays: 7,
       held: [
-        { ...held, published: "2026-10-06T00:00:00.000Z" },
+        { ...held, published: "2026-10-06T00:00:00.000Z", targets: [{ name: "vite", bundled: false, replaced: ["8.3.2"], proposed: ["8.3.3"], groups: [{ ids: ["GHSA-rq7h-c2jc-7f22"], replaced: ["8.3.2"] }] }] },
         { ecosystem: "npm", name: "postcss", version: "8.5.29", replaced: ["8.5.28"], published: "2026-10-06T00:00:00.000Z", eligibleAt: "2026-10-13T00:00:00.000Z", justification: "required" },
       ],
     });
@@ -84,6 +84,11 @@ describe("cooldownOf", () => {
     expect(heldUntil([])).toBeUndefined();
   });
 
+  it("keeps the advisories behind a held version", () => {
+    const targeted: HeldVersion = { ...held, targets: [{ name: "vite", bundled: false, replaced: ["8.3.2"], proposed: ["8.3.3"], groups: [{ ids: ["CVE-1", "GHSA-a"], replaced: ["8.3.2"] }] }] };
+    expect(cooldownOf(report({ evaluated: true, releaseAgeDays: 7, held: [targeted] }), HEAD).held).toEqual([targeted]);
+  });
+
   it.each([
     ["another head", report({ evaluated: true, releaseAgeDays: 7, held: [] }, { headSha: "b".repeat(40) }), "not"],
     ["an older schema", report({ evaluated: true, releaseAgeDays: 7, held: [] }, { schemaVersion: 1 }), "schemaVersion"],
@@ -93,6 +98,8 @@ describe("cooldownOf", () => {
     ["no held list", report({ evaluated: true, releaseAgeDays: 7 }), "held list"],
     ["a malformed entry", report({ evaluated: true, releaseAgeDays: 7, held: [{ ...held, eligibleAt: "soon" }] }), "ISO instant"],
     ["an unknown justification", report({ evaluated: true, releaseAgeDays: 7, held: [{ ...held, justification: "trusted" }] }), "justification"],
+    ["targets that aren't a list", report({ evaluated: true, releaseAgeDays: 7, held: [{ ...held, targets: {} }] }), "targets"],
+    ["a target without groups", report({ evaluated: true, releaseAgeDays: 7, held: [{ ...held, targets: [{ name: "vite", bundled: false, replaced: [], proposed: [], groups: [{ ids: [], replaced: [] }] }] }] }), "advisory groups"],
   ])("refuses %s", (_name, raw, message) => {
     expect(() => cooldownOf(raw, HEAD)).toThrow(message);
   });

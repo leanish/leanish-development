@@ -10,6 +10,7 @@ import type { Floor } from "@leanish/gate/floors";
 import { type SecurityCandidates, type SecurityFix, securityCandidates } from "@leanish/gate/candidates";
 import { type CooldownEvaluation, heldUntil } from "@leanish/gate/cooldown";
 import type { NpmPeerPlanner } from "@leanish/gate/npm-peers";
+import { type EvidenceOptions, heldEvidence } from "@leanish/gate/advisory-evidence";
 import { type GateEnvironment, type GradleInputs, readSettings } from "@leanish/gate/gate";
 import { type GradleInventory, gradleLocation, pinnedAmong, strictPinNote, strictPins } from "@leanish/gate/gradle";
 import { namingFailures } from "@leanish/gate/http";
@@ -50,7 +51,7 @@ import { requiredNpmPlan } from "./npm-required-plan.ts";
 import { npmWindowFor } from "./npm-window.ts";
 import { assertBodyFits, assertNoPlanMarker } from "@leanish/tool-runtime/plan-blocks";
 import { planDigest, planOf, planSection, withPlanSection } from "./plan-block.ts";
-import { type ChangePlan, coupledWork, type FixWork, HELD_TOPIC, packageKey, planFor, type PlannedHold, type SecurityUnit, withUnsupportedCarriers } from "./plan.ts";
+import { type ChangePlan, coupledWork, type FixWork, heldMembers, heldUnits, isHeldTopic, packageKey, planFor, type PlannedHold, type SecurityUnit, withUnsupportedCarriers } from "./plan.ts";
 import { namedProblems, retryWithoutNamed, type ProblemMoves } from "./retry.ts";
 import { referencePlan, verifyPlan, type VerifyInputs } from "./verify.ts";
 
@@ -146,7 +147,14 @@ function publicationOf(context: ToolRunContext, deps: SecureItDeps): Publication
   };
 }
 
-function skillInput(context: ToolRunContext, plan: ChangePlan, npmAgeExclusions: ReadonlyArray<string>, mode: "apply" | "adapt" | "resolve", extra: { failingChecks?: string[]; conflicted?: ReadonlyArray<string> } = {}) {
+interface SkillExtra {
+  readonly failingChecks?: string[];
+  readonly conflicted?: ReadonlyArray<string>;
+  /** Why verification refused the previous attempt at this same plan. */
+  readonly rejected?: ReadonlyArray<string>;
+}
+
+function skillInput(context: ToolRunContext, plan: ChangePlan, npmAgeExclusions: ReadonlyArray<string>, mode: "apply" | "adapt" | "resolve", extra: SkillExtra = {}) {
   return {
     repo: context.repo.repo,
     mode,
@@ -174,6 +182,7 @@ function skillInput(context: ToolRunContext, plan: ChangePlan, npmAgeExclusions:
     npmAgeExclusions: [...npmAgeExclusions],
     ...(extra.failingChecks === undefined ? {} : { failingChecks: extra.failingChecks }),
     ...(extra.conflicted === undefined ? {} : { conflicted: [...extra.conflicted] }),
+    ...(extra.rejected === undefined ? {} : { rejected: [...extra.rejected] }),
   };
 }
 
@@ -183,7 +192,7 @@ async function agentInput(
   plan: ChangePlan,
   base: Tree,
   mode: "apply" | "adapt" | "resolve",
-  extra: { failingChecks?: string[]; conflicted?: ReadonlyArray<string> } = {},
+  extra: SkillExtra = {},
   restoredFiles?: Map<string, FileState>,
 ) {
   const window = await prepareNpmFiles(execution, plan, base, false, restoredFiles);
@@ -233,6 +242,8 @@ interface Execution {
   readonly inventories: GradleInventories;
   readonly publication: PublicationContext;
   readonly npmFiles: Map<string, string>;
+  /** Branches this run created, on top of the open PRs' ones: two units' topics can cut to the same branch name. */
+  readonly branches: Set<string>;
 }
 
 interface PlanBase {
@@ -254,12 +265,16 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   const selection = await coupledWork(planned.fixes, planned.peers);
   const waiting = selection.blocked.flatMap((group) => group.reasons);
 
-  const execution = { context, deps, env, inventories, publication: publicationOf(context, deps), npmFiles: new Map<string, string>() };
+  const execution = { context, deps, env, inventories, publication: publicationOf(context, deps), npmFiles: new Map<string, string>(), branches: new Set<string>() };
   const own = await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base);
   const results: Readonly<Record<string, unknown>>[] = [];
-  for (const unit of await holdRequiredYoung(execution, selection.units, base)) {
+  const units = await holdRequiredYoung(execution, selection.units, base);
+  const claims = await heldClaimsOf(context, execution.publication, units, own);
+  for (const unit of units) {
     try {
-      results.push(await runUnit(execution, unit, base, own));
+      // Held units need every own PR's claim, or two PRs could stand for one: they fail when those can't be read.
+      if (claims instanceof Error && isHeldUnit(unit)) throw claims;
+      results.push(await runUnit(execution, unit, base, own, claims instanceof Error ? undefined : claims.get(unit.topic)));
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       context.logger.warn("secure-it: a unit failed", { topic: unit.topic, error: detail });
@@ -311,13 +326,14 @@ async function parentsFirst(fixes: ReadonlyArray<SecurityFix>, base: PlanBase, e
 /**
  * An open PR of the same plan keeps its commits; its plan section is rewritten when what it says (notes) changed.
  * Only the notes come from the recomputed plan: the rest, such as the cooldown hold its verification recorded (a
- * fresh plan has none yet), stays as published.
+ * fresh plan has none yet), stays as published. Compared as written (`withPlanSection`), so evidence that no longer fits
+ * with the new notes gives way there instead of failing the comparison.
  */
 async function refreshText(execution: Execution, pr: GitHubPullRequest, plan: ChangePlan): Promise<void> {
   const previous = planOf(pr.body);
   if (previous === undefined) return;
   const refreshed = withNotesOf(previous, plan);
-  if (planSection(refreshed) === planSection(previous)) return;
+  if (withPlanSection(pr.body, refreshed) === withPlanSection(pr.body, previous)) return;
   await rewriteText(execution.publication, pr.number, pr.headSha, (body) => withPlanSection(body, refreshed));
 }
 
@@ -383,7 +399,7 @@ async function runRemoval(execution: Execution, removal: ComputedRemoval, base: 
     return { ...report, outcome: "already-open", pullRequest: already.url };
   }
   const reusable = owned[0];
-  const prepared = await preparePlan(execution.context, execution.deps, plan, reusable, own, base.tree.id);
+  const prepared = await preparePlan(execution.context, execution.deps, plan, reusable, own, base.tree.id, execution.branches);
   const content = await applyRemoval(execution, removal);
   const problems = await verifyEdit(execution.context, execution.deps, plan, execution.env, execution.inventories, base.tree, base.gradle);
   if (problems.length > 0) return { ...report, outcome: "verification-failed", problems };
@@ -397,11 +413,43 @@ async function runRemoval(execution: Execution, removal: ComputedRemoval, base: 
 
 /**
  * A routine fix whose required npm dependency is younger than the wait can't
- * wait either: it moves to the held unit with every package coupled to it.
+ * wait either: it moves to a held unit with every package the aged plan couples
+ * to it, and with every root requiring the same young companion (a key without
+ * a fix of its own still joins them). Held work is then grouped again (`heldUnits`).
  * Moving roots only drops requirements, so one pass leaves the rest aged.
  * Kept on purpose: docs/simplification-candidates.md#reviewed-and-kept-2026-10-16.
+ * Then held units that can't be planned apart are planned together (`plannableHeld`). Runs and reviews both split here.
  */
 async function holdRequiredYoung(execution: Execution, units: ReadonlyArray<SecurityUnit>, base: PlanBase): Promise<SecurityUnit[]> {
+  return plannableHeld(execution, await withRequiredYoung(execution, units, base), base);
+}
+
+/**
+ * The held units, regrouped when some can't be planned apart: two young roots that require one exact companion each
+ * keep the other's old requirement when planned alone. The failing units are tried together first, then every held
+ * unit together (v0.7's single held batch); the first group that plans replaces its units. Otherwise they stay apart
+ * and each reports its own failure. The fallback gathers units that plan alone too, and the joined PR waits for its
+ * youngest version; a failure that only happened once (a registry error) can still gather them, so each is logged.
+ */
+async function plannableHeld(execution: Execution, units: ReadonlyArray<SecurityUnit>, base: PlanBase): Promise<SecurityUnit[]> {
+  const held = units.filter(isHeldUnit);
+  if (held.length < 2) return [...units];
+  const plans = async (unit: SecurityUnit) => planUnit(execution, unit, base).then(() => true, (err: unknown) => {
+    execution.context.logger.warn("secure-it: a held unit doesn't plan alone", { topic: unit.topic, error: err instanceof Error ? err.message : String(err) });
+    return false;
+  });
+  const failing: SecurityUnit[] = [];
+  for (const unit of held) if (!(await plans(unit))) failing.push(unit);
+  if (failing.length === 0) return [...units];
+  for (const group of failing.length > 1 && failing.length < held.length ? [failing, held] : [held]) {
+    const [joined] = heldUnits(group.flatMap((unit) => unit.work), group.flatMap((unit) => unit.coupled ?? []), [group.flatMap((unit) => unit.work.map(packageKey))]);
+    if (joined !== undefined && (await plans(joined))) return [...units.filter((unit) => !group.includes(unit)), joined];
+  }
+  return [...units];
+}
+
+/** The aged unit's fixes that need a young required npm companion, held with it (the first step of `holdRequiredYoung`). */
+async function withRequiredYoung(execution: Execution, units: ReadonlyArray<SecurityUnit>, base: PlanBase): Promise<SecurityUnit[]> {
   const aged = units.find((unit) => unit.kind === "routine" && unit.held !== true);
   if (aged === undefined) return [...units];
   let plan: ChangePlan;
@@ -413,22 +461,101 @@ async function holdRequiredYoung(execution: Execution, units: ReadonlyArray<Secu
   }
   const moved = new Set((plan.requiredNpm ?? []).filter((target) => target.exempt).map((target) => `npm|${target.root.name}`));
   if (moved.size === 0) return [...units];
+  // requiredNpmPlan's coupled sets keep only moved packages: each young requirement joins its root and target here
+  // instead, so roots requiring one young companion move together. An aged companion joins nothing: it holds no one.
+  const bridges = (plan.requiredNpm ?? []).filter((target) => target.exempt).map((target) => [`npm|${target.root.name}`, `npm|${target.name}`]);
   for (;;) {
     const size = moved.size;
-    for (const set of aged.coupled ?? []) if (set.some((key) => moved.has(key))) for (const key of set) moved.add(key);
+    for (const set of [...(plan.coupled ?? []), ...bridges]) if (set.some((key) => moved.has(key))) for (const key of set) moved.add(key);
     if (moved.size === size) break;
   }
-  const held = units.find((unit) => unit.kind === "routine" && unit.held === true);
+  const held = units.filter((unit) => unit.kind === "routine" && unit.held === true);
   const stays = aged.work.filter((fix) => !moved.has(packageKey(fix)));
-  const joined: SecurityUnit = {
-    kind: "routine",
-    topic: HELD_TOPIC,
-    held: true,
-    work: [...(held?.work ?? []), ...aged.work.filter((fix) => moved.has(packageKey(fix)))],
-    coupled: [...(held?.coupled ?? []), ...(aged.coupled ?? []).filter((set) => set.some((key) => moved.has(key)))],
-  };
+  const joined = heldUnits(
+    [...held.flatMap((unit) => unit.work), ...aged.work.filter((fix) => moved.has(packageKey(fix)))],
+    // The aged plan's sets, not only the unit's: they include what planning required npm discovered (a root that
+    // needs another root's fix), which the held units keep for their own retries too.
+    [...held.flatMap((unit) => unit.coupled ?? []), ...(plan.coupled ?? []).filter((set) => set.some((key) => moved.has(key)))],
+    bridges,
+  );
   const rest = stays.length === 0 ? [] : [{ ...aged, work: stays, coupled: (aged.coupled ?? []).filter((set) => !set.some((key) => moved.has(key))) }];
-  return [...units.filter((unit) => unit !== aged && unit !== held), ...rest, joined];
+  return [...units.filter((unit) => unit !== aged && !held.includes(unit)), ...rest, ...joined];
+}
+
+/**
+ * Which open held PR each held unit of this run takes (topic → PR number): the one sharing the most of its packages,
+ * strongest pairs first across all units, so the order units run in never decides which PR changes purpose. Ties go
+ * to the pair whose lowest shared package sorts first, then to the lower PR number. Each PR goes to one unit at most;
+ * a unit with none opens its own.
+ */
+export function heldClaims(units: ReadonlyArray<SecurityUnit>, own: ReadonlyArray<GitHubPullRequest>): Map<string, number> {
+  const held = units.filter(isHeldUnit);
+  const pairs = own.flatMap((pr) => {
+    const previous = planOf(pr.body);
+    if (previous === undefined || !isHeldPlan(previous)) return [];
+    return held.flatMap((unit) => {
+      const match = heldOverlap(previous, unit);
+      return match === undefined ? [] : [{ topic: unit.topic, number: pr.number, ...match }];
+    });
+  }).sort((a, b) => b.shared - a.shared || (a.lowest < b.lowest ? -1 : a.lowest > b.lowest ? 1 : 0) || a.number - b.number);
+  const claims = new Map<string, number>();
+  const taken = new Set<number>();
+  for (const pair of pairs) {
+    if (claims.has(pair.topic) || taken.has(pair.number)) continue;
+    claims.set(pair.topic, pair.number);
+    taken.add(pair.number);
+  }
+  return claims;
+}
+
+const isHeldUnit = (unit: SecurityUnit) => unit.kind === "routine" && isHeldTopic(unit.topic);
+
+/**
+ * The held units' claims, read only when some unit is held (each other unit reads its own PRs, as before); what made
+ * them unreadable (an own PR's journal, say) instead of a throw, so that fails the held units alone, not the run.
+ */
+async function heldClaimsOf(context: ToolRunContext, publication: PublicationContext, units: ReadonlyArray<SecurityUnit>, own: ReadonlyArray<GitHubPullRequest>): Promise<ReadonlyMap<string, number> | Error> {
+  if (!units.some(isHeldUnit)) return new Map();
+  try {
+    return heldClaims(units, await claimable(context, publication, own));
+  } catch (err) {
+    return err instanceof Error ? err : new Error(String(err));
+  }
+}
+
+/**
+ * The open PRs a held unit may claim, read-only: the head is still the tool's (the body's recorded head, or the
+ * journal's, whose saved publication then stands for the body), and no person took it over (a held PR marked ready,
+ * which review leaves alone). Otherwise a PR someone pushed to, or one a person took, would keep its unit from the PR
+ * the tool opens or keeps instead. The chosen PR is recovered later, as any reused one is.
+ */
+async function claimable(context: ToolRunContext, publication: PublicationContext, own: ReadonlyArray<GitHubPullRequest>): Promise<GitHubPullRequest[]> {
+  const claimable: GitHubPullRequest[] = [];
+  for (const pr of own) {
+    if (topicOf(RULES, pr.headRef) === undefined) continue;
+    const effective = stateOf(pr.body)?.head === pr.headSha ? pr : await journaled(context, publication, pr);
+    if (effective === undefined) continue;
+    if ((planOf(effective.body)?.cooldown?.length ?? 0) > 0 && !effective.isDraft) continue;
+    claimable.push(effective);
+  }
+  return claimable;
+}
+
+/** `pr` as the journal last published it at its current head (legacy entries record only the head); else undefined. */
+async function journaled(context: ToolRunContext, publication: PublicationContext, pr: GitHubPullRequest): Promise<GitHubPullRequest | undefined> {
+  const pushed = await publication.journal.last(context.repo.repo, pr.number);
+  if (pushed?.head !== pr.headSha) return undefined;
+  return pushed.publication === undefined ? pr : { ...pr, title: pushed.publication.title, body: pushed.publication.body };
+}
+
+/** How many of a held unit's packages a held plan shares, and the lowest shared one; undefined when none. */
+function heldOverlap(previous: ChangePlan, unit: SecurityUnit): { readonly shared: number; readonly lowest: string } | undefined {
+  const listed: unknown = heldMembers(previous);
+  // Read from a PR body: a plan whose members aren't names stands for no held unit, rather than failing every claim.
+  if (!Array.isArray(listed) || !listed.every((key) => typeof key === "string")) return undefined;
+  const members = new Set<string>(listed);
+  const shared = [...new Set(unit.work.map(packageKey))].filter((key) => members.has(key)).sort();
+  return shared.length === 0 ? undefined : { shared: shared.length, lowest: shared[0]! };
 }
 
 async function planUnit(execution: Execution, unit: SecurityUnit, base: PlanBase): Promise<ChangePlan> {
@@ -439,10 +566,10 @@ async function planUnit(execution: Execution, unit: SecurityUnit, base: PlanBase
   return execution.deps.requiredNpm(base.tree, plan, execution.env);
 }
 
-async function runUnit(execution: Execution, unit: SecurityUnit, base: PlanBase, own: ReadonlyArray<GitHubPullRequest>): Promise<Readonly<Record<string, unknown>>> {
+async function runUnit(execution: Execution, unit: SecurityUnit, base: PlanBase, own: ReadonlyArray<GitHubPullRequest>, claimed: number | undefined): Promise<Readonly<Record<string, unknown>>> {
   const { context, deps, publication } = execution;
   const plan = await planUnit(execution, unit, base);
-  const owned = await recognisedPlans(context, publication, own, plan);
+  const owned = await recognisedPlans(context, publication, own, plan, claimed);
   const already = owned.find((pr) => {
     const previous = planOf(pr.body);
     return stateOf(pr.body)?.head === pr.headSha && previous !== undefined && planDigest(previous) === planDigest(plan);
@@ -453,13 +580,16 @@ async function runUnit(execution: Execution, unit: SecurityUnit, base: PlanBase,
     return { ...details, outcome: "already-open", pullRequest: already.url };
   }
   const reusable = owned[0];
-  const prepared = await preparePlan(context, deps, plan, reusable, own, base.tree.id);
+  const prepared = await preparePlan(context, deps, plan, reusable, own, base.tree.id, execution.branches);
   const input = await agentInput(execution, plan, base.tree, "apply");
   const answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({ entrypoint: "secure-it", input });
   if (answer.outcome !== "applied" || answer.publication == null) return { ...details, outcome: "cannot-apply", summary: answer.summary };
   assertNoPlanMarker(answer.publication.body);
-  const verified = await verifyWithRetry(execution, base, plan, answer.publication);
-  const checked = { ...details, notes: verified.plan.notes ?? [], packages: verified.plan.packages, named: verified.named, leftOut: verified.leftOut };
+  const verified = await verifyWithRetry(execution, base, plan, answer.publication, { retryRejected: true });
+  const checked = {
+    ...details, notes: verified.plan.notes ?? [], packages: verified.plan.packages, named: verified.named, leftOut: verified.leftOut,
+    ...(verified.rejected === undefined ? {} : { rejected: verified.rejected }),
+  };
   if (verified.problems.length > 0) return { ...checked, outcome: "verification-failed", problems: verified.problems };
   const content = { ...verified.content, body: withPlanSection(verified.content.body, verified.plan) };
   if (reusable !== undefined) {
@@ -472,10 +602,11 @@ async function runUnit(execution: Execution, unit: SecurityUnit, base: PlanBase,
     : { ...checked, outcome: "published", pullRequest: created.url };
 }
 
-async function preparePlan(context: ToolRunContext, deps: SecureItDeps, plan: ChangePlan, reusable: GitHubPullRequest | undefined, own: ReadonlyArray<GitHubPullRequest>, baseSha: string): Promise<PreparedBranch> {
+async function preparePlan(context: ToolRunContext, deps: SecureItDeps, plan: ChangePlan, reusable: GitHubPullRequest | undefined, own: ReadonlyArray<GitHubPullRequest>, baseSha: string, created: Set<string>): Promise<PreparedBranch> {
   if (reusable !== undefined) return reconcileBranch(context, deps, reusable, baseSha);
-  const taken = new Set(own.map((pr) => pr.headRef));
+  const taken = new Set([...own.map((pr) => pr.headRef), ...created]);
   const branch = freeBranch(RULES, context.now, plan.topic, taken);
+  created.add(branch);
   await clearLeftoverBranch(context.github, RULES, context.repo.repo, branch);
   const fresh = await context.workspace.prepareBranch(context.workingCopy, { branch, start: "default" });
   if (fresh.kind !== "prepared") throw new Error(`${branch} couldn't be prepared`);
@@ -489,10 +620,16 @@ interface VerifiedBatch {
   readonly problems: ReadonlyArray<string>;
   readonly named: ReadonlyArray<ProblemMoves>;
   readonly leftOut: NonNullable<ChangePlan["leftOut"]>;
+  /** What verification refused in the first attempt, when the agent was asked again with it. */
+  readonly rejected?: ReadonlyArray<string>;
 }
 
-/** Restart once from the same base without named package groups; never shrink malware or guess an unnamed cause. */
-async function verifyWithRetry(execution: Execution, base: PlanBase, plan: ChangePlan, content: Content): Promise<VerifiedBatch> {
+/**
+ * When the first edit fails, and the caller allows it (a fresh application, not a review's adaptation, which a restart
+ * from the base would lose), ask the agent once more for the same plan with the refusal. Then restart once from the
+ * same base without named package groups; never shrink malware or guess an unnamed cause.
+ */
+async function verifyWithRetry(execution: Execution, base: PlanBase, plan: ChangePlan, content: Content, options: { readonly retryRejected?: boolean } = {}): Promise<VerifiedBatch> {
   const { context, deps, env, inventories } = execution;
   if (execution.npmFiles.size === 0 && plan.moves.some((move) => move.ecosystem === "npm")) {
     const window = await npmWindowFor(plan, context.releaseAgeDays, context.releaseAgeExclude, context.now, env.fetch, await lockfilesOf(base.tree));
@@ -502,39 +639,95 @@ async function verifyWithRetry(execution: Execution, base: PlanBase, plan: Chang
   const heard = (evaluation: CooldownEvaluation) => {
     cooldown = evaluation;
   };
-  const problems = await verifyEdit(context, deps, plan, env, inventories, base.tree, base.gradle, execution.npmFiles, heard);
-  if (problems.length === 0) return withCooldown(env, { plan, content, problems, named: [], leftOut: plan.leftOut ?? [] }, cooldown);
-  const retry = retryWithoutNamed(plan, problems);
-  if (retry.plan === undefined) return { plan, content, problems, named: retry.named, leftOut: retry.leftOut };
-  context.logger.warn("secure-it: retrying the routine without named package groups", { leftOut: retry.leftOut });
-  await deps.revert(context.workingCopy, base.tree.id);
-  const answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({
-    entrypoint: "secure-it", input: await agentInput(execution, retry.plan, base.tree, "apply"),
-  });
-  if (answer.outcome !== "applied" || answer.publication == null) {
-    return { plan: retry.plan, content, problems: [`retry could not apply: ${answer.summary}`], named: retry.named, leftOut: retry.plan.leftOut ?? [] };
+  const first = await verifyEdit(context, deps, plan, env, inventories, base.tree, base.gradle, execution.npmFiles, heard);
+  if (first.length === 0) return withCooldown(env, base.tree, { plan, content, problems: first, named: [], leftOut: plan.leftOut ?? [] }, cooldown);
+  let problems = first;
+  let rejected: Pick<VerifiedBatch, "rejected"> = {};
+  // Why the feedback attempt never reached a verification; the reduction then works from the first refusal.
+  let unverified: string | undefined;
+  if (options.retryRejected === true) {
+    context.logger.warn("secure-it: asking the agent again with the verification's refusal", { problems });
+    rejected = { rejected: first };
+    try {
+      await deps.revert(context.workingCopy, base.tree.id);
+      const again = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({
+        entrypoint: "secure-it", input: await agentInput(execution, plan, base.tree, "apply", { rejected: first }),
+      });
+      if (again.outcome !== "applied" || again.publication == null) {
+        unverified = `the agent couldn't apply: ${again.summary}`;
+      } else {
+        assertNoPlanMarker(again.publication.body);
+        cooldown = undefined;
+        problems = await verifyEdit(context, deps, plan, env, inventories, base.tree, base.gradle, execution.npmFiles, heard);
+        // Only once verified, so the problems and the publication are always the same attempt's.
+        content = again.publication;
+      }
+    } catch (error) {
+      unverified = `the attempt failed: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    if (unverified !== undefined) {
+      context.logger.warn("secure-it: asking again didn't reach a verification", { why: unverified });
+      problems = first;
+    } else if (problems.length === 0) {
+      return withCooldown(env, base.tree, { plan, content, problems, named: [], leftOut: plan.leftOut ?? [], ...rejected }, cooldown);
+    }
   }
-  assertNoPlanMarker(answer.publication.body);
-  cooldown = undefined;
-  const remaining = await verifyEdit(context, deps, retry.plan, env, inventories, base.tree, base.gradle, execution.npmFiles, heard);
-  const batch = { plan: retry.plan, content: answer.publication, problems: remaining, named: [...retry.named, ...namedProblems(retry.plan, remaining)], leftOut: retry.plan.leftOut ?? [] };
-  return remaining.length === 0 ? withCooldown(env, batch, cooldown) : batch;
+  // A failed outcome keeps what stopped the attempt with the refusal; a passing one is never touched.
+  const noted = (batch: VerifiedBatch): VerifiedBatch =>
+    unverified === undefined || batch.problems.length === 0 ? batch : { ...batch, problems: [...batch.problems, `asked again with that refusal, ${unverified}`] };
+  const retry = retryWithoutNamed(plan, problems);
+  if (retry.plan === undefined) return noted({ plan, content, problems, named: retry.named, leftOut: retry.leftOut, ...rejected });
+  context.logger.warn("secure-it: retrying the routine without named package groups", { leftOut: retry.leftOut });
+  let answer: SkillAnswer;
+  let remaining: string[];
+  try {
+    await deps.revert(context.workingCopy, base.tree.id);
+    answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({
+      entrypoint: "secure-it", input: await agentInput(execution, retry.plan, base.tree, "apply"),
+    });
+    if (answer.outcome !== "applied" || answer.publication == null) {
+      return noted({ plan: retry.plan, content, problems: [`retry could not apply: ${answer.summary}`], named: retry.named, leftOut: retry.plan.leftOut ?? [], ...rejected });
+    }
+    assertNoPlanMarker(answer.publication.body);
+    cooldown = undefined;
+    remaining = [...await verifyEdit(context, deps, retry.plan, env, inventories, base.tree, base.gradle, execution.npmFiles, heard)];
+  } catch (error) {
+    // After a feedback attempt, the report keeps its refusal whatever stopped the reduced one; otherwise as before.
+    if (rejected.rejected === undefined) throw error;
+    return noted({ plan: retry.plan, content, problems: [`retry failed: ${error instanceof Error ? error.message : String(error)}`], named: retry.named, leftOut: retry.plan.leftOut ?? [], ...rejected });
+  }
+  const batch = { plan: retry.plan, content: answer.publication!, problems: remaining, named: [...retry.named, ...namedProblems(retry.plan, remaining)], leftOut: retry.plan.leftOut ?? [], ...rejected };
+  return noted(remaining.length === 0 ? await withCooldown(env, base.tree, batch, cooldown) : batch);
 }
 
 /**
  * The verified plan with what the verifying comparison's cooldown holds (and
- * the signals people weigh), or without any; a cooldown the comparison
- * couldn't evaluate is a problem, never "nothing held".
+ * the signals and advisory evidence people weigh), or without any; a cooldown
+ * the comparison couldn't evaluate is a problem, never "nothing held".
  */
-async function withCooldown(env: GateEnvironment, batch: VerifiedBatch, cooldown: CooldownEvaluation | undefined): Promise<VerifiedBatch> {
+async function withCooldown(env: GateEnvironment, base: Tree, batch: VerifiedBatch, cooldown: CooldownEvaluation | undefined): Promise<VerifiedBatch> {
   if (cooldown?.evaluated === false) return { ...batch, problems: [`the cooldown can't be evaluated: ${cooldown.reason}`] };
   const { cooldown: _previous, ...plan } = batch.plan;
   const held = cooldown?.held ?? [];
   if (held.length === 0) return { ...batch, plan };
   const registry = new NpmRegistry(env.fetch);
+  const { config } = await readSettings(base);
+  const options = { fetch: env.fetch, token: env.githubToken, now: env.now, sourceRepos: { fetch: env.fetch, overrides: config.repositories, mavenRepositories: config.maven.repositories } };
   const planned: PlannedHold[] = [];
-  for (const entry of held) planned.push({ ...entry, signals: entry.ecosystem === "npm" ? await npmSignals(registry, entry) : [] });
+  for (const entry of held) {
+    planned.push({ ...entry, signals: entry.ecosystem === "npm" ? await npmSignals(registry, entry) : [], ...await evidenceFor(entry, options) });
+  }
   return { ...batch, plan: { ...plan, cooldown: planned } };
+}
+
+/** The evidence for people, or why it couldn't be read: informative, so it never fails the verification. */
+async function evidenceFor(entry: HeldVersion, options: EvidenceOptions): Promise<Pick<PlannedHold, "evidence" | "evidenceFailure">> {
+  try {
+    const evidence = await heldEvidence(entry, options);
+    return evidence === undefined ? {} : { evidence };
+  } catch (error) {
+    return { evidenceFailure: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 async function npmSignals(registry: NpmRegistry, entry: HeldVersion): Promise<string[]> {
@@ -550,13 +743,17 @@ async function recognisedPlans(
   publication: PublicationContext,
   own: ReadonlyArray<GitHubPullRequest>,
   plan: ChangePlan,
+  claimed?: number,
 ): Promise<GitHubPullRequest[]> {
   const owned: GitHubPullRequest[] = [];
+  const held = plan.kind === "routine" && isHeldTopic(plan.topic);
   for (const candidate of own) {
     // The recorded plan names the unit, not the branch: branch topics are cut and made branch-safe, so two packages can
     // share one (`@scope/foo` and `scope-foo`), and a numbered branch (`…-2`, next to one a human took over) is cut shorter.
     const previous = planOf(candidate.body);
-    if (previous === undefined || previous.kind !== plan.kind || previous.topic !== plan.topic) continue;
+    if (previous === undefined || previous.kind !== plan.kind) continue;
+    // A held unit's PR is the one `heldClaims` gave it, whatever its topic says now.
+    if (held ? candidate.number !== claimed || !isHeldTopic(previous.topic) : previous.topic !== plan.topic) continue;
     if (topicOf(RULES, candidate.headRef) === undefined) continue;
     const journaled = await publication.journal.last(context.repo.repo, candidate.number);
     // Legacy entries prove only the head: reconcile a freshly computed plan rather than trusting the body.
@@ -630,7 +827,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
   const env = await deps.gate(context);
   const inventories = deps.gradle(context);
   const publication = publicationOf(context, deps);
-  const execution = { context, deps, env, inventories, publication, npmFiles: new Map<string, string>() };
+  const execution = { context, deps, env, inventories, publication, npmFiles: new Map<string, string>(), branches: new Set<string>() };
   const notes: Array<Readonly<Record<string, unknown>>> = [];
   const planFrom = (pr: GitHubPullRequest): ChangePlan => {
     const plan = planOf(pr.body);
@@ -676,9 +873,13 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       const { units, blocked } = await reviewUnits(previous, planned.fixes, planned.peers);
       if (blocked.length > 0) notes.push({ number: pr.number, blocked });
       // Split exactly as a run would, required-dependency moves included, before telling which unit is this PR's.
-      const unit = unitOf(previous, await holdRequiredYoung(execution, units, { tree: base, gradle: baseGradle }));
+      const split = await holdRequiredYoung(execution, units, { tree: base, gradle: baseGradle });
+      // A held PR is the unit a run would give it, so a run and a review never disagree on which PR is whose.
+      const open = isHeldPlan(previous) ? await claimable(context, publication, await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base)) : [];
+      const claims = heldClaims(split, open);
+      const unit = unitOf(previous, split, claims, pr.number);
       if (unit === undefined) {
-        await closeAndDelete(publication, pr.number, pr.headSha, "No actionable fixes remain for this security unit on the default branch. Blocked fixes are reported by secure-it.");
+        await closeAndDelete(publication, pr.number, pr.headSha, retirementOf(previous, split, claims, pr.number));
         return "retired";
       }
       const recomputed = await planUnit(execution, unit, { tree: base, gradle: baseGradle });
@@ -766,9 +967,35 @@ async function reviewUnits(previous: ChangePlan, fixes: ReadonlyArray<SecurityFi
   return coupledWork(scoped, peers);
 }
 
-/** The recomputed unit an open PR stands for: two routine units can exist (aged and held), so its topic says which. */
-function unitOf(previous: ChangePlan, units: ReadonlyArray<SecurityUnit>): SecurityUnit | undefined {
+/**
+ * The recomputed unit an open PR stands for: several routine units can exist (the aged one and each held one). A held
+ * PR (`number`) stands for the held unit `heldClaims` gives it among the open PRs, so a unit whose name changed keeps
+ * its PR and no two PRs stand for one unit; the others, by topic.
+ */
+export function unitOf(previous: ChangePlan, units: ReadonlyArray<SecurityUnit>, claims: ReadonlyMap<string, number>, number: number): SecurityUnit | undefined {
   const kind = previous.malware ? "malware" : previous.kind;
   if (kind === undefined) return units[0];
-  return units.find((unit) => unit.kind === kind && (kind !== "routine" || unit.topic === previous.topic));
+  if (!isHeldPlan(previous)) return units.find((unit) => unit.kind === kind && (kind !== "routine" || unit.topic === previous.topic));
+  return units.find((unit) => unit.kind === "routine" && isHeldTopic(unit.topic) && claims.get(unit.topic) === number);
+}
+
+/**
+ * Why review retires an open PR no unit is left for. A held one may only have lost its claim: the held work it
+ * overlaps went to other PRs (a claim says which PR will carry it, not that it does yet) or to none yet (a run opens
+ * one), or none of it is held any more, which doesn't mean nothing needs fixing (it may be in the aged batch now).
+ */
+export function retirementOf(previous: ChangePlan, units: ReadonlyArray<SecurityUnit>, claims: ReadonlyMap<string, number>, number: number): string {
+  if (!isHeldPlan(previous)) return "No actionable fixes remain for this security unit on the default branch. Blocked fixes are reported by secure-it.";
+  const overlapping = units.filter((unit) => unit.kind === "routine" && isHeldTopic(unit.topic) && heldOverlap(previous, unit) !== undefined);
+  const others = [...new Set(overlapping.map((unit) => claims.get(unit.topic)).filter((claim): claim is number => claim !== undefined && claim !== number))].sort((a, b) => a - b);
+  const unassigned = overlapping.some((unit) => claims.get(unit.topic) === undefined);
+  if (others.length > 0) {
+    return `The remaining overlapping held work is assigned to ${others.map((claim) => `#${claim}`).join(", ")}${unassigned ? ", and a run opens a PR for the rest" : ""}; this draft is superseded.`;
+  }
+  if (unassigned) return "The overlapping held work isn't assigned to an open PR yet; a run opens one for it, so this draft is superseded.";
+  return "None of this draft's fixes is held on the default branch any more; a run plans whatever still needs fixing. Blocked fixes are reported by secure-it.";
+}
+
+function isHeldPlan(plan: ChangePlan): boolean {
+  return !plan.malware && plan.kind === "routine" && isHeldTopic(plan.topic);
 }

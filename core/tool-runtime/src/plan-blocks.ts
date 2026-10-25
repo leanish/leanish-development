@@ -10,6 +10,11 @@ import { brotliCompressSync, brotliDecompressSync } from "node:zlib";
 const RESERVED = "<!-- leanish:plan";
 const BLOCK = /<!-- leanish:plan(:br)? ([A-Za-z0-9+/=]+) -->/;
 
+/** What a plan, its section or a PR body throws when it passes its size limit, apart from any other failure. */
+export class TooLargeError extends Error {
+  override readonly name = "TooLargeError";
+}
+
 /** A plan section's size limit, leaving the rest of GitHub's body limit to the agent's description. */
 export const SECTION_LIMIT = 43_000;
 /** GitHub's limit on a PR body. */
@@ -34,9 +39,11 @@ export interface PlanSectionParts {
  * releases before compressed blocks could write it too, so they keep reading those PRs; otherwise it's compressed, and
  * the people's part is cut to what fits. Throws when even the compressed block with no people's part doesn't fit.
  */
-export function planSection(parts: PlanSectionParts): string {
+export function planSection(written: PlanSectionParts): string {
+  // The people's part and footer can quote names, notes and errors from elsewhere; a block in them would be read first.
+  const parts = { ...written, people: defused(written.people), ...(written.footer === undefined ? {} : { footer: defused(written.footer) }) };
   const json = Buffer.from(JSON.stringify(parts.payload));
-  if (json.length > PLAN_BYTE_LIMIT) throw new Error(`${parts.name} is too large for a PR body: ${json.length} bytes of JSON, over ${PLAN_BYTE_LIMIT}`);
+  if (json.length > PLAN_BYTE_LIMIT) throw new TooLargeError(`${parts.name} is too large for a PR body: ${json.length} bytes of JSON, over ${PLAN_BYTE_LIMIT}`);
   const legacy = assembled(parts, parts.people, encoded(json, false));
   if (legacy.length <= SECTION_LIMIT) return legacy;
   const block = encoded(json, true);
@@ -48,7 +55,7 @@ export function planSection(parts: PlanSectionParts): string {
     return assembled(parts, `${lines.slice(0, shown).join("\n").trimEnd()}\n\n${notShown(hidden)}`.trimStart(), block);
   };
   if (cut(0).length > SECTION_LIMIT) {
-    throw new Error(`${parts.name} is too large for a PR body: without its table it still takes ${cut(0).length} characters of the section's ${SECTION_LIMIT}, ${block.length} of them its compressed block`);
+    throw new TooLargeError(`${parts.name} is too large for a PR body: without its table it still takes ${cut(0).length} characters of the section's ${SECTION_LIMIT}, ${block.length} of them its compressed block`);
   }
   // The most lines that fit, by bisection: showing more lines never makes the section shorter.
   let fits = 0;
@@ -75,6 +82,15 @@ function assembled(parts: PlanSectionParts, people: string, block: string): stri
 }
 
 const notShown = (count: number) => `_${count} more line${count === 1 ? "" : "s"} of this plan ${count === 1 ? "isn't" : "aren't"} shown here; the hidden plan below has all of it._`;
+
+/**
+ * `text` with every plan marker's opening defused as `&lt;!-- leanish:plan`: people read the same, no reader takes it for
+ * a block. Reads take a body's first block, so text a tool writes before its own block, which can quote advisories,
+ * names or errors from elsewhere, never carries one.
+ */
+export function defused(text: string): string {
+  return text.replaceAll(RESERVED, `&lt;${RESERVED.slice(1)}`);
+}
 
 /**
  * Refuses an agent's PR description that carries a plan marker. Reads take the first marker in a body, so a copied
@@ -128,5 +144,5 @@ export function withPlanSection(body: string, heading: string, section: string):
 
 /** Throws when `body` is over GitHub's limit on a PR body. */
 export function assertBodyFits(body: string): void {
-  if (body.length > BODY_LIMIT) throw new Error(`the PR body would be ${body.length} characters, over GitHub's ${BODY_LIMIT}`);
+  if (body.length > BODY_LIMIT) throw new TooLargeError(`the PR body would be ${body.length} characters, over GitHub's ${BODY_LIMIT}`);
 }

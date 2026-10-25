@@ -33,7 +33,20 @@ export function retryWithoutNamed(plan: ChangePlan, problems: ReadonlyArray<stri
   const moves = plan.moves.filter((move) => !keys.has(moveKey(move)));
   if (moves.length === 0) return { plan: undefined, named, leftOut };
   const requiredNpm = plan.requiredNpm?.filter((target) => !keys.has(`npm|${target.root.name}`));
-  const notes = requiredNpm?.map((target) => target.reason);
+  // The omitted moves' notes go with them: the required targets' reasons, unless a kept target shares the reason (same
+  // requiring package and version, one deduplicated note), and any other note about an omitted move or a package it
+  // carries (a floor, an override, an advisory note) unless that package is a kept move's too. A note is about the
+  // package it starts with; others it mentions only explain it. The rest stays (the gate's, a kept fix's).
+  const keptReasons = new Set((requiredNpm ?? []).map((target) => target.reason));
+  const omittedReasons = new Set((plan.requiredNpm ?? []).map((target) => target.reason).filter((reason) => !keptReasons.has(reason)));
+  const omitted = plan.moves.filter((move) => keys.has(moveKey(move)));
+  const kept = (plan.notes ?? []).filter((note) => {
+    if (keptReasons.has(note)) return true;
+    if (omittedReasons.has(note)) return false;
+    const subject = subjectOf(note);
+    return subject === undefined || !concerns(omitted, subject) || concerns(moves, subject);
+  });
+  const notes = plan.notes === undefined ? undefined : kept;
   return { plan: { ...plan, moves, requiredNpm, notes, packages: plan.packages.filter((key) => !keys.has(key)), leftOut: [...(plan.leftOut ?? []), ...leftOut] }, named, leftOut };
 }
 
@@ -45,6 +58,16 @@ export function namedProblems(plan: ChangePlan, problems: ReadonlyArray<string>)
 }
 
 const moveKey = (move: PlannedMove) => `${move.ecosystem}|${move.name}`;
+
+/**
+ * The package a note is about: the name of the `name@version` it starts with (scoped npm and Maven names included);
+ * undefined for a note that starts with none, such as the gate's. The version may be another copy's: only the name counts.
+ */
+const subjectOf = (note: string): string | undefined => /^(@?[^\s@]+)@\S/.exec(note)?.[1];
+
+/** Whether `name` is one of `moves` or a package one of them carries. */
+const concerns = (moves: ReadonlyArray<PlannedMove>, name: string) =>
+  moves.some((move) => move.name === name || (move.carries ?? []).some((carried) => carried.name === name));
 
 function namesMove(problem: string, move: PlannedMove): boolean {
   const name = move.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

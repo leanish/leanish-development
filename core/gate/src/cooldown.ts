@@ -14,7 +14,7 @@
  */
 import type { Config } from "./config.ts";
 import { isObject } from "./json.ts";
-import type { HeldVersion, YoungJustification } from "./release-age.ts";
+import type { HeldGroup, HeldTarget, HeldVersion, YoungJustification } from "./release-age.ts";
 import { REPORT_SCHEMA_VERSION } from "./report.ts";
 import type { Ecosystem } from "./versions.ts";
 
@@ -85,16 +85,37 @@ export function heldEntry(raw: unknown): HeldVersion {
   const justification = text("justification");
   if (!JUSTIFICATIONS.has(justification)) throw new Error(`a held entry has an unknown justification ${justification}`);
   const replaced = raw["replaced"];
-  if (!Array.isArray(replaced) || !replaced.every((version) => typeof version === "string")) throw new Error("a held entry has no replaced list");
+  if (!isStrings(replaced)) throw new Error("a held entry has no replaced list");
+  const targets = raw["targets"];
   return {
     ecosystem: ecosystem as Ecosystem,
     name: text("name"),
     version: text("version"),
-    replaced: replaced as string[],
+    replaced,
     published: instant("published"),
     eligibleAt: instant("eligibleAt"),
     justification: justification as YoungJustification,
+    ...(targets === undefined ? {} : { targets: heldTargets(targets) }),
   };
+}
+
+function heldTargets(raw: unknown): HeldTarget[] {
+  if (!Array.isArray(raw)) throw new Error("a held entry's targets aren't a list");
+  return raw.map((entry: unknown) => {
+    if (!isObject(entry) || typeof entry["name"] !== "string" || entry["name"] === "" || typeof entry["bundled"] !== "boolean") {
+      throw new Error("a held target has no name or bundled flag");
+    }
+    const { replaced, proposed, groups } = entry;
+    if (!isStrings(replaced) || !isStrings(proposed)) throw new Error(`held target ${entry["name"]} has no version lists`);
+    if (!Array.isArray(groups) || !groups.every((group) => isObject(group) && isStrings(group["ids"]) && group["ids"].length > 0 && isStrings(group["replaced"]))) {
+      throw new Error(`held target ${entry["name"]} has no advisory groups`);
+    }
+    return { name: entry["name"], bundled: entry["bundled"], replaced, proposed, groups: groups as HeldGroup[] };
+  });
+}
+
+function isStrings(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
 const WHY: Readonly<Record<YoungJustification, string>> = {

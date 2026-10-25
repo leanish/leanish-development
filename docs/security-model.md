@@ -45,9 +45,17 @@ controls an action could otherwise move an old release's tag to new code, which 
 young version comes in; it doesn't make that version safe, and the build, tests and CI run it either way.
 
 So the gate holds every young version a PR adds or changes, justified or not: the separate `cooldown` check stays
-red until the last one turns old enough, and no exception clears it. secure-it keeps such fixes in a draft PR of
-their own, opened with a warning, and retires it once everything aged. Taking it earlier is a person's explicit
-decision: every other check green, the reason written on the PR, an admin merge. Details:
+red until the last one turns old enough, and no exception clears it. secure-it keeps such fixes in draft PRs of
+their own, one per group of young fixes that can move apart, each opened with a warning and retired once its
+versions aged. Taking it earlier is a person's explicit decision: every other check green, the reason written on the
+PR, an admin merge.
+
+The gate also reads a dependency's own repository advisories, which name a fix days before GitHub reviews them into
+its database and OSV imports them. Whoever controls that repository and the package can publish an advisory and a
+"fixed" version together to get a young version proposed early. So such unreviewed advisories detect and rule
+versions out, but never trigger a fix nor justify a young version; one can still steer the choice by ruling a
+version out, which the plan records, and whatever comes early stays held. The rules:
+[how each source counts](../core/gate/README.md#how-each-source-counts). Details:
 [the gate's cooldown](../core/gate/README.md#the-cooldown-young-versions-are-held-however-justified) and
 [secure-it's warning](../secure-it/README.md#the-cooldown-warning).
 
@@ -60,7 +68,7 @@ decision: every other check green, the reason written on the PR, an admin merge.
 - A lockfile entry that keeps its name and version but changes its source, bytes or bundling (`resolved`, `integrity`, `inBundle`) fails: nothing about the version tells the new artifact from the original, so the age and identity checks a version change gets can't apply.
 - npm registry lookups encode the whole package name and version as separate URL components. Names from lockfiles cannot add path separators, queries or fragments; empty and dot components are refused before fetching.
 - It fails closed on what it needs to judge: an unreachable registry, OSV or GitHub API, data that doesn't parse, or a build that didn't resolve fails the check, never "clean". What it can't read but doesn't need to judge (a source repository's advisories that return 404, a range it can't parse) is a coverage gap: listed in the report, next to a verdict that can pass.
-- The gate and both tools retry GET/HEAD reads only on connection timeouts or resets (`UND_ERR_CONNECT_TIMEOUT`, `UND_ERR_SOCKET`, `ECONNRESET`, `ETIMEDOUT`), at most twice, after 250–750 ms, then 500–1500 ms. No overall timeout is added; caller cancellation and fetch timeouts still apply. Bodies are buffered before parsing, so an interrupted read retries the whole request. Malformed JSON, HTTP errors, aborts and writes aren't retried. Exhaustion fails closed, naming the request and final cause. Concurrent lookups stop scheduling at the first failure, drain active work and report that failure; POM lookups stay limited to 16 per process.
+- The gate and both tools retry GET/HEAD reads only on connection timeouts or resets (`UND_ERR_CONNECT_TIMEOUT`, `UND_ERR_SOCKET`, `ECONNRESET`, `ETIMEDOUT`), at most twice, after 250–750 ms, then 500–1500 ms. No overall timeout is added; caller cancellation and fetch timeouts still apply. Bodies are buffered before parsing, so an interrupted read retries the whole request. Malformed JSON, HTTP errors, aborts and writes aren't retried. Exhaustion fails closed, naming the request and final cause. Concurrent lookups stop scheduling at the first failure, drain active work and report that failure; source-repository lookups run at most 16 packages at a time per pass, each walking up to 5 parent POMs.
 
 ## secure-it and bump-it
 
@@ -111,7 +119,7 @@ Both tools are in this tree: [`secure-it`](../secure-it) and [`bump-it`](../bump
 - **CI adaptation updates the published verdict.** After verification, both tools publish the agent's new title,
   description and commit message with the current plan and state markers, so the PR reports the latest adaptation and checks.
 - **The tool decides versions, verifies the result with this gate, and publishes.** Every write to a PR re-reads it first and stops unless it's still the tool's, at the expected head. Nothing merges by itself.
-- **Published text keeps the machine out.** In a PR's title, description and commit message, absolute paths inside the working copy become repository-relative, and paths under the home, temp, state and cache directories become `<local path>` ([`publication-text.ts`](../core/tool-runtime/src/publication-text.ts)). The tool's own `<!-- leanish:… -->` markers (its state and encoded plan) pass through: this cleans what readers see, not every byte.
+- **Published text keeps the machine out.** In a PR's title, description and commit message, absolute paths inside the working copy become repository-relative, and paths under the home, temp, state and cache directories become `<local path>` ([`publication-text.ts`](../core/tool-runtime/src/publication-text.ts)). The tool's own `<!-- leanish:… -->` markers (its state and encoded plan) pass through: this cleans what readers see, not every byte. Any other `<!-- leanish:plan` the text quotes or that cleaning would leave is defused (`&lt;!-- leanish:plan`), and removing old markers never joins the text around them, so the tool's own plan block is always the first one read.
 - **Floor history stays intact.** secure-it compares recorded floors and their declarations before `compare`: compatibility floors never change, and security floors change only at exact planned targets with their scope and history preserved. New floors must be planned security additions, and only a dedicated floor-removal plan may remove security floors. Remaining target advisories are checked against compare's head findings from the same snapshot.
 - **Strict pins stay the owner's.** Gradle interprets the build and catalogs. Its inventory records each resolved
   configuration's external module declarations and constraints, including their full rich versions. Project dependencies

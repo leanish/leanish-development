@@ -191,10 +191,11 @@ updates or verify an agent's edits. The first actual tool run below can publish.
 
 Run one opted-in repository interactively before installing schedules. These
 commands may open/update draft PRs; review may also mark them ready or close
-them. Neither merges. A secure-it PR that takes versions younger than the
-release-age wait stays a draft, with a warning on top, until secure-it retires it
-once they've aged; require the gate's `supply-chain / cooldown` check too (see the
-gate's [adoption steps](../core/gate/README.md#adopting-the-gate)).
+them. Neither merges. secure-it holds versions younger than the release-age wait
+in draft PRs, one per group of young fixes, each with a warning on top, until it
+retires each draft once its versions have aged; require the gate's
+`supply-chain / cooldown` check too (see the gate's
+[adoption steps](../core/gate/README.md#adopting-the-gate)).
 
 ```bash
 cd "$HOME/dev/supply-chain"
@@ -284,7 +285,7 @@ Estimates are not a subscription bill.
 
 | Symptom | Cause and action |
 |---|---|
-| `UND_ERR_CONNECT_TIMEOUT` or a connection reset during a registry/POM lookup | The gate and tools retry GET/HEAD reads twice with backoff and jitter, without an overall timeout; caller cancellation and fetch timeouts still apply. If every attempt fails, the unit/check fails closed and reports the URL and final cause. POM lookups are capped at 16 per process; overlap alone does not prove concurrency caused the failure. See the [network behavior](security-model.md#the-gate-itself). |
+| `UND_ERR_CONNECT_TIMEOUT` or a connection reset during a registry/POM lookup | The gate and tools retry GET/HEAD reads twice with backoff and jitter, without an overall timeout; caller cancellation and fetch timeouts still apply. If every attempt fails, the unit/check fails closed and reports the URL and final cause. Source-repository lookups run at most 16 packages at a time per pass; overlap alone does not prove concurrency caused the failure. See the [network behavior](security-model.md#the-gate-itself). |
 | OSV-Scanner refused because sandboxed commands can write its path | `dirs.state` is under `/tmp`, the cache or a writable checkout. Move state to its default home path, outside those roots; do not bypass the check. Stop schedules while moving it so publication journals and workspace metadata move together. A symlink alias is canonicalized, not an escape. |
 | Gradle `fileHashes.lock (Operation not permitted)` although plain writes work | A reused daemon kept an earlier sandbox's writable root. Inventories, floor probes and wrapper generation use `--no-daemon`, so their daemon is single-use and never one an agent started; keep that flag on any custom tool-run Gradle command. `GRADLE_OPTS` and repository JVM settings are not overwritten. |
 | npm `notarget` for a young version already locked | npm's own age window can reject even a previously accepted security fix. The tools report young/unreadable locked-base exclusions (and secure-it's planned young targets); npm >=11.17 reads them, while the tool's targets and `compare` still enforce the policy. Do not turn off the window globally. Check the npm version on **launchd's** PATH. |

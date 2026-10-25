@@ -41,9 +41,20 @@ One snapshot per run, shared by base and head:
 
 - **[OSV-Scanner](https://github.com/google/osv-scanner)**, run once over the union of every package version on both sides, from an empty directory with an empty config, so no `osv-scanner.toml` in the checked repository can ignore anything. Every requested package must come back in its output.
 - **Repository security advisories** of each dependency's own GitHub repository (the config's `repositories` first; else npm: the version manifest's `repository`; Maven: the POM's `scm`, walking up to 5 parents). A repository can publish an advisory days before GitHub reviews it and OSV imports it. The gate reads them, and asks OSV for its record of each, before OSV-Scanner runs: when OSV already has the advisory for that package, OSV's verdict on the version stands; the repository's own range only covers what OSV doesn't have yet. A repository advisory marked as malware is always kept. Ranges are read as maintainers write them (`< 1.1.21, >= 2.0.0 < 2.1.7`, `6.x <6.1.2`, `4.0.0 - 5.0.7`); a range without an upper bound stops at its patched version.
-- **GitHub's advisory database** for GitHub Actions: OSV holds their advisories but doesn't match versions against them; GitHub's `affects=` filter does (reviewed advisories and malware, asked once per action version).
+- **GitHub's advisory database** for GitHub Actions: OSV holds their advisories but doesn't match versions against them; GitHub's `affects=` filter does (reviewed advisories and malware, each asked once per action version; an entry of another type in those answers fails the run).
 
 A package with no GitHub source repository, an unreadable repository, and a range the gate can't read are **coverage gaps**: listed in the report, never a pass in disguise.
+
+## How each source counts
+
+A project's own repository advisories are published by whoever controls that repository, in minutes and with no review, so they count less than the others:
+
+- **Reviewed** means, for an advisory group on a package version, that some record of it comes from OSV or from GitHub's advisory database (Actions: GitHub's `reviewed` or `malware` records only). OSV counts as reviewed because it imports GitHub's advisories only from their reviewed set (`advisories/github-reviewed`), never the unreviewed imports. **Unreviewed** means every record comes from the project's own repository advisories. The gate decides with the sources this run read: it doesn't ask GitHub's database about npm or Maven, so an advisory GitHub reviewed but OSV hasn't imported yet counts as unreviewed for those hours.
+- **Every advisory, reviewed or not, detects and vetoes:** it's a finding, and a PR that adds it fails; a candidate version is ruled out when it brings an advisory group the current version doesn't have, still has a target the fix must clear, or has malware (bump-it and security fixes alike). An advisory the current version already has may stay: that's inherited, not added.
+- **Only a reviewed advisory triggers and justifies:** secure-it plans a fix only for reviewed targets, and only reviewed targets make a young version the rule-picked fix, a young carrier a bundle fix, or a young npm dependency required by one. A version affected only by unreviewed advisories gets no fix: the run reports it, and it waits until a reviewed source lists it.
+- **A veto can steer the choice, even to a young version:** when an unreviewed advisory rules out the version the rule would otherwise take, the next fixing version is taken, held like any young one. secure-it's plan notes each candidate ruled out that way, carriers included (among the carrier versions the search read). A required npm dependency is the exception: its version is set by the requirement, so a veto there refuses the fix instead, and the refusal names each advisory it adds, marked when unreviewed.
+- **Malware counts from any source,** and **a `releaseAge` exception** may still name an unreviewed advisory: it's the owner's written override.
+- **Every young version is held** by the [cooldown](#the-cooldown-young-versions-are-held-however-justified), however justified (own packages aside: they skip the wait); taking it early is a person's decision.
 
 ## Gradle builds
 
@@ -122,7 +133,7 @@ After a passing comparison, the `supply-chain` job runs `npm-signatures`: script
 
 A version younger than the wait passes without an exception when it's the fix the version rule picks. For a version V replacing R:
 
-- **Targets:** the advisories that affect R and not V. An upgrade that fixes A and leaves B fixes A; malware isn't a target. No target, no fix.
+- **Targets:** the reviewed advisories ([how each source counts](#how-each-source-counts)) that affect R and not V. An upgrade that fixes A and leaves B fixes A; malware isn't a target. No target, no fix.
 - **Candidates:** the registry's versions above R, up to the end of V's line. Prereleases count only if R is one; a Maven version keeps R's flavor (`-jre`). A candidate fixes when no target affects it, and it brings no advisory R doesn't have, malware included.
 - **The rule:**
   1. Take the first compatible line with a fixing candidate, starting from R's own (npm's caret range; Maven's first numeric segment, or `0.N` when the first is 0; adjustable through `compatibleLines` in config). A backport 1.9.5 beats a mature 2.0.0.
@@ -130,7 +141,7 @@ A version younger than the wait passes without an exception when it's the fix th
   3. If none is that old, take the lowest fixing candidate, however young.
 - V passes only if it's that version. If an older fix in the line turns 7 days old before CI runs, the check fails on purpose: that one is safer, and secure-it picks it up.
 
-Candidates join the same advisory snapshot as base and head, so the rule and the comparison read the same data. In an October 2026 example, sqs-codec's snappy-java 1.1.10.8 → 1.1.10.10, then three days old, passed with no exception: 1.1.10.9 leaves two of the seven advisories, and 1.1.10.10 is the lowest that fixes them all.
+Candidates join the same advisory snapshot as base and head, so the rule and the comparison read the same data. In an October 2026 example, sqs-codec's snappy-java 1.1.10.8 → 1.1.10.10, then three days old, passed with no exception: 1.1.10.9 leaves two of the seven advisories, and 1.1.10.10 is the lowest that fixes them all. Under the current rules it needs those advisories reviewed: while only snappy-java's own repository published them, they'd have ruled versions out and justified none.
 
 ## A young carrier with a bundled fix (npm)
 
@@ -145,9 +156,9 @@ head copy of V:
   redirects) and checks each against the sha512 integrity its lockfile records; head's must also be the one the
   registry publishes. Each lockfile's bundled entries under the copy must be exactly what its archive ships, path by
   path, name and version included, both ways.
-- **Targets:** the bundled package + advisory groups R's bundle has and V's doesn't (wherever in the bundle a package
-  sits: a package that moved inside the bundle still counts), plus R's own advisories V no longer has. Malware isn't a
-  target.
+- **Targets:** the bundled package + reviewed advisory groups R's bundle has and V's doesn't (wherever in the bundle a
+  package sits: a package that moved inside the bundle still counts), plus R's own reviewed advisories V no longer has.
+  Malware isn't a target; unreviewed advisories still rule candidates out.
 - **The rule:** the young-fix rule above, applied to the carrier: a candidate fixes when its bundle has none of the
   targets anywhere, adds no package + advisory group pair R's bundle lacked, holds no malware, and the carrier version
   itself fixes R's own targets without a new advisory. Candidates are read lazily, in order; each batch of newly read
@@ -204,6 +215,10 @@ that is younger than `releaseAgeDays` is **held**, whether the rule picked it, a
 `releaseAge` exception names it:
 
 - The `supply-chain` verdict is unchanged: it says whether the change is right.
+- The comparison report records, for each held version, the advisories it fixes (`targets`): behind a security or
+  bundle fix, what justifies it; for a required version or an exception, the ones it fixes too, and an exception's
+  named advisory whichever source lists it. They're for people (secure-it's warning reads them) and never change a
+  verdict.
 - The separate `cooldown` job stays red while anything is held (and whenever it can't tell: a comparison that didn't
   pass, a missing report, a report for another head). Its log and step summary list each held version and when it
   turns old enough. Require it next to `supply-chain` (see GitHub settings below).
@@ -214,7 +229,7 @@ that is younger than `releaseAgeDays` is **held**, whether the rule picked it, a
   green, the reason written on the PR, then an admin merge past the red `cooldown` check. Where nothing enforces
   the check (no ruleset, e.g. a private repository on the free plan), the same: a merge with the reason written.
 - Open PRs aren't rescanned: the cooldown is judged when the PR is opened, pushed to, reopened or retargeted.
-  secure-it retires its held PRs once everything aged and plans fresh ones (bump-it never publishes held versions).
+  secure-it retires each held PR once its own versions aged and plans fresh ones (bump-it never publishes held versions).
   For a person's PR, re-run the **whole** workflow after the time it gives (a re-run of the `cooldown` job alone
   reads the old report and stays red), or push. A base that raises its wait later doesn't re-hold a PR that was
   already green.

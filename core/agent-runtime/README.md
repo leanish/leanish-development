@@ -1,4 +1,4 @@
-# agent-basics
+# @leanish/agent-runtime
 
 What secure-it and bump-it need to run a coding agent, without leanish-development's agent framework:
 

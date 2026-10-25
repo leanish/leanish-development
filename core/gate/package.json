@@ -31,6 +31,7 @@
   "exports": {
     "./actions-github": "./src/actions-github.ts",
     "./actions-inventory": "./src/actions-inventory.ts",
+    "./advisory-evidence": "./src/advisory-evidence.ts",
     "./candidates": "./src/candidates.ts",
     "./carrier-candidates": "./src/carrier-candidates.ts",
     "./carrier-fixes": "./src/carrier-fixes.ts",

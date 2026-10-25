@@ -50,9 +50,30 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
    | Gradle | a transitive one, or one only a plugin declares, that a dependency the sources declare brings in every affected configuration | first, that declaration's lowest version in its own line, past the wait, that brings a fixed version (proved by a reference resolution, at most 6 per vulnerable module; the declaration moves wherever it's declared, `carries` in the plan) |
    | Gradle | otherwise, or when no such version is proved | a floor: an explicit dependency with `because(...)`, plus its entry in `.github/dependency-floors.json` (the PR notes why no parent could move) |
    | Actions | any | pin to the tag's commit |
-   - **Young fixes go apart.** Fixes whose target is younger than the release-age wait, everything coupled to them,
-     and any fix whose required npm dependency is young form their own routine unit (topic `security-cooldown`), so
-     the aged fixes aren't held back. A major or malware unit with a young version stays whole and is held.
+   - **Young fixes go apart, each group in its own PR.** Fixes whose target is younger than the release-age wait,
+     everything coupled to them, and any fix whose required npm dependency is young leave the aged batch, so the aged
+     fixes aren't held back. They're then split as far as they can be, one held routine unit (topic
+     `security-cooldown-<package>`, after its lowest package) per group, so no young fix waits for another and each
+     can be taken when it ages or by a person's call:
+     - **Always together, the couplings known when splitting:** coupled npm peers, a carrier and its carried package,
+       and what planning the aged batch finds (a root that needs another root's fix). Planning a held group can find
+       more; those don't rejoin groups already split unless a group can't be planned without them (below), and each PR
+       proves what it moves alone.
+     - **Together, roots that only wait for the same young npm companion:** fixes that are aged themselves but require
+       one young dependency wait for it alike, so one PR moves it for all.
+     - **Apart on purpose, young fixes that share a young companion:** joined, each would wait for the other's
+       version too. Each PR chooses and verifies the companion version its own requirements prove; when one merges,
+       the other's review rebases it.
+     - **Rejoined, groups that can't be planned apart:** each held group is then planned alone. When some fail (two
+       young roots that each require one exact companion keep the other's old requirement when planned alone), the
+       failing groups are planned together when there are several, then every held group together (v0.7's single
+       held batch). The first that plans replaces its groups; otherwise each stays apart and reports its own failure.
+       That fallback can gather groups that would have planned alone, even those apart on purpose above, and their PR
+       waits for its youngest version; a failure that happens only once (a registry error) can gather them too, so
+       each is logged. Runs and reviews regroup the same way.
+
+     A major or malware unit with a young version stays whole and is held. What the PR finally holds is the
+     verifying comparison's call, not this prediction.
 4. **Looks at its open PRs first.**
    - An open PR for the same routine/major/malware unit, with an identical plan and a recognised head: keep its
      commits and refresh the plan section if its notes changed; its review owns further work. The unit reports
@@ -62,6 +83,14 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
      prepared as a clean base checkout for the new plan, so nothing the old plan did lingers. After verification,
      the tool appends the verified tree to the existing PR history as a normal commit.
    - One someone else pushed to: the fix goes in a PR of its own.
+   - A held unit is recognised by its packages, not its name (a group's lowest package can change as members age or
+     join): it takes the open held PR sharing most of its own packages (`members` in the plan; companions planning
+     adds don't count), strongest pairs first across all units, each PR going to one unit at most; a review gives a
+     held PR the same unit a run would. v0.7's single `security-cooldown` PR is taken over this way by one group; the
+     others open their own. A PR someone else pushed to, or one a person marked ready, is never claimed. A held PR
+     left without a unit (two groups merged, or none of its packages is held any more) is retired when a review
+     recomputes it, after the default branch moves; until then it waits or graduates as any held PR does. Its closing
+     comment names the PRs its held work went to, or says none of it is held any more.
 5. **The tool resolves npm; the agent applies non-npm moves** (skill [`secure-it`](skills/secure-it/SKILL.md)).
    - **npm, by the tool.** In a sandboxed export of base, before any agent work, the tool pins every planned direct
      and peer companion to its exact target at once (unplanned directs keep base versions), installs, restores the
@@ -128,12 +157,26 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
    the original problems appear in the run report, the PR description and its persisted plan; only the remaining
    moves are claimed as applied. npm may still induce transitive changes, and these still face `compare`. The next
    run reconsiders omitted fixes.
-7. **Publishes** draft PRs: `secure-it/<date>-security` for the routine, `secure-it/<date>-<package>-major` for each
-   major, or `secure-it/<date>-malware`. Each unit starts from the scanned base and publishes at most one new or
-   updated PR. A failed unit is reported and doesn't stop other major units. The tool appends the move table and the
-   hidden plan for later runs to the agent's description, and keeps local paths out of the title, description and
-   commit message ([`publication-text.ts`](../core/tool-runtime/src/publication-text.ts)). Multi-unit reports use `units`;
-   a single unit keeps its outcome at the top level too.
+
+   Advisories only the project's own repository publishes (unreviewed) plan no fix: such a version is reported, and
+   waits for a reviewed source; when a reviewed fix moves the package anyway, they're a note on that fix instead. They still rule candidates out, and the plan notes each candidate ruled out that way
+   ("ruled out by …, not corroborated by the sources this decision used"), carrier versions included. A required npm
+   dependency's version is set by its requirement, so there a veto refuses the fix, and the refusal names each advisory
+   the version adds, marked when unreviewed. See
+   [how each source counts](../core/gate/README.md#how-each-source-counts).
+
+   Before that reduction, a first refusal gets the agent asked once more for the same plan, from the base, with the
+   refusal (`rejected`): an agent that moved a parent instead of the planned floor, say. The reduction then works
+   from the second attempt's problems, or from the first refusal's when that attempt couldn't apply or failed before
+   its verification; the run report keeps the first (`rejected`). A review's adaptation is never
+   restarted this way, since a restart from the base would lose it.
+7. **Publishes** draft PRs: `secure-it/<date>-security` for the routine, `secure-it/<date>-security-cooldown-<package>`
+   for each held group, `secure-it/<date>-<package>-major` for each major, or `secure-it/<date>-malware`. Each unit
+   starts from the scanned base and publishes at most one new or updated PR. A failed unit is reported and doesn't stop
+   other major units. The tool appends the move table and the hidden plan for later runs to the agent's description, and
+   keeps local paths out of the title, description and commit message
+   ([`publication-text.ts`](../core/tool-runtime/src/publication-text.ts)). Multi-unit reports use `units`; a single
+   unit keeps its outcome at the top level too.
 
 ## Removing redundant security floors
 
@@ -214,6 +257,30 @@ and passing every check doesn't rule out malware, that secure-it keeps the PR a 
 aged, and how a person takes it earlier: every other check green, the reason written on the PR, an admin merge. A PR
 planned as aged that the comparison holds anyway is held the same way. A cooldown the comparison couldn't evaluate
 fails verification.
+
+For a security or bundle fix, and for a required version or an exception that fixes advisories itself (the gate
+records them, and an exception's named one, reviewed or not), the warning also says where the advisories behind it
+appear. After the verification,
+secure-it reads each advisory, and every alias the responses name, from the dependency's own repository advisories,
+GitHub's database and OSV, fresh and only to inform. A table shows each source as it says: the fix it declares, and
+whether its ranges put each replaced and proposed version among the affected ones; a bundled package is named as
+bundled, and a removal as a removal. A lookup that fails reads "couldn't be fully checked", never "not found".
+
+A fixed line opens the warning: that a reviewed record (OSV, or GitHub's reviewed database) still backs every fix as
+read now, or, with those rows marked ⚠, that none does for some (withdrawn since, ranges that changed, or sources that
+couldn't be read). A fix whose evidence couldn't be read, wasn't recorded, or covers only some of its targets gets
+its own line and is listed: the notice never says every fix is backed while one is unchecked. The comparison's verdict
+stands either way. A fix's targets are reviewed advisories by the time it's proposed, except the one a release-age
+exception names, which the owner's call lets in whichever source lists it; how each source counts is in
+[the gate's rules](../core/gate/README.md#how-each-source-counts).
+
+When the table would push the PR body past GitHub's limit, only the table is left out, with a line saying so: the
+plan's block keeps the whole evidence, the ⚠ packages are named in the opening line, each with its newest proposed
+versions, and the rest of the warning stays. When even that can't be written (the plan with the evidence passes its
+block's or section's limit, or the body GitHub's), the evidence gives way, never the fix: the PR is written without
+any, and each fix that had some is listed as unchecked, saying why.
+
+The agent never writes any of this.
 
 ## Isolation
 

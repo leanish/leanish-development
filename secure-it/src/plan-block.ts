@@ -7,9 +7,11 @@
  */
 import { createHash } from "node:crypto";
 
+import { isAdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import { heldEntry, heldUntil } from "@leanish/gate/cooldown";
-import { assertBodyFits, planPayload, planSection as sectionOf, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
+import { assertBodyFits, BODY_LIMIT, defused, planPayload, planSection as sectionOf, TooLargeError, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
 
+import { advisoryNotice, EVIDENCE_LEFT_OUT } from "./advisory-notice.ts";
 import { floorIdentity, validRemoval } from "./floor-removal.ts";
 import type { ChangePlan, PlannedHold, PlannedMove } from "./plan.ts";
 
@@ -42,6 +44,7 @@ export function planSection(plan: ChangePlan): string {
     "|---|---|---|---|---|---|",
     ...rows,
     ...omittedSection(plan),
+    ...plan.moves.flatMap(vetoLines),
     ...(plan.notes ?? []).map((note) => `- ${note.replace(/\s+/g, " ")}`),
   ].join("\n");
   const footer = "Security targets are the versions the supply-chain gate's rule picks (`supply-chain candidates --rule security`); code chose any required direct-peer companions at their lowest safe compatible versions. The gate verified the change before it was published.";
@@ -75,6 +78,15 @@ function fixesLabel(plan: ChangePlan, move: PlannedMove): string {
   return coupled ? "direct peer compatibility" : "";
 }
 
+/** Text from elsewhere in a line of the plan's section: `<` escaped, so it can't open a comment hiding what follows. */
+const quoted = (text: string) => text.replaceAll("<", "&lt;").replace(/\s+/g, " ");
+
+/** A fixed line per candidate the gate ruled out only by advisories no reviewed source corroborates. */
+function vetoLines(move: PlannedMove): string[] {
+  return (move.vetoed ?? []).map((veto) =>
+    `- ${quoted(move.name)} ${quoted(veto.version)} was ruled out by ${quoted(veto.advisories.join(", "))}, not corroborated by the sources this decision used; this takes ${move.to}.`);
+}
+
 /** Omissions are visible to reviewers as well as the command report and persisted plan. */
 function omittedSection(plan: ChangePlan): string[] {
   if (plan.leftOut === undefined || plan.leftOut.length === 0) return [];
@@ -91,14 +103,44 @@ function omittedSection(plan: ChangePlan): string[] {
   ];
 }
 
-/** `body` with its plan section replaced by `plan`'s (or `plan`'s appended when it has none), and the cooldown warning on top while it holds. */
+/**
+ * `body` with its plan section replaced by `plan`'s (or `plan`'s appended when it has none), and the cooldown warning on
+ * top while it holds. The advisory evidence is for people and never changes a verdict, so when the body can't be written
+ * with it (its plan, section or body over a limit), it gives way, never the fix: written again without any, each fix that
+ * had some says why it's missing. What still can't be written, and any other failure, fails as before.
+ */
 export function withPlanSection(body: string, plan: ChangePlan): string {
-  const warning = cooldownWarning(plan.cooldown ?? []);
+  try {
+    return composed(body, plan);
+  } catch (error) {
+    const lighter = error instanceof TooLargeError ? withoutEvidence(plan) : undefined;
+    if (lighter === undefined) throw error;
+    try {
+      return composed(body, lighter);
+    } catch (retried) {
+      throw retried instanceof TooLargeError ? error : retried;
+    }
+  }
+}
+
+/** `plan` without its holds' evidence, each hold that had some saying why; undefined when none has any. */
+function withoutEvidence(plan: ChangePlan): ChangePlan | undefined {
+  const held = plan.cooldown ?? [];
+  if (!held.some((entry) => entry.evidence !== undefined)) return undefined;
+  return { ...plan, cooldown: held.map(({ evidence, ...entry }) => (evidence === undefined ? entry : { ...entry, evidenceFailure: EVIDENCE_LEFT_OUT })) };
+}
+
+function composed(body: string, plan: ChangePlan): string {
+  const held = plan.cooldown ?? [];
+  const warning = cooldownWarning(held);
   const rest = replaced(withoutWarning(body), HEADING, planSection(plan));
   if (warning === undefined) return rest;
   const warned = `${warning}\n\n${rest}`;
-  assertBodyFits(warned);
-  return warned;
+  if (warned.length <= BODY_LIMIT) return warned;
+  // Only the evidence table gives way: the plan's block below keeps the evidence, and the rest of the warning stays.
+  const shorter = `${cooldownWarning(held, { table: false })!}\n\n${rest}`;
+  assertBodyFits(shorter);
+  return shorter;
 }
 
 function withoutWarning(body: string): string {
@@ -108,29 +150,35 @@ function withoutWarning(body: string): string {
   return `${body.slice(0, start)}${body.slice(end + WARNING_END.length)}`.replace(/^\s+/, "");
 }
 
-/** The warning a held PR opens with: what came early, why, what to check, and how the hold ends. */
-export function cooldownWarning(held: ReadonlyArray<PlannedHold>): string | undefined {
+/** The warning a held PR opens with: what came early, why, what to check, and how the hold ends; `table` as in advisoryNotice. */
+export function cooldownWarning(held: ReadonlyArray<PlannedHold>, options: { readonly table?: boolean } = {}): string | undefined {
   const until = heldUntil(held);
   if (until === undefined) return undefined;
-  const cell = (text: string) => text.replaceAll("|", "\\|").replace(/\s+/g, " ");
+  // `<` too: a name or signal from elsewhere can't open a comment that hides the rest, or end the warning early.
+  const cell = (text: string) => text.replaceAll("|", "\\|").replaceAll("<", "&lt;").replace(/\s+/g, " ");
   const minute = (instant: string) => `${instant.slice(0, 10)} ${instant.slice(11, 16)}`;
   const why = { "security-fix": "the security fix the version rule picks", "bundle-fix": "the carrier version the rule picks for advisories in its bundle", required: "required by a security fix", exception: "a release-age exception", unjustified: "not justified: the gate fails it" } as const;
   const rows = held.map((entry) =>
     `> | ${entry.ecosystem} \`${cell(entry.name)}\` | ${entry.replaced.length === 0 ? "new" : cell(entry.replaced.join(", "))} → ${cell(entry.version)} | ${minute(entry.published)} | ${minute(entry.eligibleAt)} | ${why[entry.justification]} | ${cell(entry.signals.join("; ")) || "—"} |`);
-  return [
+  const notice = advisoryNotice(held, options);
+  const quoted = (lines: ReadonlyArray<string>) => lines.map((line) => (line === "" ? ">" : `> ${line}`));
+  // Above the plan's section, so its block must stay the body's first: the advisory text in it comes from elsewhere.
+  return defused([
     WARNING_START,
     "> [!WARNING]",
     "> **Release-age cooldown bypassed.** This PR takes versions published less than the release-age wait ago. Needing them for a security fix, and passing every check, doesn't rule out malware: whoever controls a publisher can ship it inside a real fix, whatever the advisory's severity.",
     ">",
+    ...notice.paragraphs.flatMap((paragraph) => [`> ${paragraph}`, ">"]),
     "> | Package | Version | Published (UTC) | Held until (UTC) | Why | Signals |",
     "> |---|---|---|---|---|---|",
     ...rows,
     ">",
+    ...(notice.details.length === 0 ? [] : [...quoted(notice.details), ">"]),
     `> secure-it keeps this PR a draft, and the supply-chain gate's \`cooldown\` check stays red, until ${minute(until)} UTC. Then secure-it closes it and its next run opens a freshly verified PR (held again only if something in it is still young).`,
     ">",
     "> To take it earlier, a person decides: every other check green, the reason written in a PR comment, then an admin merge past the red `cooldown` check (where no ruleset enforces it, a merge with the same written reason).",
     WARNING_END,
-  ].join("\n");
+  ].join("\n"));
 }
 
 /** The plan a PR's body carries, if it has one that parses. */
@@ -142,11 +190,15 @@ export function planOf(body: string): ChangePlan | undefined {
 function validMetadata(plan: ChangePlan): boolean {
   if (plan.kind === "floor-removal") return plan.topic === "floor-removal" && plan.malware === false && plan.moves.length === 0 && validRemoval(plan.floorRemoval);
   if (plan.floorRemoval !== undefined) return false;
+  // Every plan since v0.4 has one; runs and reviews tell which PR is whose by it.
+  if (typeof plan.topic !== "string") return false;
   if (plan.notes !== undefined && (!Array.isArray(plan.notes) || !plan.notes.every((note) => typeof note === "string"))) return false;
   if (plan.cooldown !== undefined && !validHolds(plan.cooldown)) return false;
   if (plan.requiredNpm !== undefined && (!Array.isArray(plan.requiredNpm) || !plan.requiredNpm.every((target) =>
     target !== null && typeof target === "object" && typeof target.exempt === "boolean" && [target.name, target.version, target.path, target.lockfile, target.key, target.range, target.reason, target.parent?.name, target.parent?.version, target.parent?.path, target.root?.name, target.root?.version, target.root?.path].every((value) => typeof value === "string")))) return false;
   if (plan.kind !== undefined && !["routine", "major", "malware"].includes(plan.kind)) return false;
+  if (plan.members !== undefined && (!Array.isArray(plan.members) || !plan.members.every((key: unknown) => typeof key === "string"))) return false;
+  if (plan.packages !== undefined && (!Array.isArray(plan.packages) || !plan.packages.every((key: unknown) => typeof key === "string"))) return false;
   if (plan.coupled !== undefined && (!Array.isArray(plan.coupled) || !plan.coupled.every((set) => Array.isArray(set) && set.every((name: unknown) => typeof name === "string")))) return false;
   if (plan.leftOut === undefined) return true;
   return Array.isArray(plan.leftOut) && plan.leftOut.every((entry) =>
@@ -158,7 +210,14 @@ function isMove(move: unknown): move is PlannedMove {
   if (typeof move !== "object" || move === null) return false;
   const m = move as Record<string, unknown>;
   return typeof m["name"] === "string" && typeof m["from"] === "string" && typeof m["to"] === "string" && typeof m["mechanism"] === "string" && Array.isArray(m["locations"]) &&
-    (m["carries"] === undefined || (Array.isArray(m["carries"]) && m["carries"].every(isCarried)));
+    (m["carries"] === undefined || (Array.isArray(m["carries"]) && m["carries"].every(isCarried))) &&
+    (m["vetoed"] === undefined || (Array.isArray(m["vetoed"]) && m["vetoed"].every(isVeto)));
+}
+
+function isVeto(entry: unknown): boolean {
+  if (typeof entry !== "object" || entry === null) return false;
+  const v = entry as Record<string, unknown>;
+  return typeof v["version"] === "string" && Array.isArray(v["advisories"]) && v["advisories"].every((id) => typeof id === "string");
 }
 
 function isCarried(entry: unknown): boolean {
@@ -176,7 +235,8 @@ function validHolds(held: unknown): boolean {
     } catch {
       return false;
     }
-    const signals = (entry as PlannedHold).signals;
-    return Array.isArray(signals) && signals.every((signal) => typeof signal === "string");
+    const { signals, evidence, evidenceFailure } = entry as PlannedHold;
+    return Array.isArray(signals) && signals.every((signal) => typeof signal === "string")
+      && (evidence === undefined || isAdvisoryEvidence(evidence)) && (evidenceFailure === undefined || typeof evidenceFailure === "string");
   });
 }

@@ -23,6 +23,35 @@ describe("batch retry", () => {
     expect(planOf(planSection(retry.plan!))?.coupled).toEqual(original.coupled);
   });
 
+  it("drops the notes of the moves it omits, a package one carries included, and keeps the rest", () => {
+    const floor: PlannedMove = { ...move("g:foo"), ecosystem: "Maven" };
+    const carrier: PlannedMove = { ...move("carrier"), carries: [{ name: "brace", from: ["5.0.9"], locations: ["node_modules/carrier/node_modules/brace"], advisories: ["GHSA-b"], to: [] }] };
+    // A note is about the package it starts with; the others it names only explain it.
+    const notes = [
+      "g:foo@1.0.0 gets a floor: gradle/libs.versions.toml names it",
+      "brace@5.0.9 is affected by GHSA-r: these advisories alone don't trigger an update",
+      "carrier@1.0.1 at node_modules/carrier keeps an override: every parent version in range drops @scope/kept@1.0.1",
+      "@scope/kept@1.0.0 is affected by GHSA-k: these advisories alone don't trigger an update",
+      "@scope/kept@1.0.1 at node_modules/@scope/kept keeps an override: every parent version in range drops carrier@1.0.1",
+      "a gate note",
+    ];
+    const retry = retryWithoutNamed({ ...plan(floor, carrier, move("@scope/kept")), notes }, ["g:foo at gradle/libs.versions.toml is gone, not 1.0.1", "carrier at node_modules/carrier is gone, not 1.0.1"]);
+    expect(retry.plan?.moves.map((kept) => kept.name)).toEqual(["@scope/kept"]);
+    expect(retry.plan?.notes).toEqual(notes.slice(3));
+  });
+
+  it("keeps the remaining moves' vetoes and every other note when it omits a package", () => {
+    const vetoed = { ...move("lib"), vetoed: [{ version: "1.0.0.1", advisories: ["GHSA-repo"] }] };
+    const original = { ...plan(vetoed, move("other")), notes: ["lib@2.0.0 is affected by GHSA-x, only in the project's repository advisories"] };
+    const retry = retryWithoutNamed(original, ["other at node_modules/other is gone, not 1.0.1"]);
+    expect(retry.plan?.moves).toEqual([vetoed]);
+    expect(retry.plan?.notes).toEqual(original.notes);
+    expect(planSection(retry.plan!)).toContain("- lib 1.0.0.1 was ruled out by GHSA-repo, not corroborated by the sources this decision used; this takes 1.0.1.");
+    // An advisory id from elsewhere can't open a comment hiding the rest of the section.
+    const quoting = plan({ ...move("lib"), vetoed: [{ version: "1.0.0.1", advisories: ["<!-- x"] }] });
+    expect(planSection(quoting)).toContain("was ruled out by &lt;!-- x, not corroborated");
+  });
+
   it("attributes a failed required child to its security root and leaves unrelated npm work", () => {
     const root = { name: "lib", version: "1.0.1", path: "node_modules/lib" };
     const target = { name: "child", version: "2.0.0", path: "node_modules/child", lockfile: "package-lock.json", root, parent: root, key: "child", range: "^2", exempt: true, reason: "forced young child" };
@@ -32,6 +61,17 @@ describe("batch retry", () => {
     expect(retry.plan?.requiredNpm).toEqual([]);
     expect(retry.plan?.notes).toEqual([]);
     expect(retry.leftOut[0]?.problems).toEqual(["compare: child@2.0.0 adds an advisory"]);
+  });
+
+  it("keeps a reason an omitted target shares with a kept one, and drops only the omitted target's own", () => {
+    const lib = { name: "lib", version: "1.0.1", path: "node_modules/lib" };
+    const app = { name: "app", version: "1.0.1", path: "node_modules/app" };
+    const shared = "parent@1.0.0 requires child ^2; aged child@2.0.0 anchors its required-dependency proof";
+    const target = (root: typeof lib, name: string, reason: string) => ({ name, version: "2.0.0", path: `node_modules/${name}`, lockfile: "package-lock.json", root, parent: root, key: name, range: "^2", exempt: false, reason });
+    const original = { ...plan(move("lib"), move("app"), move("other")), requiredNpm: [target(lib, "child", shared), target(lib, "own", "lib's own reason"), target(app, "child", shared)], notes: ["a gate note", shared, "lib's own reason"] };
+    const retry = retryWithoutNamed(original, ["lib at node_modules/lib is gone, not 1.0.1"]);
+    expect(retry.plan?.packages).toEqual(["npm|app", "npm|other"]);
+    expect(retry.plan?.notes).toEqual(["a gate note", shared]);
   });
 
   it("attributes a carried package's problem to its carrier, and keeps the carrier in the plan's text and block", () => {

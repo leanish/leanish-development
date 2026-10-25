@@ -105,6 +105,18 @@ jobs:
     expect(() => parseUses("steps:\n  - uses: not-an-action\n", "odd.yml")).toThrow("odd.yml: can't read `uses: not-an-action`");
     expect(() => parseUses("steps:\n  - uses: [a]\n", "odd.yml")).toThrow("odd.yml: a `uses:` isn't a string");
   });
+
+  it("can't read a remote action whose owner or repo is `.` or `..`, but reads dot-led names and local actions", () => {
+    const sha = "a".repeat(40);
+    for (const value of [`../..@${sha}`, "acme/..@v1", "acme/.@v1", "../checkout@v1"]) {
+      expect(() => parseUses(`steps:\n  - uses: ${value}\n`, "odd.yml")).toThrow(`odd.yml: can't read \`uses: ${value}\``);
+    }
+    const read = parseUses("steps:\n  - uses: acme/.github/deploy@v1\n  - uses: ./.github/actions/build\n", "ci.yml");
+    expect(read.uses.map((use) => [use.name, use.path])).toEqual([["acme/.github", "deploy"]]);
+    expect(read.local).toEqual(["./.github/actions/build"]);
+    // Outside a job or step such a value doesn't read as an action, so it isn't counted (nor looked up).
+    expect(parseUses("env:\n  uses: acme/..@v1\nsteps:\n  - uses: acme/x@v1\n", "ci.yml").uses.map((use) => use.name)).toEqual(["acme/x"]);
+  });
 });
 
 describe("resolving uses", () => {
@@ -360,8 +372,8 @@ describe("GitHub's advisory database", () => {
       fakeFetch({
         [`${API}/advisories/GHSA-unrv-unrv-unrv`]: { body: { ghsa_id: "GHSA-unrv-unrv-unrv", type: "unreviewed", ...vulnerable } },
         [`${API}/advisories/GHSA-revd-revd-revd`]: { body: { ghsa_id: "GHSA-revd-revd-revd", type: "reviewed", ...vulnerable } },
-        [affects("reviewed")]: { body: [{ ghsa_id: "GHSA-page-one1-aaaa" }], headers: { link: `<${API}/advisories?page=2>; rel="next"` } },
-        [`${API}/advisories?page=2`]: { body: [{ ghsa_id: "GHSA-page-two2-bbbb" }] },
+        [affects("reviewed")]: { body: [{ ghsa_id: "GHSA-page-one1-aaaa", type: "reviewed" }], headers: { link: `<${API}/advisories?page=2>; rel="next"` } },
+        [`${API}/advisories?page=2`]: { body: [{ ghsa_id: "GHSA-page-two2-bbbb", type: "reviewed" }] },
         [affects("malware")]: { body: [] },
       }),
       undefined,
@@ -369,6 +381,12 @@ describe("GitHub's advisory database", () => {
     expect(await gh.globalCovers("GHSA-unrv-unrv-unrv", "a/b")).toBe(false);
     expect(await gh.globalCovers("GHSA-revd-revd-revd", "a/b")).toBe(true);
     expect((await gh.advisories("a/b", "v1.0.0")).map((advisory) => advisory.id)).toEqual(["GHSA-page-one1-aaaa", "GHSA-page-two2-bbbb"]);
+  });
+
+  it("refuses a record the reviewed query returns that isn't reviewed: only reviewed ones may trigger a fix", async () => {
+    const affects = (type: string) => `${API}/advisories?ecosystem=actions&affects=${encodeURIComponent("a/b@v1.0.0")}&type=${type}&per_page=100`;
+    const gh = new ActionsGitHub(fakeFetch({ [affects("reviewed")]: { body: [{ ghsa_id: "GHSA-unrv-unrv-unrv", type: "unreviewed" }] }, [affects("malware")]: { body: [] } }), undefined);
+    await expect(gh.advisories("a/b", "v1.0.0")).rejects.toThrow("GitHub advisory GHSA-unrv-unrv-unrv isn't reviewed (type unreviewed)");
   });
 
   it("marks a release listing past the page cap incomplete, so the young-fix proof can't use it", async () => {

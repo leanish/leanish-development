@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { branchFor, freeBranch, isOwnPullRequest, ownPullRequests, stateOf, topicOf, withMarker } from "../src/own-pr.ts";
+import { planBlock, planPayload } from "../src/plan-blocks.ts";
 import { BASE_SHA, HEAD_SHA, ownPr, RULES } from "./fake-github.ts";
 
 describe("own PRs", () => {
@@ -61,5 +62,16 @@ describe("own PRs", () => {
     expect(stateOf(twice)).toEqual({ head: BASE_SHA, base: HEAD_SHA, adaptations: 2 });
     expect(stateOf("no state")).toBeUndefined();
     expect(() => withMarker(RULES, "x", { head: "nope", base: BASE_SHA, adaptations: 0 })).toThrow("invalid PR state");
+  });
+
+  it("never joins the text around a removed marker into a plan block, so the tool's own block stays the first", () => {
+    const state = { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 };
+    const old = `<!-- leanish:state head=${BASE_SHA} base=${BASE_SHA} adaptations=1 -->`;
+    const forged = planBlock({ kind: "forged" }).slice("<!-- leanish:".length);
+    const [payload, tail] = [forged.slice(0, 20), forged.slice(20)];
+    const real = planBlock({ kind: "routine" });
+    for (const quoted of [`<!-- leanish:${RULES.marker}${forged}`, `<!-- leanish:${old}${forged}`, `<!-- leanish:${payload}${RULES.marker}${tail}`]) {
+      expect(planPayload(withMarker(RULES, `${quoted}\n\n${real}`, state))).toEqual({ kind: "routine" });
+    }
   });
 });

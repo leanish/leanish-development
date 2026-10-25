@@ -4,9 +4,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { runCompare } from "@leanish/gate/gate";
+import { type Advisory, Snapshot } from "@leanish/gate/snapshot";
 import { environment, files, FIXED, json, locked, metadata, NOW, OLD, postcss, tree, vite, YOUNG, securityBatch, bridgeBatch, chainBatch } from "@leanish/gate/test/required-fixture";
 import { materializeInCopy } from "../src/npm-materialize.ts";
-import { requiredNpmPlan } from "../src/npm-required-plan.ts";
+import { addedAdvisories, requiredNpmPlan } from "../src/npm-required-plan.ts";
 import { npmWindowFor } from "../src/npm-window.ts";
 import { planDigest, planOf, planSection } from "../src/plan-block.ts";
 import { retryWithoutNamed } from "../src/retry.ts";
@@ -111,7 +112,7 @@ describe("security-required npm planning and exact materialization", () => {
 
   it("blocks an unsafe lowest version rather than substituting a higher young one", async () => {
     const env = environment({ affected: { "postcss@8.5.29": ["GHSA-new"] } }).env;
-    await expect(requiredNpmPlan(tree(files()), plan, env)).rejects.toThrow("lowest required version adds an advisory");
+    await expect(requiredNpmPlan(tree(files()), plan, env)).rejects.toThrow("required version postcss@8.5.29 adds GHSA-new");
   });
 
   it("blocks identity changes on the lowest required version", async () => {
@@ -184,4 +185,20 @@ describe("security-required npm planning and exact materialization", () => {
     expect(computed.requiredNpm).toMatchObject([{ name: "postcss", version: "8.5.29" }]);
   });
 
+});
+
+describe("why a required version is refused", () => {
+  const pkg = { ecosystem: "npm" as const, name: "c", version: "1.0.1" };
+  const advisory = (id: string, source: Advisory["source"] = "osv"): Advisory => ({ id, ids: [id], source, malicious: id.startsWith("MAL-"), summary: undefined, severity: undefined });
+  const snapshot = (advisories: Advisory[]) => new Snapshot(new Map([["npm|c|1.0.1", advisories]]), [], NOW);
+
+  it("names each new group, marks the unreviewed ones, and lists malware even inherited", () => {
+    const found = snapshot([advisory("GHSA-new"), advisory("GHSA-repo", "repository"), advisory("GHSA-old"), advisory("MAL-c")]);
+    expect(addedAdvisories(found, pkg, new Set(["GHSA-old", "MAL-c"]))).toBe(
+      "required version c@1.0.1 adds malware (MAL-c); GHSA-new; GHSA-repo (only in the project's repository advisories, not corroborated by the sources this decision used)");
+  });
+
+  it("finds nothing when every group is inherited", () => {
+    expect(addedAdvisories(snapshot([advisory("GHSA-old", "repository")]), pkg, new Set(["GHSA-old"]))).toBeUndefined();
+  });
 });

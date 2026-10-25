@@ -9,6 +9,7 @@ import type { GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
 import type { WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
 import { InMemoryWorkspace } from "@leanish/agent-runtime/working-copy/in-memory-workspace";
 import type { GradleInventory } from "@leanish/gate/gradle";
+import type { AdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import type { SecurityFix } from "@leanish/gate/candidates";
 import { FLOORS_PATH, parseFloors } from "@leanish/gate/floors";
 import { selectRemovals, withoutFloorRecords } from "../src/floor-removal.ts";
@@ -21,12 +22,16 @@ import { MemoryJournal } from "@leanish/tool-runtime/test/memory-journal";
 import { branchFor, stateOf, withMarker } from "@leanish/tool-runtime/own-pr";
 import { BASE_SHA, FakeGitHub, GREEN, HEAD_SHA, ownPr, PUSHED_SHA, RED } from "@leanish/tool-runtime/test/fake-github";
 import { planOf, planSection, withPlanSection } from "../src/plan-block.ts";
-import { planFor } from "../src/plan.ts";
+import { EVIDENCE_LEFT_OUT, REVIEWED } from "../src/advisory-notice.ts";
+import { planBlock } from "@leanish/tool-runtime/plan-blocks";
+import { type ChangePlan, planFor, type SecurityUnit } from "../src/plan.ts";
 import { verifyPlan, type VerifyInputs } from "../src/verify.ts";
 import { computedNpmProblems } from "@leanish/tool-runtime/npm-file-checks";
 import { materializeInCopy } from "../src/npm-materialize.ts";
+import { requiredNpmPlan } from "../src/npm-required-plan.ts";
+import { environment, OLD, postcss, securityBatch } from "@leanish/gate/test/required-fixture";
 import { preservedFloors } from "../src/floor-checks.ts";
-import { defaultDeps, RULES, type SecureItDeps, secureIt } from "../src/secure-it.ts";
+import { defaultDeps, heldClaims, retirementOf, RULES, type SecureItDeps, secureIt, unitOf } from "../src/secure-it.ts";
 
 // Keep local security verification real; replace only the external scan.
 vi.mock("@leanish/gate/gate", async (original) => ({ ...await original<object>(), runCompare: vi.fn() }));
@@ -601,6 +606,113 @@ describe("secure-it run", () => {
     expect(h.agentCalls.map((call) => (call.input["moves"] as Array<{ name: string }>).map((move) => move.name).sort())).toEqual([["g:lib", "vite"]]);
   });
 
+  it("asks the agent again with the refusal and publishes the second attempt when it passes", async () => {
+    const h = harness({ fixes: [vite()] });
+    let attempts = 0;
+    const refusal = "compare: tools.jackson:jackson-bom@3.2.4 was published 2026-10-18T22:36:10.000Z (4.8 days ago, under 7)";
+    const deps = { ...h.deps, verify: async () => (++attempts === 1 ? [refusal] : []) };
+    expect(await secureIt(deps).run(h.context)).toMatchObject({ outcome: "published", rejected: [refusal] });
+    expect(h.agentCalls.map((call) => [call.input["mode"], call.input["rejected"]])).toEqual([["apply", undefined], ["apply", [refusal]]]);
+    expect(h.reverted).toEqual([BASE_SHA]);
+    expect(h.workspace.publications).toHaveLength(1);
+  });
+
+  it("stops at the second attempt's cannot-apply, keeping the first refusal", async () => {
+    const h = harness({ fixes: [vite()], problems: ["vite at node_modules/vite is 8.3.2, not 8.3.3"] });
+    let calls = 0;
+    const context = { ...h.context, agent: (async () => (++calls === 1 ? APPLIED : { outcome: "cannot-apply", summary: "the floor needs a parent move" })) as ToolRunContext["agent"] };
+    expect(await secureIt(h.deps).run(context)).toMatchObject({
+      outcome: "verification-failed", rejected: ["vite at node_modules/vite is 8.3.2, not 8.3.3"],
+      problems: ["vite at node_modules/vite is 8.3.2, not 8.3.3", "asked again with that refusal, the agent couldn't apply: the floor needs a parent move"],
+    });
+    expect(calls).toBe(2);
+    expect(h.workspace.publications).toEqual([]);
+  });
+
+  it("keeps the first refusal when the second attempt throws", async () => {
+    const h = harness({ fixes: [vite()], problems: ["vite at node_modules/vite is 8.3.2, not 8.3.3"] });
+    let calls = 0;
+    const context = { ...h.context, agent: (async () => {
+      if (++calls === 1) return APPLIED;
+      throw new Error("agent crashed");
+    }) as ToolRunContext["agent"] };
+    expect(await secureIt(h.deps).run(context)).toMatchObject({
+      outcome: "verification-failed", rejected: ["vite at node_modules/vite is 8.3.2, not 8.3.3"],
+      problems: ["vite at node_modules/vite is 8.3.2, not 8.3.3", "asked again with that refusal, the attempt failed: agent crashed"],
+    });
+  });
+
+  it.each([
+    ["can't apply", async () => ({ outcome: "cannot-apply", summary: "the floor needs a parent move" })],
+    ["throws", async () => {
+      throw new Error("agent crashed");
+    }],
+  ])("still reduces from the first refusal when the second attempt %s", async (_case, second) => {
+    const refusal = "compare: new: left-pad@1.0.1: GHSA-new has no exception";
+    const h = harness({ fixes: [vite(), leftPad()] });
+    const verified: string[] = [];
+    const deps = { ...h.deps, verify: async (input: VerifyInputs) => {
+      verified.push(input.plan.packages.join(","));
+      return input.plan.packages.includes("npm|left-pad") ? [refusal] : [];
+    } };
+    const asked: unknown[] = [];
+    let calls = 0;
+    const context = { ...h.context, agent: (async (request: Parameters<ToolRunContext["agent"]>[0]) => {
+      asked.push((request.input as Record<string, unknown>)["rejected"]);
+      return ++calls === 2 ? second() : h.context.agent(request);
+    }) as ToolRunContext["agent"] };
+    expect(await secureIt(deps).run(context)).toMatchObject({
+      outcome: "published", packages: ["npm|vite"], rejected: [refusal], leftOut: [{ moves: [{ name: "left-pad" }], problems: [refusal] }],
+    });
+    // The reduced plan starts from the base without the refusal, and publishes only after its own verification.
+    expect(asked).toEqual([undefined, [refusal], undefined]);
+    expect(h.reverted).toEqual([BASE_SHA, BASE_SHA]);
+    expect(verified).toEqual(["npm|left-pad,npm|vite", "npm|vite"]);
+    expect(h.workspace.publications).toHaveLength(1);
+  });
+
+  it.each([
+    ["can't apply", "cannot-apply", [], "retry could not apply: no room"],
+    ["throws", "throw", [], "retry failed: agent crashed"],
+    ["leaves problems", "applied", ["vite at node_modules/vite is 8.3.2, not 8.3.3"], "vite at node_modules/vite is 8.3.2, not 8.3.3"],
+    ["can't evaluate the cooldown", "applied", "unevaluated", "the cooldown can't be evaluated: base's settings don't parse"],
+  ] as const)("keeps why asking again stopped when the reduced attempt %s", async (_case, reduced, reducedProblems, problem) => {
+    const refusal = "compare: new: left-pad@1.0.1: GHSA-new has no exception";
+    const h = harness({ fixes: [vite(), leftPad()] });
+    const deps = { ...h.deps, verify: async (input: VerifyInputs) => {
+      if (input.plan.packages.includes("npm|left-pad")) return [refusal];
+      if (reducedProblems !== "unevaluated") return [...reducedProblems];
+      input.cooldown?.({ evaluated: false, reason: "base's settings don't parse" });
+      return [];
+    } };
+    let calls = 0;
+    const context = { ...h.context, agent: (async (request: Parameters<ToolRunContext["agent"]>[0]) => {
+      if (++calls === 2) return { outcome: "cannot-apply", summary: "the floor needs a parent move" };
+      if (calls === 3 && reduced === "cannot-apply") return { outcome: "cannot-apply", summary: "no room" };
+      if (calls === 3 && reduced === "throw") throw new Error("agent crashed");
+      return h.context.agent(request);
+    }) as ToolRunContext["agent"] };
+    expect(await secureIt(deps).run(context)).toMatchObject({
+      outcome: "verification-failed", rejected: [refusal],
+      problems: [problem, "asked again with that refusal, the agent couldn't apply: the floor needs a parent move"],
+    });
+    expect(calls).toBe(3);
+    expect(h.workspace.publications).toEqual([]);
+  });
+
+  it("keeps the first refusal when the reduced attempt throws", async () => {
+    const h = harness({ fixes: [vite(), leftPad()], problems: ["compare: new: left-pad@1.0.1: GHSA-new has no exception"] });
+    let calls = 0;
+    const context = { ...h.context, agent: (async () => {
+      if (++calls <= 2) return APPLIED;
+      throw new Error("agent crashed");
+    }) as ToolRunContext["agent"] };
+    expect(await secureIt(h.deps).run(context)).toMatchObject({
+      outcome: "verification-failed", rejected: ["compare: new: left-pad@1.0.1: GHSA-new has no exception"], problems: ["retry failed: agent crashed"],
+    });
+    expect(calls).toBe(3);
+  });
+
   it("retries a failed batch from base once without named package groups and discloses them", async () => {
     const h = harness({ fixes: [vite(), leftPad()] });
     const sequence: string[] = [];
@@ -611,9 +723,14 @@ describe("secure-it run", () => {
       sequence.push(`revert:${sha}`);
       return h.deps.revert(wc, sha);
     } };
-    expect(await secureIt(deps).run(h.context)).toMatchObject({ outcome: "published", packages: ["npm|vite"], leftOut: [{ moves: [{ name: "left-pad" }], problems: [expect.stringContaining("GHSA-new")] }] });
-    expect(sequence).toEqual(["verify:npm|left-pad,npm|vite", `revert:${BASE_SHA}`, "verify:npm|vite"]);
-    expect(h.agentCalls.map((call) => (call.input["moves"] as Array<{ name: string }>).map((move) => move.name))).toEqual([["vite", "left-pad"], ["vite"]]);
+    expect(await secureIt(deps).run(h.context)).toMatchObject({
+      outcome: "published", packages: ["npm|vite"], leftOut: [{ moves: [{ name: "left-pad" }], problems: [expect.stringContaining("GHSA-new")] }],
+      rejected: ["compare: new: left-pad@1.0.1: GHSA-new has no exception"],
+    });
+    // The same plan once more with the refusal, then the reduced one from the last problems.
+    expect(sequence).toEqual(["verify:npm|left-pad,npm|vite", `revert:${BASE_SHA}`, "verify:npm|left-pad,npm|vite", `revert:${BASE_SHA}`, "verify:npm|vite"]);
+    expect(h.agentCalls.map((call) => (call.input["moves"] as Array<{ name: string }>).map((move) => move.name))).toEqual([["vite", "left-pad"], ["vite", "left-pad"], ["vite"]]);
+    expect(h.agentCalls.map((call) => call.input["rejected"])).toEqual([undefined, ["compare: new: left-pad@1.0.1: GHSA-new has no exception"], undefined]);
     const pr = h.github.prs.get(42)!;
     expect(pr.body).toContain("Left out after verification failed");
     expect(pr.body).toContain("left-pad");
@@ -625,20 +742,22 @@ describe("secure-it run", () => {
   it("does not retry a second time or guess a parent for an induced/global failure", async () => {
     const h = harness({ fixes: [vite(), leftPad()] });
     let attempts = 0;
-    const deps = { ...h.deps, verify: async () => ++attempts === 1 ? ["left-pad at node_modules/left-pad is 1.0.2, not 1.0.1"] : ["vite at node_modules/vite is 8.3.2, not 8.3.3"] };
+    const deps = { ...h.deps, verify: async () => ++attempts <= 2 ? ["left-pad at node_modules/left-pad is 1.0.2, not 1.0.1"] : ["vite at node_modules/vite is 8.3.2, not 8.3.3"] };
     expect(await secureIt(deps).run(h.context)).toMatchObject({ outcome: "verification-failed", leftOut: [{ moves: [{ name: "left-pad" }] }], named: [{ moves: [{ name: "left-pad" }] }, { moves: [{ name: "vite" }] }] });
-    expect(h.agentCalls).toHaveLength(2);
+    expect(h.agentCalls).toHaveLength(3);
     expect(h.workspace.publications).toEqual([]);
     const unknown = harness({ fixes: [vite(), leftPad()], problems: ["compare: new: induced@1.0.1: GHSA-new has no exception"] });
     expect(await secureIt(unknown.deps).run(unknown.context)).toMatchObject({ outcome: "verification-failed", named: [{ moves: [] }] });
-    expect(unknown.agentCalls).toHaveLength(1);
-    expect(unknown.reverted).toEqual([]);
+    // Asked once more with the refusal; no reduction guesses a parent.
+    expect(unknown.agentCalls).toHaveLength(2);
+    expect(unknown.reverted).toHaveLength(1);
   });
 
   it("does not shrink malware after verification fails", async () => {
     const h = harness({ fixes: [vite({ malicious: true }), leftPad({ malicious: true })], problems: ["compare: new: left-pad@1.0.1: MAL-bad has no exception"] });
     expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "verification-failed", topic: "malware", leftOut: [] });
-    expect(h.agentCalls).toHaveLength(1);
+    // The whole plan once more with the refusal, never a smaller one.
+    expect(h.agentCalls.map((call) => (call.input["moves"] as unknown[]).length)).toEqual([2, 2]);
     expect(h.workspace.publications).toEqual([]);
   });
 
@@ -848,6 +967,8 @@ describe("secure-it review", () => {
     failing.github.checks = RED;
     expect(await secureIt(failing.deps).review(failing.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "error", detail: expect.stringContaining("doesn't verify") }] });
     expect(stateOf(failing.github.prs.get(7)!.body)?.adaptations).toBe(1);
+    // An adaptation isn't restarted from the base with the refusal: that would lose it.
+    expect(failing.agentCalls.map((call) => call.input["rejected"])).toEqual([undefined]);
   });
 });
 
@@ -1007,10 +1128,33 @@ describe("the cooldown hold", () => {
     expect(planOf(body)?.cooldown).toEqual(held.cooldown);
   });
 
+  it("rewrites a held PR's notes without its evidence when the new notes leave no room for it", async () => {
+    // 180 advisory groups of hashes fit the section beside one note; 8K of new notes don't, even compressed.
+    const hex = (seed: string) => createHash("sha256").update(seed).digest("hex");
+    const evidence: AdvisoryEvidence = { collectedAt: "2026-10-06T12:00:00.000Z", targets: [{ ecosystem: "npm", name: "vite", bundled: false, replaced: ["8.3.1"], proposed: ["8.3.3"],
+      groups: Array.from({ length: 180 }, (_, i) => {
+        const found = { id: `GHSA-${hex(`${i}`).slice(0, 14)}`, aliases: Array.from({ length: 4 }, (_, j) => hex(`${i}-${j}`)), withdrawn: false, namesPackage: true,
+          declaredFixes: ["8.3.3"], verdicts: { "8.3.1": "affected" as const, "8.3.3": "not-affected" as const } };
+        return { ids: [found.id], replaced: ["8.3.1"], sources: (["repository", "github", "osv"] as const).map((source) => ({ source, lookup: "checked" as const, records: [found] })) };
+      }) }] };
+    const plan = await planFor([vite()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined });
+    const held = { ...plan, notes: ["an outdated reason"], cooldown: [{ ...HELD, signals: [], evidence }] };
+    const published = withPlanSection("Fixes vite.", held);
+    expect(planOf(published)?.cooldown?.[0]?.evidence).toEqual(evidence);
+    const notes = Array.from({ length: 128 }, (_, i) => `vite@8.3.3 note ${i}: ${hex(`note-${i}`)}`);
+    const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, planned) => ({ ...planned, notes });
+    const h = harness({ prs: [ownPr({ headRef: `secure-it/2026-10-05-${plan.topic}`, body: withMarker(RULES, published, { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) })] });
+    expect(await secureIt({ ...h.deps, requiredNpm }).run(h.context)).toMatchObject({ outcome: "already-open" });
+    const body = h.github.prs.get(7)!.body;
+    expect(body).not.toContain("an outdated reason");
+    expect(planOf(body)).toMatchObject({ notes, cooldown: [{ ...HELD, signals: [], evidenceFailure: EVIDENCE_LEFT_OUT }] });
+    expect(planOf(body)?.cooldown?.[0]?.evidence).toBeUndefined();
+  });
+
   it("opens young fixes in a held PR of their own, warned, while the aged ones go out as usual", async () => {
     const h = harness({ fixes: [YOUNG_VITE(), leftPad()] });
     const result = await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context);
-    expect(result).toMatchObject({ outcome: "completed", units: [{ topic: "security", outcome: "published" }, { topic: "security-cooldown", outcome: "published" }] });
+    expect(result).toMatchObject({ outcome: "completed", units: [{ topic: "security", outcome: "published" }, { topic: "security-cooldown-vite", outcome: "published" }] });
     expect(h.agentCalls.map((call) => (call.input["moves"] as Array<{ name: string }>).map((move) => move.name))).toEqual([["left-pad"], ["vite"]]);
     const [aged, held] = [...h.github.prs.values()];
     expect(aged!.body).not.toContain("[!WARNING]");
@@ -1019,6 +1163,59 @@ describe("the cooldown hold", () => {
     expect(held!.body).toContain("> | npm `vite` | 8.3.1 → 8.3.3 | 2026-10-06 00:00 | 2026-10-13 00:00 | the security fix the version rule picks | registry metadata unreadable |");
     expect(held!.isDraft).toBe(true);
     expect(planOf(held!.body)?.cooldown).toEqual([{ ...HELD, signals: ["registry metadata unreadable"] }]);
+  });
+
+  it("records where the advisories behind a held fix appear, and opens the warning with it", async () => {
+    const h = harness({ fixes: [vite()] });
+    const targeted = { ...HELD, targets: [{ name: "vite", bundled: false, replaced: ["8.3.1"], proposed: ["8.3.3"], groups: [{ ids: ["GHSA-vite-0001"], replaced: ["8.3.1"] }] }] };
+    const verify = async (inputs: VerifyInputs) => {
+      inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: [targeted] });
+      return [];
+    };
+    expect(await secureIt({ ...h.deps, verify }).run(h.context)).toMatchObject({ outcome: "published" });
+    const body = h.github.prs.get(42)!.body;
+    const [hold] = planOf(body)!.cooldown!;
+    // The harness answers every lookup with a 404: checked and not found, never failed.
+    expect(hold!.evidence).toMatchObject({ collectedAt: NOW.toISOString(), targets: [{ name: "vite", groups: [{ ids: ["GHSA-vite-0001"], sources: [
+      { source: "repository", lookup: "incomplete" }, { source: "github", lookup: "checked", records: [] }, { source: "osv", lookup: "checked", records: [] },
+    ] }] }] });
+    expect(body).toContain("> **Some advisories recorded for these held fixes are not backed by reviewed records as read now.**");
+    expect(body).toContain("> | ⚠ GHSA-vite-0001 | `vite` 8.3.1 → 8.3.3 | couldn't be fully checked: its source repository can't be found: registry lookup of vite@8.3.1 failed with HTTP 404 | not found | not found |");
+  });
+
+  it("still opens a held draft with its targets when its evidence leaves the body over GitHub's limit, without the evidence", async () => {
+    // 60 advisory groups: with their evidence the plan's block takes ~32K characters, without it ~6K, beside a 40K description.
+    const hex = (seed: string) => createHash("sha256").update(seed).digest("hex");
+    const groups = Array.from({ length: 60 }, (_, i) => ({ ids: [`GHSA-${hex(`${i}`).slice(0, 14)}`], replaced: ["8.3.1"] }));
+    const targeted = { ...HELD, targets: [{ name: "vite", bundled: false, replaced: ["8.3.1"], proposed: ["8.3.3"], groups }] };
+    const verify = async (inputs: VerifyInputs) => {
+      inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: [targeted] });
+      return [];
+    };
+    const h = harness({ fixes: [vite()], answer: { ...APPLIED, publication: { ...APPLIED.publication, body: "x".repeat(40_000) } } });
+    expect(await secureIt({ ...h.deps, verify }).run(h.context)).toMatchObject({ outcome: "published" });
+    const pr = h.github.prs.get(42)!;
+    expect(pr.isDraft).toBe(true);
+    expect(pr.body.length).toBeLessThanOrEqual(65_536);
+    const [hold] = planOf(pr.body)!.cooldown!;
+    expect(hold).toMatchObject({ targets: targeted.targets, evidenceFailure: EVIDENCE_LEFT_OUT });
+    expect(hold!.evidence).toBeUndefined();
+    expect(pr.body).toContain(`vite@8.3.3: ${EVIDENCE_LEFT_OUT}`);
+  });
+
+  it("records the evidence of a required version that fixes advisories itself, so the warning checks it too", async () => {
+    const h = harness({ fixes: [vite()] });
+    const target = (name: string, from: string, to: string, id: string) => ({ name, bundled: false, replaced: [from], proposed: [to], groups: [{ ids: [id], replaced: [from] }] });
+    const required = { ...HELD, name: "postcss", version: "8.5.29", replaced: ["8.5.28"], justification: "required" as const, targets: [target("postcss", "8.5.28", "8.5.29", "GHSA-postcss-0001")] };
+    const verify = async (inputs: VerifyInputs) => {
+      inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: [{ ...HELD, targets: [target("vite", "8.3.1", "8.3.3", "GHSA-vite-0001")] }, required] });
+      return [];
+    };
+    expect(await secureIt({ ...h.deps, verify }).run(h.context)).toMatchObject({ outcome: "published" });
+    const body = h.github.prs.get(42)!.body;
+    expect(planOf(body)!.cooldown![1]!.evidence).toMatchObject({ targets: [{ name: "postcss", groups: [{ ids: ["GHSA-postcss-0001"] }] }] });
+    expect(body).toContain("| ⚠ GHSA-postcss-0001 | `postcss` 8.5.28 → 8.5.29 |");
+    expect(body).not.toContain(REVIEWED);
   });
 
   it("holds whatever the comparison holds, even in a PR planned as aged", async () => {
@@ -1043,7 +1240,7 @@ describe("the cooldown hold", () => {
       ? { ...plan, requiredNpm: [{ exempt: true, name: "postcss", version: "8.5.29", root: { name: "vite", version: "8.3.3", path: "node_modules/vite" } }] as never }
       : plan;
     const result = await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context);
-    expect(result).toMatchObject({ units: [{ topic: "security", packages: ["npm|left-pad"] }, { topic: "security-cooldown", packages: ["npm|vite"] }] });
+    expect(result).toMatchObject({ units: [{ topic: "security", packages: ["npm|left-pad"] }, { topic: "security-cooldown-vite", packages: ["npm|vite"] }] });
   });
 
   it("holds an aged fix with the aged fix it requires when that one requires a young dependency", async () => {
@@ -1056,7 +1253,195 @@ describe("the cooldown hold", () => {
       ...plan.packages.includes("npm|left-pad") ? [target("left-pad", "1.0.1", "node_modules/left-pad")] : [],
     ] as never });
     const result = await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context);
-    expect(result).toMatchObject({ units: [{ topic: "security-cooldown", packages: ["npm|left-pad", "npm|vite"] }] });
+    expect(result).toMatchObject({ units: [{ topic: "security-cooldown-left-pad", packages: ["npm|left-pad", "npm|vite"] }] });
+  });
+
+  it("keeps a coupling planning discovers in the held unit: a root that needs another root's fix", async () => {
+    // vite's young requirement moves it to a held unit; planning found it needs left-pad's fix too.
+    const h = harness({ fixes: [vite(), leftPad()] });
+    const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => plan.packages.includes("npm|vite") && plan.packages.includes("npm|left-pad")
+      ? { ...plan, coupled: [["npm|vite", "npm|left-pad"]], requiredNpm: [{ exempt: true, name: "postcss", version: "8.5.29", root: { name: "vite", version: "8.3.3", path: "node_modules/vite" } }] as never }
+      : plan;
+    const result = await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context);
+    expect(result).toMatchObject({ units: [{ topic: "security-cooldown-left-pad", packages: ["npm|left-pad", "npm|vite"] }] });
+  });
+
+  it("doesn't hold an aged fix because it shares an aged companion with a held one", async () => {
+    // Only vite's requirement of c is young; left-pad's is aged, so left-pad goes out with the aged batch.
+    const h = harness({ fixes: [vite(), leftPad()] });
+    const target = (root: string, version: string, exempt: boolean) => ({ exempt, name: "c", version: "1.0.1", root: { name: root, version, path: `node_modules/${root}` } });
+    const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => ({ ...plan, requiredNpm: [
+      ...plan.packages.includes("npm|vite") ? [target("vite", "8.3.3", true)] : [],
+      ...plan.packages.includes("npm|left-pad") ? [target("left-pad", "1.0.1", false)] : [],
+    ] as never });
+    const result = await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context);
+    expect(result).toMatchObject({ units: [{ topic: "security", packages: ["npm|left-pad"] }, { topic: "security-cooldown-vite", packages: ["npm|vite"] }] });
+  });
+
+  const YOUNG_PAD = () => leftPad({ to: { version: "1.0.1", line: "1", aged: false, major: false, blockers: [] } });
+
+  it("opens one held PR per young fix that can be separated, so none waits for another", async () => {
+    const h = harness({ fixes: [YOUNG_VITE(), YOUNG_PAD()] });
+    const result = await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context);
+    expect(result).toMatchObject({ outcome: "completed", units: [
+      { topic: "security-cooldown-left-pad", packages: ["npm|left-pad"], outcome: "published" },
+      { topic: "security-cooldown-vite", packages: ["npm|vite"], outcome: "published" },
+    ] });
+    const prs = [...h.github.prs.values()];
+    expect(prs.map((pr) => [pr.headRef, planOf(pr.body)?.members])).toEqual([
+      ["secure-it/2026-10-07-security-cooldown-left-pad", ["npm|left-pad"]],
+      ["secure-it/2026-10-07-security-cooldown-vite", ["npm|vite"]],
+    ]);
+  });
+
+  /** Planning a held unit that holds one of vite and left-pad without the other fails: each keeps the other's old requirement. */
+  const apartFails: SecureItDeps["requiredNpm"] = async (_base, plan) => {
+    const held = plan.topic.startsWith("security-cooldown");
+    if (held && plan.packages.includes("npm|vite") !== plan.packages.includes("npm|left-pad")) throw new Error(`${plan.topic} keeps the other root's requirement`);
+    return plan;
+  };
+
+  it("plans two young fixes together when neither can be planned apart", async () => {
+    const h = harness({ fixes: [YOUNG_VITE(), YOUNG_PAD()] });
+    const result = await secureIt({ ...h.deps, requiredNpm: apartFails, verify: holdingVerify }).run(h.context);
+    expect(result).toMatchObject({ topic: "security-cooldown-left-pad", packages: ["npm|left-pad", "npm|vite"], outcome: "published" });
+    expect([...h.github.prs.values()].map((pr) => planOf(pr.body)?.members)).toEqual([["npm|left-pad", "npm|vite"]]);
+  });
+
+  it.each([false, true])("plans two young roots together when each requires one exact companion, as planning proves it (aged companion: %s)", async (aged) => {
+    // securityBatch: vite and bundler 8.3.3 each require postcss 8.5.29 exactly, and 8.3.2 requires 8.5.28 exactly, so
+    // requiredNpmPlan can plan neither while the other stays at 8.3.2.
+    const batch = securityBatch();
+    const registry = environment({ ...batch, docs: aged ? { ...batch.docs, postcss: { ...postcss, time: { ...postcss.time, "8.5.29": OLD } } } : batch.docs });
+    const young = (name: string) => vite({ name, from: "8.3.2", locations: [`node_modules/${name}`], to: { version: "8.3.3", line: "8", aged: false, major: false, blockers: [] } });
+    const h = harness({ fixes: [young("vite"), young("bundler")], files: batch.base });
+    const requiredNpm: SecureItDeps["requiredNpm"] = (base, plan) => requiredNpmPlan(base, plan, registry.env);
+    const result = await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context);
+    expect(result).toMatchObject({ topic: "security-cooldown-bundler", packages: ["npm|bundler", "npm|vite"], outcome: "published" });
+  });
+
+  it("plans a young fix together with the aged fix its young requirement held, when they can't be planned apart", async () => {
+    // left-pad is aged, but its young requirement c holds it; then it can't be planned without vite, nor vite without it.
+    const h = harness({ fixes: [YOUNG_VITE(), leftPad()] });
+    const young = { exempt: true, name: "c", version: "1.0.1", root: { name: "left-pad", version: "1.0.1", path: "node_modules/left-pad" } };
+    const requiredNpm: SecureItDeps["requiredNpm"] = async (base, plan, env) => {
+      const planned = await apartFails(base, plan, env);
+      return plan.packages.includes("npm|left-pad") ? { ...planned, requiredNpm: [young] as never } : planned;
+    };
+    const result = await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context);
+    expect(result).toMatchObject({ topic: "security-cooldown-left-pad", packages: ["npm|left-pad", "npm|vite"], outcome: "published" });
+  });
+
+  it("falls back to every held fix together, gathering one that plans alone, when only one can't be planned apart", async () => {
+    // vite needs left-pad's fix; other plans alone, yet the fallback, v0.7's single held batch, takes it too.
+    const other = leftPad({ name: "other", locations: ["node_modules/other"], to: { version: "1.0.1", line: "1", aged: false, major: false, blockers: [] } });
+    const h = harness({ fixes: [YOUNG_VITE(), YOUNG_PAD(), other] });
+    const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => {
+      if (plan.packages.includes("npm|vite") && !plan.packages.includes("npm|left-pad")) throw new Error("vite needs left-pad's fix");
+      return plan;
+    };
+    expect(await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context)).toMatchObject({
+      topic: "security-cooldown-left-pad", packages: ["npm|left-pad", "npm|other", "npm|vite"], outcome: "published",
+    });
+  });
+
+  it("keeps a held fix that can't be planned apart from one that can, so the other still opens", async () => {
+    const h = harness({ fixes: [YOUNG_VITE(), YOUNG_PAD()] });
+    const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => {
+      if (plan.packages.includes("npm|vite")) throw new Error("vite's requirement can't be met");
+      return plan;
+    };
+    expect(await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context)).toMatchObject({ outcome: "completed", units: [
+      { topic: "security-cooldown-left-pad", packages: ["npm|left-pad"], outcome: "published" },
+      { topic: "security-cooldown-vite", outcome: "failed", detail: "vite's requirement can't be met" },
+    ] });
+  });
+
+  it("reviews a held PR as the joint unit a run would plan, when its fix can't be planned apart any more", async () => {
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite",
+      body: withMarker(RULES, withPlanSection("Fixes vite.", { ...await heldPlan(YOUNG_VITE()), cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pr], baseSha: "f".repeat(40), fixes: [YOUNG_VITE(), YOUNG_PAD()] });
+    h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
+    expect(await secureIt({ ...h.deps, requiredNpm: apartFails, verify: holdingVerify }).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "rebased" }] });
+    expect(planOf(h.github.prs.get(7)!.body)).toMatchObject({ topic: "security-cooldown-left-pad", members: ["npm|left-pad", "npm|vite"] });
+  });
+
+  it("reuses v0.7's single held PR for the unit holding its lowest package, and opens the other", async () => {
+    const legacy = await planFor([YOUNG_PAD(), YOUNG_VITE()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined },
+      { kind: "routine", topic: "security-cooldown" });
+    const { members: _members, ...recorded } = legacy;
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown", body: withMarker(RULES, withPlanSection("Fixes both.", recorded), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pr], fixes: [YOUNG_VITE(), YOUNG_PAD()] });
+    h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
+    expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({ units: [
+      { topic: "security-cooldown-left-pad", outcome: "updated", pullRequest: "https://github.com/leanish/widget/pull/7" },
+      { topic: "security-cooldown-vite", outcome: "published" },
+    ] });
+    expect(planOf(h.github.prs.get(7)!.body)).toMatchObject({ topic: "security-cooldown-left-pad", members: ["npm|left-pad"] });
+  });
+
+  it("doesn't claim a held PR someone pushed to, so the PR it opens instead is reused on the next run", async () => {
+    const plan = await planFor([YOUNG_VITE()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined },
+      { kind: "routine", topic: "security-cooldown-vite" });
+    const pushed = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite", headSha: "9".repeat(40), body: withMarker(RULES, withPlanSection("Fixes vite.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pushed], fixes: [YOUNG_VITE()] });
+    expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({ topic: "security-cooldown-vite", outcome: "published" });
+    expect(h.github.prs.size).toBe(2);
+    expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({ topic: "security-cooldown-vite", outcome: "already-open" });
+    expect(h.github.prs.size).toBe(2);
+  });
+
+  const heldPlan = (fix: SecurityFix) => planFor([fix], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined },
+    { kind: "routine", topic: `security-cooldown-${fix.name}` });
+
+  it("doesn't claim a held PR a person marked ready: the unit keeps a PR of its own", async () => {
+    const plan = await heldPlan(YOUNG_VITE());
+    const taken = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite", isDraft: false,
+      body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [taken], fixes: [YOUNG_VITE()] });
+    expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({ topic: "security-cooldown-vite", outcome: "published" });
+    expect(h.github.prs.get(7)!.body).toBe(taken.body);
+  });
+
+  it("claims by the plan the journal published when the body lags behind the head", async () => {
+    // #7's body still records left-pad's plan at an older head; the journal holds vite's plan at its current head.
+    const stale = await heldPlan(YOUNG_PAD());
+    const current = withMarker(RULES, withPlanSection("Fixes vite.", await heldPlan(YOUNG_VITE())), { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 });
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite", headSha: PUSHED_SHA, body: withMarker(RULES, withPlanSection("Fixes left-pad.", stale), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pr], fixes: [YOUNG_VITE(), YOUNG_PAD()] });
+    await h.journal.pushed(REPO, 7, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: "moving vite", body: current, adaptations: 0 } });
+    expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({ units: [
+      { topic: "security-cooldown-left-pad", outcome: "published" },
+      { topic: "security-cooldown-vite", outcome: "already-open", pullRequest: "https://github.com/leanish/widget/pull/7" },
+    ] });
+  });
+
+  it("fails only the held units when an own PR's journal can't be read, and reads none without a held unit", async () => {
+    // #7's head moved past its recorded state, so its journal is read, and that read fails.
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security", headSha: PUSHED_SHA, body: withMarker(RULES, "Fixes left-pad.", { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const broken = (h: ReturnType<typeof harness>) => {
+      h.journal.last = async () => { throw new Error("leanish__widget/7.json isn't a journal"); };
+    };
+    const both = harness({ prs: [pr], fixes: [leftPad({ name: "aged-pad" }), YOUNG_VITE()] });
+    broken(both);
+    expect(await secureIt({ ...both.deps, verify: holdingVerify }).run(both.context)).toMatchObject({ units: [
+      { topic: "security", outcome: expect.not.stringMatching(/^failed$/) },
+      { topic: "security-cooldown-vite", outcome: "failed", detail: "leanish__widget/7.json isn't a journal" },
+    ] });
+    const aged = harness({ prs: [pr], fixes: [leftPad({ name: "aged-pad" })] });
+    let reads = 0;
+    aged.journal.last = async () => { reads += 1; throw new Error("leanish__widget/7.json isn't a journal"); };
+    expect(await secureIt(aged.deps).run(aged.context)).not.toMatchObject({ outcome: "failed" });
+    expect(reads).toBe(0);
+  });
+
+  it("gives two held units whose topics cut to one branch name a branch each", async () => {
+    const lock = JSON.stringify({ lockfileVersion: 3, packages: { "": { name: "widget" }, "node_modules/a/b": { version: "1.0.0" }, "node_modules/a-b": { version: "1.0.0" } } });
+    const young = (name: string) => leftPad({ name, locations: [`node_modules/${name}`], to: { version: "1.0.1", line: "1", aged: false, major: false, blockers: [] } });
+    // Synthetic names: `a/b` and `a-b` both cut to the branch topic `security-cooldown-a-b`.
+    const h = harness({ fixes: [young("a/b"), young("a-b")], files: { "package-lock.json": lock } });
+    expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({ outcome: "completed" });
+    expect([...h.github.prs.values()].map((pr) => pr.headRef)).toEqual(["secure-it/2026-10-07-security-cooldown-a-b", "secure-it/2026-10-07-security-cooldown-a-b-2"]);
   });
 
   it("keeps a waiting held PR a draft on green CI, and retires it once everything has aged", async () => {
@@ -1108,5 +1493,63 @@ describe("the cooldown hold", () => {
     h.github.checks = GREEN;
     expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "error" }] });
     expect(h.github.prs.get(7)?.isDraft).toBe(true);
+  });
+});
+
+describe("which open PR a held unit is", () => {
+  const unit = (...names: string[]): SecurityUnit => ({ kind: "routine", topic: `security-cooldown-${names[0]}`, held: true, work: names.map((name) => vite({ name })) });
+  const recorded = (number: number, packages: string[], members?: string[]): GitHubPullRequest => {
+    const plan: ChangePlan = { kind: "routine", topic: "security-cooldown-x", malware: false, packages, ...(members === undefined ? {} : { members }), moves: [], severity: undefined };
+    return ownPr({ number, body: withMarker(RULES, withPlanSection("Held.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+  };
+
+  it("matches by the unit's own packages, so a companion a plan added doesn't take another unit's PR", () => {
+    // PR 7 is a's, with companion c in its packages; b's unit planned c too but holds only b.
+    expect(heldClaims([unit("b"), unit("a")], [recorded(7, ["npm|a", "npm|c"], ["npm|a"])])).toEqual(new Map([["security-cooldown-a", 7]]));
+  });
+
+  it("gives the strongest overlap first across units, then the lowest shared package, then the lower PR", () => {
+    const claims = heldClaims([unit("c"), unit("b", "d")], [recorded(7, ["npm|a", "npm|b", "npm|c"]), recorded(8, ["npm|b", "npm|d"], ["npm|b", "npm|d"])]);
+    expect(claims).toEqual(new Map([["security-cooldown-b", 8], ["security-cooldown-c", 7]]));
+    expect(heldClaims([unit("c"), unit("b")], [recorded(9, ["npm|a", "npm|b", "npm|c"])])).toEqual(new Map([["security-cooldown-b", 9]]));
+  });
+
+  it("reviews a held PR as the unit a run would give it, so two PRs never stand for one unit", () => {
+    // #10 shares a and b with the first unit; #11 shares b with it too, but c only with the second.
+    const units = [unit("a", "b"), unit("c")];
+    const own = [recorded(10, ["npm|a", "npm|b", "npm|c"]), recorded(11, ["npm|b", "npm|c"])];
+    const claims = heldClaims(units, own);
+    expect(own.map((pr) => unitOf(planOf(pr.body)!, units, claims, pr.number)?.topic)).toEqual(["security-cooldown-a", "security-cooldown-c"]);
+    expect(unitOf(planOf(own[1]!.body)!, [unit("d")], heldClaims([unit("d")], own), 11)).toBeUndefined();
+  });
+
+  it("says why a held PR is retired: its work went to other PRs, or none of it is held any more", () => {
+    const units = [unit("a", "b"), unit("c")];
+    const own = [recorded(10, ["npm|a", "npm|b"]), recorded(11, ["npm|c"]), recorded(12, ["npm|a", "npm|c"])];
+    const claims = heldClaims(units, own);
+    expect(unitOf(planOf(own[2]!.body)!, units, claims, 12)).toBeUndefined();
+    expect(retirementOf(planOf(own[2]!.body)!, units, claims, 12)).toBe("The remaining overlapping held work is assigned to #10, #11; this draft is superseded.");
+    expect(retirementOf(planOf(own[2]!.body)!, [unit("d")], new Map(), 12)).toBe("None of this draft's fixes is held on the default branch any more; a run plans whatever still needs fixing. Blocked fixes are reported by secure-it.");
+    // Held work no open PR claims yet is still held: a run opens a PR for it.
+    expect(retirementOf(planOf(own[2]!.body)!, units, new Map([["security-cooldown-a", 10]]), 12)).toBe("The remaining overlapping held work is assigned to #10, and a run opens a PR for the rest; this draft is superseded.");
+    expect(retirementOf(planOf(own[2]!.body)!, units, new Map(), 12)).toBe("The overlapping held work isn't assigned to an open PR yet; a run opens one for it, so this draft is superseded.");
+    const routine: ChangePlan = { kind: "routine", topic: "security", malware: false, packages: ["npm|a"], moves: [], severity: undefined };
+    expect(retirementOf(routine, [], new Map(), 13)).toBe("No actionable fixes remain for this security unit on the default branch. Blocked fixes are reported by secure-it.");
+  });
+
+  it("passes over an own PR whose plan has no topic, or packages that aren't names, instead of failing every claim", () => {
+    const pr = (number: number, payload: unknown) => ownPr({ number, body: withMarker(RULES, `Held.\n\n${planBlock(payload)}`, { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const held = { kind: "routine", topic: "security-cooldown-a", malware: false, moves: [] };
+    const own = [pr(5, { kind: "routine", malware: false, packages: ["npm|a"], moves: [] }), pr(6, { ...held, packages: 42 }), pr(7, { ...held, packages: ["npm|a", 5] })];
+    // None of them reads: a review leaves such a PR open with an error, as for any plan it can't read.
+    expect(own.map((found) => planOf(found.body))).toEqual([undefined, undefined, undefined]);
+    expect(heldClaims([unit("a")], own)).toEqual(new Map());
+    expect(heldClaims([unit("a")], [...own, recorded(8, ["npm|a"])])).toEqual(new Map([["security-cooldown-a", 8]]));
+  });
+
+  it("reviews the other kinds by topic, as before", () => {
+    const plan: ChangePlan = { kind: "routine", topic: "security", malware: false, packages: ["npm|a"], moves: [], severity: undefined };
+    const aged: SecurityUnit = { kind: "routine", topic: "security", work: [vite({ name: "a" })] };
+    expect(unitOf(plan, [unit("a"), aged], new Map([["security-cooldown-a", 7]]), 7)).toBe(aged);
   });
 });

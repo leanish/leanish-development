@@ -97,12 +97,51 @@ export function targetsOf(snapshot: Snapshot, pkg: PackageVersion, only?: Readon
   return [...groupsOf(snapshot, pkg)].filter((group) => !malicious.has(group) && (only === undefined || only.has(group)));
 }
 
-/** Whether `version` fixes `targets` of `from`: none of them affects it, it adds no group `from` doesn't have, no malware. */
-export function fixes(snapshot: Snapshot, pkg: PackageName, from: string, targets: ReadonlyArray<string>, version: string): boolean {
+/**
+ * Whether `version` fixes `targets` of `from`: none of them affects it, it adds no group `from` doesn't have, no
+ * malware. Groups in `ignore` don't count against it (malware always does): what a veto by them alone looks like.
+ */
+export function fixes(snapshot: Snapshot, pkg: PackageName, from: string, targets: ReadonlyArray<string>, version: string, ignore: ReadonlySet<string> = new Set()): boolean {
   const before = groupsOf(snapshot, { ...pkg, version: from });
   const advisories = snapshot.advisories({ ...pkg, version });
-  const found = new Set(advisories.map((advisory) => snapshot.group(advisory.id)));
+  const found = new Set(advisories.map((advisory) => snapshot.group(advisory.id)).filter((group) => !ignore.has(group)));
   return !advisories.some((advisory) => advisory.malicious) && targets.every((group) => !found.has(group)) && [...found].every((group) => before.has(group));
+}
+
+/**
+ * The groups on `pkg` that a reviewed source corroborates: some advisory of the group on this version comes from
+ * OSV or GitHub's database, not only from the project's own repository advisories. Only these trigger a fix or
+ * justify a young version; the rest still count against a candidate (`fixes`), as vetoes.
+ */
+export function reviewedGroups(snapshot: Snapshot, pkg: PackageVersion): Set<string> {
+  return new Set(snapshot.advisories(pkg).filter((advisory) => advisory.source !== "repository").map((advisory) => snapshot.group(advisory.id)));
+}
+
+/** The groups on `pkg` only the project's own repository advisories publish, as far as the snapshot's sources go. */
+export function unreviewedGroups(snapshot: Snapshot, pkg: PackageVersion): Set<string> {
+  const reviewed = reviewedGroups(snapshot, pkg);
+  return new Set([...groupsOf(snapshot, pkg)].filter((group) => !reviewed.has(group)));
+}
+
+/** A candidate a veto by unreviewed groups alone ruled out: it would fix `targets` with those groups ignored. */
+export interface Veto {
+  readonly version: string;
+  /** Every id of the unreviewed groups that ruled it out. */
+  readonly advisories: ReadonlyArray<string>;
+}
+
+/** The candidates in `versions` that fail `fixes` only because of unreviewed groups on them. */
+export function vetoesOf(snapshot: Snapshot, pkg: PackageName, from: string, targets: ReadonlyArray<string>, versions: ReadonlyArray<string>): Veto[] {
+  return versions.flatMap((version) => {
+    const candidate = { ...pkg, version };
+    const unreviewed = unreviewedGroups(snapshot, candidate);
+    if (unreviewed.size === 0 || fixes(snapshot, pkg, from, targets, version) || !fixes(snapshot, pkg, from, targets, version, unreviewed)) return [];
+    // Only the groups that block it: a target it still has, or one `from` didn't have (inherited debt doesn't).
+    const before = groupsOf(snapshot, { ...pkg, version: from });
+    const blocking = (group: string) => unreviewed.has(group) && (targets.includes(group) || !before.has(group));
+    const ids = snapshot.advisories(candidate).filter((advisory) => blocking(snapshot.group(advisory.id))).flatMap((advisory) => advisory.ids);
+    return [{ version, advisories: [...new Set(ids)].sort() }];
+  });
 }
 
 export type RuleChoice =
@@ -186,9 +225,14 @@ export async function youngFixProblem(
   const reasons: string[] = [];
   for (const from of young.replaced) {
     const after = groupsOf(snapshot, pkg);
-    const targets = targetsOf(snapshot, { ...pkg, version: from }).filter((group) => !after.has(group));
+    const reviewed = reviewedGroups(snapshot, { ...pkg, version: from });
+    const fixed = targetsOf(snapshot, { ...pkg, version: from }).filter((group) => !after.has(group));
+    // Only a reviewed advisory justifies a young version; an unreviewed one can still rule candidates out below.
+    const targets = fixed.filter((group) => reviewed.has(group));
     if (targets.length === 0) {
-      reasons.push(`it fixes no advisory affecting ${from}`);
+      reasons.push(fixed.length === 0
+        ? `it fixes no advisory affecting ${from}`
+        : `it fixes no reviewed advisory affecting ${from}: ${fixed.join(", ")} only in the project's repository advisories, not corroborated by the sources this decision used`);
       continue;
     }
     const fixing = (candidates.get(from) ?? []).filter((version) => fixes(snapshot, pkg, from, targets, version));

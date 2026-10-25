@@ -2,6 +2,82 @@
 
 ## Unreleased
 
+### Changed
+
+- secure-it opens one held PR per group of young fixes that can move apart (topic `security-cooldown-<package>`),
+  instead of one for all: a young version, or an advisory a person doubts, no longer holds the other young fixes, and
+  each can be taken when it ages. The couplings known when splitting (coupled npm peers, a carrier and what it
+  carries, and what planning the aged batch finds, such as a root that needs another root's fix) stay in one PR, and
+  so do aged fixes that only wait for the same young npm companion; young fixes sharing a young companion stay apart,
+  so neither waits for the other. The aged batch, majors and malware are unchanged. Held units are matched to open PRs
+  by their own packages (`members` in the plan), the same way in runs and reviews, so v0.7's single held PR is taken
+  over by one group and the others open their own; a PR someone else pushed to, or a held one a person marked ready,
+  is never claimed. Branches created in one run no longer collide when two topics cut to the same name. Held groups
+  that can't be planned apart (two young roots that each require one exact companion keep the other's old requirement
+  when planned alone) are planned and opened together: the failing groups first, then every held group, v0.7's single
+  held batch, which can gather groups that would have planned alone (their PR then waits for its youngest version);
+  otherwise each stays apart and reports its failure. Each group that doesn't plan alone is logged.
+
+- A project's own repository advisories, unreviewed and published at will by whoever controls the repository, no
+  longer trigger a fix nor justify a young version: they still detect (a finding, a PR adding one fails) and rule
+  versions out. Only reviewed advisories (OSV, or GitHub's database for Actions) make secure-it plan a fix and make a
+  young version the rule-picked fix, a bundle fix or a required npm dependency. A version affected only by unreviewed
+  advisories is reported, not fixed, until a reviewed source lists it. An unreviewed advisory can still rule out the
+  version the rule would take and steer it to another, even a young one (held); secure-it's plan notes each such
+  candidate, carrier versions included. A required npm dependency's version is set by its requirement, so a veto there
+  refuses the fix, and the refusal now names each advisory it adds, marked when unreviewed. A `releaseAge` exception
+  may still name one: the owner's override. The rules are in the gate's README ("How each source counts"). GitHub's
+  Actions advisories that aren't `reviewed` or `malware` now fail the run.
+
+### Added
+
+- secure-it's cooldown warning now says where the advisories behind each held security or bundle fix appear, and
+  behind a held required version or exception that fixes advisories itself: the
+  dependency's own repository advisories, GitHub's database and OSV, each read after the verification and shown as
+  that source says (its declared fix, and whether its ranges put each replaced and proposed version among the affected
+  ones). A fixed line opens the warning: that a reviewed record (OSV, or GitHub's reviewed database) still backs every
+  fix as read now, or, marking the rows, that none does for some; a fix it couldn't check gets its own line and is
+  listed. A lookup that fails is shown as such, never as "not found". When the table would push the PR body past
+  GitHub's limit, only the table is left out, with a line saying so, and the plan's block keeps the evidence; when
+  the PR still can't be written with the evidence, it's left out, and each fix that had some is listed as unchecked. The
+  gate's comparison report records, for each held fix, the advisories behind it (`targets`), and for a required
+  version or an exception the ones it fixes (an exception's named one, whichever source lists it); nothing in the
+  evidence changes a verdict.
+- When verification refuses an edit the agent wrote, bump-it and secure-it now ask the agent once more, from the base,
+  with the refusal (`rejected` in the skill input). In bump-it a second refusal fails the unit as before; in secure-it
+  the existing retry without the named package groups still follows, from the second refusal, or from the first when
+  the second attempt never reached a verification. A review's adaptation isn't restarted this way. The run report
+  lists the first refusal (`rejected`) and, when the unit still fails, why the second attempt stopped short of a
+  verification. On kryptovero, the agent replaced a planned Gradle floor with a move of its parent, which the gate
+  refused, and the critical fix was never proposed.
+
+### Fixed
+
+- The evidence in secure-it's cooldown warning covers every advisory a held fix brings: a young carrier proved both as
+  the fix for its own advisory and for its bundle's now lists both, and each advisory group carries every alias the
+  package's own records name (another version's record linking a CVE to its GHSA included), so a backed fix isn't
+  flagged as having no GHSA id, and the "every advisory is backed" line no longer leaves a bundled one unchecked.
+- No text a tool writes in a PR body can carry a plan block of its own any more: bump-it's and secure-it's plan
+  sections, secure-it's cooldown warning and every published body defuse any `<!-- leanish:plan` they quote (from an
+  advisory, a name, an error or a cleaned path), and replacing a body's state markers never joins the text around
+  them into a block, so the tool's own block stays the first one read. secure-it's warning and veto lines also escape
+  `<` in what they quote, so a quoted HTML comment can't hide the rest. Before, an advisory's text in the new warning
+  could replace a held PR's verified plan for later runs and reviews.
+- secure-it matches held units to its open PRs, reading their journals, only when a unit is held, and a journal it
+  can't read there fails just the held units instead of the whole run (each unit still reads its own PRs' journals,
+  as before).
+- A secure-it retry that leaves moves out drops the notes about them too (a floor, an override, an advisory note on the
+  move or a package it carries; a note is about the package it starts with), keeping the gate's and the kept moves'
+  notes; the left-out section still names each move.
+  Before, the PR could still describe a floor it no longer added.
+- A secure-it plan without a topic, or whose packages aren't a list of names, no longer reads: a review leaves that PR
+  open with an error, and matching held PRs passes over it instead of failing the whole run.
+- The gate refuses a repository advisory list's next page off GitHub's API host instead of sending the token there,
+  and reads at most 20 pages (either one fails the run, as an unreadable list does); a source repository named `.` or
+  `..` (in a manifest, a POM or the config) names none, and a remote action whose owner or repo is `.` or `..` can't
+  be read in a job or step (`uses:`) and no longer counts as one elsewhere, so no lookup walks the API path the token
+  is sent to.
+
 ## 0.7.5 - 2026-10-23
 
 ### Fixed

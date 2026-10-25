@@ -600,3 +600,50 @@ What each step added:
 - Sol and Astra each found an overstated claim in the docs; Astra's hold was settled on its own thread before merging.
 
 v0.7.4 (`1ba1779`) is rc.1 plus its release metadata.
+
+## Release reviews and candidates of 0.7.5 — 2026-10-23
+
+bump-it and secure-it refused a PR whose plan section passed 43,000 characters. #227 writes the plan uncompressed
+whenever the whole section fits (so v0.7.4 reads every PR it could have written), compresses it with brotli when it
+doesn't, and cuts the people's part only if even that doesn't fit. A body over GitHub's 65,536 characters fails before
+anything is published.
+
+- **rc.1 (`2f6e174`)**: `batch` for both tools on all fixtures: secure-it 12 of 12 (9 PRs), bump-it 12 of 12
+  (15 PRs). A Haiku review found that reading only the first plan marker, strictly, refused PRs v0.7.4 read: v0.7.4
+  takes the first well-formed block. #228 restored that and cleared stray markers on rewrite; CodeQL then flagged the
+  cleanup's regex as polynomial, replaced by a linear scan.
+- **rc.2 (`55afa39`)**: the same fixture results. A Haiku review found the cleanup could delete a person's text next
+  to a stray marker. Asked how much code the change added, the owner judged the cleanup dispensable: #229 removed it
+  (`plan-blocks.ts` from 104 to 81 code lines), keeping v0.7.4's rewrite plus the body check. Sol accepted the
+  rollback limit below.
+- **rc.3 (`989e9ed`)**: the same fixture results. Every PR was green except fast-uri, held by the cooldown until
+  2026-10-26 as planned; one TEST_gradle check was rerun after a plugins.gradle.org timeout. Haiku ×2 and Sol,
+  unprimed: documentation only. #230 took Sol's wording for the rollback and body-size notes.
+- **rc.4 (`d807fe5`)**: the CHANGELOG only. Astra, on Sol's thread: no findings.
+- **Passes on v0.7.5**: two regular passes of both tools, 28 commands each, one failure each: secure-it on kryptovero.
+  FasterXML's own repository advisories (2026-10-20, not yet in GitHub's database or OSV) affect jackson-core and
+  jackson-databind 3.2.3, GHSA-m8xf-2cr7-77ph critical among them, fixed in 3.2.4 (published 2026-10-18). kryptovero
+  gets both through `jackson-dataformat-yaml:3.2.3`, whose 3.2.4 is still under the wait, so secure-it planned a floor
+  on 3.2.4, the young fix the version rule allows. The agent moved `jackson-dataformat-yaml` and added `jackson-bom`
+  3.2.4 instead, and the gate refused both: young, and no fix themselves. The first pass also published the repin PRs;
+  the second found nothing new.
+
+Known limitations, for 0.7.6:
+- After rolling back to v0.7.4, its review ticks act on PRs with a compressed plan block; remove duplicate blocks
+  before rolling back (CHANGELOG).
+- A hand-typed malformed `:br` block before the plan hides the plan.
+- The early body check doesn't count the state markers (about 160 characters) added at publication, as before.
+- secure-it's agent can replace a planned Gradle floor with a parent move. The gate refuses it, so the fix waits for
+  the parent to age (kryptovero, above).
+- The `git` guard doesn't recognise a push under an alias or one whose `receivePack` runs another command.
+
+What each step added, with rough API-equivalent cost:
+- Haiku, six reviews (about 3.5 to 6 minutes each, 25K to 46K tokens of context, cents each): the two findings behind
+  #228 and #229.
+- Sol: the design of the limit and its PR reviews (11 calls, about $7); unprimed on rc.3, documentation only (about
+  $0.60).
+- Astra: clean on rc.4 (about $4).
+- The owner's question about the change's size removed the code each round had been fixing.
+- Claude implemented the release; the strict read, the polynomial regex and the deleted text were all its own.
+
+v0.7.5 (`310925f`) is rc.4 plus its release metadata.

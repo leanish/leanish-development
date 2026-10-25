@@ -91,6 +91,10 @@ inputSchema:
       type: array
       items:
         type: string
+    rejected:
+      type: array
+      items:
+        type: string
 outputSchema:
   type: object
   if:
@@ -362,6 +366,14 @@ The change was published and CI failed (`failingChecks` names the jobs and statu
 contexts (Commit statuses read). The Checks API is not needed; your token reads only. Fix what the move broke,
 within what you may change. If the failure isn't caused by the move, or fixing it needs more than that, answer
 `cannot-apply` and say why.
+
+## A refused attempt (`rejected`)
+
+The tool's verification refused your previous attempt at this same plan, for the reasons in `rejected`, and put the
+working copy back at the base. Apply exactly the supplied moves again, each with its own mechanism (a `gradle-floor`
+is an explicit dependency at the planned version with `because(...)`, never a move of a parent or a new BOM), and
+avoid what was refused. Change nothing the plan doesn't name to get around a refusal. If the plan can't be applied
+without what was refused, answer `cannot-apply` and say why.
 
 ## Checks and release notes
 

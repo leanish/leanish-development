@@ -22,10 +22,10 @@
  * Bumps (`bumpCandidates`): see there.
  */
 import { actionGaps } from "./actions-changes.ts";
-import { type CarriedPackage, type CarrierContext, type CarrierGroup, decideCarrier, splitBundled } from "./carrier-candidates.ts";
+import { type CarriedPackage, type CarrierContext, type CarrierDecision, type CarrierGroup, decideCarrier, splitBundled } from "./carrier-candidates.ts";
 import { type Config, isOwnPackage } from "./config.ts";
 import { type Exceptions, unexcusedProblem } from "./exceptions.ts";
-import { findingsOf, type Located } from "./findings.ts";
+import { type Finding, findingKey, findingsOf, type Located } from "./findings.ts";
 import type { Floor } from "./floors.ts";
 import {
   bundleReader,
@@ -50,7 +50,7 @@ import type { Snapshot } from "./snapshot.ts";
 import { takeSnapshot } from "./take-snapshot.ts";
 import type { Tree } from "./tree.ts";
 import { type Ecosystem, versionScheme } from "./versions.ts";
-import { compatibleLine, fixes, movesFrom, ruleChoice, targetsOf, type VersionCatalog } from "./young-fixes.ts";
+import { compatibleLine, fixes, movesFrom, reviewedGroups, ruleChoice, targetsOf, type VersionCatalog, type Veto, vetoesOf } from "./young-fixes.ts";
 
 const DAY_MS = 86_400_000;
 
@@ -87,6 +87,10 @@ export interface SecurityFix {
   readonly problem: string | undefined;
   /** A carrier move: the bundled packages it replaces, and their advisories (`carrier-candidates.ts`). */
   readonly carries?: ReadonlyArray<CarriedPackage>;
+  /** Candidates ruled out only by advisories no reviewed source corroborates, for people (`vetoesOf`). */
+  readonly vetoed?: ReadonlyArray<Veto>;
+  /** For people: what the fix leaves alone, such as another version's unreviewed advisories. */
+  readonly notes?: ReadonlyArray<string>;
 }
 
 export interface SecurityCandidates {
@@ -119,8 +123,16 @@ export async function securityCandidates(head: Tree, env: GateEnvironment, gradl
   const now = env.now();
   const today = now.toISOString().slice(0, 10);
   const failing = new Map<string, FailingVersion>();
-  // Bundled copies can only move with their carrier: their findings become the carrier's targets.
-  const { rest, carriers } = splitBundled(unexcused(state.packages, state.snapshot, exceptions, today), state.inventory.npm);
+  // Only a reviewed advisory (or malware) triggers a fix; one only the project's repository publishes is reported.
+  const findings = unexcused(state.packages, state.snapshot, exceptions, today);
+  const triggers = findings.filter((finding) => finding.malicious || reviewedGroups(state.snapshot, finding).has(finding.advisory));
+  const unreviewed = unreviewedReports(findings.filter((finding) => !triggers.includes(finding)), triggers);
+  // Bundled copies can only move with their carrier: their findings become the carrier's targets. Every finding names
+  // carriers (one whose bundle has only unreviewed findings is still a carrier, so its own fix checks the bundle);
+  // only triggering ones become targets.
+  const split = splitBundled(findings, state.inventory.npm);
+  const rest = split.rest.filter((finding) => triggers.some((trigger) => findingKey(trigger) === findingKey(finding) && trigger.version === finding.version));
+  const carriers = split.carriers.map((group) => triggeredOnly(group, triggers));
   for (const finding of rest) {
     const pkg: Located = { ecosystem: finding.ecosystem, name: finding.name, version: finding.version, locations: finding.locations };
     const entry = failing.get(versionKey(pkg)) ?? { pkg, malicious: false, advisories: [], severities: [] };
@@ -149,7 +161,12 @@ export async function securityCandidates(head: Tree, env: GateEnvironment, gradl
     identity: (pkg, to) => identity.problems(pkg, to),
   };
   const carried: SecurityFix[] = [];
-  for (const group of carriers) carried.push(await carrierFix(group, carrierOwn.get(versionKey({ ecosystem: "npm", name: group.name, version: group.version })), carrierContext));
+  for (const group of carriers) {
+    const own = carrierOwn.get(versionKey({ ecosystem: "npm", name: group.name, version: group.version }));
+    // A carrier with nothing reviewed to fix, in its bundle or of its own, isn't moved: its findings were reported.
+    if (group.carried.size === 0 && own === undefined) continue;
+    carried.push(await carrierFix(group, own, carrierContext));
+  }
   const listings = new Map<string, ReadonlyArray<string> | undefined>();
   const candidates: PackageVersion[] = carried.flatMap((fix) => (fix.to === undefined ? [] : [{ ecosystem: "npm" as const, name: fix.name, version: fix.to.version }]));
   for (const { pkg, malicious } of failing.values()) {
@@ -168,7 +185,8 @@ export async function securityCandidates(head: Tree, env: GateEnvironment, gradl
     // Regrouped on the second snapshot: a candidate can link aliases into another canonical id.
     const current = unexcused([pkg], snapshot, exceptions, today);
     const malicious = current.some((finding) => finding.malicious);
-    const targets = targetsOf(snapshot, pkg, new Set(current.map((finding) => finding.advisory)));
+    const reviewed = reviewedGroups(snapshot, pkg);
+    const targets = targetsOf(snapshot, pkg, new Set(current.filter((finding) => reviewed.has(finding.advisory)).map((finding) => finding.advisory)));
     const severity = highestSeverity(current.map((finding) => finding.severity));
     const base = { ecosystem: pkg.ecosystem, name: pkg.name, from: pkg.version, locations: pkg.locations, targets, malicious, severity };
     const moves = listings.get(versionKey(pkg));
@@ -181,7 +199,15 @@ export async function securityCandidates(head: Tree, env: GateEnvironment, gradl
       found.push(await chooseMove(pkg, targets, malicious, moves, { snapshot, catalog: catalogs[pkg.ecosystem], config, now, identity }, base));
     }
   }
-  found.push(...carried);
+  found.push(...carried, ...unreviewed.reports);
+  // A package a reviewed fix moves (its own, or a carrier's for a bundled copy) gets its unreviewed findings as notes
+  // on that fix, not as blocking reports; one whose reviewed fix is blocked anyway reports them like the rest.
+  for (const [pkg, notes] of unreviewed.notes) {
+    const moves = (fix: SecurityFix) => `${fix.ecosystem}|${fix.name}` === pkg || (fix.carries ?? []).some((carried) => `${fix.ecosystem}|${carried.name}` === pkg);
+    const index = found.findIndex((fix) => fix.to !== undefined && moves(fix));
+    if (index >= 0) found[index] = { ...found[index]!, notes: [...found[index]!.notes ?? [], ...notes] };
+    else found.push(...unreviewed.held.get(pkg) ?? []);
+  }
   return {
     fixes: found,
     npmPeers: { resolve: (moves) => peers.resolve(moves, snapshot) },
@@ -196,10 +222,60 @@ export async function securityCandidates(head: Tree, env: GateEnvironment, gradl
   };
 }
 
+/** `group` with only the carried advisories that trigger a fix (reviewed, or malware), and no package left without one. */
+function triggeredOnly(group: CarrierGroup, triggers: ReadonlyArray<Finding>): CarrierGroup {
+  const triggered = new Set(triggers.map((finding) => `${finding.name}|${finding.version}|${finding.advisory}`));
+  const carried = new Map([...group.carried.entries()].flatMap(([name, entry]) => {
+    const advisories = new Set([...entry.advisories].filter((advisory) => [...entry.versions].some((version) => triggered.has(`${name}|${version}|${advisory}`))));
+    return advisories.size === 0 ? [] : [[name, { ...entry, advisories }] as const];
+  }));
+  return { ...group, carried };
+}
+
+/**
+ * Advisories no reviewed source corroborates trigger no move: a fixed note. A package with no reviewed finding
+ * anywhere reports them like any fix that can't be made; one with a reviewed finding, on this version or another,
+ * gets them as a note on that fix instead (a report there would block the package's whole group).
+ */
+function unreviewedReports(unreviewed: ReadonlyArray<Finding>, triggers: ReadonlyArray<Finding>): {
+  readonly reports: SecurityFix[];
+  /** `ecosystem|name` → notes for its reviewed fix, and the same as reports if that fix turns out blocked. */
+  readonly notes: Map<string, string[]>;
+  readonly held: Map<string, SecurityFix[]>;
+} {
+  const byVersion = new Map<string, Finding[]>();
+  for (const finding of unreviewed) {
+    const key = versionKey(finding as PackageVersion);
+    byVersion.set(key, [...byVersion.get(key) ?? [], finding]);
+  }
+  const reports: SecurityFix[] = [];
+  const notes = new Map<string, string[]>();
+  const held = new Map<string, SecurityFix[]>();
+  for (const group of byVersion.values()) {
+    const [first] = group as [Finding, ...Finding[]];
+    const ids = [...new Set(group.flatMap((finding) => finding.ids))].sort();
+    const finding = `${first.name}@${first.version} is affected by ${ids.join(", ")}, only in the project's repository advisories (not corroborated by the sources this decision used)`;
+    const problem = `${finding}: no fix is proposed until a reviewed source lists it`;
+    const report: SecurityFix = {
+      ecosystem: first.ecosystem as Ecosystem, name: first.name, from: first.version, locations: [...new Set(group.flatMap((finding) => finding.locations))].sort(),
+      targets: [], unfixable: [], malicious: false, severity: highestSeverity(group.map((finding) => finding.severity)), to: undefined, problem,
+    };
+    const pkg = `${first.ecosystem}|${first.name}`;
+    if (!triggers.some((trigger) => `${trigger.ecosystem}|${trigger.name}` === pkg)) {
+      reports.push(report);
+      continue;
+    }
+    // On a reviewed fix's PR, which moves the package anyway: what these advisories don't do on their own.
+    notes.set(pkg, [...notes.get(pkg) ?? [], `${finding}: these advisories alone don't trigger an update`]);
+    held.set(pkg, [...held.get(pkg) ?? [], report]);
+  }
+  return { reports, notes, held };
+}
+
 /** A carrier version's fix; a decision that can't be made (an archive, a scan) is the fix's problem, not the run's. */
 async function carrierFix(group: CarrierGroup, own: FailingVersion | undefined, context: CarrierContext): Promise<SecurityFix> {
   const malicious = group.malicious || own?.malicious === true;
-  const decision = await decideCarrier(group, own?.advisories ?? [], malicious, context).catch((error: unknown) => ({
+  const decision: CarrierDecision = await decideCarrier(group, own?.advisories ?? [], malicious, context).catch((error: unknown) => ({
     from: group.version, locations: [], carries: [], unfixable: [], to: undefined,
     problem: `${group.name}@${group.version}'s carrier move can't be decided: ${error instanceof Error ? error.message : String(error)}`,
   }));
@@ -215,6 +291,7 @@ async function carrierFix(group: CarrierGroup, own: FailingVersion | undefined, 
     to: decision.to,
     problem: decision.problem,
     carries: decision.carries,
+    ...(decision.vetoed === undefined ? {} : { vetoed: decision.vetoed }),
   };
 }
 
@@ -256,11 +333,14 @@ async function chooseMove(
   const line = (version: string) => compatibleLine(config, name, version);
   const fixable = targets.filter((target) => moves.some((version) => fixes(snapshot, name, pkg.version, [target], version)));
   const unfixable = targets.filter((target) => !fixable.includes(target));
+  // Every choice below skips what unreviewed advisories alone rule out: recorded on whichever move it makes.
+  const vetoed = vetoesOf(snapshot, name, pkg.version, fixable, moves);
   const move = async (version: string, aged: boolean): Promise<SecurityFix> => ({
     ...base,
     unfixable,
     to: { version, line: line(version), aged, major: line(version) !== line(pkg.version), blockers: await context.identity.problems(pkg, version) },
     problem: undefined,
+    ...(vetoed.length === 0 ? {} : { vetoed }),
   });
   const none = (why: string): SecurityFix => ({ ...base, unfixable, to: undefined, problem: why });
   const fixing = moves.filter((version) => fixes(snapshot, name, pkg.version, fixable, version));

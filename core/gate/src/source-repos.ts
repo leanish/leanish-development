@@ -34,7 +34,8 @@ export async function sourceRepositories(
 export async function sourceRepository(pkg: PackageVersion, options: SourceRepoOptions): Promise<string | undefined> {
   const override = options.overrides.get(packageKey(pkg));
   if (override !== undefined) return override.toLowerCase();
-  if (pkg.ecosystem === "GitHub Actions") return pkg.name.toLowerCase();
+  // An action names its repository itself; `uses: ../..@v1` parses, but names none, as in githubRepository.
+  if (pkg.ecosystem === "GitHub Actions") return pkg.name.split("/").some(isDotSegment) ? undefined : pkg.name.toLowerCase();
   return pkg.ecosystem === "npm" ? npmRepository(pkg, options.fetch) : mavenRepository(pkg, options, 0);
 }
 
@@ -132,5 +133,11 @@ export function githubRepository(value: unknown): string | undefined {
   if (typeof raw !== "string") return undefined;
   const match =
     /github\.com[/:]([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:[/#?]|$)/i.exec(raw) ?? /^(?:github:)?([\w.-]+)\/([\w.-]+?)(?:\.git)?$/i.exec(raw);
-  return match === null ? undefined : `${match[1]}/${match[2]}`.toLowerCase();
+  // `.` or `..` would walk the API URL the token is sent to (`/repos/../..`): no repository is named.
+  if (match === null || isDotSegment(match[1]!) || isDotSegment(match[2]!)) return undefined;
+  return `${match[1]}/${match[2]}`.toLowerCase();
+}
+
+export function isDotSegment(segment: string): boolean {
+  return segment === "." || segment === "..";
 }

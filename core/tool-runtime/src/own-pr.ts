@@ -88,7 +88,9 @@ export function withMarker(rules: OwnPullRequests, body: string, state: PullRequ
   if (!/^[0-9a-f]{40}$/.test(state.head) || !/^[0-9a-f]{40}$/.test(state.base) || !Number.isInteger(state.adaptations) || state.adaptations < 0) {
     throw new Error(`invalid PR state ${JSON.stringify(state)}`);
   }
-  const bare = body.replaceAll(rules.marker, "").replace(new RegExp(STATE.source, "g"), "").trimEnd();
+  // Each removed marker leaves a line break: removed outright, the text around one could join into a plan block
+  // (`<!-- leanish:` + marker + `plan …`), and no block spans a line break.
+  const bare = body.replaceAll(rules.marker, "\n").replace(new RegExp(STATE.source, "g"), "\n").trimEnd();
   return `${bare}\n\n<!-- leanish:state head=${state.head} base=${state.base} adaptations=${state.adaptations} -->\n${rules.marker}\n`;
 }
 

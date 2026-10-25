@@ -33,7 +33,7 @@ import { comparisonVerdict, scanVerdict } from "./policy.ts";
 import type { RunProcess } from "./process.ts";
 import { gatherRequiredProofs, verifiedRequiredProofs, verifiedSecurityRoots } from "./npm-required-gate.ts";
 import { type ChangedVersion, isYoung, reviewReleaseAge } from "./release-age.ts";
-import { bundleFixProofs } from "./bundle-fix-proof.ts";
+import { type BundleFixProof, bundleFixProofs } from "./bundle-fix-proof.ts";
 import { BundleReader, type FetchArchive } from "./npm-bundles.ts";
 import type { Snapshot } from "./snapshot.ts";
 import { type SnapshotOptions, takeSnapshot } from "./take-snapshot.ts";
@@ -222,7 +222,7 @@ export async function runCompare(base: Tree, head: Tree, env: GateEnvironment, g
       base: baseInventory, head: headInventory, reader: bundleReader(env), registry, catalog: catalogs.npm, config, now,
       scan: (packages) => takeSnapshot(packages, snapshotOptions(config, env, github)),
     })
-    : new Map<string, string | undefined>();
+    : new Map<string, BundleFixProof>();
   const securityRoots = needsRequiredProof
     ? await verifiedSecurityRoots(rootChanges, candidates, snapshot, catalogs.npm, config, now) : [];
   const required = await gatherRequiredProofs(securityRoots, base, head, headInventory, registry, config, now);

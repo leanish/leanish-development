@@ -166,6 +166,8 @@ function globalAdvisory(entry: unknown, fromMalwareQuery: boolean): Advisory | u
   const id = entry["ghsa_id"];
   const where = `GitHub advisory ${id}`;
   if (optionalString(entry, "withdrawn_at", where) !== undefined) return undefined;
+  // The query asks for reviewed (or malware) advisories only, and a reviewed one may trigger a fix: checked, not trusted.
+  if (entry["type"] !== "reviewed" && entry["type"] !== "malware") throw new Error(`${where} isn't reviewed (type ${String(entry["type"])})`);
   const cve = optionalString(entry, "cve_id", where);
   const identifiers = Array.isArray(entry["identifiers"])
     ? entry["identifiers"].flatMap((identifier: unknown) =>
