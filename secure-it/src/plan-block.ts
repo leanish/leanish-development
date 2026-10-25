@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 
 import { isAdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import { heldEntry, heldUntil } from "@leanish/gate/cooldown";
-import { assertBodyFits, BODY_LIMIT, defused, planPayload, planSection as sectionOf, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
+import { assertBodyFits, BODY_LIMIT, defused, planPayload, planSection as sectionOf, TooLargeError, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
 
 import { advisoryNotice, EVIDENCE_LEFT_OUT } from "./advisory-notice.ts";
 import { floorIdentity, validRemoval } from "./floor-removal.ts";
@@ -107,18 +107,18 @@ function omittedSection(plan: ChangePlan): string[] {
  * `body` with its plan section replaced by `plan`'s (or `plan`'s appended when it has none), and the cooldown warning on
  * top while it holds. The advisory evidence is for people and never changes a verdict, so when the body can't be written
  * with it (its plan, section or body over a limit), it gives way, never the fix: written again without any, each fix that
- * had some says why it's missing. What still can't be written fails as before.
+ * had some says why it's missing. What still can't be written, and any other failure, fails as before.
  */
 export function withPlanSection(body: string, plan: ChangePlan): string {
   try {
     return composed(body, plan);
   } catch (error) {
-    const lighter = withoutEvidence(plan);
+    const lighter = error instanceof TooLargeError ? withoutEvidence(plan) : undefined;
     if (lighter === undefined) throw error;
     try {
       return composed(body, lighter);
-    } catch {
-      throw error;
+    } catch (retried) {
+      throw retried instanceof TooLargeError ? error : retried;
     }
   }
 }

@@ -9,6 +9,7 @@ import type { GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
 import type { WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
 import { InMemoryWorkspace } from "@leanish/agent-runtime/working-copy/in-memory-workspace";
 import type { GradleInventory } from "@leanish/gate/gradle";
+import type { AdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import type { SecurityFix } from "@leanish/gate/candidates";
 import { FLOORS_PATH, parseFloors } from "@leanish/gate/floors";
 import { selectRemovals, withoutFloorRecords } from "../src/floor-removal.ts";
@@ -1125,6 +1126,29 @@ describe("the cooldown hold", () => {
     expect(body).not.toContain("an outdated reason");
     expect(body).toContain("Release-age cooldown bypassed.");
     expect(planOf(body)?.cooldown).toEqual(held.cooldown);
+  });
+
+  it("rewrites a held PR's notes without its evidence when the new notes leave no room for it", async () => {
+    // 180 advisory groups of hashes fit the section beside one note; 8K of new notes don't, even compressed.
+    const hex = (seed: string) => createHash("sha256").update(seed).digest("hex");
+    const evidence: AdvisoryEvidence = { collectedAt: "2026-10-06T12:00:00.000Z", targets: [{ ecosystem: "npm", name: "vite", bundled: false, replaced: ["8.3.1"], proposed: ["8.3.3"],
+      groups: Array.from({ length: 180 }, (_, i) => {
+        const found = { id: `GHSA-${hex(`${i}`).slice(0, 14)}`, aliases: Array.from({ length: 4 }, (_, j) => hex(`${i}-${j}`)), withdrawn: false, namesPackage: true,
+          declaredFixes: ["8.3.3"], verdicts: { "8.3.1": "affected" as const, "8.3.3": "not-affected" as const } };
+        return { ids: [found.id], replaced: ["8.3.1"], sources: (["repository", "github", "osv"] as const).map((source) => ({ source, lookup: "checked" as const, records: [found] })) };
+      }) }] };
+    const plan = await planFor([vite()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined });
+    const held = { ...plan, notes: ["an outdated reason"], cooldown: [{ ...HELD, signals: [], evidence }] };
+    const published = withPlanSection("Fixes vite.", held);
+    expect(planOf(published)?.cooldown?.[0]?.evidence).toEqual(evidence);
+    const notes = Array.from({ length: 128 }, (_, i) => `vite@8.3.3 note ${i}: ${hex(`note-${i}`)}`);
+    const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, planned) => ({ ...planned, notes });
+    const h = harness({ prs: [ownPr({ headRef: `secure-it/2026-10-05-${plan.topic}`, body: withMarker(RULES, published, { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) })] });
+    expect(await secureIt({ ...h.deps, requiredNpm }).run(h.context)).toMatchObject({ outcome: "already-open" });
+    const body = h.github.prs.get(7)!.body;
+    expect(body).not.toContain("an outdated reason");
+    expect(planOf(body)).toMatchObject({ notes, cooldown: [{ ...HELD, signals: [], evidenceFailure: EVIDENCE_LEFT_OUT }] });
+    expect(planOf(body)?.cooldown?.[0]?.evidence).toBeUndefined();
   });
 
   it("opens young fixes in a held PR of their own, warned, while the aged ones go out as usual", async () => {

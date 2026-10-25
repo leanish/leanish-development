@@ -269,7 +269,11 @@ describe("the advisory notice on a held PR", () => {
       expect(published).not.toContain(REVIEWED);
       expect(published).not.toContain(TABLE_LEFT_OUT);
     }
-    // What can't be written even without the evidence fails as before.
+    // What can't be written even without the evidence fails as before, as does a plan without any.
     expect(() => withPlanSection("x".repeat(70_000), overBody)).toThrow("over GitHub's 65536");
+    expect(() => withPlanSection("x".repeat(70_000), { ...overBody, cooldown: [hold()] })).toThrow("over GitHub's 65536");
+    // Any other failure is never taken for a size: a group the notice can't read throws, evidence or not.
+    const unreadable = { ...reviewed, targets: [{ ...reviewed.targets[0]!, groups: [{ ids: ["GHSA-m8xf-2cr7-77ph"], replaced: ["3.2.3"] }] }] } as unknown as AdvisoryEvidence;
+    expect(() => withPlanSection("Description.", plan(unreadable))).toThrow(TypeError);
   });
 });
