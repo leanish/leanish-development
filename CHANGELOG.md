@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+
+- bump-it's "What bump-it moved" table lists lockfile-only copy changes (an in-range npm update) as rows, next to the
+  declared moves, instead of bullets under an empty table; a PR with no rows shows no table.
+
 ## 0.8.0 - 2026-10-25
 
 ### Changed

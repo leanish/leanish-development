@@ -228,14 +228,19 @@ function validCommitSha(value: unknown): boolean {
 const cell = (text: string) => text.replaceAll("|", "\\|").replaceAll("\n", " ");
 
 export function planSection(plan: BumpPlan): string {
-  const direct = ["| Package | From | To | Locations |", "|---|---|---|---|", ...plan.moves.map((move) => `| ${cell(move.name)} | ${cell(move.from)} | ${cell(move.to)} | ${cell(move.locations.join(", "))} |`)];
-  const changes = plan.changes.slice(0, 30).map((change) => `- ${cell(change.name)} at ${cell(`${change.lockfile}:${change.path}`)}: ${change.from ?? "new"} → ${change.to ?? "removed"}`);
-  if (plan.changeCount > 30) {
-    changes.push(`- and ${plan.changeCount - 30} more npm copy changes`);
-  }
-  const people = `${direct.join("\n")}\n\n${changes.join("\n")}\n\n${plan.notes.map((note) => `- ${cell(note)}`).join("\n")}`;
+  // Lockfile-only copy changes (an in-range npm update) are rows too, so a PR without declared moves doesn't show an empty table.
+  const rows = [
+    ...plan.moves.map((move) => row(move.name, move.from, move.to, move.locations.join(", "))),
+    ...plan.changes.slice(0, 30).map((change) => row(change.name, change.from ?? "new", change.to ?? "removed", `${change.lockfile}:${change.path}`)),
+  ];
+  const table = rows.length === 0 ? [] : ["| Package | From | To | Locations |", "|---|---|---|---|", ...rows];
+  const more = plan.changeCount > 30 ? [`- and ${plan.changeCount - 30} more npm copy changes`] : [];
+  const notes = plan.notes.map((note) => `- ${cell(note)}`);
+  const people = [table, more, notes].filter((lines) => lines.length > 0).map((lines) => lines.join("\n")).join("\n\n");
   return sectionOf({ heading: HEADING, people, payload: plan, name: "bump-it's plan" });
 }
+
+const row = (name: string, from: string, to: string, locations: string) => `| ${cell(name)} | ${cell(from)} | ${cell(to)} | ${cell(locations)} |`;
 
 export function withPlanSection(body: string, plan: BumpPlan): string {
   return replaceSection(body, HEADING, planSection(plan));
