@@ -54,7 +54,8 @@ describe("units and persisted plan", () => {
     expect(planSection(plan).length).toBeLessThan(20000);
   });
   it("lists lockfile-only copy changes as table rows next to declared moves, and notes after the table", async () => {
-    const changes = [{ lockfile: "package-lock.json", name: "postcss", path: "node_modules/postcss", from: "8.5.30", to: "8.5.31" }];
+    const postcss = { lockfile: "package-lock.json", name: "postcss", path: "node_modules/postcss", from: "8.5.30", to: "8.5.31" };
+    const changes = [postcss];
     const copiesOnly = planSection(await planFor(routineUnit([]), { ...npm, changes, notes: ["a note"] }, async () => undefined));
     expect(copiesOnly).toContain("| Package | From | To | Locations |\n|---|---|---|---|\n| postcss | 8.5.30 | 8.5.31 | package-lock.json:node_modules/postcss |\n\n- a note");
     expect(copiesOnly).not.toContain("- postcss");
@@ -63,7 +64,7 @@ describe("units and persisted plan", () => {
     const notesOnly = planSection(await planFor(routineUnit([]), { ...npm, notes: ["a note"] }, async () => undefined));
     expect(notesOnly).not.toContain("| Package |");
     expect(notesOnly).toContain("- a note");
-    const piped = planSection(await planFor(routineUnit([]), { ...npm, changes: [{ ...changes[0], name: "a|b", from: undefined }] }, async () => undefined));
+    const piped = planSection(await planFor(routineUnit([]), { ...npm, changes: [{ ...postcss, name: "a|b", from: undefined }] }, async () => undefined));
     expect(piped).toContain("| a\\|b | new | 8.5.31 |");
     expect(planSection(await planFor(routineUnit([]), npm, async () => undefined))).not.toContain("| Package |");
   });
