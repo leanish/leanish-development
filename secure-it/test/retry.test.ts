@@ -47,7 +47,7 @@ describe("batch retry", () => {
     const retry = retryWithoutNamed(original, ["other at node_modules/other is gone, not 1.0.1"]);
     expect(retry.plan?.moves).toEqual([vetoed]);
     expect(retry.plan?.notes).toEqual(original.notes);
-    expect(planSection(retry.plan!)).toContain("- lib 1.0.0.1 was ruled out by GHSA-repo, not corroborated by the sources this decision used; this takes 1.0.1.");
+    expect(planSection(retry.plan!)).toContain("- lib 1.0.0.1 was ruled out by GHSA-repo, not corroborated by the sources this decision used.");
     // An advisory id from elsewhere can't open a comment hiding the rest of the section.
     const quoting = plan({ ...move("lib"), vetoed: [{ version: "1.0.0.1", advisories: ["<!-- x"] }] });
     expect(planSection(quoting)).toContain("was ruled out by &lt;!-- x, not corroborated");

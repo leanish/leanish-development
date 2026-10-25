@@ -275,7 +275,8 @@ exception names, which the owner's call lets in whichever source lists it; how e
 [the gate's rules](../core/gate/README.md#how-each-source-counts).
 
 The table lists its ⚠ rows first. When it would push the PR body past GitHub's limit (measured as published:
-cleaned, with the marker), only its last rows give way: it shows the most that fit, with a line saying how many are left out,
+cleaned, with the marker), only its last rows give way: it shows the most that fit 2,048 characters short of the limit
+(room for what the measure can't see), with a line saying how many are left out,
 the plan's block keeps the whole evidence, and the rest of the warning stays. When even no row fits (the plan with the
 evidence passes its block's or section's limit, or the body GitHub's), the evidence gives way, never the fix: the PR
 is written without any, and each fix that had some is listed as unchecked, saying why.

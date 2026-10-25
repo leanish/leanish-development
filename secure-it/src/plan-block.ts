@@ -18,6 +18,8 @@ import type { ChangePlan, PlannedHold, PlannedMove } from "./plan.ts";
 
 const HEADING = "### What secure-it moved";
 const RULES = ownPullRequests("secure-it");
+/** How far short of GitHub's limit a held body's evidence table is cut (`composed`). */
+const BODY_MARGIN = 2_048;
 const WARNING_START = "<!-- secure-it cooldown warning -->";
 const WARNING_END = "<!-- /secure-it cooldown warning -->";
 
@@ -89,7 +91,7 @@ function vetoLines(move: PlannedMove): string[] {
     `- ${quoted(move.name)}: ${move.vetoesLeftOut} more candidates were ruled out the same way, by advisories not corroborated by the sources this decision used.`,
   ];
   return [...(move.vetoed ?? []).map((veto) =>
-    `- ${quoted(move.name)} ${quoted(veto.version)} was ruled out by ${quoted(veto.advisories.join(", "))}, not corroborated by the sources this decision used; this takes ${move.to}.`), ...left];
+    `- ${quoted(move.name)} ${quoted(veto.version)} was ruled out by ${quoted(veto.advisories.join(", "))}, not corroborated by the sources this decision used.`), ...left];
 }
 
 /** Omissions are visible to reviewers as well as the command report and persisted plan. */
@@ -141,8 +143,10 @@ function composed(body: string, plan: ChangePlan, measure: (text: string) => num
   const rest = replaced(withoutWarning(body), HEADING, planSection(plan));
   if (cooldownWarning(held) === undefined) return rest;
   const warned = (rows?: number) => `${cooldownWarning(held, rows === undefined ? {} : { rows })!}\n\n${rest}`;
-  // Measured as published (`measure`): a body filled up to the limit must still be accepted once cleaned and marked.
-  const fits = (text: string) => measure(text) <= BODY_LIMIT;
+  // Measured as published (`measure`), the table is cut to a target BODY_MARGIN short of the limit: room for what the
+  // measure can't see (a later step between composing and sending, or GitHub counting otherwise). Only the final check
+  // uses the limit itself, so no body that fits is refused for the margin.
+  const fits = (text: string) => measure(text) <= BODY_LIMIT - BODY_MARGIN;
   const full = warned();
   if (fits(full)) return full;
   // Only the evidence table's last rows give way (the plan's block below keeps them all): the most that fit, found by
@@ -163,7 +167,7 @@ function composed(body: string, plan: ChangePlan, measure: (text: string) => num
   const shorter = warned(most);
   // Too large even without rows: the evidence gives way next (withPlanSection), so this is a size, never a publication
   // GitHub refuses after the push.
-  if (!fits(shorter)) throw new TooLargeError(`the PR body would be ${measure(shorter)} characters once published, over GitHub's ${BODY_LIMIT}`);
+  if (measure(shorter) > BODY_LIMIT) throw new TooLargeError(`the PR body would be ${measure(shorter)} characters once published, over GitHub's ${BODY_LIMIT}`);
   return shorter;
 }
 

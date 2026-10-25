@@ -213,10 +213,11 @@ describe("the advisory notice on a held PR", () => {
     expect(body.match(/^> \| ⚠ /gm)).toHaveLength(6);
     expect(body).toContain("> | Package | Version | Published (UTC) | Held until (UTC) | Why | Signals |");
     // The most rows that fit as published: one more would pass the limit once marked.
-    expect(markedLength(RULES, body)).toBeLessThanOrEqual(65_536);
+    // The cut aims 2,048 short of the limit (room for what the measure can't see).
+    expect(markedLength(RULES, body)).toBeLessThanOrEqual(65_536 - 2_048);
     const shown = 60 - left;
     const warning = (rows: number) => cooldownWarning(large.cooldown!, { rows })!.length;
-    expect(markedLength(RULES, body) + warning(shown + 1) - warning(shown)).toBeGreaterThan(65_536);
+    expect(markedLength(RULES, body) + warning(shown + 1) - warning(shown)).toBeGreaterThan(65_536 - 2_048);
     const mark = (text: string) => withMarker(RULES, text, { head: "a".repeat(40), base: "b".repeat(40), adaptations: 3 });
     expect(mark(body).length).toBeLessThanOrEqual(65_536);
     // A refresh measures the body without its stored state and marker, so it shows the rows first published.
@@ -224,14 +225,14 @@ describe("the advisory notice on a held PR", () => {
     // Published, the body is cleaned first, and a short local path grows into `<local path>`: measured that way, the
     // cut leaves room for it, where measuring the raw body would leave the published one over the limit.
     const published = (text: string) => markedLength(RULES, cleanBody(text, CLEANING));
-    const pathy = `Ran it in /t/x. `.repeat(400);
+    const pathy = `Ran it in /t/x. `.repeat(800);
     const raw = withPlanSection(pathy, large);
     expect(published(raw)).toBeGreaterThan(65_536);
     const cut = withPlanSection(pathy, large, published);
-    expect(published(cut)).toBeLessThanOrEqual(65_536);
+    expect(published(cut)).toBeLessThanOrEqual(65_536 - 2_048);
     expect(cut.length).toBeLessThan(raw.length);
     const kept = 60 - Number(/> (\d+) of the table's 60 rows are left out/.exec(cut)?.[1]);
-    expect(published(cut) + warning(kept + 1) - warning(kept)).toBeGreaterThan(65_536);
+    expect(published(cut) + warning(kept + 1) - warning(kept)).toBeGreaterThan(65_536 - 2_048);
     expect(planOf(cut)).toEqual(large);
     // Each row fewer shortens the warning, the count's extra digit included, so the halving finds the most that fit.
     const lengths = Array.from({ length: 61 }, (_, rows) => warning(rows));
