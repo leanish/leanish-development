@@ -37,7 +37,8 @@
   ones). A fixed line opens the warning: that a reviewed record (OSV, or GitHub's reviewed database) still backs every
   fix as read now, or, marking the rows, that none does for some; a fix it couldn't check gets its own line and is
   listed. A lookup that fails is shown as such, never as "not found". When the table would push the PR body past
-  GitHub's limit, only the table is left out, with a line saying so, and the plan's block keeps the evidence. The
+  GitHub's limit, only the table is left out, with a line saying so, and the plan's block keeps the evidence; when
+  the PR still can't be written with the evidence, it's left out, and each fix that had some is listed as unchecked. The
   gate's comparison report records, for each held fix,
   the advisories behind it (`targets`); nothing in the evidence changes a verdict.
 - When verification refuses an edit the agent wrote, bump-it and secure-it now ask the agent once more, from the base,

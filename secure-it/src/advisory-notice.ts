@@ -27,6 +27,9 @@ export const INCOMPLETE =
 /** Why a fix's evidence is missing, for the list INCOMPLETE points to. */
 export const NOT_RECORDED = "not recorded for this plan";
 
+/** Why a fix's evidence is missing when the PR body couldn't be written with it (`withPlanSection`). */
+export const EVIDENCE_LEFT_OUT = "its evidence was left out: with it, this PR's body or plan would exceed its limit";
+
 /** Where the table went when it was left out; the plan's block keeps the evidence either way. */
 export const TABLE_LEFT_OUT = "The table of where each advisory appears is left out: with it, this PR's body would exceed GitHub's limit. The plan's block keeps all of it.";
 

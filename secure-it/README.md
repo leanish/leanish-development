@@ -273,7 +273,9 @@ stands either way. A fix's targets are reviewed advisories by the time it's prop
 
 When the table would push the PR body past GitHub's limit, only the table is left out, with a line saying so: the
 plan's block keeps the whole evidence, the ⚠ packages are named in the opening line, each with its newest proposed
-versions, and the rest of the warning stays.
+versions, and the rest of the warning stays. When even that can't be written (the plan with the evidence passes its
+block's or section's limit, or the body GitHub's), the evidence gives way, never the fix: the PR is written without
+any, and each fix that had some is listed as unchecked, saying why.
 
 The agent never writes any of this.
 

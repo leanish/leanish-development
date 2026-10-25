@@ -1,10 +1,12 @@
+import { createHash } from "node:crypto";
+
 import { describe, expect, it } from "vitest";
 
 import type { AdvisoryEvidence, EvidenceRecord, SourceEvidence } from "@leanish/gate/advisory-evidence";
 
-import { advisoryNotice, EVIDENCE_DIFFERS, INCOMPLETE, NOT_RECORDED, REVIEWED, TABLE_LEFT_OUT } from "../src/advisory-notice.ts";
+import { advisoryNotice, EVIDENCE_DIFFERS, EVIDENCE_LEFT_OUT, INCOMPLETE, NOT_RECORDED, REVIEWED, TABLE_LEFT_OUT } from "../src/advisory-notice.ts";
 import type { ChangePlan, PlannedHold } from "../src/plan.ts";
-import { cooldownWarning, planOf, withPlanSection } from "../src/plan-block.ts";
+import { cooldownWarning, planOf, planSection, withPlanSection } from "../src/plan-block.ts";
 import { planBlock } from "@leanish/tool-runtime/plan-blocks";
 
 const PKG = "tools.jackson.core:jackson-databind";
@@ -236,5 +238,42 @@ describe("the advisory notice on a held PR", () => {
     // Rewriting it keeps one warning, the same one.
     expect(withPlanSection(body, large)).toBe(body);
     expect(() => withPlanSection("x".repeat(70_000), plan(reviewed))).toThrow("over GitHub's 65536");
+  });
+
+  it("leaves the evidence out, never the fix, when the plan, its section or the body can't be written with it", () => {
+    // Hashes, so the block can't compress them away: `groups` advisories, each with `aliases` aliases, in all three sources.
+    const hex = (seed: string) => createHash("sha256").update(seed).digest("hex");
+    const heavy = (groups: number, aliases: number): AdvisoryEvidence => ({ collectedAt: "2026-10-23T16:57:12.000Z", targets: [{
+      ecosystem: "Maven", name: PKG, bundled: false, replaced: ["3.2.3"], proposed: ["3.2.4"], groups: Array.from({ length: groups }, (_, i) => {
+        const found = record({ id: `GHSA-${hex(`${i}`).slice(0, 14)}`, aliases: Array.from({ length: aliases }, (_, j) => hex(`${i}-${j}`)) });
+        return { ids: [found.id], replaced: ["3.2.3"], sources: [checked("repository", [found]), checked("github", [{ ...found, reviewed: true }]), checked("osv", [found])] };
+      }),
+    }] });
+    const plan = (evidence: AdvisoryEvidence): ChangePlan => ({ topic: "security-cooldown", malware: false, severity: "CRITICAL", kind: "routine", moves: [], packages: [],
+      cooldown: [hold({ evidence }), hold({ name: "g:failed", evidenceFailure: "registry lookup of g:failed failed" })] });
+    const overJson = plan(heavy(400, 10));
+    expect(JSON.stringify(overJson).length).toBeGreaterThan(1024 * 1024);
+    const overSection = plan(heavy(300, 10));
+    expect(JSON.stringify(overSection).length).toBeLessThan(1024 * 1024);
+    expect(() => planSection(overSection)).toThrow("without its table it still takes");
+    const overBody = plan(heavy(100, 4));
+    const description = "x".repeat(50_000);
+    expect(planSection(overBody).length + description.length).toBeGreaterThan(65_536);
+    for (const [written, body] of [[overJson, "Description."], [overSection, "Description."], [overBody, description]] as const) {
+      const published = withPlanSection(body, written);
+      expect(published.length).toBeLessThanOrEqual(65_536);
+      // The holds as verified, the failure recorded before kept: only the evidence is gone, and the warning says why.
+      expect(planOf(published)?.cooldown).toEqual([{ ...hold(), evidenceFailure: EVIDENCE_LEFT_OUT }, written.cooldown![1]]);
+      expect(published).toContain(`> ${INCOMPLETE}`);
+      expect(published).toContain(`${PKG}@3.2.4: ${EVIDENCE_LEFT_OUT}`);
+      expect(published).not.toContain(REVIEWED);
+      expect(published).not.toContain(TABLE_LEFT_OUT);
+    }
+    // What can't be written even without the evidence fails as before, as does a plan without any.
+    expect(() => withPlanSection("x".repeat(70_000), overBody)).toThrow("over GitHub's 65536");
+    expect(() => withPlanSection("x".repeat(70_000), { ...overBody, cooldown: [hold()] })).toThrow("over GitHub's 65536");
+    // Any other failure is never taken for a size: a group the notice can't read throws, evidence or not.
+    const unreadable = { ...reviewed, targets: [{ ...reviewed.targets[0]!, groups: [{ ids: ["GHSA-m8xf-2cr7-77ph"], replaced: ["3.2.3"] }] }] } as unknown as AdvisoryEvidence;
+    expect(() => withPlanSection("Description.", plan(unreadable))).toThrow(TypeError);
   });
 });

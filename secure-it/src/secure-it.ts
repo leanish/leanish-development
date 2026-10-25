@@ -326,13 +326,14 @@ async function parentsFirst(fixes: ReadonlyArray<SecurityFix>, base: PlanBase, e
 /**
  * An open PR of the same plan keeps its commits; its plan section is rewritten when what it says (notes) changed.
  * Only the notes come from the recomputed plan: the rest, such as the cooldown hold its verification recorded (a
- * fresh plan has none yet), stays as published.
+ * fresh plan has none yet), stays as published. Compared as written (`withPlanSection`), so evidence that no longer fits
+ * with the new notes gives way there instead of failing the comparison.
  */
 async function refreshText(execution: Execution, pr: GitHubPullRequest, plan: ChangePlan): Promise<void> {
   const previous = planOf(pr.body);
   if (previous === undefined) return;
   const refreshed = withNotesOf(previous, plan);
-  if (planSection(refreshed) === planSection(previous)) return;
+  if (withPlanSection(pr.body, refreshed) === withPlanSection(pr.body, previous)) return;
   await rewriteText(execution.publication, pr.number, pr.headSha, (body) => withPlanSection(body, refreshed));
 }
 
