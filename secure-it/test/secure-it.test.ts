@@ -1203,6 +1203,26 @@ describe("the cooldown hold", () => {
     expect(pr.body).toContain(`vite@8.3.3: ${EVIDENCE_LEFT_OUT}`);
   });
 
+  it("publishes a held body near its target within GitHub's limit, after cleaning lengthens its paths and the marker", async () => {
+    // 400 short temp paths, each growing into `<local path>` when published, beside a long description: composed near the
+    // 61,440 target, the published body passes the target and still fits GitHub's 65,536.
+    const hex = (seed: string) => createHash("sha256").update(seed).digest("hex");
+    const groups = Array.from({ length: 60 }, (_, i) => ({ ids: [`GHSA-${hex(`${i}`).slice(0, 14)}`], replaced: ["8.3.1"] }));
+    const targeted = { ...HELD, targets: [{ name: "vite", bundled: false, replaced: ["8.3.1"], proposed: ["8.3.3"], groups }] };
+    const verify = async (inputs: VerifyInputs) => {
+      inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: [targeted] });
+      return [];
+    };
+    const description = `${"/tmp/x ".repeat(400)}${"x".repeat(51_000)}`;
+    const h = harness({ fixes: [vite()], answer: { ...APPLIED, publication: { ...APPLIED.publication, body: description } } });
+    expect(await secureIt({ ...h.deps, verify }).run(h.context)).toMatchObject({ outcome: "published" });
+    const pr = h.github.prs.get(42)!;
+    expect(pr.body.match(/<local path>/g)).toHaveLength(400);
+    expect(pr.body.length).toBeGreaterThan(61_440);
+    expect(pr.body.length).toBeLessThanOrEqual(65_536);
+    expect(planOf(pr.body)!.cooldown![0]).toMatchObject({ targets: targeted.targets });
+  });
+
   it("records the evidence of a required version that fixes advisories itself, so the warning checks it too", async () => {
     const h = harness({ fixes: [vite()] });
     const target = (name: string, from: string, to: string, id: string) => ({ name, bundled: false, replaced: [from], proposed: [to], groups: [{ ids: [id], replaced: [from] }] });
