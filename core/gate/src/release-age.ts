@@ -55,10 +55,8 @@ export function isYoung(change: ChangedVersion, config: Config, now: Date): bool
 export type YoungJustification = "security-fix" | "bundle-fix" | "required" | "exception" | "unjustified";
 
 /**
- * A package whose advisories a young version fixes: the version's own package, or one its bundle carries. Behind a
- * `security-fix` or `bundle-fix` they're what justifies it; a `required` version or an `exception` records the ones it
- * fixes too, and an exception its named advisory, reviewed or not. For people (and the evidence secure-it reads for
- * them), never part of the verdict.
+ * A package whose advisories a young version fixes (`fixedTargets`): the version's own package, or one its bundle
+ * carries. For people (and the evidence secure-it reads for them), never part of the verdict.
  */
 export interface HeldTarget {
   readonly name: string;
@@ -87,7 +85,7 @@ export interface HeldVersion {
   /** When it turns `releaseAgeDays` old. */
   readonly eligibleAt: string;
   readonly justification: YoungJustification;
-  /** The advisories it fixes (`HeldTarget`): always for a `security-fix` or `bundle-fix`, when any for `required` and `exception`. */
+  /** The advisories it fixes (`HeldTarget`), whatever justified it; absent when it fixes none. */
   readonly targets?: ReadonlyArray<HeldTarget>;
 }
 
@@ -104,6 +102,7 @@ export async function reviewReleaseAge(changes: ReadonlyArray<ChangedVersion>, c
     if (!isYoung(change, context.config, context.now)) continue;
     const judged = await judgeYoung(change, context);
     if (judged.problem !== undefined) problems.push(judged.problem);
+    const targets = fixedTargets(change, context, judged.named);
     held.push({
       ecosystem: change.pkg.ecosystem,
       name: change.pkg.name,
@@ -112,7 +111,7 @@ export async function reviewReleaseAge(changes: ReadonlyArray<ChangedVersion>, c
       published: change.published.toISOString(),
       eligibleAt: new Date(change.published.getTime() + context.config.releaseAgeDays * DAY_MS).toISOString(),
       justification: judged.justification,
-      ...(judged.targets === undefined ? {} : { targets: judged.targets }),
+      ...(targets.length === 0 ? {} : { targets }),
     });
   }
   return { problems, held };
@@ -126,17 +125,13 @@ export async function releaseAgeProblems(changes: ReadonlyArray<ChangedVersion>,
 interface Judged {
   readonly justification: YoungJustification;
   readonly problem?: string;
-  readonly targets?: ReadonlyArray<HeldTarget>;
+  /** The advisory an exception names, when that exception is what justifies the version. */
+  readonly named?: string;
 }
 
 async function judgeYoung(change: ChangedVersion, context: AgeContext): Promise<Judged> {
   const { pkg } = change;
-  const bundle = context.bundleFixes?.get(versionKey(pkg));
-  const bundleTargets = bundle?.problem === undefined ? bundle?.targets ?? [] : [];
-  // Required either way, but what it fixes itself, or in a bundle proved both ways, is still for people to check.
-  if (pkg.ecosystem === "npm" && context.required?.has(versionKey(pkg))) {
-    return { justification: "required", ...recorded([ownTarget(change, context.snapshot), ...bundleTargets]) };
-  }
+  if (pkg.ecosystem === "npm" && context.required?.has(versionKey(pkg))) return { justification: "required" };
   const proof = await youngFixProblem(
     { pkg, replaced: change.replaced },
     context.candidates.get(versionKey(pkg)) ?? new Map(),
@@ -145,9 +140,9 @@ async function judgeYoung(change: ChangedVersion, context: AgeContext): Promise<
     context.config,
     context.now,
   );
-  // A carrier proved both ways fixes its bundle's advisories too: the evidence covers every one it fixes.
-  if (proof === undefined) return { justification: "security-fix", targets: mergedTargets([ownTarget(change, context.snapshot), ...bundleTargets]) };
-  if (bundle !== undefined && bundle.problem === undefined) return { justification: "bundle-fix", targets: bundle.targets };
+  if (proof === undefined) return { justification: "security-fix" };
+  const bundle = context.bundleFixes?.get(versionKey(pkg));
+  if (bundle !== undefined && bundle.problem === undefined) return { justification: "bundle-fix" };
   const bundled = bundle?.problem;
   const exception = context.exceptions.releaseAge.find(
     (entry) => (entry.ecosystem === undefined || entry.ecosystem === pkg.ecosystem) && entry.package === pkg.name && entry.version === pkg.version,
@@ -165,14 +160,21 @@ async function judgeYoung(change: ChangedVersion, context: AgeContext): Promise<
     return { justification: "unjustified", problem: `${label(pkg)}: its release-age exception expired on ${exception.expires}` };
   }
   const why = advisoryEvidenceProblem(exception.advisory, pkg, change.replaced, context.snapshot);
-  if (why !== undefined) return { justification: "unjustified", problem: `${label(pkg)}: ${why}` };
-  return { justification: "exception", ...recorded([ownTarget(change, context.snapshot), namedTarget(change, exception.advisory, context.snapshot)]) };
+  return why === undefined ? { justification: "exception", named: exception.advisory } : { justification: "unjustified", problem: `${label(pkg)}: ${why}` };
 }
 
-/** `targets` merged, keeping only those with an advisory group; none when no group is left. */
-function recorded(targets: ReadonlyArray<HeldTarget>): Pick<Judged, "targets"> {
-  const kept = mergedTargets(targets.filter((target) => target.groups.length > 0));
-  return kept.length === 0 ? {} : { targets: kept };
+/**
+ * What a young version fixes, for people and whatever justified it: its own reviewed advisories, those of a bundle
+ * proved both ways, and the advisory its exception names. Only targets with an advisory group; merged.
+ */
+function fixedTargets(change: ChangedVersion, context: AgeContext, named: string | undefined): HeldTarget[] {
+  const bundle = context.bundleFixes?.get(versionKey(change.pkg));
+  const targets = [
+    ownTarget(change, context.snapshot),
+    ...(bundle?.problem === undefined ? bundle?.targets ?? [] : []),
+    ...(named === undefined ? [] : [namedTarget(change, named, context.snapshot)]),
+  ];
+  return mergedTargets(targets.filter((target) => target.groups.length > 0));
 }
 
 /** The group an exception names, on the replaced versions it affects, whichever source lists it: the owner's call. */

@@ -1,9 +1,10 @@
 /**
  * The standard notice a held PR's warning carries about the advisories behind
  * its young versions: where each one appears, as read after the verification,
- * and a fixed line saying whether a reviewed record (OSV, or GitHub's reviewed
- * advisory database) still backs each fix. The tool writes all of it; an agent
- * never does.
+ * and what's wrong with them: the ones no reviewed record (OSV, or GitHub's
+ * reviewed advisory database) backs as read now, and the fixes that couldn't be
+ * checked. It reports problems only, so a gap in it shows less, never a false
+ * all-clear. The tool writes all of it; an agent never does.
  *
  * A held fix's targets are reviewed advisories by the time it's proposed (one
  * only a project's repository publishes triggers nothing), except the one a
@@ -16,14 +17,11 @@ import { versionScheme } from "@leanish/gate/versions";
 
 import type { PlannedHold } from "./plan.ts";
 
-export const REVIEWED =
-  "Every advisory recorded for these held fixes is still backed by a reviewed record as read now: OSV or GitHub's reviewed advisory database lists the replaced versions as affected and the proposed version, if any, as not. Candidates ruled out by advisories no reviewed source corroborates are noted in the plan below, where recorded.";
-
 export const EVIDENCE_DIFFERS =
   "**Some advisories recorded for these held fixes are not backed by reviewed records as read now.** For the rows marked ⚠ below, no reviewed record (OSV, or GitHub's reviewed advisory database) lists the replaced versions as affected and the proposed one as not, or one was withdrawn or couldn't be read. The comparison's verdict stands; check the table before taking this early.";
 
 export const INCOMPLETE =
-  "**Some of these fixes couldn't be checked**, as listed below, so this notice can't say a reviewed record still backs every fix. The comparison's verdict stands; check those before taking this early.";
+  "**Some of these fixes couldn't be checked**, as listed below. The comparison's verdict stands; check those before taking this early.";
 
 /** Why a fix's evidence is missing, for the list INCOMPLETE points to. */
 export const NOT_RECORDED = "not recorded for this plan";
@@ -46,7 +44,6 @@ const REASON_LIMIT = 300;
 const NAME_LIMIT = 120;
 const VERSION_LIMIT = 40;
 
-const JUSTIFIED = new Set<PlannedHold["justification"]>(["security-fix", "bundle-fix"]);
 const COLUMNS: ReadonlyArray<SourceEvidence["source"]> = ["repository", "github", "osv"];
 
 /** The notice, without the `> ` quote prefix: its paragraphs for the top, its table and gaps for after the holds. */
@@ -56,21 +53,19 @@ export interface AdvisoryNotice {
 }
 
 /**
- * Empty when no hold fixes an advisory: a security or bundle fix, or a required version or exception recording the
- * advisories it fixes (`targets`). Each claim covers every such fix: one whose evidence failed, wasn't
- * recorded, or has a target with no advisory group is unchecked, so the notice never says all are backed. Without
- * `table`, the rows give way (the PR body is too long) and the ⚠ packages are named instead.
+ * Empty when no hold records advisories it fixes (`targets`). A hold whose evidence failed, wasn't recorded, or has a
+ * target with no advisory group is listed as unchecked. Without `table`, the rows give way (the PR body is too long)
+ * and the ⚠ packages are named instead.
  */
 export function advisoryNotice(held: ReadonlyArray<PlannedHold>, options: { readonly table?: boolean } = {}): AdvisoryNotice {
   const table = options.table ?? true;
-  const fixes = held.filter((entry) => JUSTIFIED.has(entry.justification) || (entry.targets?.length ?? 0) > 0);
+  const fixes = held.filter((entry) => (entry.targets?.length ?? 0) > 0);
   const rows = fixes.flatMap((entry) => (entry.evidence?.targets ?? []).flatMap((target) => target.groups.map((group) => ({ entry, target, group }))));
   const unchecked = fixes.flatMap((entry) => uncheckedOf(entry).map((reason) => `- ${bounded(entry.name, NAME_LIMIT)}@${bounded(entry.version, VERSION_LIMIT)}: ${bounded(reason, REASON_LIMIT)}`));
   const differing = rows.filter(({ target, group }) => !backed(target, group));
   const paragraphs: string[] = [];
   if (differing.length > 0) paragraphs.push(table ? EVIDENCE_DIFFERS : differsFor(differing));
   if (unchecked.length > 0) paragraphs.push(INCOMPLETE);
-  if (paragraphs.length === 0 && rows.length > 0) paragraphs.push(REVIEWED);
   const details: string[] = [];
   if (rows.length > 0 && !table) details.push(TABLE_LEFT_OUT);
   if (rows.length > 0 && table) {

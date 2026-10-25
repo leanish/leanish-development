@@ -31,18 +31,16 @@
 
 ### Added
 
-- secure-it's cooldown warning now says where the advisories behind each held security or bundle fix appear, and
-  behind a held required version or exception that fixes advisories itself: the
+- secure-it's cooldown warning now says where the advisories each held version fixes appear: the
   dependency's own repository advisories, GitHub's database and OSV, each read after the verification and shown as
   that source says (its declared fix, and whether its ranges put each replaced and proposed version among the affected
-  ones). A fixed line opens the warning: that a reviewed record (OSV, or GitHub's reviewed database) still backs every
-  fix as read now, or, marking the rows, that none does for some; a fix it couldn't check gets its own line and is
-  listed. A lookup that fails is shown as such, never as "not found". When the table would push the PR body past
+  ones). It reports problems only: a line opens the warning when no reviewed record (OSV, or GitHub's reviewed
+  database) backs some advisory as read now, with those rows marked, and a fix it couldn't check is listed with its
+  reason. A lookup that fails is shown as such, never as "not found". When the table would push the PR body past
   GitHub's limit, only the table is left out, with a line saying so, and the plan's block keeps the evidence; when
   the PR still can't be written with the evidence, it's left out, and each fix that had some is listed as unchecked. The
-  gate's comparison report records, for each held fix, the advisories behind it (`targets`), and for a required
-  version or an exception the ones it fixes (an exception's named one, whichever source lists it); nothing in the
-  evidence changes a verdict.
+  gate's comparison report records, for each held version, the advisories it fixes (`targets`), whatever justified
+  it (an exception's named one, whichever source lists it); nothing in the evidence changes a verdict.
 - When verification refuses an edit the agent wrote, bump-it and secure-it now ask the agent once more, from the base,
   with the refusal (`rejected` in the skill input). In bump-it a second refusal fails the unit as before; in secure-it
   the existing retry without the named package groups still follows, from the second refusal, or from the first when

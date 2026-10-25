@@ -70,12 +70,22 @@ describe("what a young version records as the advisories it fixes", () => {
     ] })] });
   });
 
-  it("records nothing for an exception naming an advisory no replaced version has: it stays unjustified", async () => {
+  it("records only what an unjustified version fixes itself, never an exception's advisory that doesn't justify it", async () => {
     const affecting = { "npm|lib|1.0.0": [advisory("GHSA-lib", "osv")], "npm|lib|1.0.1": [advisory("GHSA-new", "osv")] };
     const exceptions = parseExceptions({ releaseAge: [{ ecosystem: "npm", package: "lib", version: "1.0.1", advisory: "CVE-9999-0000", reason: "the owner's call", expires: "2026-10-20" }] });
     const { problems, held } = await review(young(lib, "1.0.0"), affecting, { exceptions });
     expect(problems).toHaveLength(1);
-    expect(held[0]).toMatchObject({ justification: "unjustified" });
-    expect(held[0]!.targets).toBeUndefined();
+    expect(held).toEqual([expect.objectContaining({ justification: "unjustified", targets: [
+      { name: "lib", bundled: false, replaced: ["1.0.0"], proposed: ["1.0.1"], groups: [{ ids: ["GHSA-lib"], replaced: ["1.0.0"] }] },
+    ] })]);
+  });
+
+  it("records a bundle-fix carrier's own reviewed advisories beside its bundle's", async () => {
+    // The carrier adds GHSA-new, so the rule doesn't take it for its own advisory: only the bundle proof justifies it.
+    const affecting = { "npm|lib|1.0.0": [advisory("GHSA-lib", "osv")], "npm|lib|1.0.1": [advisory("GHSA-new", "osv")] };
+    const proved: BundleFixProof = { problem: undefined, targets: [bundled] };
+    const [held] = (await review(young(lib, "1.0.0"), affecting, { bundleFixes: new Map([["npm|lib|1.0.1", proved]]) })).held;
+    expect(held).toMatchObject({ justification: "bundle-fix" });
+    expect(held!.targets?.map((target) => [target.name, target.bundled])).toEqual([["lib", false], ["inner", true]]);
   });
 });

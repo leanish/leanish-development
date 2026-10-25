@@ -215,10 +215,9 @@ that is younger than `releaseAgeDays` is **held**, whether the rule picked it, a
 `releaseAge` exception names it:
 
 - The `supply-chain` verdict is unchanged: it says whether the change is right.
-- The comparison report records, for each held version, the advisories it fixes (`targets`): behind a security or
-  bundle fix, what justifies it; for a required version or an exception, the ones it fixes too, and an exception's
-  named advisory whichever source lists it. They're for people (secure-it's warning reads them) and never change a
-  verdict.
+- The comparison report records, for each held version, the advisories it fixes (`targets`), whatever justified it:
+  its own reviewed ones, those of a bundle proved both ways, and an exception's named one whichever source lists it.
+  They're for people (secure-it's warning reads them) and never change a verdict.
 - The separate `cooldown` job stays red while anything is held (and whenever it can't tell: a comparison that didn't
   pass, a missing report, a report for another head). Its log and step summary list each held version and when it
   turns old enough. Require it next to `supply-chain` (see GitHub settings below).
