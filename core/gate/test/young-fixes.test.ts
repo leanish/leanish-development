@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { type Config, parseConfig } from "../src/config.ts";
 import type { PackageName, PackageVersion } from "../src/package-version.ts";
 import { type Advisory, Snapshot } from "../src/snapshot.ts";
-import { candidateVersions, compatibleLine, gatherCandidates, type VersionCatalog, vetoesOf, youngFixProblem } from "../src/young-fixes.ts";
+import { candidateVersions, compatibleLine, gatherCandidates, passedOver, type VersionCatalog, VETOES_SHOWN, vetoesOf, vetoFields, youngFixProblem } from "../src/young-fixes.ts";
 
 const NOW = new Date("2026-10-06T12:00:00Z");
 const DAY = 86_400_000;
@@ -143,5 +143,31 @@ describe("vetoesOf", () => {
     const pkg = { ecosystem: "npm" as const, name: "lib" };
     // 1.0.1 fixes A and keeps B (inherited), but adds C: C alone rules it out. 1.0.2 just keeps B: no veto.
     expect(vetoesOf(snapshot, pkg, "1.0.0", ["GHSA-a"], ["1.0.1", "1.0.2"])).toEqual([{ version: "1.0.1", advisories: ["GHSA-c"] }]);
+  });
+});
+
+describe("passedOver", () => {
+  const veto = (version: string) => ({ version, advisories: ["GHSA-repo"] });
+  const order = Array.from({ length: 30 }, (_, i) => `1.0.${i}`);
+
+  it("records the vetoes before the choice, the nearest ten, and counts the rest", () => {
+    const vetoes = order.slice(0, 25).map(veto);
+    const recorded = passedOver(vetoes, order, "1.0.25");
+    expect(recorded.vetoed.map((entry) => entry.version)).toEqual(order.slice(15, 25));
+    expect(recorded.vetoed).toHaveLength(VETOES_SHOWN);
+    expect(recorded.vetoesLeftOut).toBe(15);
+  });
+
+  it("records nothing after the choice, in the order the choice tried, a downgrade's included", () => {
+    expect(passedOver(order.slice(5).map(veto), order, "1.0.4")).toEqual({ vetoed: [], vetoesLeftOut: 0 });
+    // Leaving malware from 1.0.5: newer in its line first, then older; 1.0.6 was tried before 1.0.3, 1.0.1 after it.
+    expect(passedOver([veto("1.0.6"), veto("1.0.1")], ["1.0.6", "1.0.3", "1.0.1"], "1.0.3")).toEqual({ vetoed: [veto("1.0.6")], vetoesLeftOut: 0 });
+    expect(() => passedOver([], order, "9.9.9")).toThrow("isn't among the candidates the choice tried");
+  });
+
+  it("gives a move no veto fields when nothing was vetoed", () => {
+    expect(vetoFields({ vetoed: [], vetoesLeftOut: 0 })).toEqual({});
+    expect(vetoFields({ vetoed: [veto("1.0.1")], vetoesLeftOut: 0 })).toEqual({ vetoed: [veto("1.0.1")] });
+    expect(vetoFields({ vetoed: [veto("1.0.1")], vetoesLeftOut: 3 })).toEqual({ vetoed: [veto("1.0.1")], vetoesLeftOut: 3 });
   });
 });

@@ -54,8 +54,10 @@ export interface PlannedMove {
   readonly unblocks?: ReadonlyArray<string>;
   /** A carrier move: the packages it replaces (bundled npm copies, or the Gradle module a parent brings), each with its advisories. */
   readonly carries?: ReadonlyArray<CarriedPackage>;
-  /** Candidates the gate ruled out only by advisories no reviewed source corroborates (`vetoesOf`), for people. */
+  /** Candidates the gate ruled out only by advisories no reviewed source corroborates, for people: the nearest the choice passed over (`passedOver`). */
   readonly vetoed?: ReadonlyArray<Veto>;
+  /** How many more candidates the choice passed over that way, when there were more than `vetoed` shows. */
+  readonly vetoesLeftOut?: number;
 }
 
 /** A dependent that moves so its range admits a copy's security target (`npm-parents.ts`). */
@@ -352,6 +354,7 @@ export async function planFor(work: ReadonlyArray<FixWork>, inputs: PlanInputs, 
     const base = {
       ecosystem: fix.ecosystem, name: fix.name, from: fix.from, to: to.version, advisories, major: to.major,
       ...(fix.carries === undefined ? {} : { carries: fix.carries }), ...(fix.vetoed === undefined || fix.vetoed.length === 0 ? {} : { vetoed: fix.vetoed }),
+      ...(fix.vetoesLeftOut === undefined ? {} : { vetoesLeftOut: fix.vetoesLeftOut }),
     };
     if (fix.ecosystem === "GitHub Actions") {
       const commitSha = await inputs.tagCommit(fix.name, to.version);

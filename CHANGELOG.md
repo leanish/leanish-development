@@ -24,11 +24,12 @@
   versions out. Only reviewed advisories (OSV, or GitHub's database for Actions) make secure-it plan a fix and make a
   young version the rule-picked fix, a bundle fix or a required npm dependency. A version affected only by unreviewed
   advisories is reported, not fixed, until a reviewed source lists it. An unreviewed advisory can still rule out the
-  version the rule would take and steer it to another, even a young one (held); secure-it's plan notes each such
-  candidate, carrier versions included. A required npm dependency's version is set by its requirement, so a veto there
-  refuses the fix, and the refusal now names each advisory it adds, marked when unreviewed. A `releaseAge` exception
-  may still name one: the owner's override. The rules are in the gate's README ("How each source counts"). GitHub's
-  Actions advisories that aren't `reviewed` or `malware` now fail the run.
+  version the rule would take and steer it to another, even a young one (held); secure-it's plan notes the ten such
+  candidates nearest the choice that it passed over, carrier versions included, and counts the rest. A required npm
+  dependency's version is set by its requirement, so a veto there refuses the fix, and the refusal now names each
+  advisory it adds, marked when unreviewed. A `releaseAge` exception may still name one: the owner's override. The
+  rules are in the gate's README ("How each source counts"). GitHub's Actions advisories that aren't `reviewed` or
+  `malware` now fail the run.
 
 ### Added
 
