@@ -111,9 +111,23 @@ function withoutNoise(text: string): string {
     .join("\n");
 }
 
+const OWN_COMMENT = "<!-- leanish:";
+const COMMENT_END = "-->";
+
+/**
+ * `body` with `clean` applied outside the tool's own comments (`<!-- leanish:` to the first `-->` after it). One scan
+ * with indexOf, not a lazy regex, which takes quadratic time on many unclosed `<!-- leanish:`. When one has no end, no
+ * later one can, so the rest is all text.
+ */
 function outsideComments(body: string, clean: (text: string) => string): string {
-  return body
-    .split(/(<!-- leanish:[\s\S]*?-->)/)
-    .map((part, i) => (i % 2 === 1 ? part : clean(part)))
-    .join("");
+  let cleaned = "";
+  let at = 0;
+  for (;;) {
+    const start = body.indexOf(OWN_COMMENT, at);
+    const end = start === -1 ? -1 : body.indexOf(COMMENT_END, start + OWN_COMMENT.length);
+    if (end === -1) break;
+    cleaned += clean(body.slice(at, start)) + body.slice(start, end + COMMENT_END.length);
+    at = end + COMMENT_END.length;
+  }
+  return cleaned + clean(body.slice(at));
 }

@@ -60,6 +60,17 @@ describe("published text keeps the machine out", () => {
     expect(clean(once)).toBe(once);
   });
 
+  it("keeps each own comment whole, to its first end, and cleans an unclosed one as text, in linear time", () => {
+    expect(clean(`a /tmp/x <!-- leanish:state /tmp/y --><!-- leanish:plan /tmp/z --> b /tmp/w`))
+      .toBe(`a ${LOCAL_PATH} <!-- leanish:state /tmp/y --><!-- leanish:plan /tmp/z --> b ${LOCAL_PATH}`);
+    expect(clean(`<!-- leanish:state /tmp/y --> --> /tmp/x`)).toBe(`<!-- leanish:state /tmp/y --> --> ${LOCAL_PATH}`);
+    expect(clean(`/tmp/x <!-- leanish:open /tmp/y`)).toBe(`${LOCAL_PATH} <!-- leanish:open ${LOCAL_PATH}`);
+    // Thousands of unclosed openings: a lazy regex would rescan the rest from each.
+    const started = Date.now();
+    clean("<!-- leanish:".repeat(20_000));
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
   it("cleans the title and commit message too, without dropping their lines", () => {
     const content = cleanContent({ title: `fixing ${WC}/lib`, body: "ok", commitMessage: `moving lib\n\nbuilt with /tmp/x` }, ROOTS);
     expect(content).toEqual({ title: "fixing lib", body: "ok", commitMessage: `moving lib\n\nbuilt with ${LOCAL_PATH}` });
