@@ -85,8 +85,11 @@ const quoted = (text: string) => text.replaceAll("<", "&lt;").replace(/\s+/g, " 
 
 /** A fixed line per candidate the gate ruled out only by advisories no reviewed source corroborates. */
 function vetoLines(move: PlannedMove): string[] {
-  return (move.vetoed ?? []).map((veto) =>
-    `- ${quoted(move.name)} ${quoted(veto.version)} was ruled out by ${quoted(veto.advisories.join(", "))}, not corroborated by the sources this decision used; this takes ${move.to}.`);
+  const left = move.vetoesLeftOut === undefined ? [] : [
+    `- ${quoted(move.name)}: ${move.vetoesLeftOut} additional candidates preceding ${move.to} in the selection order were ruled out the same way, by advisories not corroborated by the sources this decision used.`,
+  ];
+  return [...(move.vetoed ?? []).map((veto) =>
+    `- ${quoted(move.name)} ${quoted(veto.version)} was ruled out by ${quoted(veto.advisories.join(", "))}, not corroborated by the sources this decision used; this takes ${move.to}.`), ...left];
 }
 
 /** Omissions are visible to reviewers as well as the command report and persisted plan. */
@@ -230,7 +233,9 @@ function isMove(move: unknown): move is PlannedMove {
   const m = move as Record<string, unknown>;
   return typeof m["name"] === "string" && typeof m["from"] === "string" && typeof m["to"] === "string" && typeof m["mechanism"] === "string" && Array.isArray(m["locations"]) &&
     (m["carries"] === undefined || (Array.isArray(m["carries"]) && m["carries"].every(isCarried))) &&
-    (m["vetoed"] === undefined || (Array.isArray(m["vetoed"]) && m["vetoed"].every(isVeto)));
+    (m["vetoed"] === undefined || (Array.isArray(m["vetoed"]) && m["vetoed"].every(isVeto))) &&
+    // A count of the vetoes left out only stands beside some that are shown.
+    (m["vetoesLeftOut"] === undefined || (Number.isSafeInteger(m["vetoesLeftOut"]) && (m["vetoesLeftOut"] as number) > 0 && Array.isArray(m["vetoed"]) && m["vetoed"].length > 0));
 }
 
 function isVeto(entry: unknown): boolean {

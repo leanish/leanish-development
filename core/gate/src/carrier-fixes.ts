@@ -39,7 +39,7 @@ import type { NpmRegistry } from "./npm-registry.ts";
 import type { PackageName, PackageVersion } from "./package-version.ts";
 import type { Snapshot } from "./snapshot.ts";
 import { versionScheme } from "./versions.ts";
-import { compatibleLine, fixes, groupsOf, reviewedGroups, unreviewedGroups, type VersionCatalog, type Veto } from "./young-fixes.ts";
+import { compatibleLine, fixes, groupsOf, passedOver, reviewedGroups, unreviewedGroups, type VersionCatalog, type Veto } from "./young-fixes.ts";
 
 const DAY_MS = 86_400_000;
 /** Bundles read before each new advisory snapshot. */
@@ -81,8 +81,10 @@ export interface CarrierServices {
 export type CarrierChoice =
   | {
     readonly kind: "chosen"; readonly version: string; readonly line: string; readonly aged: boolean; readonly bundle: CompleteBundle; readonly snapshot: Snapshot;
-    /** Read versions ruled out only by unreviewed advisories (file header), in search order. */
+    /** Read versions ruled out only by unreviewed advisories (file header) that the search passed over, the nearest ones, in search order. */
     readonly vetoed: ReadonlyArray<Veto>;
+    /** How many more it passed over (`passedOver`). */
+    readonly vetoesLeftOut: number;
   }
   | { readonly kind: "none"; readonly reason: string }
   | { readonly kind: "incomplete"; readonly reason: string };
@@ -143,7 +145,7 @@ async function leaveMalware(search: CarrierSearch, services: CarrierServices, st
     }
     const verdict = await state.fixes(version, [version]);
     if (verdict.kind === "incomplete") return verdict;
-    if (verdict.fixes) return state.chosen(version, line(version), !search.ownPackage);
+    if (verdict.fixes) return state.chosen(version, line(version), !search.ownPackage, order);
   }
   return { kind: "none", reason: `no clean ${search.carrier} version${search.ownPackage ? "" : ` at least ${services.config.releaseAgeDays} days old`} to leave the malicious bundle of ${search.from} for` };
 }
@@ -178,7 +180,8 @@ class SearchState {
     return this.#snapshots;
   }
 
-  chosen(version: string, line: string, aged: boolean): CarrierChoice {
+  /** `version`, chosen after trying the versions before it in `order` (ascending, unless leaving malware). */
+  chosen(version: string, line: string, aged: boolean, order: ReadonlyArray<string> = this.#search.versions): CarrierChoice {
     const bundle = this.#bundles.get(version);
     if (bundle === undefined || !bundle.complete || this.#snapshot === undefined) throw new Error(`${this.#search.carrier}@${version} was chosen unread`);
     const snapshot = this.#snapshot;
@@ -188,7 +191,7 @@ class SearchState {
       const veto = carrierVeto(this.#search, other, read, snapshot);
       return veto === undefined ? [] : [veto];
     });
-    return { kind: "chosen", version, line, aged, bundle, snapshot, vetoed };
+    return { kind: "chosen", version, line, aged, bundle, snapshot, ...passedOver(vetoed, order, version) };
   }
 
   #covered(): PackageVersion[] {

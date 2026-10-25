@@ -230,6 +230,22 @@ describe("carrier versions ruled out only by unreviewed advisories", () => {
     });
   });
 
+  it("records the nearest ten it passed over and counts the rest", async () => {
+    const vetoing = bundle("brace@5.0.12", "minimatch@10.2.5", "glob@2.0.0");
+    const passed = Array.from({ length: 12 }, (_, i) => `2.10.${i}`);
+    const { services } = setup({ ...Object.fromEntries(passed.map((version) => [version, { days: 30, bundle: vetoing }])), "2.11.0": { days: 30, bundle: fixed } });
+    const choice = await chooseCarrier(search([...passed, "2.11.0"]), services);
+    expect(choice).toMatchObject({ kind: "chosen", version: "2.11.0", vetoesLeftOut: 2 });
+    expect(choice.kind === "chosen" ? choice.vetoed.map((veto) => veto.version) : []).toEqual(passed.slice(2));
+  });
+
+  it("records, leaving malware, a newer version it tried before a downgrade", async () => {
+    const vetoing = bundle("minimatch@10.2.5", "glob@2.0.0");
+    const { services } = setup({ "2.7.0": { days: 200, bundle: vetoing }, "2.8.0": { days: 90, bundle: bundle("minimatch@10.2.5") }, "2.10.0": { days: 30, bundle: vetoing } });
+    const leaving = search(["2.7.0", "2.8.0", "2.10.0"], { from: "2.9.0", fromBundle: bundle("minimatch@10.2.5", "evil@1.0.0"), carried: [], malicious: true });
+    expect(await chooseCarrier(leaving, services)).toMatchObject({ kind: "chosen", version: "2.8.0", vetoed: [{ version: "2.10.0", advisories: ["GHSA-glob-repo"] }], vetoesLeftOut: 0 });
+  });
+
   it("doesn't ignore a pair another copy of that name in the bundle corroborates", async () => {
     const { services } = setup({
       "2.10.0": { days: 30, bundle: bundle("brace@5.0.12", "minimatch@10.2.5", "glob@2.0.0", "node_modules/x/node_modules/glob=glob@2.0.1") },

@@ -144,6 +144,34 @@ export function vetoesOf(snapshot: Snapshot, pkg: PackageName, from: string, tar
   });
 }
 
+/** At most this many vetoes are recorded with a choice, the ones nearest it; the rest are counted (`passedOver`). */
+export const VETOES_SHOWN = 10;
+
+/** What a choice records of its vetoes: the candidates it passed over, nearest first kept, and how many more there were. */
+export interface RecordedVetoes {
+  readonly vetoed: ReadonlyArray<Veto>;
+  readonly vetoesLeftOut: number;
+}
+
+/**
+ * The vetoes of candidates before `chosen` in `order`, the order the choice tried them in: the VETOES_SHOWN nearest it,
+ * in that order, and a count of the rest. A candidate after the choice explains nothing about it, so isn't recorded;
+ * every move of a package would otherwise repeat them all (thousands, for one open-ended advisory).
+ */
+export function passedOver(vetoes: ReadonlyArray<Veto>, order: ReadonlyArray<string>, chosen: string): RecordedVetoes {
+  const at = order.indexOf(chosen);
+  if (at === -1) throw new Error(`the chosen version ${chosen} isn't among the candidates the choice tried`);
+  const byVersion = new Map(vetoes.map((veto) => [veto.version, veto]));
+  const passed = order.slice(0, at).flatMap((version) => byVersion.get(version) ?? []);
+  const vetoed = passed.slice(-VETOES_SHOWN);
+  return { vetoed, vetoesLeftOut: passed.length - vetoed.length };
+}
+
+/** The fields a move carries for `recorded`: none of them when nothing was vetoed. */
+export function vetoFields(recorded: RecordedVetoes): { readonly vetoed?: ReadonlyArray<Veto>; readonly vetoesLeftOut?: number } {
+  return { ...(recorded.vetoed.length === 0 ? {} : { vetoed: recorded.vetoed }), ...(recorded.vetoesLeftOut === 0 ? {} : { vetoesLeftOut: recorded.vetoesLeftOut }) };
+}
+
 export type RuleChoice =
   | { readonly kind: "chosen"; readonly version: string; readonly line: string; readonly aged: boolean }
   /** Fixing versions in the line whose publish time is unknown: an older aged fix can't be ruled out. */
