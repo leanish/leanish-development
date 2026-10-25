@@ -181,7 +181,18 @@ describe("a young carrier proved as a bundled fix", () => {
 
   it("isn't when its bundle drops nothing", async () => {
     const outcome = await compare({ "1.0.0": { published: OLD, bundles: VULNERABLE }, "1.1.0": { published: daysAgo(1), bundles: VULNERABLE } }, "1.0.0", "1.1.0");
-    expect(ageFailures(outcome.failures)).toEqual([expect.stringContaining("fixes nothing 1.0.0's had")]);
+    expect(ageFailures(outcome.failures)).toEqual([expect.stringContaining("fixes no reviewed bundled advisory affecting 1.0.0")]);
+  });
+
+  it("doesn't justify an own-only fix by ruling out the ordinary rule's aged choice on its bundle", async () => {
+    const outcome = await compare({
+      "1.0.0": { published: OLD, bundles: VULNERABLE },
+      "1.0.1": { published: daysAgo(30), bundles: FIXED },
+      "1.0.2": { published: daysAgo(1), bundles: VULNERABLE },
+    }, "1.0.0", "1.0.2", { affected: { "carrier@1.0.0": ["GHSA-own"], "brace@5.0.12": ["GHSA-added"] } });
+    expect(outcome.failures).toEqual([expect.stringContaining("1.0.1 fixes GHSA-own too and is at least 7 days old")]);
+    expect(outcome.failures[0]).toContain("carrier@1.0.2's bundle fixes no reviewed bundled advisory affecting 1.0.0; fixes of the carrier's own advisories need the ordinary young-fix rule or a release-age exception");
+    expect(outcome.cooldown).toMatchObject({ evaluated: true, held: [{ name: "carrier", version: "1.0.2", justification: "unjustified" }] });
   });
 
   it("isn't when head's lockfile records a bundle its archive doesn't ship", async () => {

@@ -10,13 +10,15 @@ import type { WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
 import { InMemoryWorkspace } from "@leanish/agent-runtime/working-copy/in-memory-workspace";
 import { gradleResolutionProblems, type GradleInventory } from "@leanish/gate/gradle";
 import type { AdvisoryEvidence } from "@leanish/gate/advisory-evidence";
-import type { SecurityFix } from "@leanish/gate/candidates";
+import { securityCandidates, type SecurityFix } from "@leanish/gate/candidates";
 import { FLOORS_PATH, parseFloors } from "@leanish/gate/floors";
 import { selectRemovals, withoutFloorRecords } from "../src/floor-removal.ts";
 import type { Tree } from "@leanish/gate/tree";
 import { assertAgentWorkspace, type ToolRunContext } from "@leanish/tool-runtime/command";
 import { retargetRepository } from "@leanish/tool-runtime/test/retarget-repository";
-import { runCompare } from "@leanish/gate/gate";
+import { runCompare, type GateEnvironment } from "@leanish/gate/gate";
+import { fakeFetch } from "@leanish/gate/test/fake-fetch";
+import { archive, manifest, serving } from "@leanish/gate/test/tarballs";
 import { parseToolConfig } from "@leanish/tool-runtime/config";
 import { MemoryJournal } from "@leanish/tool-runtime/test/memory-journal";
 import { branchFor, stateOf, withMarker } from "@leanish/tool-runtime/own-pr";
@@ -161,6 +163,70 @@ async function vitePr(overrides: Partial<GitHubPullRequest> = {}, fix = vite()):
 }
 
 describe("secure-it run", () => {
+  it("doesn't publish an own-only young carrier as a bundle fix when a repository-only finding preserves carrier identity", async () => {
+    const versions = ["1.0.0", "1.0.1", "1.0.2"];
+    const brace = (version: string) => version === "1.0.1" ? "5.0.12" : "5.0.9";
+    const tarball = (version: string) => `https://registry.npmjs.org/carrier/-/carrier-${version}.tgz`;
+    const archives = Object.fromEntries(versions.map((version) => [version, archive([
+      { path: "package/package.json", body: manifest("carrier", version, { bundleDependencies: ["brace"] }) },
+      { path: "package/node_modules/brace/package.json", body: manifest("brace", brace(version)) },
+    ])]));
+    const files = (version: string) => {
+      const root = { name: "app", dependencies: { carrier: `^${version}` } };
+      return { "package.json": JSON.stringify(root), "package-lock.json": JSON.stringify({ lockfileVersion: 3, packages: {
+        "": root,
+        "node_modules/carrier": { version, resolved: tarball(version), integrity: archives[version]!.integrity, bundleDependencies: ["brace"], dependencies: { brace: brace(version) } },
+        "node_modules/carrier/node_modules/brace": { version: brace(version), inBundle: true },
+      } }) };
+    };
+    const base = tree(BASE_SHA, files("1.0.0"));
+    const head = tree(SNAPSHOT, files("1.0.2"));
+    const env: GateEnvironment = {
+      now: () => NOW, osvScanner: "osv-scanner", githubToken: undefined,
+      fetchArchive: serving(Object.fromEntries(versions.map((version) => [tarball(version), archives[version]!.bytes]))),
+      fetch: fakeFetch({
+        ...Object.fromEntries(versions.map((version) => [`https://registry.npmjs.org/carrier/${version}`, { body: {} }])),
+        "https://registry.npmjs.org/brace/5.0.12": { body: {} },
+        "https://registry.npmjs.org/carrier": { body: {
+          time: Object.fromEntries(versions.map((version) => [version, version === "1.0.2" ? "2026-10-06T00:00:00Z" : OLD])),
+          versions: Object.fromEntries(versions.map((version) => [version, { _npmUser: { name: "maintainer" }, dependencies: { brace: brace(version) }, dist: { integrity: archives[version]!.integrity, tarball: tarball(version) } }])),
+        } },
+        "https://registry.npmjs.org/brace/5.0.9": { body: { repository: "github:acme/brace" } },
+        "https://api.github.com/repos/acme/brace/security-advisories?state=published&per_page=100": { body: [
+          { ghsa_id: "GHSA-brace-repo", state: "published", vulnerabilities: [{ package: { ecosystem: "npm", name: "brace" }, vulnerable_version_range: "= 5.0.9" }] },
+        ] },
+      }),
+      run: async (command, args) => {
+        if (command !== "osv-scanner") throw new Error(`unexpected command: ${command}`);
+        if (args[0] === "--version") return { code: 0, stdout: "osv-scanner version: 2.6.0\n", stderr: "" };
+        const scanned = JSON.parse(await readFile(args[args.indexOf("--lockfile") + 1]!.replace(/^osv-scanner:/, ""), "utf8")) as {
+          results: Array<{ packages: Array<{ package: { name: string; version: string } }> }>;
+        };
+        const affected: Record<string, string[]> = { "carrier@1.0.0": ["GHSA-own"], "brace@5.0.12": ["GHSA-added"] };
+        const packages = scanned.results[0]!.packages.map(({ package: pkg }) => ({ package: pkg,
+          vulnerabilities: (affected[`${pkg.name}@${pkg.version}`] ?? []).map((id) => ({ id, summary: id })),
+        }));
+        return { code: 1, stdout: JSON.stringify({ results: [{ packages }] }), stderr: "" };
+      },
+    };
+    const found = await securityCandidates(base, env);
+    expect(found.fixes.find((fix) => fix.name === "carrier")).toMatchObject({ targets: ["GHSA-own"], carries: [], to: { version: "1.0.2", aged: false } });
+    const h = harness();
+    const actual = await vi.importActual<typeof import("@leanish/gate/gate")>("@leanish/gate/gate");
+    vi.mocked(runCompare).mockImplementation(actual.runCompare);
+    try {
+      const result = await secureIt({ ...h.deps, gate: async () => env, candidates: async () => found, verify: verifyPlan,
+        materializeNpm: async () => new Map(Object.entries(files("1.0.2"))),
+        trees: { commit: async (_wc, sha) => sha === BASE_SHA ? base : head, working: () => head },
+      }).run(h.context);
+      expect(result).toMatchObject({ outcome: "verification-failed", problems: [expect.stringContaining("1.0.1 fixes GHSA-own too and is at least 7 days old")] });
+      expect(h.github.prs.size).toBe(0);
+      expect(h.workspace.pushes).toEqual([]);
+    } finally {
+      vi.mocked(runCompare).mockReset();
+    }
+  });
+
   it("declares the tool-written floors file when npm writes it before a planned Gradle floor addition", async () => {
     const h = harness({ fixes: [vite(), vite({ ecosystem: "Maven", name: "g:lib", from: "1.0", locations: [":runtimeClasspath"], to: { version: "1.1", line: "1", aged: true, major: false, blockers: [] } })] });
     const inventory: GradleInventory = { schemaVersion: 3, tree: "base", builds: [{ build: ".", configurations: [{ id: ":runtimeClasspath", kind: "project", declared: [], resolved: [{ group: "g", name: "lib", version: "1.0" }], unresolved: [], error: undefined }] }] };

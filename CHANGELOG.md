@@ -31,6 +31,10 @@
   rules are in the gate's README ("How each source counts"). GitHub's Actions advisories that aren't `reviewed` or
   `malware` now fail the run.
 
+- A young npm carrier's `bundle-fix` justification requires at least one reviewed bundled advisory it fixes. Its own
+  reviewed targets still join the combined choice; an own-only fix must satisfy the ordinary young-fix proof or an
+  explicit `releaseAge` exception.
+
 ### Added
 
 - secure-it's cooldown warning now says where the advisories each held version fixes appear: the
