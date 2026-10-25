@@ -5,9 +5,9 @@ import type { GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
 import type { WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
 import { InMemoryWorkspace } from "@leanish/agent-runtime/working-copy/in-memory-workspace";
 import { MemoryJournal } from "./memory-journal.ts";
-import { stateOf, withMarker } from "../src/own-pr.ts";
+import { MAX_ADAPTATIONS, stateOf, withMarker } from "../src/own-pr.ts";
 import { closeAndDelete, publishUpdate, type PublicationContext } from "../src/publication.ts";
-import { type BaseMerge, MAX_ADAPTATIONS, type ReviewContext, reviewOpenPullRequests, type ReviewSteps } from "../src/review.ts";
+import { type BaseMerge, type ReviewContext, reviewOpenPullRequests, type ReviewSteps } from "../src/review.ts";
 import { COOLDOWN_STEPS } from "../src/ci-state.ts";
 import { BASE_SHA, FakeGitHub, GREEN, HEAD_SHA, ownPr, PUSHED_SHA, RED, RULES } from "./fake-github.ts";
 

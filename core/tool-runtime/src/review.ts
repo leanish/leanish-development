@@ -34,11 +34,8 @@ import type { Workspace } from "@leanish/agent-runtime/working-copy/workspace";
 
 import { classifyCi, onlyCooldownHolds, unreportedRequired } from "./ci-state.ts";
 import type { PublicationJournal } from "./journal.ts";
-import { type OwnPullRequests, type PullRequestState, stateOf } from "./own-pr.ts";
+import { MAX_ADAPTATIONS, type OwnPullRequests, type PullRequestState, stateOf } from "./own-pr.ts";
 import { closeAndDelete, markReady, ownOpenPullRequests, type PublicationContext, recordState, recoverPublication } from "./publication.ts";
-
-/** How many times the agent may adapt one PR after a failed CI before the tool gives it up. */
-export const MAX_ADAPTATIONS = 2;
 
 /** What happened to one PR in a tick. */
 export type ReviewOutcome =

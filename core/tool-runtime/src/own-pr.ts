@@ -29,6 +29,9 @@ export interface PullRequestState {
   readonly adaptations: number;
 }
 
+/** How many times the agent may adapt one PR after a failed CI before the tool gives it up. */
+export const MAX_ADAPTATIONS = 2;
+
 export function ownPullRequests(tool: ToolName): OwnPullRequests {
   return { tool, label: `leanish:${tool}`, marker: MARKER(tool) };
 }
@@ -94,8 +97,8 @@ export function withMarker(rules: OwnPullRequests, body: string, state: PullRequ
   return `${bare}\n\n<!-- leanish:state head=${state.head} base=${state.base} adaptations=${state.adaptations} -->\n${rules.marker}\n`;
 }
 
-/** A state as long as any a publication writes: full SHAs and more adaptations than a PR ever gets. */
-const LONGEST_STATE: PullRequestState = { head: "f".repeat(40), base: "f".repeat(40), adaptations: 999_999 };
+/** A state as long as any a publication writes: full SHAs and the most adaptations a PR gets. */
+const LONGEST_STATE: PullRequestState = { head: "f".repeat(40), base: "f".repeat(40), adaptations: MAX_ADAPTATIONS };
 
 /**
  * How long `body` is, at most, once withMarker marks it: its own state and marker replaced, not counted twice, and the

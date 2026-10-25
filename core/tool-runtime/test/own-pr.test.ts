@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { branchFor, freeBranch, isOwnPullRequest, markedLength, ownPullRequests, stateOf, topicOf, withMarker } from "../src/own-pr.ts";
+import { branchFor, freeBranch, isOwnPullRequest, markedLength, MAX_ADAPTATIONS, ownPullRequests, stateOf, topicOf, withMarker } from "../src/own-pr.ts";
 import { planBlock, planPayload } from "../src/plan-blocks.ts";
 import { BASE_SHA, HEAD_SHA, ownPr, RULES } from "./fake-github.ts";
 
@@ -67,9 +67,10 @@ describe("own PRs", () => {
   it("measures a body as published: its own marker replaced, the longest state appended", () => {
     for (const tool of ["secure-it", "bump-it"] as const) {
       const rules = ownPullRequests(tool);
-      const marked = withMarker(rules, "Body.", { head: HEAD_SHA, base: BASE_SHA, adaptations: 3 });
-      // Six digits of adaptations against one: the measure bounds what publication writes.
-      expect(markedLength(rules, "Body.")).toBe(marked.length + 5);
+      const marked = withMarker(rules, "Body.", { head: HEAD_SHA, base: BASE_SHA, adaptations: MAX_ADAPTATIONS });
+      // Exactly what publication writes at the most adaptations; fewer never write more digits.
+      expect(markedLength(rules, "Body.")).toBe(marked.length);
+      expect(withMarker(rules, "Body.", { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }).length).toBe(marked.length);
       // A body that already carries a state and marker (a refresh) measures as the bare one.
       expect(markedLength(rules, marked)).toBe(markedLength(rules, "Body."));
     }
