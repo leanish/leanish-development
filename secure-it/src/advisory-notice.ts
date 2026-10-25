@@ -17,7 +17,7 @@ import { backsFix, type EvidenceRecord, type GroupEvidence, type SourceEvidence,
 import type { PlannedHold } from "./plan.ts";
 
 export const EVIDENCE_DIFFERS =
-  "**Some advisories recorded for these held fixes are not backed by reviewed records as read now.** For the rows marked ⚠ below, no reviewed record (OSV, or GitHub's reviewed advisory database) lists the replaced versions as affected and the proposed one as not, or one was withdrawn or couldn't be read. The comparison's verdict stands; check the table before taking this early.";
+  "**Some advisories recorded for these held fixes are not backed by reviewed records as read now.** For the advisories marked ⚠ in the table below (the plan's block keeps every row, should the table be cut), no reviewed record (OSV, or GitHub's reviewed advisory database) lists the replaced versions as affected and the proposed one as not, or one was withdrawn or couldn't be read. The comparison's verdict stands; check them before taking this early.";
 
 export const INCOMPLETE =
   "**Some of these fixes couldn't be checked**, as listed below. The comparison's verdict stands; check those before taking this early.";
