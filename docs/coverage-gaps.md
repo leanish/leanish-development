@@ -26,6 +26,12 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 - **Gradle metadata outside the reference comparison**: declaration `because(...)` reasons and resolved graph edges are exported but not compared with the planned reference; secure-it checks floor reasons separately. Reference-only `moved` markers are checked to prove the plan's moves. Local files, artifacts, attributes and capabilities are outside the exported module/version comparison.
 - **Links in workflow and action metadata (gate)**: the gate reads a symbolic link in a commit as the path it points to, so the actions behind a linked workflow, action metadata file or folder aren't read. This is pre-existing in 0.5.1. The tools refuse edits that add links or change what's behind one.
 - **An unpinned action moved into a step (gate)**: the comparison counts each action's occurrences in a file, so moving `uses: acme/action@main` from an `env` map (or another non-step key read as an action) into a step of the same workflow leaves the count unchanged and isn't required to be pinned: it's only reported as an unpinned-action gap, not failed. Pre-existing in 0.5.2.
+- **Repository advisories OSV also lists (gate)**: a project's repository advisory that isn't malware is
+  dropped for a version when OSV has a record with the same id for the package, whatever its ranges. So a repository
+  range wider than OSV's is ignored for the versions only the repository names. Pre-existing in 0.7.5; not fixed in 0.8.0.
+- **Local actions outside the repository (gate)**: read from the working tree, a local action such as `uses: ./../x`
+  can resolve outside the repository root; read from a commit, it's refused. Pre-existing in 0.7.5; not fixed in
+  0.8.0.
 - **Gradle floor removal and parent configurations (secure-it)**: the reference build that checks a floor removal
   snapshots what the configuration inherits, after the projects are evaluated. A dependency the build adds to a
   parent configuration later is missing from it, so a correct removal fails verification and needs a person. An

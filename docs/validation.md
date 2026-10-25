@@ -647,3 +647,116 @@ What each step added, with rough API-equivalent cost:
 - Claude implemented the release; the strict read, the polynomial regex and the deleted text were all its own.
 
 v0.7.5 (`310925f`) is rc.4 plus its release metadata.
+
+## Release reviews and candidates of 0.8.0 — 2026-10-25
+
+A project's own repository advisories are unreviewed: whoever controls the repository can publish one at will. From
+0.8.0 they only detect and veto; a fix or a young version needs a reviewed source, GitHub's reviewed database or OSV
+(#235). Held PRs open with a notice of where each advisory behind their young versions appears, the agent is asked
+once more with the gate's refusal (#235), and secure-it opens one held PR per group of young fixes that can move apart
+(#236). The policy change isn't backward compatible, so 0.7.6 became 0.8.0.
+
+Every candidate with code changes ran `batch` for both tools on all fixtures, as a rule secure-it 12 of 12 (9 PRs)
+and bump-it 12 of 12 (15 PRs); rc.2 and rc.11 below were the exceptions. Every PR was green except fast-uri, held by the cooldown until 2026-10-26 as planned. Then
+Haiku ×2 reviewed `git diff v0.7.5` (sources only), Sol reviewed it unprimed on a fresh clone and label, and Astra
+followed on Sol's thread when Sol found nothing. From rc.3, Sol double-checked every Haiku point Claude dismissed.
+From rc.13, by the owner's call, a finding blocked only if it weakened a gate or aborted a run in a realistic case.
+Wrong or missing data in the notice's edge cases became a known limit.
+
+- **rc.1 (`e34d167`)**: Haiku's checklist found that when the agent's second attempt couldn't apply or threw, the
+  unit failed before the reduced retry, which v0.7.5 published through. #237 restored it, along with a retry note two
+  targets share and a guard against `.`/`..` in Actions names.
+- **rc.2 (`2217c14`)**: secure-it 11 of 12: cleanup closed TEST_strict#51 a second before review listed it
+  (`git fetch` 128), so later runs waited 90 s after cleanup. Haiku found three blockers: OSV ranges with consecutive
+  or unsorted `introduced` events were misread, an unreviewed advisory on a version with a reviewed fix was dropped
+  silently, and a held PR losing its claim closed saying nothing remained. #238 fixed all three.
+- **rc.3 (`950156c`)**: Haiku found no blocker. Sol, unprimed, found two. The notice said every advisory was backed
+  while another fix's evidence was missing, and its table could push a held body past 65,536 (a 70,707-character
+  warning). Haiku had raised the size risk, and it had been deferred as a known limit. #239 lists unchecked fixes and
+  bounds every name and version.
+- **rc.4 (`e04d9c8`)**: Haiku and Sol found nothing. Astra found two. Advisory text could carry a plan block read
+  before the verified plan (P1), and an own plan without a topic aborted the run (#240).
+- **rc.5 (`6a375fb`) and rc.6 (`4d4d2ab`)**: rc.5 was clean for Haiku and Sol. Astra ran out of Codex credits. Four
+  Haiku audits of the docs (the owner's ask) led to #241, which is docs only: rc.6 kept rc.5's runs and Haiku reviews.
+  On rc.6, Sol found that one malformed journal aborted the run and that a reduced retry kept the omitted moves'
+  notes (#242).
+- **rc.7 (`a36048b`)**: Haiku and Sol found nothing. Astra found that the retry still kept a note naming a kept
+  package. #243 attributes each note to its leading `name@version`.
+- **rc.8 (`194b30f`) to rc.10 (`b257625`)**: Sol found a blocker on each:
+  - rc.8: a young carrier's evidence left out its bundle targets, and lookups dropped aliases known from other
+    versions (#244).
+  - rc.9: split held units lost the joint plan two npm roots need for one exact companion, so both failed where
+    v0.7.5 published (#245).
+  - rc.10: the evidence could push the plan past 1 MiB and stop a verified fix (#246 writes the PR without evidence
+    on a size error).
+- **rc.11 (`5b66dd1`)**: one bump-it unit failed: the agent wrote text after its final JSON (a model flake). A rerun
+  was clean. Sol found nothing. Astra found that `required` and excepted npm holds recorded no targets, so the
+  notice could claim every advisory was backed (#247).
+- **rc.12 (`ca25f7b`)**: Haiku and Sol found nothing. Astra ran out of credits. The owner then cut the notice down
+  (#248): it reports only problems, records held targets in one place, and cuts its table to fit with ⚠ rows first.
+- **rc.13 (`1b715b0`) to rc.17 (`6013c18`)**: Sol or Astra found a blocker on each candidate, the first three from size
+  limits:
+  - rc.13, Sol: a body with no rows left could be within the marker's length of the limit, so GitHub refused it
+    after the push (#249).
+  - rc.14, Sol then Astra: veto records could pass 1 MiB. Sol withdrew this as unrealistic; Astra reinstated it with
+    one repository-only advisory over about 2,000 candidates and eight moves, 1.2 MB (#251). A Haiku docs audit led
+    to #250.
+  - rc.15, Astra: the body was sized before publication's cleaning, which lengthens short local paths (#252). CodeQL
+    then flagged two existing regexes the change made reachable, now linear scans.
+  - rc.16, Sol: #251's ten recorded vetoes could leave out the one that forced a young choice. #253 keeps the
+    nearest on either side. The owner replaced exact sizing with raw budgets: 61,440 for fresh text and 65,280 for
+    published text. The cleaned title and body are checked against the client's limits before any push.
+  - rc.17, Sol: lockstep Gradle fixes (`failOnVersionConflict()`) were split, and both failed verification. #254
+    resolves held Maven plans through Gradle's reference before splitting; the real-Gradle tests passed 10 of 10 by
+    hand.
+- **rc.18 (`a46ba49`)**: Sol found nothing. Haiku's gap-hunter found a blocker, which Sol confirmed: #244 let a
+  carrier that fixes only its own advisories through the bundle proof, so a young version the young-fix rule refused
+  passed. v0.7.5 refused it (#255).
+- **rc.19 (`28699bd`)**: Haiku found no gate weakening, only one report-only gap (below). Sol and Astra found
+  nothing. Astra confirmed the thirteen blockers from rc.4 to rc.18 were closed, with no other route to them.
+- **Passes on v0.8.0**: the six fixture repins (`fixture-repin`) merged green.
+  - Pass 1 (2026-10-25 21:44): 28 commands, no errors. bump-it opened the repins leanish-skills#40,
+    java-conventions#100, dtv#55, leanish-development#259, leanish-development-incubator#36, kryptovero#19 and
+    sqs-codec#176. It also opened updates dtv#54, leanish-development#258, leanish-development-incubator#35 and
+    sqs-codec#175 (zstd-jni). On kryptovero, secure-it reported the jackson advisories behind 0.7.5's failures as
+    repository-only and proposed no fix.
+  - Pass 2 (23:39): 28 commands, no errors. It reviewed the four open update PRs, kept them current and published
+    nothing new.
+  - `main` of leanish-development failed the gate on fast-uri 3.1.8's four advisories while the held fix waited for
+    the cooldown. The owner took the young 3.1.9 (#225, leanish-development-incubator#28), as the held PR intends.
+
+Known limitations, for 0.8.1 (the release notes give each in full):
+- The notice's cells escape `|` and `<` but no other markdown; plan notes escape none. The notice also trusts the
+  evidence stored in the plan.
+- Held bodies use raw UTF-16 budgets, which can cut rows, drop evidence or refuse a publishable body.
+- GitHub's update store differs from create (262,144 against 65,536); the tools never send more than 65,536.
+- A malformed optional field on a draft repository advisory fails the gate. v0.7.5 skipped drafts first.
+- Evidence lookups have no run-level budget.
+- A transient npm planning error or a Gradle reference failure can regroup held work.
+- The all-candidates-vetoed message doesn't name the veto, and retry notes match by package name only.
+- Gradle reference checks include `gradle.ignoreConfigurations`.
+- A local `./../x` action read from the working tree can resolve outside the root (as in v0.7.5).
+- New in 0.8.0: when a package's reviewed fix is blocked, secure-it's report leaves out an unreviewed-only finding on
+  another version (the gate still fails on it).
+- A non-malware repository advisory is dropped when OSV has the same id for the package, whatever its ranges (as in
+  v0.7.5).
+- New in 0.8.0: secure-it may pick a young own-only carrier the ordinary proof refuses. Verification stops it.
+
+What each step added, with rough API-equivalent cost:
+- Haiku, 99 runs (about $5.70, each 1 to 25 minutes, under 68K tokens of context): 36 release reviews (about $0.17
+  per candidate), 51 on fix PRs, 6 docs audits and 6 on #235/#236. It found 5 of the 22 blockers first (rc.1, three
+  on rc.2, rc.18), plus older issues: the Actions next-page host pin, fixed in 0.8.0, and the OSV-range drop above.
+  It was clean on 12 candidates where Sol or Astra then found one.
+- Sol:
+  - 17 unprimed reviews (rc.3 to rc.19), about $11. rc.3's cost is unknown, and rc.4's is estimated.
+  - The implementation thread, about $22 over 91 rounds: plans, reviews of every fix, a second opinion on each
+    dismissed Haiku point, and #254, #255 and part of #253, which it wrote.
+  - It found 12 blockers first. It withdrew rc.14's under Claude's argument, and Astra reinstated it.
+- Astra, six reviews (about $24, one estimated): 5 blockers first, including the only P1, plus rc.14's reinstated.
+  rc.19 was its only clean pass.
+- The owner set the blocking bar and simplified the notice and the sizing (#248, #253). Size limits took three
+  candidates (rc.13 to rc.15), and each of those blockers came from an earlier fix.
+- Claude implemented the rest. Five blockers came from its own fixes in this release: #242 (rc.7), #244 (rc.18),
+  #248 (rc.13), #249 (rc.15) and #251 (rc.16).
+
+v0.8.0 (`10b09ec`) is rc.19 plus its release metadata (#256).
