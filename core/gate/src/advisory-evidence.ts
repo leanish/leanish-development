@@ -38,7 +38,7 @@ export interface EvidenceRecord {
   readonly namesPackage: boolean;
   /** The fixed versions it declares for the package (patched versions, or OSV's `fixed` events). */
   readonly declaredFixes: ReadonlyArray<string>;
-  /** Version → its verdict, for every replaced and proposed version of the target. */
+  /** Version → its verdict, for the replaced versions of its group and the target's proposed ones. */
   readonly verdicts: Readonly<Record<string, RangeVerdict>>;
 }
 
@@ -105,10 +105,10 @@ export function backsFix(record: EvidenceRecord, group: Pick<GroupEvidence, "rep
 
 async function targetEvidence(ecosystem: Ecosystem, target: HeldTarget, lookups: Lookups, options: EvidenceOptions): Promise<TargetEvidence> {
   const pkg: PackageName = { ecosystem, name: target.name };
-  const versions = [...target.replaced, ...target.proposed];
   const repository = await lookups.repositoryOf({ ...pkg, version: target.replaced[0] ?? target.proposed[0] ?? "" }, options.sourceRepos);
   const groups: GroupEvidence[] = [];
-  for (const group of target.groups) groups.push(await groupEvidence(pkg, versions, group, repository, lookups));
+  // Each group's records are read for the versions it's judged on only: a package's groups can each affect hundreds.
+  for (const group of target.groups) groups.push(await groupEvidence(pkg, [...group.replaced, ...target.proposed], group, repository, lookups));
   return { ecosystem, name: target.name, bundled: target.bundled, replaced: target.replaced, proposed: target.proposed, groups };
 }
 

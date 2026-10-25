@@ -272,11 +272,11 @@ recorded, or covers only some of its targets is listed with its reason. The comp
 exception names, which the owner's call lets in whichever source lists it; how each source counts is in
 [the gate's rules](../core/gate/README.md#how-each-source-counts).
 
-When the table would push the PR body past GitHub's limit, only the table is left out, with a line saying so: the
-plan's block keeps the whole evidence, the ⚠ packages are named in the opening line, each with its newest proposed
-versions, and the rest of the warning stays. When even that can't be written (the plan with the evidence passes its
-block's or section's limit, or the body GitHub's), the evidence gives way, never the fix: the PR is written without
-any, and each fix that had some is listed as unchecked, saying why.
+The table lists its ⚠ rows first. When it would push the PR body past GitHub's limit (keeping room for the marker
+publication adds), only its last rows give way: it shows the most that fit, with a line saying how many are left out,
+the plan's block keeps the whole evidence, and the rest of the warning stays. When even no row fits (the plan with the
+evidence passes its block's or section's limit, or the body GitHub's), the evidence gives way, never the fix: the PR
+is written without any, and each fix that had some is listed as unchecked, saying why.
 
 The agent never writes any of this.
 

@@ -9,9 +9,10 @@ import { createHash } from "node:crypto";
 
 import { isAdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import { heldEntry, heldUntil } from "@leanish/gate/cooldown";
+import { MARKER_ROOM } from "@leanish/tool-runtime/own-pr";
 import { assertBodyFits, BODY_LIMIT, defused, planPayload, planSection as sectionOf, TooLargeError, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
 
-import { advisoryNotice, EVIDENCE_LEFT_OUT } from "./advisory-notice.ts";
+import { advisoryNotice, EVIDENCE_LEFT_OUT, tableRowCount } from "./advisory-notice.ts";
 import { floorIdentity, validRemoval } from "./floor-removal.ts";
 import type { ChangePlan, PlannedHold, PlannedMove } from "./plan.ts";
 
@@ -132,13 +133,28 @@ function withoutEvidence(plan: ChangePlan): ChangePlan | undefined {
 
 function composed(body: string, plan: ChangePlan): string {
   const held = plan.cooldown ?? [];
-  const warning = cooldownWarning(held);
   const rest = replaced(withoutWarning(body), HEADING, planSection(plan));
-  if (warning === undefined) return rest;
-  const warned = `${warning}\n\n${rest}`;
-  if (warned.length <= BODY_LIMIT) return warned;
-  // Only the evidence table gives way: the plan's block below keeps the evidence, and the rest of the warning stays.
-  const shorter = `${cooldownWarning(held, { table: false })!}\n\n${rest}`;
+  if (cooldownWarning(held) === undefined) return rest;
+  const warned = (rows?: number) => `${cooldownWarning(held, rows === undefined ? {} : { rows })!}\n\n${rest}`;
+  // The room publication's marker takes is kept free, so a body filled up to the limit is still accepted once marked.
+  const fits = (text: string) => text.length <= BODY_LIMIT - MARKER_ROOM;
+  const full = warned();
+  if (fits(full)) return full;
+  // Only the evidence table's last rows give way (the plan's block below keeps them all): the most that fit, found by
+  // halving, since one row fewer never makes the body longer (a row outweighs the extra digit in the count of those cut).
+  let low = 0;
+  let high = tableRowCount(held) - 1;
+  let most = 0;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    if (fits(warned(middle))) {
+      most = middle;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  const shorter = warned(most);
   assertBodyFits(shorter);
   return shorter;
 }
@@ -150,8 +166,8 @@ function withoutWarning(body: string): string {
   return `${body.slice(0, start)}${body.slice(end + WARNING_END.length)}`.replace(/^\s+/, "");
 }
 
-/** The warning a held PR opens with: what came early, why, what to check, and how the hold ends; `table` as in advisoryNotice. */
-export function cooldownWarning(held: ReadonlyArray<PlannedHold>, options: { readonly table?: boolean } = {}): string | undefined {
+/** The warning a held PR opens with: what came early, why, what to check, and how the hold ends; `rows` as in advisoryNotice. */
+export function cooldownWarning(held: ReadonlyArray<PlannedHold>, options: { readonly rows?: number } = {}): string | undefined {
   const until = heldUntil(held);
   if (until === undefined) return undefined;
   // `<` too: a name or signal from elsewhere can't open a comment that hides the rest, or end the warning early.

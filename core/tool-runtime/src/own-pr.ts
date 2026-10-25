@@ -94,6 +94,12 @@ export function withMarker(rules: OwnPullRequests, body: string, state: PullRequ
   return `${bare}\n\n<!-- leanish:state head=${state.head} base=${state.base} adaptations=${state.adaptations} -->\n${rules.marker}\n`;
 }
 
+/**
+ * Room for what withMarker appends to a body (its state line and marker), for whatever fills a body up to GitHub's
+ * limit: 158 characters for secure-it with fewer than 10 adaptations, so it fits with room to spare.
+ */
+export const MARKER_ROOM = 256;
+
 /** The state the tool recorded in a PR body; undefined when there's none (a body someone rewrote). */
 export function stateOf(body: string): PullRequestState | undefined {
   const found = STATE.exec(body);

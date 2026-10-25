@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { branchFor, freeBranch, isOwnPullRequest, ownPullRequests, stateOf, topicOf, withMarker } from "../src/own-pr.ts";
+import { branchFor, freeBranch, isOwnPullRequest, MARKER_ROOM, ownPullRequests, stateOf, topicOf, withMarker } from "../src/own-pr.ts";
 import { planBlock, planPayload } from "../src/plan-blocks.ts";
 import { BASE_SHA, HEAD_SHA, ownPr, RULES } from "./fake-github.ts";
 
@@ -62,6 +62,13 @@ describe("own PRs", () => {
     expect(stateOf(twice)).toEqual({ head: BASE_SHA, base: HEAD_SHA, adaptations: 2 });
     expect(stateOf("no state")).toBeUndefined();
     expect(() => withMarker(RULES, "x", { head: "nope", base: BASE_SHA, adaptations: 0 })).toThrow("invalid PR state");
+  });
+
+  it("appends no more than MARKER_ROOM to a body, for either tool", () => {
+    for (const tool of ["secure-it", "bump-it"] as const) {
+      const appended = withMarker(ownPullRequests(tool), "x", { head: HEAD_SHA, base: BASE_SHA, adaptations: 999_999 }).length - 1;
+      expect(appended).toBeLessThanOrEqual(MARKER_ROOM);
+    }
   });
 
   it("never joins the text around a removed marker into a plan block, so the tool's own block stays the first", () => {
