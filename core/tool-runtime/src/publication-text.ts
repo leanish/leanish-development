@@ -77,7 +77,7 @@ function cleanPaths(text: string, roots: LocalRoots): string {
     ...roots.other.map((root) => ({ root, relative: false })),
   ]
     .filter(({ root }) => root.startsWith("/") && root.length > 1)
-    .map(({ root, relative }) => ({ root: root.replace(/\/+$/, ""), relative }))
+    .map(({ root, relative }) => ({ root: withoutTrailingSlashes(root), relative }))
     // The most specific root first: the working copy usually sits under the home directory.
     .sort((a, b) => b.root.length - a.root.length || Number(b.relative) - Number(a.relative));
   let cleaned = text;
@@ -90,6 +90,13 @@ function cleanPaths(text: string, roots: LocalRoots): string {
     cleaned = cleaned.replace(new RegExp(`${TOKEN_START}(?:file://)?${at}(?=$|[/\\s"'\`)\\]>,;:])([^\\s"'\`)\\]>,;]*)`, "g"), (_, rest: string) => replacement(rest, relative));
   }
   return cleaned;
+}
+
+/** `path` without the slashes it ends with: a loop, as `/\/+$/` takes quadratic time on many slashes not at the end. */
+function withoutTrailingSlashes(path: string): string {
+  let end = path.length;
+  while (end > 0 && path[end - 1] === "/") end--;
+  return path.slice(0, end);
 }
 
 /** What may come right before a path: nothing, whitespace, a quote, a bracket or `=` (as in `NAME=/path`). */
