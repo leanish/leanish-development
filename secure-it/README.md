@@ -50,6 +50,11 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
    | Gradle | a transitive one, or one only a plugin declares, that a dependency the sources declare brings in every affected configuration | first, that declaration's lowest version in its own line, past the wait, that brings a fixed version (proved by a reference resolution, at most 6 per vulnerable module; the declaration moves wherever it's declared, `carries` in the plan) |
    | Gradle | otherwise, or when no such version is proved | a floor: an explicit dependency with `because(...)`, plus its entry in `.github/dependency-floors.json` (the PR notes why no parent could move) |
    | Actions | any | pin to the tag's commit |
+
+   A young npm carrier passes as a `bundle-fix` only when it fixes at least one reviewed bundled advisory. Its own
+   reviewed targets join that choice; an own-only fix needs the ordinary young-fix proof or an explicit `releaseAge`
+   exception. Verification refuses a carrier choice that neither proof nor an exception justifies.
+
    - **Young fixes go apart, each group in its own PR.** Fixes whose target is younger than the release-age wait,
      everything coupled to them, and any fix whose required npm dependency is young leave the aged batch, so the aged
      fixes aren't held back. They're then split as far as they can be, one held routine unit (topic

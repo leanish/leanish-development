@@ -14,8 +14,10 @@
  * Any part that can't be established (an unreadable archive, a budget, an
  * unknown publish time) leaves V unjustified, with the reason.
  *
- * The targets include the carrier's own advisory groups R has and V doesn't,
- * so a version fixing both is proved as the combined choice secure-it makes.
+ * At least one target must be a reviewed bundled advisory. The targets also
+ * include the carrier's own reviewed groups R has and V doesn't, so a version
+ * fixing both is proved as the combined choice secure-it makes. Own-only fixes
+ * need the ordinary young-fix proof or an explicit release-age exception.
  * Every head copy of V must be such an occurrence and pass: a copy elsewhere
  * has no evidence of its own.
  *
@@ -123,20 +125,20 @@ async function occurrenceProof(pkg: PackageVersion, occurrence: Occurrence, inpu
   const snapshot = await inputs.scan([
     { ...pkg, version: occurrence.from }, pkg, ...versionsOf(fromBundle), ...versionsOf(toBundle),
   ]);
-  // Only reviewed advisories justify a young carrier: a bundled one or the carrier's own (vetoes still use them all).
+  // A bundle proof needs a reviewed bundled target; unreviewed advisories still veto candidates.
   const reviewedIn = (name: string, group: string) => fromBundle.packages.some((entry) => entry.name === name
     && reviewedGroups(snapshot, { ecosystem: "npm", name, version: entry.version }).has(group));
   const removed = removedTargets(fromBundle, toBundle, snapshot);
   const carried = removed.filter((target) => reviewedIn(target.name, target.advisory));
+  if (carried.length === 0) {
+    return removed.length === 0
+      ? `${at}: ${pkg.name}@${pkg.version}'s bundle fixes no reviewed bundled advisory affecting ${occurrence.from}; fixes of the carrier's own advisories need the ordinary young-fix rule or a release-age exception`
+      : `${at}: ${pkg.name}@${pkg.version}'s bundle fixes no reviewed advisory ${occurrence.from}'s had (${describe(removed)} only in the project's repository advisories, not corroborated by the sources this decision used)`;
+  }
   // The carrier's own advisories it fixes too: the combined choice secure-it makes, reconstructed from the trees.
   const after = groupsOf(snapshot, pkg);
   const ownReviewed = reviewedGroups(snapshot, { ...pkg, version: occurrence.from });
   const own = targetsOf(snapshot, { ...pkg, version: occurrence.from }).filter((group) => !after.has(group) && ownReviewed.has(group));
-  if (carried.length === 0 && own.length === 0) {
-    return removed.length === 0
-      ? `${at}: ${pkg.name}@${pkg.version}'s bundle fixes nothing ${occurrence.from}'s had`
-      : `${at}: ${pkg.name}@${pkg.version}'s bundle fixes no reviewed advisory ${occurrence.from}'s had (${describe(removed)} only in the project's repository advisories, not corroborated by the sources this decision used)`;
-  }
   const listed = await inputs.catalog.versions(pkg);
   if (listed === undefined) return `${at}: the registry doesn't list ${pkg.name}'s versions, so the rule can't be checked`;
   const choice = await chooseCarrier({

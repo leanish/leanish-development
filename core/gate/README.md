@@ -158,6 +158,8 @@ head copy of V:
   path, name and version included, both ways.
 - **Targets:** the bundled package + reviewed advisory groups R's bundle has and V's doesn't (wherever in the bundle a
   package sits: a package that moved inside the bundle still counts), plus R's own reviewed advisories V no longer has.
+  At least one reviewed bundled target is required. The carrier's own targets join the combined choice but cannot
+  justify a bundle fix alone: an own-only fix needs the ordinary young-fix proof or an explicit `releaseAge` exception.
   Malware isn't a target; unreviewed advisories still rule candidates out.
 - **The rule:** the young-fix rule above, applied to the carrier: a candidate fixes when its bundle has none of the
   targets anywhere, adds no package + advisory group pair R's bundle lacked, holds no malware, and the carrier version
