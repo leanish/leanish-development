@@ -258,7 +258,9 @@ aged, and how a person takes it earlier: every other check green, the reason wri
 planned as aged that the comparison holds anyway is held the same way. A cooldown the comparison couldn't evaluate
 fails verification.
 
-For a security or bundle fix, the warning also says where the advisories behind it appear. After the verification,
+For a security or bundle fix, and for a required version or an exception that fixes advisories itself (the gate
+records them, and an exception's named one, reviewed or not), the warning also says where the advisories behind it
+appear. After the verification,
 secure-it reads each advisory, and every alias the responses name, from the dependency's own repository advisories,
 GitHub's database and OSV, fresh and only to inform. A table shows each source as it says: the fix it declares, and
 whether its ranges put each replaced and proposed version among the affected ones; a bundled package is named as

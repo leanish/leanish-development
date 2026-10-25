@@ -16,7 +16,7 @@ import { versionScheme } from "@leanish/gate/versions";
 import type { PlannedHold } from "./plan.ts";
 
 export const REVIEWED =
-  "Every advisory this fixes is still backed by a reviewed record as read now: OSV or GitHub's reviewed advisory database lists the replaced versions as affected and the proposed version, if any, as not. Candidates ruled out by advisories no reviewed source corroborates are noted in the plan below, where recorded.";
+  "Every advisory recorded for these held fixes is still backed by a reviewed record as read now: OSV or GitHub's reviewed advisory database lists the replaced versions as affected and the proposed version, if any, as not. Candidates ruled out by advisories no reviewed source corroborates are noted in the plan below, where recorded.";
 
 export const EVIDENCE_DIFFERS =
   "**The reviewed advisories read after the comparison don't back this fix as the comparison did.** For the rows marked ⚠ below, no reviewed record (OSV, or GitHub's reviewed advisory database) lists the replaced versions as affected and the proposed one as not, or one was withdrawn or couldn't be read. The comparison's verdict stands; check the table before taking this early.";
@@ -55,13 +55,14 @@ export interface AdvisoryNotice {
 }
 
 /**
- * Empty when no hold is a security or bundle fix. Each claim covers every fix: one whose evidence failed, wasn't
+ * Empty when no hold fixes an advisory: a security or bundle fix, or a required version or exception recording the
+ * advisories it fixes (`targets`). Each claim covers every such fix: one whose evidence failed, wasn't
  * recorded, or has a target with no advisory group is unchecked, so the notice never says all are backed. Without
  * `table`, the rows give way (the PR body is too long) and the ⚠ packages are named instead.
  */
 export function advisoryNotice(held: ReadonlyArray<PlannedHold>, options: { readonly table?: boolean } = {}): AdvisoryNotice {
   const table = options.table ?? true;
-  const fixes = held.filter((entry) => JUSTIFIED.has(entry.justification));
+  const fixes = held.filter((entry) => JUSTIFIED.has(entry.justification) || (entry.targets?.length ?? 0) > 0);
   const rows = fixes.flatMap((entry) => (entry.evidence?.targets ?? []).flatMap((target) => target.groups.map((group) => ({ entry, target, group }))));
   const unchecked = fixes.flatMap((entry) => uncheckedOf(entry).map((reason) => `- ${bounded(entry.name, NAME_LIMIT)}@${bounded(entry.version, VERSION_LIMIT)}: ${bounded(reason, REASON_LIMIT)}`));
   const differing = rows.filter(({ target, group }) => !backed(target, group));

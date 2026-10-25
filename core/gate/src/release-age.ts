@@ -55,8 +55,10 @@ export function isYoung(change: ChangedVersion, config: Config, now: Date): bool
 export type YoungJustification = "security-fix" | "bundle-fix" | "required" | "exception" | "unjustified";
 
 /**
- * A package whose advisories justify a young version: the version's own package, or one its bundle carries. For
- * people (and the evidence secure-it reads for them), never part of the verdict.
+ * A package whose advisories a young version fixes: the version's own package, or one its bundle carries. Behind a
+ * `security-fix` or `bundle-fix` they're what justifies it; a `required` version or an `exception` records the ones it
+ * fixes too, and an exception its named advisory, reviewed or not. For people (and the evidence secure-it reads for
+ * them), never part of the verdict.
  */
 export interface HeldTarget {
   readonly name: string;
@@ -85,7 +87,7 @@ export interface HeldVersion {
   /** When it turns `releaseAgeDays` old. */
   readonly eligibleAt: string;
   readonly justification: YoungJustification;
-  /** The advisories behind a `security-fix` or `bundle-fix`. */
+  /** The advisories it fixes (`HeldTarget`): always for a `security-fix` or `bundle-fix`, when any for `required` and `exception`. */
   readonly targets?: ReadonlyArray<HeldTarget>;
 }
 
@@ -129,7 +131,12 @@ interface Judged {
 
 async function judgeYoung(change: ChangedVersion, context: AgeContext): Promise<Judged> {
   const { pkg } = change;
-  if (pkg.ecosystem === "npm" && context.required?.has(versionKey(pkg))) return { justification: "required" };
+  const bundle = context.bundleFixes?.get(versionKey(pkg));
+  const bundleTargets = bundle?.problem === undefined ? bundle?.targets ?? [] : [];
+  // Required either way, but what it fixes itself, or in a bundle proved both ways, is still for people to check.
+  if (pkg.ecosystem === "npm" && context.required?.has(versionKey(pkg))) {
+    return { justification: "required", ...recorded([ownTarget(change, context.snapshot), ...bundleTargets]) };
+  }
   const proof = await youngFixProblem(
     { pkg, replaced: change.replaced },
     context.candidates.get(versionKey(pkg)) ?? new Map(),
@@ -138,11 +145,8 @@ async function judgeYoung(change: ChangedVersion, context: AgeContext): Promise<
     context.config,
     context.now,
   );
-  const bundle = context.bundleFixes?.get(versionKey(pkg));
   // A carrier proved both ways fixes its bundle's advisories too: the evidence covers every one it fixes.
-  if (proof === undefined) {
-    return { justification: "security-fix", targets: mergedTargets([ownTarget(change, context.snapshot), ...(bundle?.problem === undefined ? bundle?.targets ?? [] : [])]) };
-  }
+  if (proof === undefined) return { justification: "security-fix", targets: mergedTargets([ownTarget(change, context.snapshot), ...bundleTargets]) };
   if (bundle !== undefined && bundle.problem === undefined) return { justification: "bundle-fix", targets: bundle.targets };
   const bundled = bundle?.problem;
   const exception = context.exceptions.releaseAge.find(
@@ -161,7 +165,26 @@ async function judgeYoung(change: ChangedVersion, context: AgeContext): Promise<
     return { justification: "unjustified", problem: `${label(pkg)}: its release-age exception expired on ${exception.expires}` };
   }
   const why = advisoryEvidenceProblem(exception.advisory, pkg, change.replaced, context.snapshot);
-  return why === undefined ? { justification: "exception" } : { justification: "unjustified", problem: `${label(pkg)}: ${why}` };
+  if (why !== undefined) return { justification: "unjustified", problem: `${label(pkg)}: ${why}` };
+  return { justification: "exception", ...recorded([ownTarget(change, context.snapshot), namedTarget(change, exception.advisory, context.snapshot)]) };
+}
+
+/** `targets` merged, keeping only those with an advisory group; none when no group is left. */
+function recorded(targets: ReadonlyArray<HeldTarget>): Pick<Judged, "targets"> {
+  const kept = mergedTargets(targets.filter((target) => target.groups.length > 0));
+  return kept.length === 0 ? {} : { targets: kept };
+}
+
+/** The group an exception names, on the replaced versions it affects, whichever source lists it: the owner's call. */
+function namedTarget(change: ChangedVersion, advisory: string, snapshot: Snapshot): HeldTarget {
+  const named = snapshot.group(advisory);
+  return {
+    name: change.pkg.name,
+    bundled: false,
+    replaced: change.replaced,
+    proposed: [change.pkg.version],
+    groups: groupIds(snapshot, change.replaced.map((version) => ({ ...change.pkg, version })), (group) => group === named),
+  };
 }
 
 /** The reviewed groups a security fix leaves behind: affecting a replaced version and not the new one, malware aside. */
