@@ -9,14 +9,15 @@ import { createHash } from "node:crypto";
 
 import { isAdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import { heldEntry, heldUntil } from "@leanish/gate/cooldown";
-import { MARKER_ROOM } from "@leanish/tool-runtime/own-pr";
-import { assertBodyFits, BODY_LIMIT, defused, planPayload, planSection as sectionOf, TooLargeError, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
+import { markedLength, ownPullRequests } from "@leanish/tool-runtime/own-pr";
+import { BODY_LIMIT, defused, planPayload, planSection as sectionOf, TooLargeError, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
 
 import { advisoryNotice, EVIDENCE_LEFT_OUT, tableRowCount } from "./advisory-notice.ts";
 import { floorIdentity, validRemoval } from "./floor-removal.ts";
 import type { ChangePlan, PlannedHold, PlannedMove } from "./plan.ts";
 
 const HEADING = "### What secure-it moved";
+const RULES = ownPullRequests("secure-it");
 const WARNING_START = "<!-- secure-it cooldown warning -->";
 const WARNING_END = "<!-- /secure-it cooldown warning -->";
 
@@ -136,8 +137,8 @@ function composed(body: string, plan: ChangePlan): string {
   const rest = replaced(withoutWarning(body), HEADING, planSection(plan));
   if (cooldownWarning(held) === undefined) return rest;
   const warned = (rows?: number) => `${cooldownWarning(held, rows === undefined ? {} : { rows })!}\n\n${rest}`;
-  // The room publication's marker takes is kept free, so a body filled up to the limit is still accepted once marked.
-  const fits = (text: string) => text.length <= BODY_LIMIT - MARKER_ROOM;
+  // Measured as published, marker included: a body filled up to the limit must still be accepted once marked.
+  const fits = (text: string) => markedLength(RULES, text) <= BODY_LIMIT;
   const full = warned();
   if (fits(full)) return full;
   // Only the evidence table's last rows give way (the plan's block below keeps them all): the most that fit, found by
@@ -155,7 +156,9 @@ function composed(body: string, plan: ChangePlan): string {
     }
   }
   const shorter = warned(most);
-  assertBodyFits(shorter);
+  // Too large even without rows: the evidence gives way next (withPlanSection), so this is a size, never a publication
+  // GitHub refuses after the push.
+  if (!fits(shorter)) throw new TooLargeError(`the PR body would be ${markedLength(RULES, shorter)} characters once marked, over GitHub's ${BODY_LIMIT}`);
   return shorter;
 }
 

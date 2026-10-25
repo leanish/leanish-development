@@ -7,10 +7,11 @@ import type { AdvisoryEvidence, EvidenceRecord, SourceEvidence } from "@leanish/
 import { advisoryNotice, EVIDENCE_DIFFERS, EVIDENCE_LEFT_OUT, INCOMPLETE, NOT_RECORDED, tableCut } from "../src/advisory-notice.ts";
 import type { ChangePlan, PlannedHold } from "../src/plan.ts";
 import { cooldownWarning, planOf, planSection, withPlanSection } from "../src/plan-block.ts";
-import { MARKER_ROOM, ownPullRequests, withMarker } from "@leanish/tool-runtime/own-pr";
+import { markedLength, ownPullRequests, withMarker } from "@leanish/tool-runtime/own-pr";
 import { planBlock } from "@leanish/tool-runtime/plan-blocks";
 
 const PKG = "tools.jackson.core:jackson-databind";
+const RULES = ownPullRequests("secure-it");
 const record = (overrides: Partial<EvidenceRecord> = {}): EvidenceRecord => ({
   id: "GHSA-m8xf-2cr7-77ph", aliases: ["CVE-2026-110879"], withdrawn: false, namesPackage: true, declaredFixes: ["3.2.4"],
   verdicts: { "3.2.3": "affected", "3.2.4": "not-affected" }, ...overrides,
@@ -208,18 +209,15 @@ describe("the advisory notice on a held PR", () => {
     expect(body).toContain(`> ${EVIDENCE_DIFFERS}`);
     expect(body.match(/^> \| ⚠ /gm)).toHaveLength(6);
     expect(body).toContain("> | Package | Version | Published (UTC) | Held until (UTC) | Why | Signals |");
-    // The most rows that fit: one more would pass the room publication's marker needs, and the marked body is accepted.
-    expect(body.length).toBeLessThanOrEqual(65_536 - MARKER_ROOM);
+    // The most rows that fit as published: one more would pass the limit once marked.
+    expect(markedLength(RULES, body)).toBeLessThanOrEqual(65_536);
     const shown = 60 - left;
     const warning = (rows: number) => cooldownWarning(large.cooldown!, { rows })!.length;
-    expect(body.length + warning(shown + 1) - warning(shown)).toBeGreaterThan(65_536 - MARKER_ROOM);
-    const mark = (text: string) => withMarker(ownPullRequests("secure-it"), text, { head: "a".repeat(40), base: "b".repeat(40), adaptations: 3 });
+    expect(markedLength(RULES, body) + warning(shown + 1) - warning(shown)).toBeGreaterThan(65_536);
+    const mark = (text: string) => withMarker(RULES, text, { head: "a".repeat(40), base: "b".repeat(40), adaptations: 3 });
     expect(mark(body).length).toBeLessThanOrEqual(65_536);
-    // A refresh counts the stored state and marker, so it may show a few rows fewer than the first publication; then it
-    // stays put, and still fits once marked again.
-    const refreshed = withPlanSection(mark(body), large);
-    expect(withPlanSection(refreshed, large)).toBe(refreshed);
-    expect(mark(refreshed).length).toBeLessThanOrEqual(65_536);
+    // A refresh measures the body without its stored state and marker, so it shows the rows first published.
+    expect(mark(withPlanSection(mark(body), large))).toBe(mark(body));
     // Each row fewer shortens the warning, the count's extra digit included, so the halving finds the most that fit.
     const lengths = Array.from({ length: 61 }, (_, rows) => warning(rows));
     expect(lengths.every((length, rows) => rows === 0 || length > lengths[rows - 1]!)).toBe(true);
@@ -257,6 +255,22 @@ describe("the advisory notice on a held PR", () => {
       expect(published).toContain(`${PKG}@3.2.4: ${EVIDENCE_LEFT_OUT}`);
       expect(published).not.toMatch(/rows are left out/);
     }
+    // A long description that leaves even the row-less body within the marker's length of the limit: the evidence gives
+    // way, so the marked body is still accepted, as the same PR without evidence was before.
+    const small: ChangePlan = { ...plan(reviewed), cooldown: [hold({ evidence: reviewed })] };
+    const rowless = (description: string) => `${cooldownWarning(small.cooldown!, { rows: 0 })!}\n\n${description}\n\n${planSection(small)}`;
+    const nearLimit = "x".repeat(65_536 - 60 - rowless("").length);
+    expect(rowless(nearLimit).length).toBe(65_536 - 60);
+    expect(markedLength(RULES, rowless(nearLimit))).toBeGreaterThan(65_536);
+    const pushed = withPlanSection(nearLimit, small);
+    expect(markedLength(RULES, pushed)).toBeLessThanOrEqual(65_536);
+    expect(planOf(pushed)?.cooldown).toEqual([{ ...hold(), evidenceFailure: EVIDENCE_LEFT_OUT }]);
+    // The limit applies to the marked body, exactly: one with no evidence to drop is accepted at 65,536 characters once
+    // marked and refused, before any publication, at 65,537.
+    const bare: ChangePlan = { ...plan(reviewed), cooldown: [hold()] };
+    const unmarked = markedLength(RULES, withPlanSection("", bare));
+    expect(markedLength(RULES, withPlanSection("x".repeat(65_536 - unmarked), bare))).toBe(65_536);
+    expect(() => withPlanSection("x".repeat(65_537 - unmarked), bare)).toThrow("characters once marked, over GitHub's 65536");
     // What can't be written even without the evidence fails as before, as does a plan without any.
     expect(() => withPlanSection("x".repeat(70_000), overBody)).toThrow("over GitHub's 65536");
     expect(() => withPlanSection("x".repeat(70_000), { ...overBody, cooldown: [hold()] })).toThrow("over GitHub's 65536");
