@@ -25,7 +25,7 @@
   young version the rule-picked fix, a bundle fix or a required npm dependency. A version affected only by unreviewed
   advisories is reported, not fixed, until a reviewed source lists it. An unreviewed advisory can still rule out the
   version the rule would take and steer it to another, even a young one (held); secure-it's plan notes the ten such
-  candidates nearest the choice that it passed over, carrier versions included, and counts the rest. A required npm
+  candidates nearest the choice, on either side, carrier versions included, and counts the rest. A required npm
   dependency's version is set by its requirement, so a veto there refuses the fix, and the refusal now names each
   advisory it adds, marked when unreviewed. A `releaseAge` exception may still name one: the owner's override. The
   rules are in the gate's README ("How each source counts"). GitHub's Actions advisories that aren't `reviewed` or
@@ -39,7 +39,8 @@
   ones). It reports problems only: a line opens the warning when no reviewed record (OSV, or GitHub's reviewed
   database) backs some advisory as read now, with those rows marked, and a fix it couldn't check is listed with its
   reason. A lookup that fails is shown as such, never as "not found". The table lists its ⚠ rows first; when it
-  would push the PR body past GitHub's limit, it shows the rows that fit, with a line saying how many are left out,
+  would push a held PR body's raw UTF-16 length past 61,440 for fresh text or 65,280 for text already carrying a
+  publication state marker (marker included), it shows the rows that fit, with a line saying how many are left out,
   and the plan's block keeps the evidence; when the PR still can't be written with the evidence, it's left out, and
   each fix that had some is listed as unchecked. The gate's comparison report records, for each held version, the
   advisories it fixes (`targets`), whether or not anything justified it (an exception's named one, whichever source
@@ -54,6 +55,13 @@
 
 ### Fixed
 
+- Both tools now check the actual cleaned title (nonblank, at most 256 UTF-16 units) and marked body (at most 65,536)
+  against the client's limits before a push or a text-only API update, instead of letting the client refuse them after
+  the push. This final guard only refuses; it does not retry composition without evidence. The held-body raw budgets may drop rows or evidence, or
+  refuse an otherwise publishable body; excessive path expansion is refused by the final guard.
+
+- Agent PR descriptions may not carry a `<!-- leanish:state` marker, just as they may not carry a plan marker: fresh
+  text cannot pretend to be already published and receive the larger held-body budget.
 - The evidence in secure-it's cooldown warning now includes bundled advisories and every alias: a young carrier proved
   both as the fix for its own advisory and for its bundle's now lists both, and each advisory group carries every alias
   the package's own records name (another version's record linking a CVE to its GHSA included), so a backed fix isn't

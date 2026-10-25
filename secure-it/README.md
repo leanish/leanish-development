@@ -159,12 +159,12 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
    run reconsiders omitted fixes.
 
    Advisories only the project's own repository publishes (unreviewed) plan no fix: such a version is reported, and
-   waits for a reviewed source; when a reviewed fix moves the package anyway, they're a note on that fix instead. They still rule candidates out, and the plan notes the ten candidates nearest the choice
-   that it passed over that way ("ruled out by …, not corroborated by the sources this decision used"), carrier
-   versions included, and counts the rest; a candidate after the choice explains nothing about it, so isn't noted. A required npm
-   dependency's version is set by its requirement, so there a veto refuses the fix, and the refusal names each advisory
-   the version adds, marked when unreviewed. See
-   [how each source counts](../core/gate/README.md#how-each-source-counts).
+   waits for a reviewed source; when a reviewed fix moves the package anyway, they're a note on that fix instead.
+   They still rule candidates out, and the plan notes the ten candidates ruled out that way nearest the choice, on
+   either side ("ruled out by …, not corroborated by the sources this decision used"), carrier versions included, and
+   counts the rest: a sample, not every veto that shaped the choice. A required npm dependency's version is set by
+   its requirement, so there a veto refuses the fix, and the refusal names each advisory the version adds, marked
+   when unreviewed. See [how each source counts](../core/gate/README.md#how-each-source-counts).
 
    Before that reduction, a first refusal gets the agent asked once more for the same plan, from the base, with the
    refusal (`rejected`): an agent that moved a parent instead of the planned floor, say. The reduction then works
@@ -274,11 +274,20 @@ recorded, or covers only some of its targets is listed with its reason. The comp
 exception names, which the owner's call lets in whichever source lists it; how each source counts is in
 [the gate's rules](../core/gate/README.md#how-each-source-counts).
 
-The table lists its ⚠ rows first. When it would push the PR body past GitHub's limit (measured as published:
-cleaned, with the marker), only its last rows give way: it shows the most that fit, with a line saying how many are left out,
-the plan's block keeps the whole evidence, and the rest of the warning stays. When even no row fits (the plan with the
-evidence passes its block's or section's limit, or the body GitHub's), the evidence gives way, never the fix: the PR
-is written without any, and each fix that had some is listed as unchecked, saying why.
+The table lists its ⚠ rows first. Composition uses raw UTF-16 length budgets: 61,440 for fresh text (including a fresh
+agent description updating an existing PR), or 65,280 for text carrying a publication state marker, already published
+and including its marker. The latter leaves 256 units below the client's limit for replacement and re-cleaning.
+When the table would push the body past its budget, only its last rows give way: it shows the most that fit, with a line saying how many are left out, the plan's block keeps the whole evidence, and the
+rest of the warning stays. When even no row fits (the plan with the evidence passes its block's or section's limit,
+or the body its raw budget), the PR is written without the evidence, and each fix that had some is listed as unchecked,
+saying why. A body that still cannot fit is refused. These conservative budgets can drop rows or evidence, or refuse
+a body, even when GitHub could store it.
+
+Agent descriptions must not include reserved plan or publication state markers; those are written by the tool.
+Publication separately checks the cleaned title (nonblank, at most 256 UTF-16 units) and marked body (at most 65,536)
+against the client's limits on both create and update. Enough path expansion can still exceed a limit; the final guard
+refuses before the push, or before a text-only API update. This guard does not retry without evidence.
+It also protects bump-it and non-held publications, whose composition keeps its existing raw check.
 
 The agent never writes any of this.
 

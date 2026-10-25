@@ -139,7 +139,9 @@ A routine with only npm and wrapper moves needs no agent.
 ## Review
 
 A verified CI adaptation replaces the PR title and description with the agent's new verdict and check results,
-keeping the verified plan and publication state markers.
+keeping the verified plan and publication state markers. Agent descriptions must not include those reserved
+plan or state markers; the tool writes them. Before pushing or editing a PR, publication checks the cleaned title
+(nonblank, at most 256 UTF-16 units) and marked body (at most 65,536) against the client's limits.
 
 The [shared tick](../core/tool-runtime) leaves human pushes alone, recomputes on any base movement before reading CI, then
 handles pending/green checks without a model. A routine recomputes the whole routine; a major recomputes its package.

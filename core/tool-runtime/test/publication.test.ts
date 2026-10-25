@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import { MAX_BODY_CHARS, MAX_TITLE_CHARS } from "@leanish/agent-runtime/github/github-client";
 import { ConsoleLogger } from "@leanish/agent-runtime/logger/console-logger";
 import type { PreparedBranch, WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
 import { InMemoryWorkspace } from "@leanish/agent-runtime/working-copy/in-memory-workspace";
 import { MemoryJournal } from "./memory-journal.ts";
-import { markedLength, ownPullRequests, stateOf, withMarker } from "../src/own-pr.ts";
-import { clearLeftoverBranch, closeAndDelete, markReady, ownOpenPullRequests, publishedLength, publishNew, publishUpdate, recordState, recoverPublication, rewriteText, type PublicationContext } from "../src/publication.ts";
+import { ownPullRequests, stateOf, withMarker } from "../src/own-pr.ts";
+import { clearLeftoverBranch, closeAndDelete, markReady, ownOpenPullRequests, publishNew, publishUpdate, recordState, recoverPublication, rewriteText, type PublicationContext } from "../src/publication.ts";
 import { BASE_SHA, FakeGitHub, HEAD_SHA, OWN_BRANCH, ownPr, PUSHED_SHA, RULES } from "./fake-github.ts";
 
 const WC: WorkingCopy = { projectId: "leanish/widget", path: "/synthetic/leanish/widget", branch: "main", headSha: BASE_SHA, gitDir: "/x/.git" };
@@ -19,6 +20,93 @@ const fresh: PreparedBranch = { branch: "secure-it/2026-10-07-vite", baseSha: BA
 const existing: PreparedBranch = { branch: OWN_BRANCH, baseSha: BASE_SHA, remoteHeadSha: HEAD_SHA, preparedSha: HEAD_SHA };
 
 describe("publication", () => {
+  it.each([
+    { operation: "create", body: "/t ".repeat(6_000), kind: "expanded paths" },
+    { operation: "update", body: "/t ".repeat(21_000), kind: "expanded paths" },
+    { operation: "create", body: "😀".repeat(32_700), kind: "astral characters" },
+    { operation: "update", body: "😀".repeat(32_700), kind: "astral characters" },
+  ])("refuses $kind on $operation before any push or PR edit", async ({ operation, body }) => {
+    const github = new FakeGitHub(...(operation === "update" ? [ownPr({ isDraft: false })] : []));
+    const workspace = new InMemoryWorkspace();
+    const journal = new MemoryJournal();
+    const ctx = { ...context(github, workspace, journal), localRoots: ["/t"] };
+    // Raw text fits the client limit, but cleaning or the appended marker makes the actual body exceed it.
+    expect(body.length).toBeLessThan(65_536);
+    const publish = operation === "create"
+      ? publishNew(ctx, fresh, { ...CONTENT, body })
+      : publishUpdate(ctx, existing, 7, { ...CONTENT, body });
+    await expect(publish).rejects.toThrow(new RegExp(`would be [0-9]+ UTF-16 units, over the client's ${MAX_BODY_CHARS} limit`));
+    expect(workspace.pushes).toEqual([]);
+    expect(github.calls.filter((call) => /createPullRequest|updatePullRequest|convertToDraft/.test(call))).toEqual([]);
+    expect(await journal.last("leanish/widget", 7)).toBeUndefined();
+    expect(github.prs.get(7)?.body).toBe(operation === "update" ? ownPr().body : undefined);
+  });
+
+  it.each(["create", "update"] as const)("refuses invalid cleaned titles on %s before any push or PR edit", async (operation) => {
+    for (const title of ["", "  ", "x".repeat(MAX_TITLE_CHARS + 1), "😀".repeat(129), "/t ".repeat(20)]) {
+      const github = new FakeGitHub(...(operation === "update" ? [ownPr({ isDraft: false })] : []));
+      const workspace = new InMemoryWorkspace();
+      const ctx = { ...context(github, workspace), localRoots: ["/t"] };
+      const content = { ...CONTENT, title };
+      const publish = operation === "create" ? publishNew(ctx, fresh, content) : publishUpdate(ctx, existing, 7, content);
+      await expect(publish).rejects.toThrow(/the PR title/);
+      expect(workspace.pushes).toEqual([]);
+      expect(github.calls.filter((call) => /createPullRequest|updatePullRequest|convertToDraft/.test(call))).toEqual([]);
+      expect(github.prs.get(7)?.body).toBe(operation === "update" ? ownPr().body : undefined);
+    }
+  });
+
+  it("accepts a cleaned title at the client's limit and refuses invalid text-only rewrites", async () => {
+    const title = "😀".repeat(MAX_TITLE_CHARS / 2);
+    const created = await publishNew(context(new FakeGitHub()), fresh, { ...CONTENT, title });
+    expect(created?.title).toBe(title);
+    const github = new FakeGitHub(ownPr({ title: "/t ".repeat(20) }));
+    await expect(rewriteText({ ...context(github), localRoots: ["/t"] }, 7, HEAD_SHA, (body) => body)).resolves.toBeDefined();
+    // Rewriting text keeps the stored title verbatim; an invalid stored title is refused before its API write.
+    github.prs.set(7, ownPr({ title: "x".repeat(MAX_TITLE_CHARS + 1) }));
+    const calls = github.calls.length;
+    await expect(rewriteText(context(github), 7, HEAD_SHA, (body) => body)).rejects.toThrow("the PR title would be 257");
+    expect(github.calls.slice(calls).some((call) => call.startsWith("updatePullRequest"))).toBe(false);
+  });
+
+  it.each(["create", "update"] as const)("checks the exact %s client limit in UTF-16 units, including its marker", async (operation) => {
+    const limit = MAX_BODY_CHARS;
+    const state = { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 };
+    const tail = withMarker(RULES, "x", state).length - 1;
+    const available = limit - tail;
+    const body = "😀".repeat(Math.floor(available / 2)) + "x".repeat(available % 2);
+    const github = new FakeGitHub(...(operation === "update" ? [ownPr()] : []));
+    const ctx = context(github);
+    if (operation === "create") {
+      const pr = await publishNew(ctx, fresh, { ...CONTENT, body });
+      expect(pr!.body).toHaveLength(limit);
+      await expect(publishNew(context(new FakeGitHub()), fresh, { ...CONTENT, body: body + "x" })).rejects.toThrow(`${limit + 1} UTF-16 units`);
+    } else {
+      const pr = await publishUpdate(ctx, existing, 7, { ...CONTENT, body });
+      expect(pr.pr.body).toHaveLength(limit);
+      await expect(publishUpdate(context(new FakeGitHub(ownPr())), existing, 7, { ...CONTENT, body: body + "x" })).rejects.toThrow(`${limit + 1} UTF-16 units`);
+    }
+  });
+
+  it("makes the fake enforce the same UTF-16 body cap on create and update as the real client", async () => {
+    const github = new FakeGitHub(ownPr());
+    const body = "😀".repeat(MAX_BODY_CHARS / 2);
+    const created = await github.createPullRequest({ repo: WC.projectId, head: fresh.branch, base: "main", title: CONTENT.title, body, draft: true });
+    expect(created.body).toHaveLength(MAX_BODY_CHARS);
+    await expect(github.createPullRequest({ repo: WC.projectId, head: fresh.branch, base: "main", title: CONTENT.title, body: body + "x", draft: true })).rejects.toThrow("body too long");
+    await github.updatePullRequest({ repo: WC.projectId, number: 7, title: CONTENT.title, body });
+    await expect(github.updatePullRequest({ repo: WC.projectId, number: 7, title: CONTENT.title, body: body + "x" })).rejects.toThrow("body too long");
+    expect(github.prs.get(7)?.body).toBe(body);
+  });
+
+  it("refuses oversized text rewrites without changing the PR", async () => {
+    const github = new FakeGitHub(ownPr());
+    await expect(rewriteText({ ...context(github), localRoots: ["/t"] }, 7, HEAD_SHA, () => "/t ".repeat(21_000)))
+      .rejects.toThrow("over the client's 65536 limit");
+    expect(github.prs.get(7)?.body).toBe(ownPr().body);
+    expect(github.calls.some((call) => call.startsWith("updatePullRequest"))).toBe(false);
+  });
+
   it("rewrites a PR's text from its body as it is now, keeping its state and an owner's edit", async () => {
     const state = { head: HEAD_SHA, base: BASE_SHA, adaptations: 1 };
     const github = new FakeGitHub(ownPr({ body: withMarker(RULES, "An owner's added note.\n\nold reasons", state) }));
@@ -115,7 +203,9 @@ describe("publication", () => {
     const github = new FakeGitHub(ownPr());
     github.fail("updatePullRequest");
     const journal = new MemoryJournal();
-    await expect(publishUpdate(context(github, new InMemoryWorkspace(), journal), existing, 7, CONTENT)).rejects.toThrow("unexpected response");
+    const workspace = new InMemoryWorkspace();
+    await expect(publishUpdate(context(github, workspace, journal), existing, 7, CONTENT)).rejects.toThrow("unexpected response");
+    expect(workspace.pushes).toEqual([{ projectId: WC.projectId, branch: existing.branch, sha: PUSHED_SHA }]);
     expect(await journal.last("leanish/widget", 7)).toEqual({ head: PUSHED_SHA, base: BASE_SHA,
       publication: { title: CONTENT.title, body: withMarker(RULES, CONTENT.body, { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 }), adaptations: 0 } });
     expect(stateOf(github.prs.get(7)!.body)?.head).toBe(HEAD_SHA);
@@ -138,17 +228,6 @@ describe("publication", () => {
     const rewritten = new FakeGitHub(ownPr({ body: withMarker(RULES, "old note", state) }));
     await rewriteText(context(rewritten), 7, HEAD_SHA, () => "new note from /Users/dev/state/plan.json");
     expect(rewritten.prs.get(7)!.body).toContain("new note from <local path>");
-  });
-
-  it("measures a body as it's published: cleaned, which can lengthen it, then marked", async () => {
-    const github = new FakeGitHub();
-    const short = { ...context(github), localRoots: ["/t"] };
-    const content = { ...CONTENT, body: "Ran it in /t/x first." };
-    await publishNew(short, fresh, content);
-    const sent = [...github.prs.values()][0]!.body;
-    expect(sent).toContain("Ran it in <local path> first.");
-    expect(publishedLength(short, content.body)).toBe(sent.length);
-    expect(publishedLength(short, content.body)).toBeGreaterThan(markedLength(RULES, content.body));
   });
 
   it("refuses to publish over a PR that moved or stopped being the tool's", async () => {

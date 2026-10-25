@@ -230,13 +230,27 @@ describe("carrier versions ruled out only by unreviewed advisories", () => {
     });
   });
 
-  it("records the nearest ten it passed over and counts the rest", async () => {
+  it("records the nearest ten it read and counts the rest", async () => {
     const vetoing = bundle("brace@5.0.12", "minimatch@10.2.5", "glob@2.0.0");
     const passed = Array.from({ length: 12 }, (_, i) => `2.10.${i}`);
     const { services } = setup({ ...Object.fromEntries(passed.map((version) => [version, { days: 30, bundle: vetoing }])), "2.11.0": { days: 30, bundle: fixed } });
     const choice = await chooseCarrier(search([...passed, "2.11.0"]), services);
     expect(choice).toMatchObject({ kind: "chosen", version: "2.11.0", vetoesLeftOut: 2 });
     expect(choice.kind === "chosen" ? choice.vetoed.map((veto) => veto.version) : []).toEqual(passed.slice(2));
+  });
+
+  it("records a vetoed aged version above a young fallback, and no version it didn't read", async () => {
+    const vetoing = bundle("brace@5.0.12", "minimatch@10.2.5", "glob@2.0.0");
+    // 2.10.0 fixes but is young. Its batch of four is read and judged: the aged 2.11.0 is vetoed. Past the first fix, a
+    // young version isn't read, so 2.12.0's bundle (it would be vetoed) never is.
+    const { services, reads } = setup({
+      "2.10.0": { days: 1, bundle: fixed }, "2.11.0": { days: 30, bundle: vetoing }, "2.11.1": { days: 1, bundle: fixed }, "2.11.2": { days: 1, bundle: fixed },
+      "2.12.0": { days: 1, bundle: vetoing },
+    });
+    expect(await chooseCarrier(search(["2.10.0", "2.11.0", "2.11.1", "2.11.2", "2.12.0"]), services)).toMatchObject({
+      kind: "chosen", version: "2.10.0", aged: false, vetoed: [{ version: "2.11.0", advisories: ["GHSA-glob-repo"] }], vetoesLeftOut: 0,
+    });
+    expect(reads).not.toContain("2.12.0");
   });
 
   it("records, leaving malware, a newer version it tried before a downgrade", async () => {

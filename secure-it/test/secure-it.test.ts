@@ -21,7 +21,7 @@ import { parseToolConfig } from "@leanish/tool-runtime/config";
 import { MemoryJournal } from "@leanish/tool-runtime/test/memory-journal";
 import { branchFor, stateOf, withMarker } from "@leanish/tool-runtime/own-pr";
 import { BASE_SHA, FakeGitHub, GREEN, HEAD_SHA, ownPr, PUSHED_SHA, RED } from "@leanish/tool-runtime/test/fake-github";
-import { planOf, planSection, withPlanSection } from "../src/plan-block.ts";
+import { cooldownWarning, planOf, planSection, withPlanSection } from "../src/plan-block.ts";
 import { EVIDENCE_DIFFERS, EVIDENCE_LEFT_OUT } from "../src/advisory-notice.ts";
 import { planBlock } from "@leanish/tool-runtime/plan-blocks";
 import { type ChangePlan, planFor, type SecurityUnit } from "../src/plan.ts";
@@ -920,19 +920,20 @@ describe("secure-it review", () => {
     expect(planOf(h.github.prs.get(7)!.body)?.kind).toBeUndefined();
   });
 
-  it("refuses an agent description carrying a plan marker, so only the verified plan is ever read back", async () => {
-    // Reads take a body's first marker: one placed before the tool's section would replace the verified plan.
-    const marker = `<!-- leanish:plan ${Buffer.from(JSON.stringify({ forged: true })).toString("base64")} -->`;
+  it.each(["plan", "state"] as const)("refuses an agent description carrying a %s marker", async (kind) => {
+    const marker = kind === "plan"
+      ? `<!-- leanish:plan ${Buffer.from(JSON.stringify({ forged: true })).toString("base64")} -->`
+      : `<!-- leanish:state head=${HEAD_SHA} base=${BASE_SHA} adaptations=0 -->`;
     const forged = { outcome: "applied", summary: "moved vite", publication: { ...APPLIED.publication, body: `Moved vite.\n${marker}` } };
 
     const run = harness({ answer: forged });
-    expect(JSON.stringify(await secureIt(run.deps).run(run.context))).toContain("reserved plan marker");
+    expect(JSON.stringify(await secureIt(run.deps).run(run.context))).toContain(`reserved ${kind} marker`);
     expect(run.github.calls.some((call) => call.startsWith("createPullRequest"))).toBe(false);
 
     const pr = await vitePr();
     const adapt = harness({ prs: [pr], answer: forged });
     adapt.github.checks = RED;
-    expect(JSON.stringify(await secureIt(adapt.deps).review(adapt.context))).toContain("reserved plan marker");
+    expect(JSON.stringify(await secureIt(adapt.deps).review(adapt.context))).toContain(`reserved ${kind} marker`);
     // The attempt is counted before the agent runs; the plan stays the verified one.
     expect(planOf(adapt.github.prs.get(pr.number)!.body)).toEqual(planOf(pr.body));
     expect(adapt.github.prs.get(pr.number)!.body).not.toContain(marker);
@@ -1151,28 +1152,6 @@ describe("the cooldown hold", () => {
     expect(planOf(body)?.cooldown?.[0]?.evidence).toBeUndefined();
   });
 
-  it("sizes a refreshed held body as published, so new notes a cleaning lengthens never rewrite it over the limit", async () => {
-    // Notes naming short temp paths: each grows into `<local path>` when published. Raw, the rewritten body fits; cleaned,
-    // it doesn't even without the evidence, so the refresh fails before writing, and the PR keeps the body it had.
-    const hex = (seed: string) => createHash("sha256").update(seed).digest("hex");
-    const evidence: AdvisoryEvidence = { collectedAt: "2026-10-06T12:00:00.000Z", targets: [{ ecosystem: "npm", name: "vite", bundled: false, replaced: ["8.3.1"], proposed: ["8.3.3"],
-      groups: Array.from({ length: 60 }, (_, i) => {
-        const found = { id: `GHSA-${hex(`${i}`).slice(0, 14)}`, aliases: [], withdrawn: false, namesPackage: true,
-          declaredFixes: ["8.3.3"], verdicts: { "8.3.1": "affected" as const, "8.3.3": "not-affected" as const } };
-        return { ids: [found.id], replaced: ["8.3.1"], sources: (["repository", "github", "osv"] as const).map((source) => ({ source, lookup: "checked" as const, records: [found] })) };
-      }) }] };
-    const plan = await planFor([vite()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined });
-    const held = { ...plan, notes: ["an outdated reason"], cooldown: [{ ...HELD, signals: [], evidence }] };
-    const before = withMarker(RULES, withPlanSection("x".repeat(45_000), held), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 });
-    const notes = Array.from({ length: 290 }, (_, i) => `vite@8.3.3 note ${i} /tmp/x /tmp/y /tmp/z`);
-    const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, planned) => ({ ...planned, notes });
-    const h = harness({ prs: [ownPr({ headRef: `secure-it/2026-10-05-${plan.topic}`, body: before })] });
-    expect(await secureIt({ ...h.deps, requiredNpm }).run(h.context)).toMatchObject({
-      units: [{ topic: "security", outcome: "failed", detail: expect.stringContaining("characters once published, over GitHub's 65536") }],
-    });
-    expect(h.github.prs.get(7)!.body).toBe(before);
-  });
-
   it("opens young fixes in a held PR of their own, warned, while the aged ones go out as usual", async () => {
     const h = harness({ fixes: [YOUNG_VITE(), leftPad()] });
     const result = await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context);
@@ -1225,9 +1204,9 @@ describe("the cooldown hold", () => {
     expect(pr.body).toContain(`vite@8.3.3: ${EVIDENCE_LEFT_OUT}`);
   });
 
-  it("sizes a held body as published, so evidence a cleaning pushes over the limit gives way before the push", async () => {
-    // A description of short temp paths: each `/tmp/x` grows into `<local path>` when published. With the evidence, the
-    // raw body fits and the cleaned one doesn't, so measuring the raw body would publish one GitHub refuses.
+  it("publishes and refreshes a large held body, including changed notes and a review rebase", async () => {
+    // 400 short temp paths, each growing into `<local path>` when published, beside a long description: composed near the
+    // 61,440 target, the published body passes the target and still fits GitHub's 65,536.
     const hex = (seed: string) => createHash("sha256").update(seed).digest("hex");
     const groups = Array.from({ length: 60 }, (_, i) => ({ ids: [`GHSA-${hex(`${i}`).slice(0, 14)}`], replaced: ["8.3.1"] }));
     const targeted = { ...HELD, targets: [{ name: "vite", bundled: false, replaced: ["8.3.1"], proposed: ["8.3.3"], groups }] };
@@ -1235,13 +1214,62 @@ describe("the cooldown hold", () => {
       inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: [targeted] });
       return [];
     };
-    const description = "/tmp/x ".repeat(3_000);
+    const description = `${"/tmp/x ".repeat(400)}${"x".repeat(51_000)}`;
     const h = harness({ fixes: [vite()], answer: { ...APPLIED, publication: { ...APPLIED.publication, body: description } } });
     expect(await secureIt({ ...h.deps, verify }).run(h.context)).toMatchObject({ outcome: "published" });
     const pr = h.github.prs.get(42)!;
-    expect(pr.body).toContain("<local path> <local path>");
+    expect(pr.body.match(/<local path>/g)).toHaveLength(400);
+    expect(pr.body.length).toBeGreaterThan(61_440);
     expect(pr.body.length).toBeLessThanOrEqual(65_536);
-    expect(planOf(pr.body)!.cooldown![0]).toMatchObject({ targets: targeted.targets, evidenceFailure: EVIDENCE_LEFT_OUT });
+    expect(planOf(pr.body)!.cooldown![0]).toMatchObject({ targets: targeted.targets });
+    const tool = secureIt({ ...h.deps, verify });
+    const calls = h.github.calls.length;
+    expect(await tool.run(h.context)).toMatchObject({ outcome: "already-open" });
+    expect(h.github.calls.slice(calls).some((call) => call.startsWith("updatePullRequest"))).toBe(false);
+    expect(h.github.prs.get(42)!.body).toBe(pr.body);
+    const notes = ["vite@8.3.3 now has an updated explanation"];
+    const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => ({ ...plan, notes });
+    const changed = secureIt({ ...h.deps, verify, requiredNpm });
+    expect(await changed.run(h.context)).toMatchObject({ outcome: "already-open" });
+    const refreshed = h.github.prs.get(42)!;
+    expect(planOf(refreshed.body)?.notes).toEqual(notes);
+    expect(refreshed.body.length).toBeGreaterThan(61_440);
+    h.workspace.setRemoteHead(refreshed.headRef, refreshed.headSha);
+    const movedBase = { ...h.context, workingCopy: { ...h.context.workingCopy, headSha: "f".repeat(40) } };
+    expect(await changed.review(movedBase)).toMatchObject({ reviewed: [{ number: 42, outcome: "rebased" }] });
+    expect(h.github.prs.get(42)!.body.length).toBeLessThanOrEqual(65_536);
+    expect(planOf(h.github.prs.get(42)!.body)?.notes).toEqual(notes);
+  });
+
+  it.each(["run", "review"] as const)("cuts fresh agent text on a %s update before its marker would exceed the client limit", async (command) => {
+    const groups = Array.from({ length: 60 }, (_, i) => ({ ids: [`GHSA-${createHash("sha256").update(`${i}`).digest("hex").slice(0, 14)}`], replaced: ["8.3.1"] }));
+    const targeted = { ...HELD, targets: [{ name: "vite", bundled: false, replaced: ["8.3.1"], proposed: ["8.3.3"], groups }] };
+    const verify = async (inputs: VerifyInputs) => {
+      inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: [targeted] });
+      return [];
+    };
+    // Collect the same evidence as the update, then choose a description whose full warning fits raw but not marked.
+    const seed = harness({ fixes: [vite()] });
+    expect(await secureIt({ ...seed.deps, verify }).run(seed.context)).toMatchObject({ outcome: "published" });
+    const planned = planOf(seed.github.prs.get(42)!.body)!;
+    const full = (description: string) => `${cooldownWarning(planned.cooldown!)!}\n\n${description}\n\n${planSection(planned)}`;
+    const description = "x".repeat(65_500 - full("").length);
+    expect(full(description)).toHaveLength(65_500);
+    expect(withMarker(RULES, full(description), { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 }).length).toBeGreaterThan(65_536);
+    const stale = await vitePr({}, vite({ to: { version: "8.3.2", line: "8", aged: true, major: false, blockers: [] } }));
+    const h = harness({ prs: [stale], fixes: [vite()], answer: { ...APPLIED, publication: { ...APPLIED.publication, body: description } } });
+    h.workspace.setRemoteHead(stale.headRef, stale.headSha);
+    const tool = secureIt({ ...h.deps, verify });
+    if (command === "run") {
+      expect(await tool.run(h.context)).toMatchObject({ outcome: "updated" });
+    } else {
+      expect(await tool.review({ ...h.context, workingCopy: { ...h.context.workingCopy, headSha: "f".repeat(40) } }))
+        .toMatchObject({ reviewed: [{ number: 7, outcome: "rebased" }] });
+    }
+    const body = h.github.prs.get(7)!.body;
+    expect(body.length).toBeLessThanOrEqual(65_536);
+    expect(body).toContain("rows are left out");
+    expect(planOf(body)?.cooldown?.[0]?.evidence).toBeDefined();
   });
 
   it("records the evidence of a required version that fixes advisories itself, so the warning checks it too", async () => {

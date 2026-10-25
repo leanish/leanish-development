@@ -36,7 +36,7 @@ import { runSandboxed, sandboxWritable } from "@leanish/tool-runtime/sandboxed";
 import { ensureOsvScanner, verifyingRun } from "@leanish/tool-runtime/osv-scanner";
 import { freeBranch, ownPullRequests, stateOf, topicOf } from "@leanish/tool-runtime/own-pr";
 import { publicationParent, revertToBase } from "@leanish/tool-runtime/reconcile";
-import { clearLeftoverBranch, closeAndDelete, ownOpenPullRequests, type PublicationContext, publishedLength, publishNew, publishUpdate, recoverPublication, rewriteText } from "@leanish/tool-runtime/publication";
+import { clearLeftoverBranch, closeAndDelete, ownOpenPullRequests, type PublicationContext, publishNew, publishUpdate, recoverPublication, rewriteText } from "@leanish/tool-runtime/publication";
 import { machineRoots } from "@leanish/tool-runtime/publication-text";
 import { type BaseMerge, type CooldownState, reviewOpenPullRequests, type ReviewSteps } from "@leanish/tool-runtime/review";
 
@@ -333,9 +333,8 @@ async function refreshText(execution: Execution, pr: GitHubPullRequest, plan: Ch
   const previous = planOf(pr.body);
   if (previous === undefined) return;
   const refreshed = withNotesOf(previous, plan);
-  const measure = (text: string) => publishedLength(execution.publication, text);
-  if (withPlanSection(pr.body, refreshed, measure) === withPlanSection(pr.body, previous, measure)) return;
-  await rewriteText(execution.publication, pr.number, pr.headSha, (body) => withPlanSection(body, refreshed, measure));
+  if (withPlanSection(pr.body, refreshed) === withPlanSection(pr.body, previous)) return;
+  await rewriteText(execution.publication, pr.number, pr.headSha, (body) => withPlanSection(body, refreshed));
 }
 
 /** `published` with `recomputed`'s notes (a floor removal's own, or the plan's). */
@@ -592,7 +591,7 @@ async function runUnit(execution: Execution, unit: SecurityUnit, base: PlanBase,
     ...(verified.rejected === undefined ? {} : { rejected: verified.rejected }),
   };
   if (verified.problems.length > 0) return { ...checked, outcome: "verification-failed", problems: verified.problems };
-  const content = { ...verified.content, body: withPlanSection(verified.content.body, verified.plan, (text) => publishedLength(execution.publication, text)) };
+  const content = { ...verified.content, body: withPlanSection(verified.content.body, verified.plan) };
   if (reusable !== undefined) {
     const { pr } = await publishUpdate(publication, prepared, reusable.number, content, 0);
     return { ...checked, outcome: "updated", pullRequest: pr.url };
@@ -840,7 +839,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
     const verified = await verifyWithRetry(execution, base, plan, content);
     if (verified.leftOut.length > 0) notes.push({ number: pr.number, leftOut: verified.leftOut, named: verified.named });
     if (verified.problems.length > 0) throw new Error(`${failure}: ${verified.problems.join("; ")}`);
-    return publishUpdate(publication, prepared, pr.number, { ...verified.content, body: withPlanSection(verified.content.body, verified.plan, (text) => publishedLength(publication, text)) }, attempt);
+    return publishUpdate(publication, prepared, pr.number, { ...verified.content, body: withPlanSection(verified.content.body, verified.plan) }, attempt);
   };
   const steps: ReviewSteps = {
     cooldown: (pr) => cooldownState(planFrom(pr), context.now),
@@ -905,7 +904,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       }
       // The agent applies a changed plan, or re-applies the same one over the base's side of conflicted dependency
       // files, resolving code conflicts too.
-      let content = { title: pr.title, body: withPlanSection(pr.body, plan, (text) => publishedLength(publication, text)), commitMessage: `merging ${context.base}` };
+      let content = { title: pr.title, body: withPlanSection(pr.body, plan), commitMessage: `merging ${context.base}` };
       if (changed || merge.kind === "conflicted") {
         const answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({
           entrypoint: "secure-it",

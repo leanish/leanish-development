@@ -7,17 +7,21 @@
  */
 import { createHash } from "node:crypto";
 
+import { MAX_BODY_CHARS } from "@leanish/agent-runtime/github/github-client";
 import { isAdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import { heldEntry, heldUntil } from "@leanish/gate/cooldown";
-import { markedLength, ownPullRequests } from "@leanish/tool-runtime/own-pr";
-import { BODY_LIMIT, defused, planPayload, planSection as sectionOf, TooLargeError, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
+import { MARKER_ROOM, stateOf } from "@leanish/tool-runtime/own-pr";
+import { defused, planPayload, planSection as sectionOf, TooLargeError, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
 
 import { advisoryNotice, EVIDENCE_LEFT_OUT, tableRowCount } from "./advisory-notice.ts";
 import { floorIdentity, validRemoval } from "./floor-removal.ts";
 import type { ChangePlan, PlannedHold, PlannedMove } from "./plan.ts";
 
 const HEADING = "### What secure-it moved";
-const RULES = ownPullRequests("secure-it");
+/** Fresh agent text: leave room for cleaning and the publication marker below the client's body limit. */
+export const FRESH_HELD_BODY_TARGET = 61_440;
+/** Already published text includes its marker; keep spare room for its replacement and any re-cleaning. */
+export const PUBLISHED_HELD_BODY_TARGET = MAX_BODY_CHARS - MARKER_ROOM;
 const WARNING_START = "<!-- secure-it cooldown warning -->";
 const WARNING_END = "<!-- /secure-it cooldown warning -->";
 
@@ -86,10 +90,10 @@ const quoted = (text: string) => text.replaceAll("<", "&lt;").replace(/\s+/g, " 
 /** A fixed line per candidate the gate ruled out only by advisories no reviewed source corroborates. */
 function vetoLines(move: PlannedMove): string[] {
   const left = move.vetoesLeftOut === undefined ? [] : [
-    `- ${quoted(move.name)}: ${move.vetoesLeftOut} additional candidates preceding ${move.to} in the selection order were ruled out the same way, by advisories not corroborated by the sources this decision used.`,
+    `- ${quoted(move.name)}: ${move.vetoesLeftOut} more candidates were ruled out the same way, by advisories not corroborated by the sources this decision used.`,
   ];
   return [...(move.vetoed ?? []).map((veto) =>
-    `- ${quoted(move.name)} ${quoted(veto.version)} was ruled out by ${quoted(veto.advisories.join(", "))}, not corroborated by the sources this decision used; this takes ${move.to}.`), ...left];
+    `- ${quoted(move.name)} ${quoted(veto.version)} was ruled out by ${quoted(veto.advisories.join(", "))}, not corroborated by the sources this decision used.`), ...left];
 }
 
 /** Omissions are visible to reviewers as well as the command report and persisted plan. */
@@ -112,17 +116,18 @@ function omittedSection(plan: ChangePlan): string[] {
  * `body` with its plan section replaced by `plan`'s (or `plan`'s appended when it has none), and the cooldown warning on
  * top while it holds. The advisory evidence is for people and never changes a verdict, so when the body can't be written
  * with it (its plan, section or body over a limit), it gives way, never the fix: written again without any, each fix that
- * had some says why it's missing. What still can't be written, and any other failure, fails as before. `measure` is the
- * body's length as published; a publishing caller passes `publishedLength`, which also counts the cleaning.
+ * had some says why it's missing. Fresh text has a smaller raw budget than text carrying a published state marker.
+ * What still can't be written, and any other failure, fails as before.
  */
-export function withPlanSection(body: string, plan: ChangePlan, measure: (text: string) => number = (text) => markedLength(RULES, text)): string {
+export function withPlanSection(body: string, plan: ChangePlan): string {
+  const heldBodyTarget = stateOf(body) === undefined ? FRESH_HELD_BODY_TARGET : PUBLISHED_HELD_BODY_TARGET;
   try {
-    return composed(body, plan, measure);
+    return composed(body, plan, heldBodyTarget);
   } catch (error) {
     const lighter = error instanceof TooLargeError ? withoutEvidence(plan) : undefined;
     if (lighter === undefined) throw error;
     try {
-      return composed(body, lighter, measure);
+      return composed(body, lighter, heldBodyTarget);
     } catch (retried) {
       throw retried instanceof TooLargeError ? error : retried;
     }
@@ -136,18 +141,16 @@ function withoutEvidence(plan: ChangePlan): ChangePlan | undefined {
   return { ...plan, cooldown: held.map(({ evidence, ...entry }) => (evidence === undefined ? entry : { ...entry, evidenceFailure: EVIDENCE_LEFT_OUT })) };
 }
 
-function composed(body: string, plan: ChangePlan, measure: (text: string) => number): string {
+function composed(body: string, plan: ChangePlan, heldBodyTarget: number): string {
   const held = plan.cooldown ?? [];
   const rest = replaced(withoutWarning(body), HEADING, planSection(plan));
   if (cooldownWarning(held) === undefined) return rest;
   const warned = (rows?: number) => `${cooldownWarning(held, rows === undefined ? {} : { rows })!}\n\n${rest}`;
-  // Measured as published (`measure`): a body filled up to the limit must still be accepted once cleaned and marked.
-  const fits = (text: string) => measure(text) <= BODY_LIMIT;
+  const fits = (text: string) => text.length <= heldBodyTarget;
   const full = warned();
   if (fits(full)) return full;
   // Only the evidence table's last rows give way (the plan's block below keeps them all): the most that fit, found by
-  // halving, since one row fewer never makes the body longer (a row outweighs the extra digit in the count of those cut),
-  // cleaned or not: rows escape `<`, so none opens a comment span that publication's cleaning would leave alone.
+  // halving, since one row fewer never makes the body longer (a row outweighs the extra digit in the count of those cut).
   let low = 0;
   let high = tableRowCount(held) - 1;
   let most = 0;
@@ -161,9 +164,9 @@ function composed(body: string, plan: ChangePlan, measure: (text: string) => num
     }
   }
   const shorter = warned(most);
-  // Too large even without rows: the evidence gives way next (withPlanSection), so this is a size, never a publication
-  // GitHub refuses after the push.
-  if (!fits(shorter)) throw new TooLargeError(`the PR body would be ${measure(shorter)} characters once published, over GitHub's ${BODY_LIMIT}`);
+  // Too large even without rows: the evidence gives way next (withPlanSection). Publication separately checks the
+  // cleaned, marked body, since a raw budget cannot bound arbitrary path expansion.
+  if (!fits(shorter)) throw new TooLargeError(`the PR body would be ${shorter.length} characters, over the ${heldBodyTarget} a held body is kept to`);
   return shorter;
 }
 
