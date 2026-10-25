@@ -39,7 +39,8 @@
   ones). It reports problems only: a line opens the warning when no reviewed record (OSV, or GitHub's reviewed
   database) backs some advisory as read now, with those rows marked, and a fix it couldn't check is listed with its
   reason. A lookup that fails is shown as such, never as "not found". The table lists its ⚠ rows first; when it
-  would push the PR body past GitHub's limit, it shows the rows that fit, with a line saying how many are left out,
+  would push the PR body past 61,440 characters (about 4,000 short of GitHub's limit, room for what publishing adds),
+  it shows the rows that fit, with a line saying how many are left out,
   and the plan's block keeps the evidence; when the PR still can't be written with the evidence, it's left out, and
   each fix that had some is listed as unchecked. The gate's comparison report records, for each held version, the
   advisories it fixes (`targets`), whether or not anything justified it (an exception's named one, whichever source

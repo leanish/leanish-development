@@ -9,17 +9,19 @@ import { createHash } from "node:crypto";
 
 import { isAdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import { heldEntry, heldUntil } from "@leanish/gate/cooldown";
-import { markedLength, ownPullRequests } from "@leanish/tool-runtime/own-pr";
-import { BODY_LIMIT, defused, planPayload, planSection as sectionOf, TooLargeError, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
+import { defused, planPayload, planSection as sectionOf, TooLargeError, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
 
 import { advisoryNotice, EVIDENCE_LEFT_OUT, tableRowCount } from "./advisory-notice.ts";
 import { floorIdentity, validRemoval } from "./floor-removal.ts";
 import type { ChangePlan, PlannedHold, PlannedMove } from "./plan.ts";
 
 const HEADING = "### What secure-it moved";
-const RULES = ownPullRequests("secure-it");
-/** How far short of GitHub's limit a held body's evidence table is cut (`composed`). */
-const BODY_MARGIN = 2_048;
+/**
+ * The most characters a held body is composed to, raw: 60K, about 4,000 short of the 65,536 GitHub takes when a PR is
+ * created. The gap covers what publishing adds (the state and marker, local paths becoming `<local path>`), so the
+ * same check cuts the table, drops the evidence and refuses the body, and none fills it to GitHub's limit itself.
+ */
+const HELD_BODY_TARGET = 61_440;
 const WARNING_START = "<!-- secure-it cooldown warning -->";
 const WARNING_END = "<!-- /secure-it cooldown warning -->";
 
@@ -114,17 +116,16 @@ function omittedSection(plan: ChangePlan): string[] {
  * `body` with its plan section replaced by `plan`'s (or `plan`'s appended when it has none), and the cooldown warning on
  * top while it holds. The advisory evidence is for people and never changes a verdict, so when the body can't be written
  * with it (its plan, section or body over a limit), it gives way, never the fix: written again without any, each fix that
- * had some says why it's missing. What still can't be written, and any other failure, fails as before. `measure` is the
- * body's length as published; a publishing caller passes `publishedLength`, which also counts the cleaning.
+ * had some says why it's missing. What still can't be written, and any other failure, fails as before.
  */
-export function withPlanSection(body: string, plan: ChangePlan, measure: (text: string) => number = (text) => markedLength(RULES, text)): string {
+export function withPlanSection(body: string, plan: ChangePlan): string {
   try {
-    return composed(body, plan, measure);
+    return composed(body, plan);
   } catch (error) {
     const lighter = error instanceof TooLargeError ? withoutEvidence(plan) : undefined;
     if (lighter === undefined) throw error;
     try {
-      return composed(body, lighter, measure);
+      return composed(body, lighter);
     } catch (retried) {
       throw retried instanceof TooLargeError ? error : retried;
     }
@@ -138,20 +139,16 @@ function withoutEvidence(plan: ChangePlan): ChangePlan | undefined {
   return { ...plan, cooldown: held.map(({ evidence, ...entry }) => (evidence === undefined ? entry : { ...entry, evidenceFailure: EVIDENCE_LEFT_OUT })) };
 }
 
-function composed(body: string, plan: ChangePlan, measure: (text: string) => number): string {
+function composed(body: string, plan: ChangePlan): string {
   const held = plan.cooldown ?? [];
   const rest = replaced(withoutWarning(body), HEADING, planSection(plan));
   if (cooldownWarning(held) === undefined) return rest;
   const warned = (rows?: number) => `${cooldownWarning(held, rows === undefined ? {} : { rows })!}\n\n${rest}`;
-  // Measured as published (`measure`), the table is cut to a target BODY_MARGIN short of the limit: room for what the
-  // measure can't see (a later step between composing and sending, or GitHub counting otherwise). Only the final check
-  // uses the limit itself, so no body that fits is refused for the margin.
-  const fits = (text: string) => measure(text) <= BODY_LIMIT - BODY_MARGIN;
+  const fits = (text: string) => text.length <= HELD_BODY_TARGET;
   const full = warned();
   if (fits(full)) return full;
   // Only the evidence table's last rows give way (the plan's block below keeps them all): the most that fit, found by
-  // halving, since one row fewer never makes the body longer (a row outweighs the extra digit in the count of those cut),
-  // cleaned or not: rows escape `<`, so none opens a comment span that publication's cleaning would leave alone.
+  // halving, since one row fewer never makes the body longer (a row outweighs the extra digit in the count of those cut).
   let low = 0;
   let high = tableRowCount(held) - 1;
   let most = 0;
@@ -167,7 +164,7 @@ function composed(body: string, plan: ChangePlan, measure: (text: string) => num
   const shorter = warned(most);
   // Too large even without rows: the evidence gives way next (withPlanSection), so this is a size, never a publication
   // GitHub refuses after the push.
-  if (measure(shorter) > BODY_LIMIT) throw new TooLargeError(`the PR body would be ${measure(shorter)} characters once published, over GitHub's ${BODY_LIMIT}`);
+  if (!fits(shorter)) throw new TooLargeError(`the PR body would be ${shorter.length} characters, over the ${HELD_BODY_TARGET} a held body is kept to`);
   return shorter;
 }
 

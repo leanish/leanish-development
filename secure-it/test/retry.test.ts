@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import { markedLength, ownPullRequests } from "@leanish/tool-runtime/own-pr";
 import { planBlock } from "@leanish/tool-runtime/plan-blocks";
 import { cooldownWarning, planOf, planSection, withPlanSection } from "../src/plan-block.ts";
 import type { ChangePlan, PlannedMove } from "../src/plan.ts";
@@ -63,7 +62,7 @@ describe("batch retry", () => {
     const eight = plan(...Array.from({ length: 8 }, (_, i) => ({ ...counted, from: `1.0.${i}`, locations: [`p${i}/node_modules/lib`] })));
     const body = withPlanSection("Description.", eight);
     expect(planOf(body)).toEqual(eight);
-    expect(markedLength(ownPullRequests("secure-it"), body)).toBeLessThan(30_000);
+    expect(body.length).toBeLessThan(30_000);
     for (const vetoesLeftOut of [0, -1, 1.5, "3"]) expect(planOf(withPlanSection("Description.", plan({ ...counted, vetoesLeftOut } as unknown as PlannedMove)))).toBeUndefined();
     expect(planOf(withPlanSection("Description.", plan({ ...move("lib"), vetoesLeftOut: 3 })))).toBeUndefined();
   });
@@ -153,7 +152,7 @@ describe("batch retry", () => {
     expect(planOf(planSection({ ...reduced, kind: "invalid" as never }))).toBeUndefined();
   });
 
-  it("compresses a plan too large for a plain block, and keeps its cooldown warning within GitHub's body limit", () => {
+  it("compresses a plan too large for a plain block, and keeps a held body within its target", () => {
     const large = plan(...Array.from({ length: 400 }, (_, n) => move(`lib-${n}`)));
     expect(planBlock(large).length).toBeGreaterThan(43_000);
     const section = planSection(large);
@@ -165,10 +164,10 @@ describe("batch retry", () => {
     const warned = withPlanSection("Description.", { ...large, cooldown: [held] });
     expect(warned).toContain("Release-age cooldown bypassed");
     expect(planOf(warned)).toEqual({ ...large, cooldown: [held] });
-    // The body fits without the warning and goes over with it.
+    // The body fits GitHub's limit without the warning and goes over the held target with it.
     const warning = cooldownWarning([held])!;
     const filler = "x".repeat(65_536 - "\n\n".length - planSection({ ...large, cooldown: [held] }).length - Math.floor(warning.length / 2));
     expect(() => withPlanSection(filler, large)).not.toThrow();
-    expect(() => withPlanSection(filler, { ...large, cooldown: [held] })).toThrow(/over GitHub's 65536/);
+    expect(() => withPlanSection(filler, { ...large, cooldown: [held] })).toThrow(/over the 61440 a held body is kept to/);
   });
 });
