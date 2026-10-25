@@ -8,11 +8,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { SecurityFix } from "@leanish/gate/candidates";
 import { parseConfig } from "@leanish/gate/config";
 import type { GateEnvironment } from "@leanish/gate/gate";
-import { gradleLocation, type GradleInventory, runGradleInventory } from "@leanish/gate/gradle";
+import { gradleLocation, gradleResolutionProblems, type GradleInventory, runGradleInventory } from "@leanish/gate/gradle";
 import { gradleSourceIndex } from "@leanish/gate/gradle-sources";
 import { runProcess, type RunProcess } from "@leanish/gate/process";
 import { workingTree } from "@leanish/gate/tree";
 import { fakeFetch } from "@leanish/gate/test/fake-fetch";
+import { referenceProblems, referenceTransform } from "@leanish/tool-runtime/gradle-reference";
 import type { GradleTransform } from "@leanish/tool-runtime/inventories";
 import { withGradleParents } from "../src/gradle-parents.ts";
 import { planFor } from "../src/plan.ts";
@@ -233,5 +234,59 @@ dependencies { implementation "fixture:d:1.0" }
       name: "fixture:d", from: "1.0", to: "1.2", mechanism: "gradle-declared",
       carries: [expect.objectContaining({ name: "fixture:x", from: ["1.0"], to: ["2.0"] })],
     })]);
+  }, 600_000);
+});
+
+
+describe.skipIf(process.env["SUPPLY_CHAIN_GRADLE_TESTS"] !== "1")("held Gradle fixes, with real Gradle offline", () => {
+  let fixtureRoot: string;
+  let fixtureBuild: string;
+  const offline: RunProcess = (command, args, options) => runProcess(process.env["SUPPLY_CHAIN_GRADLE_BIN"] ?? command,
+    ["--offline", "--gradle-user-home", join(fixtureRoot, "gradle-home"), ...args], options);
+
+  beforeAll(async () => {
+    fixtureRoot = await mkdtemp(join(tmpdir(), "secure-it-held-gradle-"));
+    const repo = join(fixtureRoot, "repo");
+    for (const version of ["1.0.0", "1.0.1"]) {
+      for (const name of ["a", "b"]) await write(repo, `g/${name}/${version}/${name}-${version}.pom`,
+        pom(`g:${name}:${version}`, name === "a" ? [`g:b:${version}`] : []));
+    }
+    fixtureBuild = join(fixtureRoot, "build");
+    await cp(WRAPPER, fixtureBuild, { recursive: true });
+    await write(fixtureBuild, "settings.gradle", 'rootProject.name = "held-fixture"\n');
+    await write(fixtureBuild, "build.gradle", `plugins { id "java" }
+repositories { maven { url = uri("${repo}") } }
+configurations.configureEach { resolutionStrategy.failOnVersionConflict() }
+dependencies { implementation "g:a:1.0.0"; implementation "g:b:1.0.0" }
+`);
+  });
+
+  afterAll(async () => {
+    if (fixtureRoot !== undefined) await rm(fixtureRoot, { recursive: true, force: true });
+  });
+
+  it("resolves the aligned security moves together, but refuses either half", async () => {
+    const base = await runGradleInventory(fixtureBuild, ["."], "base", offline);
+    expect(gradleResolutionProblems(base, [])).toEqual([]);
+    const moves = ["a", "b"].map((name) => ({ name: `g:${name}`, from: "1.0.0", to: "1.0.1", locations: [":compileClasspath", ":runtimeClasspath", ":testCompileClasspath", ":testRuntimeClasspath"] }));
+    for (const selected of [[moves[0]!], [moves[1]!], moves]) {
+      const transform = referenceTransform(selected, []);
+      const file = join(fixtureRoot, "reference.json");
+      await writeFile(file, JSON.stringify(transform.content(fixtureBuild)));
+      const inventory = await runGradleInventory(fixtureBuild, ["."], "reference", offline, {
+        additionalInitScripts: [transform.initScript], systemProperties: { [transform.property]: file },
+      });
+      const failures = gradleResolutionProblems(inventory, []);
+      if (selected.length === 1) {
+        // Gradle reports failOnVersionConflict as both requested versions left unresolved, not by the word "conflict";
+        // the joint case below resolving proves the fixture itself is complete.
+        expect(failures.join("\n")).toMatch(/couldn't resolve g:b:1\.0\.0/);
+        expect(failures.join("\n")).toMatch(/couldn't resolve g:b:1\.0\.1/);
+      } else {
+        expect(failures).toEqual([]);
+        expect(referenceProblems(base, inventory, selected, [])).toEqual([]);
+        expect(at(inventory, ":runtimeClasspath").resolved).toEqual(["a:1.0.1", "b:1.0.1"]);
+      }
+    }
   }, 600_000);
 });
