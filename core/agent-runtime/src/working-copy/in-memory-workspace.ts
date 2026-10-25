@@ -1,6 +1,6 @@
 // Copied from leanish/leanish-development core/runtime/src/working-copy/in-memory-workspace.ts at c6282df; see PROVENANCE.md.
 // Local changes: `RepoSource` instead of catalog-it's `Project`; `remote-merging` (a scheduled conflict lists package-lock.json);
-// calls `beforePush`.
+// calls `beforePush` and records pushes separately from publication attempts.
 import type { RepoSource as Project } from "../types/repo-source.ts";
 
 import type {
@@ -74,6 +74,8 @@ export class InMemoryWorkspace implements Workspace {
   readonly preparations: Array<{ readonly projectId: string; readonly args: PrepareBranchArgs }> = [];
   /** Every `publishBranch` call, in order. */
   readonly publications: Array<{ readonly projectId: string; readonly prepared: PreparedBranch; readonly args: PublishBranchArgs }> = [];
+  /** Pushes that happened after `beforePush` passed, even if a caller subsequently fails. */
+  readonly pushes: Array<{ readonly projectId: string; readonly branch: string; readonly sha: string }> = [];
   /** Every `deleteRemoteBranch` call, in order. */
   readonly deletions: Array<{ readonly projectId: string; readonly args: DeleteRemoteBranchArgs }> = [];
 
@@ -111,8 +113,10 @@ export class InMemoryWorkspace implements Workspace {
       this.#nextPublishUnchanged = false;
       return { kind: "unchanged" };
     }
-    await args.beforePush?.("c".repeat(40));
-    return { kind: "pushed", sha: "c".repeat(40) };
+    const sha = "c".repeat(40);
+    await args.beforePush?.(sha);
+    this.pushes.push({ projectId: workingCopy.projectId, branch: prepared.branch, sha });
+    return { kind: "pushed", sha };
   }
 
   async deleteRemoteBranch(workingCopy: WorkingCopy, args: DeleteRemoteBranchArgs): Promise<DeleteRemoteBranchResult> {

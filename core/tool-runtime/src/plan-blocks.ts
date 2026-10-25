@@ -93,11 +93,12 @@ export function defused(text: string): string {
 }
 
 /**
- * Refuses an agent's PR description that carries a plan marker. Reads take the first marker in a body, so a copied
- * or invented plan placed before the tool's own section would replace the verified plan for every later read.
+ * Refuses reserved plan or state markers in an agent's PR description. A copied plan before the tool's section could
+ * replace the verified plan for later reads; a state marker could make fresh text look already published for sizing.
  */
 export function assertNoPlanMarker(body: string): void {
   if (body.includes(RESERVED)) throw new Error("the agent returned a reserved plan marker in its PR description");
+  if (body.includes("<!-- leanish:state")) throw new Error("the agent returned a reserved state marker in its PR description");
 }
 
 /**

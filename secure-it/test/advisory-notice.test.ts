@@ -6,7 +6,7 @@ import type { AdvisoryEvidence, EvidenceRecord, SourceEvidence } from "@leanish/
 
 import { advisoryNotice, EVIDENCE_DIFFERS, EVIDENCE_LEFT_OUT, INCOMPLETE, NOT_RECORDED, tableCut } from "../src/advisory-notice.ts";
 import type { ChangePlan, PlannedHold } from "../src/plan.ts";
-import { cooldownWarning, planOf, planSection, withPlanSection } from "../src/plan-block.ts";
+import { FRESH_HELD_BODY_TARGET, PUBLISHED_HELD_BODY_TARGET, cooldownWarning, planOf, planSection, withPlanSection } from "../src/plan-block.ts";
 import { ownPullRequests, withMarker } from "@leanish/tool-runtime/own-pr";
 import { planBlock } from "@leanish/tool-runtime/plan-blocks";
 import { cleanBody } from "@leanish/tool-runtime/publication-text";
@@ -224,8 +224,10 @@ describe("the advisory notice on a held PR", () => {
     expect(pathy.length).toBeLessThanOrEqual(61_440);
     expect(mark(cleanBody(pathy, CLEANING)).length).toBeLessThanOrEqual(65_536);
     expect(planOf(pathy)).toEqual(large);
-    // A refresh composes the published body, its state and marker included, within the same target.
-    expect(withPlanSection(mark(body), large).length).toBeLessThanOrEqual(61_440);
+    // Published text includes its state and marker and gets the stored budget; repeated refreshes stay stable.
+    const refreshed = withPlanSection(mark(body), large);
+    expect(refreshed.length).toBeLessThanOrEqual(PUBLISHED_HELD_BODY_TARGET);
+    expect(withPlanSection(refreshed, large)).toBe(refreshed);
     // Each row fewer shortens the warning, the count's extra digit included, so the halving finds the most that fit.
     const lengths = Array.from({ length: 61 }, (_, rows) => warning(rows));
     expect(lengths.every((length, rows) => rows === 0 || length > lengths[rows - 1]!)).toBe(true);
@@ -277,6 +279,11 @@ describe("the advisory notice on a held PR", () => {
     const unpadded = withPlanSection("", bare).length;
     expect(withPlanSection("x".repeat(61_440 - unpadded), bare)).toHaveLength(61_440);
     expect(() => withPlanSection("x".repeat(61_441 - unpadded), bare)).toThrow("61441 characters, over the 61440 a held body is kept to");
+    const mark = (text: string) => withMarker(RULES, text, { head: "a".repeat(40), base: "b".repeat(40), adaptations: 0 });
+    const storedBase = withPlanSection(mark(""), bare).length;
+    expect(withPlanSection(mark("x".repeat(65_280 - storedBase)), bare)).toHaveLength(65_280);
+    expect(() => withPlanSection(mark("x".repeat(65_281 - storedBase)), bare)).toThrow("65281 characters, over the 65280 a held body is kept to");
+    expect([FRESH_HELD_BODY_TARGET, PUBLISHED_HELD_BODY_TARGET]).toEqual([61_440, 65_280]);
     // What can't be written even without the evidence fails as before, as does a plan without any.
     expect(() => withPlanSection("x".repeat(70_000), overBody)).toThrow("over GitHub's 65536");
     expect(() => withPlanSection("x".repeat(70_000), { ...overBody, cooldown: [hold()] })).toThrow("over GitHub's 65536");

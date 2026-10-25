@@ -1,6 +1,6 @@
 // Adapted from leanish/leanish-development agents/bump-it/test/fake-github.ts at c6282df: secure-it's rules and PR state
 // instead of bump-it's constants; the Dependabot PR factory is left out; CI fixtures use actions-jobs source.
-import { GitHubApiError } from "@leanish/agent-runtime/github/github-client";
+import { GitHubApiError, MAX_BODY_CHARS, MAX_TITLE_CHARS } from "@leanish/agent-runtime/github/github-client";
 import type { GitHubClient, GitHubHeadChecks, GitHubNewPullRequest, GitHubPullRequest, GitHubRequiredChecks } from "@leanish/agent-runtime/types/clients";
 
 import { ownPullRequests, withMarker } from "../src/own-pr.ts";
@@ -120,6 +120,8 @@ export class FakeGitHub implements GitHubClient {
   }
 
   async createPullRequest(args: GitHubNewPullRequest): Promise<GitHubPullRequest> {
+    if (args.title.trim() === "" || args.title.length > MAX_TITLE_CHARS) throw new GitHubApiError("createPullRequest", "invalid title");
+    if (args.body.length > MAX_BODY_CHARS) throw new GitHubApiError("createPullRequest", "body too long");
     this.#record("createPullRequest", `${args.head} -> ${args.base} draft=${args.draft}`);
     const number = this.#nextNumber++;
     const pr = ownPr({
@@ -140,6 +142,8 @@ export class FakeGitHub implements GitHubClient {
   }
 
   async updatePullRequest(args: { readonly repo: string; readonly number: number; readonly title: string; readonly body: string }): Promise<GitHubPullRequest> {
+    if (args.title.trim() === "" || args.title.length > MAX_TITLE_CHARS) throw new GitHubApiError("updatePullRequest", "invalid title");
+    if (args.body.length > MAX_BODY_CHARS) throw new GitHubApiError("updatePullRequest", "body too long");
     this.#record("updatePullRequest", `${args.number}`);
     return this.#update(args.number, { title: args.title, body: args.body });
   }

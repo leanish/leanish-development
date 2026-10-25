@@ -274,12 +274,20 @@ recorded, or covers only some of its targets is listed with its reason. The comp
 exception names, which the owner's call lets in whichever source lists it; how each source counts is in
 [the gate's rules](../core/gate/README.md#how-each-source-counts).
 
-The table lists its ⚠ rows first. A held PR body is kept to 61,440 characters, about 4,000 short of the 65,536 GitHub
-takes, to leave room for what publishing adds (the state marker, local paths cleaned into `<local path>`). When the
-table would push the body past that, only its last rows give way: it shows the most that fit, with a line saying how
-many are left out, the plan's block keeps the whole evidence, and the rest of the warning stays. When even no row fits
-(the plan with the evidence passes its block's or section's limit, or the body its 61,440), the evidence gives way,
-never the fix: the PR is written without any, and each fix that had some is listed as unchecked, saying why.
+The table lists its ⚠ rows first. Composition uses raw UTF-16 length budgets: 61,440 for fresh text (including a fresh
+agent description updating an existing PR), or 65,280 for text carrying a publication state marker, already published
+and including its marker. The latter leaves 256 units below the client's limit for replacement and re-cleaning.
+When the table would push the body past its budget, only its last rows give way: it shows the most that fit, with a line saying how many are left out, the plan's block keeps the whole evidence, and the
+rest of the warning stays. When even no row fits (the plan with the evidence passes its block's or section's limit,
+or the body its raw budget), the PR is written without the evidence, and each fix that had some is listed as unchecked,
+saying why. A body that still cannot fit is refused. These conservative budgets can drop rows or evidence, or refuse
+a body, even when GitHub could store it.
+
+Agent descriptions must not include reserved plan or publication state markers; those are written by the tool.
+Publication separately checks the cleaned title (nonblank, at most 256 UTF-16 units) and marked body (at most 65,536)
+against the client's limits on both create and update. Enough path expansion can still exceed a limit; the final guard
+refuses before the push, or before a text-only API update. This guard does not retry without evidence.
+It also protects bump-it and non-held publications, whose composition keeps its existing raw check.
 
 The agent never writes any of this.
 

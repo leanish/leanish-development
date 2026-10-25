@@ -21,9 +21,9 @@ const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 /** Branch names the client sends in a URL path: plain refs, never `..` or an option. */
 const BRANCH_PATTERN = /^[A-Za-z0-9._][A-Za-z0-9._/-]*$/;
-/** GitHub's own cap on a PR body (65,536 characters). */
-const MAX_BODY_CHARS = 65_536;
-const MAX_TITLE_CHARS = 256;
+/** Conservative client cap on a PR body, in UTF-16 units, for both create and update. */
+export const MAX_BODY_CHARS = 65_536;
+export const MAX_TITLE_CHARS = 256;
 
 /**
  * Any GitHub-side failure of a `GitHubClient` call: missing token, network
