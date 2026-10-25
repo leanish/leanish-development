@@ -11,7 +11,7 @@ import { isAdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import { heldEntry, heldUntil } from "@leanish/gate/cooldown";
 import { assertBodyFits, BODY_LIMIT, defused, planPayload, planSection as sectionOf, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
 
-import { advisoryNotice } from "./advisory-notice.ts";
+import { advisoryNotice, EVIDENCE_LEFT_OUT } from "./advisory-notice.ts";
 import { floorIdentity, validRemoval } from "./floor-removal.ts";
 import type { ChangePlan, PlannedHold, PlannedMove } from "./plan.ts";
 
@@ -103,8 +103,34 @@ function omittedSection(plan: ChangePlan): string[] {
   ];
 }
 
-/** `body` with its plan section replaced by `plan`'s (or `plan`'s appended when it has none), and the cooldown warning on top while it holds. */
+/**
+ * `body` with its plan section replaced by `plan`'s (or `plan`'s appended when it has none), and the cooldown warning on
+ * top while it holds. The advisory evidence is for people and never changes a verdict, so when the body can't be written
+ * with it (its plan, section or body over a limit), it gives way, never the fix: written again without any, each fix that
+ * had some says why it's missing. What still can't be written fails as before.
+ */
 export function withPlanSection(body: string, plan: ChangePlan): string {
+  try {
+    return composed(body, plan);
+  } catch (error) {
+    const lighter = withoutEvidence(plan);
+    if (lighter === undefined) throw error;
+    try {
+      return composed(body, lighter);
+    } catch {
+      throw error;
+    }
+  }
+}
+
+/** `plan` without its holds' evidence, each hold that had some saying why; undefined when none has any. */
+function withoutEvidence(plan: ChangePlan): ChangePlan | undefined {
+  const held = plan.cooldown ?? [];
+  if (!held.some((entry) => entry.evidence !== undefined)) return undefined;
+  return { ...plan, cooldown: held.map(({ evidence, ...entry }) => (evidence === undefined ? entry : { ...entry, evidenceFailure: EVIDENCE_LEFT_OUT })) };
+}
+
+function composed(body: string, plan: ChangePlan): string {
   const held = plan.cooldown ?? [];
   const warning = cooldownWarning(held);
   const rest = replaced(withoutWarning(body), HEADING, planSection(plan));

@@ -21,6 +21,7 @@ import { MemoryJournal } from "@leanish/tool-runtime/test/memory-journal";
 import { branchFor, stateOf, withMarker } from "@leanish/tool-runtime/own-pr";
 import { BASE_SHA, FakeGitHub, GREEN, HEAD_SHA, ownPr, PUSHED_SHA, RED } from "@leanish/tool-runtime/test/fake-github";
 import { planOf, planSection, withPlanSection } from "../src/plan-block.ts";
+import { EVIDENCE_LEFT_OUT } from "../src/advisory-notice.ts";
 import { planBlock } from "@leanish/tool-runtime/plan-blocks";
 import { type ChangePlan, planFor, type SecurityUnit } from "../src/plan.ts";
 import { verifyPlan, type VerifyInputs } from "../src/verify.ts";
@@ -1156,6 +1157,26 @@ describe("the cooldown hold", () => {
     ] }] }] });
     expect(body).toContain("> **The reviewed advisories read after the comparison don't back this fix as the comparison did.**");
     expect(body).toContain("> | ⚠ GHSA-vite-0001 | `vite` 8.3.1 → 8.3.3 | couldn't be fully checked: its source repository can't be found: registry lookup of vite@8.3.1 failed with HTTP 404 | not found | not found |");
+  });
+
+  it("still opens a held draft with its targets when its evidence leaves the body over GitHub's limit, without the evidence", async () => {
+    // 60 advisory groups: with their evidence the plan's block takes ~32K characters, without it ~6K, beside a 40K description.
+    const hex = (seed: string) => createHash("sha256").update(seed).digest("hex");
+    const groups = Array.from({ length: 60 }, (_, i) => ({ ids: [`GHSA-${hex(`${i}`).slice(0, 14)}`], replaced: ["8.3.1"] }));
+    const targeted = { ...HELD, targets: [{ name: "vite", bundled: false, replaced: ["8.3.1"], proposed: ["8.3.3"], groups }] };
+    const verify = async (inputs: VerifyInputs) => {
+      inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: [targeted] });
+      return [];
+    };
+    const h = harness({ fixes: [vite()], answer: { ...APPLIED, publication: { ...APPLIED.publication, body: "x".repeat(40_000) } } });
+    expect(await secureIt({ ...h.deps, verify }).run(h.context)).toMatchObject({ outcome: "published" });
+    const pr = h.github.prs.get(42)!;
+    expect(pr.isDraft).toBe(true);
+    expect(pr.body.length).toBeLessThanOrEqual(65_536);
+    const [hold] = planOf(pr.body)!.cooldown!;
+    expect(hold).toMatchObject({ targets: targeted.targets, evidenceFailure: EVIDENCE_LEFT_OUT });
+    expect(hold!.evidence).toBeUndefined();
+    expect(pr.body).toContain(`vite@8.3.3: ${EVIDENCE_LEFT_OUT}`);
   });
 
   it("holds whatever the comparison holds, even in a PR planned as aged", async () => {
