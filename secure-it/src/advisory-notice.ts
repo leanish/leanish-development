@@ -6,7 +6,8 @@
  * never does.
  *
  * A held fix's targets are reviewed advisories by the time it's proposed (one
- * only a project's repository publishes triggers nothing); this re-reads them.
+ * only a project's repository publishes triggers nothing), except the one a
+ * release-age exception names, whichever source lists it; this re-reads them.
  * A record "backs" a fix when it puts the replaced versions the comparison found
  * affected among the affected ones and none of the proposed versions.
  */
@@ -19,7 +20,7 @@ export const REVIEWED =
   "Every advisory recorded for these held fixes is still backed by a reviewed record as read now: OSV or GitHub's reviewed advisory database lists the replaced versions as affected and the proposed version, if any, as not. Candidates ruled out by advisories no reviewed source corroborates are noted in the plan below, where recorded.";
 
 export const EVIDENCE_DIFFERS =
-  "**The reviewed advisories read after the comparison don't back this fix as the comparison did.** For the rows marked ⚠ below, no reviewed record (OSV, or GitHub's reviewed advisory database) lists the replaced versions as affected and the proposed one as not, or one was withdrawn or couldn't be read. The comparison's verdict stands; check the table before taking this early.";
+  "**Some advisories recorded for these held fixes are not backed by reviewed records as read now.** For the rows marked ⚠ below, no reviewed record (OSV, or GitHub's reviewed advisory database) lists the replaced versions as affected and the proposed one as not, or one was withdrawn or couldn't be read. The comparison's verdict stands; check the table before taking this early.";
 
 export const INCOMPLETE =
   "**Some of these fixes couldn't be checked**, as listed below, so this notice can't say a reviewed record still backs every fix. The comparison's verdict stands; check those before taking this early.";
@@ -119,7 +120,7 @@ function differsFor(rows: ReadonlyArray<{ readonly entry: PlannedHold; readonly 
   const names = [...moves.values()];
   const shown = names.slice(0, NAMED_LIMIT).join("; ");
   const more = names.length > NAMED_LIMIT ? ` and ${names.length - NAMED_LIMIT} more` : "";
-  return `**The reviewed advisories read after the comparison don't back this fix as the comparison did** for ${shown}${more}: no reviewed record (OSV, or GitHub's reviewed advisory database) lists the replaced versions as affected and the proposed one as not, or one was withdrawn or couldn't be read. The comparison's verdict stands; look into these before taking this early.`;
+  return `**Some advisories recorded for these held fixes are not backed by reviewed records as read now**, for ${shown}${more}: no reviewed record (OSV, or GitHub's reviewed advisory database) lists the replaced versions as affected and the proposed one as not, or one was withdrawn or couldn't be read. The comparison's verdict stands; look into these before taking this early.`;
 }
 
 /**
