@@ -14,9 +14,10 @@
   over by one group and the others open their own; a PR someone else pushed to, or a held one a person marked ready,
   is never claimed. Branches created in one run no longer collide when two topics cut to the same name. Held groups
   that can't be planned apart (two young roots that each require one exact companion keep the other's old requirement
-  when planned alone) are planned and opened together: the failing groups first, then every held group, v0.7's single
-  held batch, which can gather groups that would have planned alone (their PR then waits for its youngest version);
-  otherwise each stays apart and reports its failure. Each group that doesn't plan alone is logged.
+  when planned alone) are planned and opened together: the failing groups when there are several, then every held
+  group, v0.7's single held batch, which can gather groups that would have planned alone (their PR then waits for
+  its youngest version); otherwise each stays apart and reports its failure. Each group that doesn't plan alone is
+  logged.
 
 - A project's own repository advisories, unreviewed and published at will by whoever controls the repository, no
   longer trigger a fix nor justify a young version: they still detect (a finding, a PR adding one fails) and rule
@@ -40,9 +41,9 @@
   reason. A lookup that fails is shown as such, never as "not found". The table lists its ⚠ rows first; when it
   would push the PR body past GitHub's limit, it shows the rows that fit, with a line saying how many are left out,
   and the plan's block keeps the evidence; when the PR still can't be written with the evidence, it's left out, and
-  each fix that had some is listed as unchecked. The
-  gate's comparison report records, for each held version, the advisories it fixes (`targets`), whatever justified
-  it (an exception's named one, whichever source lists it); nothing in the evidence changes a verdict.
+  each fix that had some is listed as unchecked. The gate's comparison report records, for each held version, the
+  advisories it fixes (`targets`), whether or not anything justified it (an exception's named one, whichever source
+  lists it); nothing in the evidence changes a verdict.
 - When verification refuses an edit the agent wrote, bump-it and secure-it now ask the agent once more, from the base,
   with the refusal (`rejected` in the skill input). In bump-it a second refusal fails the unit as before; in secure-it
   the existing retry without the named package groups still follows, from the second refusal, or from the first when

@@ -259,12 +259,13 @@ aged, and how a person takes it earlier: every other check green, the reason wri
 planned as aged that the comparison holds anyway is held the same way. A cooldown the comparison couldn't evaluate
 fails verification.
 
-For every held version that fixes advisories (the gate records them, whatever justified the version, and an
-exception's named one, reviewed or not), the warning also says where those advisories appear. After the verification,
-secure-it reads each advisory, and every alias the responses name, from the dependency's own repository advisories,
-GitHub's database and OSV, fresh and only to inform. A table shows each source as it says: the fix it declares, and
-whether its ranges put each replaced and proposed version among the affected ones; a bundled package is named as
-bundled, and a removal as a removal. A lookup that fails reads "couldn't be fully checked", never "not found".
+For every held version that fixes advisories (the gate records them, whether or not anything justified the version,
+and an exception's named one, reviewed or not), the warning also says where those advisories appear. After the
+verification, secure-it reads each advisory, and every alias the responses name, from the dependency's own repository
+advisories, GitHub's database and OSV, fresh and only to inform. A table shows each source as it says: the fix it
+declares, and whether its ranges put each replaced and proposed version among the affected ones; a bundled package is
+named as bundled, and a removal as a removal. A lookup that fails reads "couldn't be fully checked", never "not
+found".
 
 The notice reports problems only, so a gap in it shows less, never a false all-clear. When no reviewed record (OSV, or
 GitHub's reviewed database) backs some advisory as read now (withdrawn since, ranges that changed, or sources that
