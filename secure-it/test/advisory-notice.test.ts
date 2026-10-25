@@ -213,7 +213,13 @@ describe("the advisory notice on a held PR", () => {
     const shown = 60 - left;
     const warning = (rows: number) => cooldownWarning(large.cooldown!, { rows })!.length;
     expect(body.length + warning(shown + 1) - warning(shown)).toBeGreaterThan(65_536 - MARKER_ROOM);
-    expect(withMarker(ownPullRequests("secure-it"), body, { head: "a".repeat(40), base: "b".repeat(40), adaptations: 3 }).length).toBeLessThanOrEqual(65_536);
+    const mark = (text: string) => withMarker(ownPullRequests("secure-it"), text, { head: "a".repeat(40), base: "b".repeat(40), adaptations: 3 });
+    expect(mark(body).length).toBeLessThanOrEqual(65_536);
+    // A refresh counts the stored state and marker, so it may show a few rows fewer than the first publication; then it
+    // stays put, and still fits once marked again.
+    const refreshed = withPlanSection(mark(body), large);
+    expect(withPlanSection(refreshed, large)).toBe(refreshed);
+    expect(mark(refreshed).length).toBeLessThanOrEqual(65_536);
     // Each row fewer shortens the warning, the count's extra digit included, so the halving finds the most that fit.
     const lengths = Array.from({ length: 61 }, (_, rows) => warning(rows));
     expect(lengths.every((length, rows) => rows === 0 || length > lengths[rows - 1]!)).toBe(true);
