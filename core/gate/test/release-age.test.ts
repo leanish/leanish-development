@@ -43,6 +43,13 @@ describe("what a young version records as the advisories it fixes", () => {
     expect(held!.targets).toBeUndefined();
   });
 
+  it("records nothing for a required version the change adds, which replaces none", async () => {
+    const added: ChangedVersion = { pkg: lib, replaced: [], published: new Date("2026-10-06T00:00:00Z") };
+    const [held] = (await review(added, { "npm|lib|1.0.0": [advisory("GHSA-lib", "osv")] }, required)).held;
+    expect(held).toMatchObject({ justification: "required" });
+    expect(held!.targets).toBeUndefined();
+  });
+
   it("adds a required carrier's proved bundle, once, and never a bundle whose proof failed", async () => {
     const own = { "npm|lib|1.0.0": [advisory("GHSA-lib", "osv")] };
     const proved: BundleFixProof = { problem: undefined, targets: [bundled, bundled] };
@@ -61,5 +68,14 @@ describe("what a young version records as the advisories it fixes", () => {
     expect(outcome).toEqual({ problems: [], held: [expect.objectContaining({ justification: "exception", targets: [
       { name: "lib", bundled: false, replaced: ["1.0.0"], proposed: ["1.0.1"], groups: [{ ids: ["CVE-2026-1", "GHSA-repo"], replaced: ["1.0.0"] }, { ids: ["GHSA-lib"], replaced: ["1.0.0"] }] },
     ] })] });
+  });
+
+  it("records nothing for an exception naming an advisory no replaced version has: it stays unjustified", async () => {
+    const affecting = { "npm|lib|1.0.0": [advisory("GHSA-lib", "osv")], "npm|lib|1.0.1": [advisory("GHSA-new", "osv")] };
+    const exceptions = parseExceptions({ releaseAge: [{ ecosystem: "npm", package: "lib", version: "1.0.1", advisory: "CVE-9999-0000", reason: "the owner's call", expires: "2026-10-20" }] });
+    const { problems, held } = await review(young(lib, "1.0.0"), affecting, { exceptions });
+    expect(problems).toHaveLength(1);
+    expect(held[0]).toMatchObject({ justification: "unjustified" });
+    expect(held[0]!.targets).toBeUndefined();
   });
 });
