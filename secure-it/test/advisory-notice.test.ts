@@ -9,9 +9,12 @@ import type { ChangePlan, PlannedHold } from "../src/plan.ts";
 import { cooldownWarning, planOf, planSection, withPlanSection } from "../src/plan-block.ts";
 import { markedLength, ownPullRequests, withMarker } from "@leanish/tool-runtime/own-pr";
 import { planBlock } from "@leanish/tool-runtime/plan-blocks";
+import { cleanBody } from "@leanish/tool-runtime/publication-text";
 
 const PKG = "tools.jackson.core:jackson-databind";
 const RULES = ownPullRequests("secure-it");
+/** Roots for publication's cleaning: `/t/x` (4 characters) becomes `<local path>` (12). */
+const CLEANING = { workingCopy: ["/synthetic/wc"], other: ["/t"] };
 const record = (overrides: Partial<EvidenceRecord> = {}): EvidenceRecord => ({
   id: "GHSA-m8xf-2cr7-77ph", aliases: ["CVE-2026-110879"], withdrawn: false, namesPackage: true, declaredFixes: ["3.2.4"],
   verdicts: { "3.2.3": "affected", "3.2.4": "not-affected" }, ...overrides,
@@ -218,6 +221,18 @@ describe("the advisory notice on a held PR", () => {
     expect(mark(body).length).toBeLessThanOrEqual(65_536);
     // A refresh measures the body without its stored state and marker, so it shows the rows first published.
     expect(mark(withPlanSection(mark(body), large))).toBe(mark(body));
+    // Published, the body is cleaned first, and a short local path grows into `<local path>`: measured that way, the
+    // cut leaves room for it, where measuring the raw body would leave the published one over the limit.
+    const published = (text: string) => markedLength(RULES, cleanBody(text, CLEANING));
+    const pathy = `Ran it in /t/x. `.repeat(400);
+    const raw = withPlanSection(pathy, large);
+    expect(published(raw)).toBeGreaterThan(65_536);
+    const cut = withPlanSection(pathy, large, published);
+    expect(published(cut)).toBeLessThanOrEqual(65_536);
+    expect(cut.length).toBeLessThan(raw.length);
+    const kept = 60 - Number(/> (\d+) of the table's 60 rows are left out/.exec(cut)?.[1]);
+    expect(published(cut) + warning(kept + 1) - warning(kept)).toBeGreaterThan(65_536);
+    expect(planOf(cut)).toEqual(large);
     // Each row fewer shortens the warning, the count's extra digit included, so the halving finds the most that fit.
     const lengths = Array.from({ length: 61 }, (_, rows) => warning(rows));
     expect(lengths.every((length, rows) => rows === 0 || length > lengths[rows - 1]!)).toBe(true);
@@ -265,12 +280,21 @@ describe("the advisory notice on a held PR", () => {
     const pushed = withPlanSection(nearLimit, small);
     expect(markedLength(RULES, pushed)).toBeLessThanOrEqual(65_536);
     expect(planOf(pushed)?.cooldown).toEqual([{ ...hold(), evidenceFailure: EVIDENCE_LEFT_OUT }]);
+    // Cleaning can push even the row-less body over: the evidence gives way then too.
+    const lengthened = (text: string) => markedLength(RULES, cleanBody(text, CLEANING));
+    const paths = "/t/x ".repeat(40);
+    const roomy = paths + "x".repeat(65_536 - 400 - rowless("").length - paths.length);
+    expect(markedLength(RULES, rowless(roomy))).toBeLessThanOrEqual(65_536);
+    expect(lengthened(rowless(roomy))).toBeGreaterThan(65_536);
+    const dropped = withPlanSection(roomy, small, lengthened);
+    expect(lengthened(dropped)).toBeLessThanOrEqual(65_536);
+    expect(planOf(dropped)?.cooldown).toEqual([{ ...hold(), evidenceFailure: EVIDENCE_LEFT_OUT }]);
     // The limit applies to the marked body, exactly: one with no evidence to drop is accepted at 65,536 characters once
     // marked and refused, before any publication, at 65,537.
     const bare: ChangePlan = { ...plan(reviewed), cooldown: [hold()] };
     const unmarked = markedLength(RULES, withPlanSection("", bare));
     expect(markedLength(RULES, withPlanSection("x".repeat(65_536 - unmarked), bare))).toBe(65_536);
-    expect(() => withPlanSection("x".repeat(65_537 - unmarked), bare)).toThrow("characters once marked, over GitHub's 65536");
+    expect(() => withPlanSection("x".repeat(65_537 - unmarked), bare)).toThrow("characters once published, over GitHub's 65536");
     // What can't be written even without the evidence fails as before, as does a plan without any.
     expect(() => withPlanSection("x".repeat(70_000), overBody)).toThrow("over GitHub's 65536");
     expect(() => withPlanSection("x".repeat(70_000), { ...overBody, cooldown: [hold()] })).toThrow("over GitHub's 65536");

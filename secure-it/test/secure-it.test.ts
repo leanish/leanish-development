@@ -1151,6 +1151,28 @@ describe("the cooldown hold", () => {
     expect(planOf(body)?.cooldown?.[0]?.evidence).toBeUndefined();
   });
 
+  it("sizes a refreshed held body as published, so new notes a cleaning lengthens never rewrite it over the limit", async () => {
+    // Notes naming short temp paths: each grows into `<local path>` when published. Raw, the rewritten body fits; cleaned,
+    // it doesn't even without the evidence, so the refresh fails before writing, and the PR keeps the body it had.
+    const hex = (seed: string) => createHash("sha256").update(seed).digest("hex");
+    const evidence: AdvisoryEvidence = { collectedAt: "2026-10-06T12:00:00.000Z", targets: [{ ecosystem: "npm", name: "vite", bundled: false, replaced: ["8.3.1"], proposed: ["8.3.3"],
+      groups: Array.from({ length: 60 }, (_, i) => {
+        const found = { id: `GHSA-${hex(`${i}`).slice(0, 14)}`, aliases: [], withdrawn: false, namesPackage: true,
+          declaredFixes: ["8.3.3"], verdicts: { "8.3.1": "affected" as const, "8.3.3": "not-affected" as const } };
+        return { ids: [found.id], replaced: ["8.3.1"], sources: (["repository", "github", "osv"] as const).map((source) => ({ source, lookup: "checked" as const, records: [found] })) };
+      }) }] };
+    const plan = await planFor([vite()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined });
+    const held = { ...plan, notes: ["an outdated reason"], cooldown: [{ ...HELD, signals: [], evidence }] };
+    const before = withMarker(RULES, withPlanSection("x".repeat(45_000), held), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 });
+    const notes = Array.from({ length: 290 }, (_, i) => `vite@8.3.3 note ${i} /tmp/x /tmp/y /tmp/z`);
+    const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, planned) => ({ ...planned, notes });
+    const h = harness({ prs: [ownPr({ headRef: `secure-it/2026-10-05-${plan.topic}`, body: before })] });
+    expect(await secureIt({ ...h.deps, requiredNpm }).run(h.context)).toMatchObject({
+      units: [{ topic: "security", outcome: "failed", detail: expect.stringContaining("characters once published, over GitHub's 65536") }],
+    });
+    expect(h.github.prs.get(7)!.body).toBe(before);
+  });
+
   it("opens young fixes in a held PR of their own, warned, while the aged ones go out as usual", async () => {
     const h = harness({ fixes: [YOUNG_VITE(), leftPad()] });
     const result = await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context);
@@ -1201,6 +1223,25 @@ describe("the cooldown hold", () => {
     expect(hold).toMatchObject({ targets: targeted.targets, evidenceFailure: EVIDENCE_LEFT_OUT });
     expect(hold!.evidence).toBeUndefined();
     expect(pr.body).toContain(`vite@8.3.3: ${EVIDENCE_LEFT_OUT}`);
+  });
+
+  it("sizes a held body as published, so evidence a cleaning pushes over the limit gives way before the push", async () => {
+    // A description of short temp paths: each `/tmp/x` grows into `<local path>` when published. With the evidence, the
+    // raw body fits and the cleaned one doesn't, so measuring the raw body would publish one GitHub refuses.
+    const hex = (seed: string) => createHash("sha256").update(seed).digest("hex");
+    const groups = Array.from({ length: 60 }, (_, i) => ({ ids: [`GHSA-${hex(`${i}`).slice(0, 14)}`], replaced: ["8.3.1"] }));
+    const targeted = { ...HELD, targets: [{ name: "vite", bundled: false, replaced: ["8.3.1"], proposed: ["8.3.3"], groups }] };
+    const verify = async (inputs: VerifyInputs) => {
+      inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: [targeted] });
+      return [];
+    };
+    const description = "/tmp/x ".repeat(3_000);
+    const h = harness({ fixes: [vite()], answer: { ...APPLIED, publication: { ...APPLIED.publication, body: description } } });
+    expect(await secureIt({ ...h.deps, verify }).run(h.context)).toMatchObject({ outcome: "published" });
+    const pr = h.github.prs.get(42)!;
+    expect(pr.body).toContain("<local path> <local path>");
+    expect(pr.body.length).toBeLessThanOrEqual(65_536);
+    expect(planOf(pr.body)!.cooldown![0]).toMatchObject({ targets: targeted.targets, evidenceFailure: EVIDENCE_LEFT_OUT });
   });
 
   it("records the evidence of a required version that fixes advisories itself, so the warning checks it too", async () => {

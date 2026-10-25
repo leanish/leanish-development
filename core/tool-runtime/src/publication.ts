@@ -12,7 +12,7 @@ import type { Workspace } from "@leanish/agent-runtime/working-copy/workspace";
 
 import type { PublicationJournal } from "./journal.ts";
 import { cleanBody, cleanContent, type LocalRoots, withCanonical } from "./publication-text.ts";
-import { isOwnPullRequest, type OwnPullRequests, type PullRequestState, stateOf, withMarker } from "./own-pr.ts";
+import { isOwnPullRequest, markedLength, type OwnPullRequests, type PullRequestState, stateOf, withMarker } from "./own-pr.ts";
 
 /**
  * Everything a tool writes to GitHub, done by the tool's own process with its
@@ -57,6 +57,14 @@ async function expectedTree(context: PublicationContext): Promise<{ readonly exp
 /** Published text keeps the machine out: see publication-text.ts. */
 function rootsOf(context: PublicationContext): LocalRoots {
   return { workingCopy: withCanonical([context.workingCopy.path]), other: context.localRoots };
+}
+
+/**
+ * How long `body` is, at most, once published: cleaned as every publication cleans it (which can lengthen it, a short
+ * local path becoming `<local path>`), then marked. Whatever fills a body up to GitHub's limit measures it this way.
+ */
+export function publishedLength(context: PublicationContext, body: string): number {
+  return markedLength(context.rules, cleanBody(body, rootsOf(context)));
 }
 
 /** A PR's title, description and the commit message of the agent's change. */
