@@ -12,7 +12,7 @@ import { type CooldownEvaluation, heldUntil } from "@leanish/gate/cooldown";
 import type { NpmPeerPlanner } from "@leanish/gate/npm-peers";
 import { type EvidenceOptions, heldEvidence } from "@leanish/gate/advisory-evidence";
 import { type GateEnvironment, type GradleInputs, readSettings } from "@leanish/gate/gate";
-import { type GradleInventory, gradleLocation, pinnedAmong, strictPinNote, strictPins } from "@leanish/gate/gradle";
+import { type GradleInventory, gradleLocation, gradleResolutionProblems, pinnedAmong, strictPinNote, strictPins } from "@leanish/gate/gradle";
 import { namingFailures } from "@leanish/gate/http";
 import { FileRepositoryAdvisoryCache } from "@leanish/tool-runtime/repository-advisory-cache";
 import { BundleReader } from "@leanish/gate/npm-bundles";
@@ -26,7 +26,7 @@ import { FLOORS_FILE, isMechanical } from "@leanish/tool-runtime/edit-checks";
 import { writeLocalFile } from "@leanish/tool-runtime/local-files";
 import { gradleSourceIndex } from "@leanish/gate/gradle-sources";
 import { candidateTree, changedBetween, fileState, type FileState, linkProblems, snapshotCandidate } from "@leanish/tool-runtime/git-copies";
-import { referenceTransform } from "@leanish/tool-runtime/gradle-reference";
+import { referenceProblems, referenceTransform } from "@leanish/tool-runtime/gradle-reference";
 import { type GradleInventories, lockfilesOf, sandboxedGradleInventories } from "@leanish/tool-runtime/inventories";
 import { FileJournal, type PublicationJournal } from "@leanish/tool-runtime/journal";
 import { formatManifest } from "@leanish/tool-runtime/manifest-format";
@@ -244,6 +244,8 @@ interface Execution {
   readonly npmFiles: Map<string, string>;
   /** Branches this run created, on top of the open PRs' ones: two units' topics can cut to the same branch name. */
   readonly branches: Set<string>;
+  /** Preflight only, shared for one run/tick by base and plan; rejections stay unknown until the next invocation. */
+  readonly heldReferences: Map<string, Promise<ReadonlyArray<string>>>;
 }
 
 interface PlanBase {
@@ -265,14 +267,14 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   const selection = await coupledWork(planned.fixes, planned.peers);
   const waiting = selection.blocked.flatMap((group) => group.reasons);
 
-  const execution = { context, deps, env, inventories, publication: publicationOf(context, deps), npmFiles: new Map<string, string>(), branches: new Set<string>() };
+  const execution = { context, deps, env, inventories, publication: publicationOf(context, deps), npmFiles: new Map<string, string>(), branches: new Set<string>(), heldReferences: new Map<string, Promise<ReadonlyArray<string>>>() };
   const own = await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base);
   const results: Readonly<Record<string, unknown>>[] = [];
-  const units = await holdRequiredYoung(execution, selection.units, base);
-  const claims = await heldClaimsOf(context, execution.publication, units, own);
+  const { units, error } = await holdRequiredYoung(execution, selection.units, base);
+  const claims = error ?? await heldClaimsOf(context, execution.publication, units, own);
   for (const unit of units) {
     try {
-      // Held units need every own PR's claim, or two PRs could stand for one: they fail when those can't be read.
+      // Held units need a known preflight and every own PR's claim; other units still run when either is unavailable.
       if (claims instanceof Error && isHeldUnit(unit)) throw claims;
       results.push(await runUnit(execution, unit, base, own, claims instanceof Error ? undefined : claims.get(unit.topic)));
     } catch (err) {
@@ -418,34 +420,76 @@ async function runRemoval(execution: Execution, removal: ComputedRemoval, base: 
  * a fix of its own still joins them). Held work is then grouped again (`heldUnits`).
  * Moving roots only drops requirements, so one pass leaves the rest aged.
  * Kept on purpose: docs/simplification-candidates.md#reviewed-and-kept-2026-10-16.
- * Then held units that can't be planned apart are planned together (`plannableHeld`). Runs and reviews both split here.
+ * Then held units that can't be planned or whose Gradle references don't resolve apart are tried together
+ * (`plannableHeld`). Runs and base-movement reviews both split here.
  */
-async function holdRequiredYoung(execution: Execution, units: ReadonlyArray<SecurityUnit>, base: PlanBase): Promise<SecurityUnit[]> {
-  return plannableHeld(execution, await withRequiredYoung(execution, units, base), base);
+async function holdRequiredYoung(execution: Execution, units: ReadonlyArray<SecurityUnit>, base: PlanBase): Promise<{ readonly units: SecurityUnit[]; readonly error?: Error }> {
+  const prepared = await withRequiredYoung(execution, units, base);
+  try {
+    return { units: await plannableHeld(execution, prepared, base) };
+  } catch (error) {
+    // Keep the required-young split: an unknown Gradle result blocks held work, never sends a moved root out aged.
+    return { units: prepared, error: error instanceof Error ? error : new Error(String(error)) };
+  }
 }
 
 /**
- * The held units, regrouped when some can't be planned apart: two young roots that require one exact companion each
- * keep the other's old requirement when planned alone. The failing units are tried together first, then every held
- * unit together (v0.7's single held batch); the first group that plans replaces its units. Otherwise they stay apart
- * and each reports its own failure. The fallback gathers units that plan alone too, and the joined PR waits for its
- * youngest version; a failure that only happened once (a registry error) can still gather them, so each is logged.
+ * Held units regroup when some can't be planned apart (npm requirements), or their planned Gradle references don't
+ * resolve apart. The failing units are tried together first, then every held unit (v0.7's single held batch); the first
+ * group that passes replaces its units. Otherwise each stays apart and reports its own failure. A joined PR can
+ * gather healthy groups and waits for its youngest version. Planning errors retain the old fallback; Gradle execution
+ * errors propagate without regrouping. Every failure is logged with its unit and reason.
+ * Only two or more held units incur this preflight; only plans with Maven moves incur extra Gradle resolutions.
  */
 async function plannableHeld(execution: Execution, units: ReadonlyArray<SecurityUnit>, base: PlanBase): Promise<SecurityUnit[]> {
   const held = units.filter(isHeldUnit);
   if (held.length < 2) return [...units];
-  const plans = async (unit: SecurityUnit) => planUnit(execution, unit, base).then(() => true, (err: unknown) => {
-    execution.context.logger.warn("secure-it: a held unit doesn't plan alone", { topic: unit.topic, error: err instanceof Error ? err.message : String(err) });
-    return false;
-  });
+  const passes = async (unit: SecurityUnit): Promise<boolean> => {
+    const failed = (error: unknown) => execution.context.logger.warn("secure-it: a held unit's preflight failed", {
+      topic: unit.topic, error: error instanceof Error ? error.message : String(error),
+    });
+    let plan: ChangePlan;
+    try {
+      plan = await planUnit(execution, unit, base);
+    } catch (error) {
+      failed(error);
+      return false; // Existing npm planning fallback, including its transient-error trade-off.
+    }
+    if (!plan.moves.some((move) => move.ecosystem === "Maven")) return true;
+    try {
+      const key = `${base.tree.id}:${planDigest(plan)}`;
+      let checked = execution.heldReferences.get(key);
+      if (checked === undefined) {
+        checked = heldGradleProblems(plan, base, execution.inventories);
+        execution.heldReferences.set(key, checked);
+      }
+      const problems = await checked;
+      if (problems.length === 0) return true;
+      failed(problems.join("; "));
+      return false;
+    } catch (error) {
+      failed(error);
+      throw error; // No reference result: unknown, not evidence that these groups must move together.
+    }
+  };
   const failing: SecurityUnit[] = [];
-  for (const unit of held) if (!(await plans(unit))) failing.push(unit);
+  for (const unit of held) if (!(await passes(unit))) failing.push(unit);
   if (failing.length === 0) return [...units];
   for (const group of failing.length > 1 && failing.length < held.length ? [failing, held] : [held]) {
     const [joined] = heldUnits(group.flatMap((unit) => unit.work), group.flatMap((unit) => unit.coupled ?? []), [group.flatMap((unit) => unit.work.map(packageKey))]);
-    if (joined !== undefined && (await plans(joined))) return [...units.filter((unit) => !group.includes(unit)), joined];
+    if (joined !== undefined && (await passes(joined))) return [...units.filter((unit) => !group.includes(unit)), joined];
   }
   return [...units];
+}
+
+/** Problems a completed reference proves; execution errors and a missing inventory propagate as unknown. */
+async function heldGradleProblems(plan: ChangePlan, base: PlanBase, inventories: GradleInventories): Promise<ReadonlyArray<string>> {
+  const planned = referencePlan(plan, base.gradle);
+  if (planned.problems.length > 0) return planned.problems;
+  const reference = await referenceOf(plan, base.tree, base.gradle, inventories);
+  if (reference === undefined) throw new Error("the held plan has no Gradle reference inventory");
+  // As in verification's reference comparison, even a returned inventory can contain resolution failures.
+  return [...referenceProblems(base.gradle, reference, planned.moves, planned.floors), ...gradleResolutionProblems(reference, [])];
 }
 
 /** The aged unit's fixes that need a young required npm companion, held with it (the first step of `holdRequiredYoung`). */
@@ -827,7 +871,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
   const env = await deps.gate(context);
   const inventories = deps.gradle(context);
   const publication = publicationOf(context, deps);
-  const execution = { context, deps, env, inventories, publication, npmFiles: new Map<string, string>(), branches: new Set<string>() };
+  const execution = { context, deps, env, inventories, publication, npmFiles: new Map<string, string>(), branches: new Set<string>(), heldReferences: new Map<string, Promise<ReadonlyArray<string>>>() };
   const notes: Array<Readonly<Record<string, unknown>>> = [];
   const planFrom = (pr: GitHubPullRequest): ChangePlan => {
     const plan = planOf(pr.body);
@@ -873,7 +917,10 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       const { units, blocked } = await reviewUnits(previous, planned.fixes, planned.peers);
       if (blocked.length > 0) notes.push({ number: pr.number, blocked });
       // Split exactly as a run would, required-dependency moves included, before telling which unit is this PR's.
-      const split = await holdRequiredYoung(execution, units, { tree: base, gradle: baseGradle });
+      const held = await holdRequiredYoung(execution, units, { tree: base, gradle: baseGradle });
+      // A non-held PR needs no held regrouping; its unit is already in the required-young split.
+      if (held.error !== undefined && isHeldPlan(previous)) throw held.error;
+      const split = held.units;
       // A held PR is the unit a run would give it, so a run and a review never disagree on which PR is whose.
       const open = isHeldPlan(previous) ? await claimable(context, publication, await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base)) : [];
       const claims = heldClaims(split, open);

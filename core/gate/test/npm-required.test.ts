@@ -168,6 +168,8 @@ describe("npm security-required release age", () => {
     const snapshot = (security: boolean) => new Snapshot(new Map([
       ["npm|vite|8.3.2", security ? [advisory] : []], ["npm|vite|8.3.3", []],
       ["npm|postcss|8.5.29", []], ["npm|postcss|8.5.30", []],
+      // The gate's snapshot covers every change it judges, these other ecosystems' too.
+      ["Maven|postcss|8.5.29", []], ["GitHub Actions|postcss|8.5.29", []],
     ]), [], NOW);
     const good = await verifiedRequiredProofs([proof], [change], candidates, snapshot(true), cat, config, NOW);
     expect([...good.versions]).toEqual(["npm|postcss|8.5.29"]);

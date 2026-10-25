@@ -7,15 +7,21 @@
  */
 import { createHash } from "node:crypto";
 
+import { MAX_BODY_CHARS } from "@leanish/agent-runtime/github/github-client";
 import { isAdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import { heldEntry, heldUntil } from "@leanish/gate/cooldown";
-import { assertBodyFits, BODY_LIMIT, defused, planPayload, planSection as sectionOf, TooLargeError, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
+import { MARKER_ROOM, stateOf } from "@leanish/tool-runtime/own-pr";
+import { defused, planPayload, planSection as sectionOf, TooLargeError, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
 
-import { advisoryNotice, EVIDENCE_LEFT_OUT } from "./advisory-notice.ts";
+import { advisoryNotice, EVIDENCE_LEFT_OUT, tableRowCount } from "./advisory-notice.ts";
 import { floorIdentity, validRemoval } from "./floor-removal.ts";
 import type { ChangePlan, PlannedHold, PlannedMove } from "./plan.ts";
 
 const HEADING = "### What secure-it moved";
+/** Fresh agent text: leave room for cleaning and the publication marker below the client's body limit. */
+export const FRESH_HELD_BODY_TARGET = 61_440;
+/** Already published text includes its marker; keep spare room for its replacement and any re-cleaning. */
+export const PUBLISHED_HELD_BODY_TARGET = MAX_BODY_CHARS - MARKER_ROOM;
 const WARNING_START = "<!-- secure-it cooldown warning -->";
 const WARNING_END = "<!-- /secure-it cooldown warning -->";
 
@@ -83,8 +89,11 @@ const quoted = (text: string) => text.replaceAll("<", "&lt;").replace(/\s+/g, " 
 
 /** A fixed line per candidate the gate ruled out only by advisories no reviewed source corroborates. */
 function vetoLines(move: PlannedMove): string[] {
-  return (move.vetoed ?? []).map((veto) =>
-    `- ${quoted(move.name)} ${quoted(veto.version)} was ruled out by ${quoted(veto.advisories.join(", "))}, not corroborated by the sources this decision used; this takes ${move.to}.`);
+  const left = move.vetoesLeftOut === undefined ? [] : [
+    `- ${quoted(move.name)}: ${move.vetoesLeftOut} more candidates were ruled out the same way, by advisories not corroborated by the sources this decision used.`,
+  ];
+  return [...(move.vetoed ?? []).map((veto) =>
+    `- ${quoted(move.name)} ${quoted(veto.version)} was ruled out by ${quoted(veto.advisories.join(", "))}, not corroborated by the sources this decision used.`), ...left];
 }
 
 /** Omissions are visible to reviewers as well as the command report and persisted plan. */
@@ -107,16 +116,18 @@ function omittedSection(plan: ChangePlan): string[] {
  * `body` with its plan section replaced by `plan`'s (or `plan`'s appended when it has none), and the cooldown warning on
  * top while it holds. The advisory evidence is for people and never changes a verdict, so when the body can't be written
  * with it (its plan, section or body over a limit), it gives way, never the fix: written again without any, each fix that
- * had some says why it's missing. What still can't be written, and any other failure, fails as before.
+ * had some says why it's missing. Fresh text has a smaller raw budget than text carrying a published state marker.
+ * What still can't be written, and any other failure, fails as before.
  */
 export function withPlanSection(body: string, plan: ChangePlan): string {
+  const heldBodyTarget = stateOf(body) === undefined ? FRESH_HELD_BODY_TARGET : PUBLISHED_HELD_BODY_TARGET;
   try {
-    return composed(body, plan);
+    return composed(body, plan, heldBodyTarget);
   } catch (error) {
     const lighter = error instanceof TooLargeError ? withoutEvidence(plan) : undefined;
     if (lighter === undefined) throw error;
     try {
-      return composed(body, lighter);
+      return composed(body, lighter, heldBodyTarget);
     } catch (retried) {
       throw retried instanceof TooLargeError ? error : retried;
     }
@@ -130,16 +141,32 @@ function withoutEvidence(plan: ChangePlan): ChangePlan | undefined {
   return { ...plan, cooldown: held.map(({ evidence, ...entry }) => (evidence === undefined ? entry : { ...entry, evidenceFailure: EVIDENCE_LEFT_OUT })) };
 }
 
-function composed(body: string, plan: ChangePlan): string {
+function composed(body: string, plan: ChangePlan, heldBodyTarget: number): string {
   const held = plan.cooldown ?? [];
-  const warning = cooldownWarning(held);
   const rest = replaced(withoutWarning(body), HEADING, planSection(plan));
-  if (warning === undefined) return rest;
-  const warned = `${warning}\n\n${rest}`;
-  if (warned.length <= BODY_LIMIT) return warned;
-  // Only the evidence table gives way: the plan's block below keeps the evidence, and the rest of the warning stays.
-  const shorter = `${cooldownWarning(held, { table: false })!}\n\n${rest}`;
-  assertBodyFits(shorter);
+  if (cooldownWarning(held) === undefined) return rest;
+  const warned = (rows?: number) => `${cooldownWarning(held, rows === undefined ? {} : { rows })!}\n\n${rest}`;
+  const fits = (text: string) => text.length <= heldBodyTarget;
+  const full = warned();
+  if (fits(full)) return full;
+  // Only the evidence table's last rows give way (the plan's block below keeps them all): the most that fit, found by
+  // halving, since one row fewer never makes the body longer (a row outweighs the extra digit in the count of those cut).
+  let low = 0;
+  let high = tableRowCount(held) - 1;
+  let most = 0;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    if (fits(warned(middle))) {
+      most = middle;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  const shorter = warned(most);
+  // Too large even without rows: the evidence gives way next (withPlanSection). Publication separately checks the
+  // cleaned, marked body, since a raw budget cannot bound arbitrary path expansion.
+  if (!fits(shorter)) throw new TooLargeError(`the PR body would be ${shorter.length} characters, over the ${heldBodyTarget} a held body is kept to`);
   return shorter;
 }
 
@@ -150,8 +177,8 @@ function withoutWarning(body: string): string {
   return `${body.slice(0, start)}${body.slice(end + WARNING_END.length)}`.replace(/^\s+/, "");
 }
 
-/** The warning a held PR opens with: what came early, why, what to check, and how the hold ends; `table` as in advisoryNotice. */
-export function cooldownWarning(held: ReadonlyArray<PlannedHold>, options: { readonly table?: boolean } = {}): string | undefined {
+/** The warning a held PR opens with: what came early, why, what to check, and how the hold ends; `rows` as in advisoryNotice. */
+export function cooldownWarning(held: ReadonlyArray<PlannedHold>, options: { readonly rows?: number } = {}): string | undefined {
   const until = heldUntil(held);
   if (until === undefined) return undefined;
   // `<` too: a name or signal from elsewhere can't open a comment that hides the rest, or end the warning early.
@@ -211,7 +238,9 @@ function isMove(move: unknown): move is PlannedMove {
   const m = move as Record<string, unknown>;
   return typeof m["name"] === "string" && typeof m["from"] === "string" && typeof m["to"] === "string" && typeof m["mechanism"] === "string" && Array.isArray(m["locations"]) &&
     (m["carries"] === undefined || (Array.isArray(m["carries"]) && m["carries"].every(isCarried))) &&
-    (m["vetoed"] === undefined || (Array.isArray(m["vetoed"]) && m["vetoed"].every(isVeto)));
+    (m["vetoed"] === undefined || (Array.isArray(m["vetoed"]) && m["vetoed"].every(isVeto))) &&
+    // A count of the vetoes left out only stands beside some that are shown.
+    (m["vetoesLeftOut"] === undefined || (Number.isSafeInteger(m["vetoesLeftOut"]) && (m["vetoesLeftOut"] as number) > 0 && Array.isArray(m["vetoed"]) && m["vetoed"].length > 0));
 }
 
 function isVeto(entry: unknown): boolean {

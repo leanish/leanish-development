@@ -46,10 +46,25 @@ describe("batch retry", () => {
     const retry = retryWithoutNamed(original, ["other at node_modules/other is gone, not 1.0.1"]);
     expect(retry.plan?.moves).toEqual([vetoed]);
     expect(retry.plan?.notes).toEqual(original.notes);
-    expect(planSection(retry.plan!)).toContain("- lib 1.0.0.1 was ruled out by GHSA-repo, not corroborated by the sources this decision used; this takes 1.0.1.");
+    expect(planSection(retry.plan!)).toContain("- lib 1.0.0.1 was ruled out by GHSA-repo, not corroborated by the sources this decision used.");
     // An advisory id from elsewhere can't open a comment hiding the rest of the section.
     const quoting = plan({ ...move("lib"), vetoed: [{ version: "1.0.0.1", advisories: ["<!-- x"] }] });
     expect(planSection(quoting)).toContain("was ruled out by &lt;!-- x, not corroborated");
+  });
+
+  it("counts the vetoes left out, keeps eight such moves well within every limit, and refuses a malformed count", () => {
+    const vetoed = Array.from({ length: 10 }, (_, i) => ({ version: `1.0.0.${i}`, advisories: ["GHSA-repo", "CVE-2026-1"] }));
+    const counted = { ...move("lib"), vetoed, vetoesLeftOut: 1_990 };
+    expect(planSection(plan(counted))).toContain(
+      "- lib: 1990 more candidates were ruled out the same way, by advisories not corroborated by the sources this decision used.",
+    );
+    // Eight projects locking eight versions of one package, one open-ended repository advisory over 2,000 candidates.
+    const eight = plan(...Array.from({ length: 8 }, (_, i) => ({ ...counted, from: `1.0.${i}`, locations: [`p${i}/node_modules/lib`] })));
+    const body = withPlanSection("Description.", eight);
+    expect(planOf(body)).toEqual(eight);
+    expect(body.length).toBeLessThan(30_000);
+    for (const vetoesLeftOut of [0, -1, 1.5, "3"]) expect(planOf(withPlanSection("Description.", plan({ ...counted, vetoesLeftOut } as unknown as PlannedMove)))).toBeUndefined();
+    expect(planOf(withPlanSection("Description.", plan({ ...move("lib"), vetoesLeftOut: 3 })))).toBeUndefined();
   });
 
   it("attributes a failed required child to its security root and leaves unrelated npm work", () => {
@@ -137,7 +152,7 @@ describe("batch retry", () => {
     expect(planOf(planSection({ ...reduced, kind: "invalid" as never }))).toBeUndefined();
   });
 
-  it("compresses a plan too large for a plain block, and keeps its cooldown warning within GitHub's body limit", () => {
+  it("compresses a plan too large for a plain block, and keeps a held body within its target", () => {
     const large = plan(...Array.from({ length: 400 }, (_, n) => move(`lib-${n}`)));
     expect(planBlock(large).length).toBeGreaterThan(43_000);
     const section = planSection(large);
@@ -149,10 +164,10 @@ describe("batch retry", () => {
     const warned = withPlanSection("Description.", { ...large, cooldown: [held] });
     expect(warned).toContain("Release-age cooldown bypassed");
     expect(planOf(warned)).toEqual({ ...large, cooldown: [held] });
-    // The body fits without the warning and goes over with it.
+    // The body fits GitHub's limit without the warning and goes over the held target with it.
     const warning = cooldownWarning([held])!;
     const filler = "x".repeat(65_536 - "\n\n".length - planSection({ ...large, cooldown: [held] }).length - Math.floor(warning.length / 2));
     expect(() => withPlanSection(filler, large)).not.toThrow();
-    expect(() => withPlanSection(filler, { ...large, cooldown: [held] })).toThrow(/over GitHub's 65536/);
+    expect(() => withPlanSection(filler, { ...large, cooldown: [held] })).toThrow(/over the 61440 a held body is kept to/);
   });
 });

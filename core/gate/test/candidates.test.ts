@@ -281,6 +281,35 @@ describe("securityCandidates and repository-only advisories", () => {
     expect(fix).toMatchObject({ targets: ["GHSA-a"], to: { version: "1.0.2", aged: false }, vetoed: [{ version: "1.0.1", advisories: ["GHSA-b"] }] });
   });
 
+  it("records the vetoes nearest the choice, on either side, and counts the rest", async () => {
+    // One open-ended repository advisory over 24 candidates below the aged fix 1.0.25.
+    const versions = Object.fromEntries(Array.from({ length: 31 }, (_, i) => [`1.0.${i}`, OLD]));
+    const below = withRepositoryAdvisories(environment({ "lib@1.0.0": ["GHSA-a"] }, { lib: versions }), [repositoryAdvisory("GHSA-b", ">= 1.0.1, < 1.0.25")]);
+    const [fix] = (await securityCandidates(await tree({ lib: "1.0.0" }), below)).fixes;
+    expect(fix?.to?.version).toBe("1.0.25");
+    expect(fix?.vetoed?.map((veto) => veto.version)).toEqual(Array.from({ length: 10 }, (_, i) => `1.0.${i + 15}`));
+    expect(fix?.vetoesLeftOut).toBe(14);
+    // Above an aged fix too: the nearest ten of 29, the rest counted.
+    const above = withRepositoryAdvisories(environment({ "lib@1.0.0": ["GHSA-a"] }, { lib: versions }), [repositoryAdvisory("GHSA-b", ">= 1.0.2")]);
+    const [aged] = (await securityCandidates(await tree({ lib: "1.0.0" }), above)).fixes;
+    expect(aged).toMatchObject({ to: { version: "1.0.1" }, vetoesLeftOut: 19 });
+    expect(aged?.vetoed?.map((veto) => veto.version)).toEqual(Array.from({ length: 10 }, (_, i) => `1.0.${i + 2}`));
+  });
+
+  it("records the veto that took the aged fix and left a young one", async () => {
+    const env = withRepositoryAdvisories(environment({ "lib@1.0.0": ["GHSA-a"] }, { lib: { "1.0.0": OLD, "1.0.1": YESTERDAY, "1.1.0": OLD } }), [repositoryAdvisory("GHSA-b", ">= 1.1.0")]);
+    const [fix] = (await securityCandidates(await tree({ lib: "1.0.0" }), env)).fixes;
+    expect(fix).toMatchObject({ to: { version: "1.0.1", aged: false }, vetoed: [{ version: "1.1.0", advisories: ["GHSA-b"] }] });
+  });
+
+  it("records the vetoes nearest a choice leaving malware, a newer one before a downgrade and an older one after it", async () => {
+    const registry = { lib: { "1.0.1": OLD, "1.0.3": OLD, "1.0.5": OLD, "1.0.6": OLD } };
+    const env = withRepositoryAdvisories(environment({ "lib@1.0.5": ["MAL-2026-1"] }, registry), [repositoryAdvisory("GHSA-b", ">= 1.0.6"), repositoryAdvisory("GHSA-c", "< 1.0.2")]);
+    const [fix] = (await securityCandidates(await tree({ lib: "1.0.5" }), env)).fixes;
+    expect(fix).toMatchObject({ malicious: true, to: { version: "1.0.3" }, vetoed: [{ version: "1.0.6", advisories: ["GHSA-b"] }, { version: "1.0.1", advisories: ["GHSA-c"] }] });
+    expect(fix?.vetoesLeftOut).toBeUndefined();
+  });
+
   it("records the veto on an own package's move too", async () => {
     // An aged 1.0.3 too: the rule would take it for anyone else; an own package takes the lowest fix, 1.0.2.
     const registry = { "@leanish/lib": { "1.0.0": OLD, "1.0.1": YESTERDAY, "1.0.2": YESTERDAY, "1.0.3": OLD } };

@@ -50,7 +50,7 @@ import type { Snapshot } from "./snapshot.ts";
 import { takeSnapshot } from "./take-snapshot.ts";
 import type { Tree } from "./tree.ts";
 import { type Ecosystem, versionScheme } from "./versions.ts";
-import { compatibleLine, fixes, movesFrom, reviewedGroups, ruleChoice, targetsOf, type VersionCatalog, type Veto, vetoesOf } from "./young-fixes.ts";
+import { compatibleLine, fixes, movesFrom, nearestVetoes, reviewedGroups, ruleChoice, targetsOf, type VersionCatalog, type Veto, vetoesOf, vetoFields } from "./young-fixes.ts";
 
 const DAY_MS = 86_400_000;
 
@@ -87,8 +87,10 @@ export interface SecurityFix {
   readonly problem: string | undefined;
   /** A carrier move: the bundled packages it replaces, and their advisories (`carrier-candidates.ts`). */
   readonly carries?: ReadonlyArray<CarriedPackage>;
-  /** Candidates ruled out only by advisories no reviewed source corroborates, for people (`vetoesOf`). */
+  /** Candidates ruled out only by advisories no reviewed source corroborates, for people: the ones nearest the choice (`nearestVetoes`). */
   readonly vetoed?: ReadonlyArray<Veto>;
+  /** How many more candidates such a veto ruled out, when there were more than `vetoed` shows. */
+  readonly vetoesLeftOut?: number;
   /** For people: what the fix leaves alone, such as another version's unreviewed advisories. */
   readonly notes?: ReadonlyArray<string>;
 }
@@ -292,6 +294,7 @@ async function carrierFix(group: CarrierGroup, own: FailingVersion | undefined, 
     problem: decision.problem,
     carries: decision.carries,
     ...(decision.vetoed === undefined ? {} : { vetoed: decision.vetoed }),
+    ...(decision.vetoesLeftOut === undefined ? {} : { vetoesLeftOut: decision.vetoesLeftOut }),
   };
 }
 
@@ -333,30 +336,37 @@ async function chooseMove(
   const line = (version: string) => compatibleLine(config, name, version);
   const fixable = targets.filter((target) => moves.some((version) => fixes(snapshot, name, pkg.version, [target], version)));
   const unfixable = targets.filter((target) => !fixable.includes(target));
-  // Every choice below skips what unreviewed advisories alone rule out: recorded on whichever move it makes.
-  const vetoed = vetoesOf(snapshot, name, pkg.version, fixable, moves);
-  const move = async (version: string, aged: boolean): Promise<SecurityFix> => ({
+  // Every choice below skips what unreviewed advisories alone rule out: recorded on whichever move it makes, the ones
+  // nearest it in `order`, the order the choice ranks the candidates in.
+  const vetoes = vetoesOf(snapshot, name, pkg.version, fixable, moves);
+  const move = async (version: string, aged: boolean, order: ReadonlyArray<string> = moves): Promise<SecurityFix> => ({
     ...base,
     unfixable,
     to: { version, line: line(version), aged, major: line(version) !== line(pkg.version), blockers: await context.identity.problems(pkg, version) },
     problem: undefined,
-    ...(vetoed.length === 0 ? {} : { vetoed }),
+    ...vetoFields(nearestVetoes(vetoes, order, version)),
   });
   const none = (why: string): SecurityFix => ({ ...base, unfixable, to: undefined, problem: why });
   const fixing = moves.filter((version) => fixes(snapshot, name, pkg.version, fixable, version));
   if (malicious) {
     const scheme = versionScheme(pkg.ecosystem);
     const sameLine = (version: string) => line(version) === line(pkg.version);
-    const newer = fixing.filter((version) => scheme.compare(version, pkg.version) > 0);
-    const order = [
-      ...newer.filter(sameLine),
-      ...fixing.filter((version) => scheme.compare(version, pkg.version) < 0 && sameLine(version)).reverse(),
-      ...newer.filter((version) => !sameLine(version)),
-    ];
+    // Newer in its line first, then older in its line, then newer lines.
+    const preferred = (versions: ReadonlyArray<string>) => {
+      const newer = versions.filter((version) => scheme.compare(version, pkg.version) > 0);
+      return [
+        ...newer.filter(sameLine),
+        ...versions.filter((version) => scheme.compare(version, pkg.version) < 0 && sameLine(version)).reverse(),
+        ...newer.filter((version) => !sameLine(version)),
+      ];
+    };
+    const order = preferred(fixing);
+    // The same order over every candidate, vetoed ones included: where each veto sits relative to the choice.
+    const tried = preferred(moves);
     // Own packages skip the wait here too; the version must still be clean.
-    if (own && order.length > 0) return move(order[0]!, false);
+    if (own && order.length > 0) return move(order[0]!, false, tried);
     for (const version of order) {
-      if (await isAged({ ...name, version }, catalog, config, now)) return move(version, true);
+      if (await isAged({ ...name, version }, catalog, config, now)) return move(version, true, tried);
     }
     return none(`no clean version of ${pkg.name} at least ${config.releaseAgeDays} days old to leave the malicious ${pkg.version} for`);
   }

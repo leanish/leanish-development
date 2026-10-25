@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { type Config, parseConfig } from "../src/config.ts";
 import type { PackageName, PackageVersion } from "../src/package-version.ts";
 import { type Advisory, Snapshot } from "../src/snapshot.ts";
-import { candidateVersions, compatibleLine, gatherCandidates, type VersionCatalog, vetoesOf, youngFixProblem } from "../src/young-fixes.ts";
+import { candidateVersions, compatibleLine, gatherCandidates, nearestVetoes, type VersionCatalog, VETOES_SHOWN, vetoesOf, vetoFields, youngFixProblem } from "../src/young-fixes.ts";
 
 const NOW = new Date("2026-10-06T12:00:00Z");
 const DAY = 86_400_000;
@@ -143,5 +143,42 @@ describe("vetoesOf", () => {
     const pkg = { ecosystem: "npm" as const, name: "lib" };
     // 1.0.1 fixes A and keeps B (inherited), but adds C: C alone rules it out. 1.0.2 just keeps B: no veto.
     expect(vetoesOf(snapshot, pkg, "1.0.0", ["GHSA-a"], ["1.0.1", "1.0.2"])).toEqual([{ version: "1.0.1", advisories: ["GHSA-c"] }]);
+  });
+});
+
+describe("nearestVetoes", () => {
+  const veto = (version: string) => ({ version, advisories: ["GHSA-repo"] });
+  const order = Array.from({ length: 31 }, (_, i) => `1.0.${i}`);
+  const versions = (recorded: { vetoed: ReadonlyArray<{ version: string }> }) => recorded.vetoed.map((entry) => entry.version);
+
+  it("records the ten vetoes nearest the choice and counts the rest", () => {
+    const recorded = nearestVetoes(order.slice(0, 25).map(veto), order, "1.0.25");
+    expect(versions(recorded)).toEqual(order.slice(15, 25));
+    expect(recorded.vetoed).toHaveLength(VETOES_SHOWN);
+    expect(recorded.vetoesLeftOut).toBe(15);
+  });
+
+  it("takes them from either side, the earlier on a tie, in the order given", () => {
+    // Around 1.0.15, with 1.0.14 not vetoed: the tenth place is a tie at distance 6, which 1.0.9 takes over 1.0.21.
+    const vetoes = order.filter((version) => version !== "1.0.15" && version !== "1.0.14").map(veto);
+    const recorded = nearestVetoes(vetoes, order, "1.0.15");
+    expect(versions(recorded)).toEqual(["1.0.9", "1.0.10", "1.0.11", "1.0.12", "1.0.13", "1.0.16", "1.0.17", "1.0.18", "1.0.19", "1.0.20"]);
+    expect(recorded.vetoesLeftOut).toBe(19);
+    // Sparse ones far on both sides, and an aged alternative a veto took from above a young choice.
+    expect(versions(nearestVetoes([veto("1.0.30"), veto("1.0.0")], order, "1.0.5"))).toEqual(["1.0.0", "1.0.30"]);
+    expect(nearestVetoes([veto("1.1.0")], ["1.0.1", "1.1.0"], "1.0.1")).toEqual({ vetoed: [veto("1.1.0")], vetoesLeftOut: 0 });
+    // Leaving malware from 1.0.5: the order is newer in its line first, then older.
+    expect(versions(nearestVetoes([veto("1.0.1"), veto("1.0.6")], ["1.0.6", "1.0.3", "1.0.1"], "1.0.3"))).toEqual(["1.0.6", "1.0.1"]);
+  });
+
+  it("counts only vetoes of candidates in the order, never the chosen version's own", () => {
+    expect(nearestVetoes([veto("1.0.4"), veto("9.9.9")], order, "1.0.4")).toEqual({ vetoed: [], vetoesLeftOut: 0 });
+    expect(() => nearestVetoes([], order, "9.9.9")).toThrow("isn't among the candidates the choice ranked");
+  });
+
+  it("gives a move no veto fields when nothing was vetoed", () => {
+    expect(vetoFields({ vetoed: [], vetoesLeftOut: 0 })).toEqual({});
+    expect(vetoFields({ vetoed: [veto("1.0.1")], vetoesLeftOut: 0 })).toEqual({ vetoed: [veto("1.0.1")] });
+    expect(vetoFields({ vetoed: [veto("1.0.1")], vetoesLeftOut: 3 })).toEqual({ vetoed: [veto("1.0.1")], vetoesLeftOut: 3 });
   });
 });

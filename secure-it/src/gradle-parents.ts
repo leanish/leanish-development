@@ -98,7 +98,7 @@ function fold(work: ReadonlyArray<FixWork>, fix: FixWork, floored: ReadonlyArray
 }
 
 function withoutVetoes(fix: FixWork): FixWork {
-  const { vetoed: _vetoed, ...rest } = fix;
+  const { vetoed: _vetoed, vetoesLeftOut: _vetoesLeftOut, ...rest } = fix;
   return rest;
 }
 

@@ -50,6 +50,11 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
    | Gradle | a transitive one, or one only a plugin declares, that a dependency the sources declare brings in every affected configuration | first, that declaration's lowest version in its own line, past the wait, that brings a fixed version (proved by a reference resolution, at most 6 per vulnerable module; the declaration moves wherever it's declared, `carries` in the plan) |
    | Gradle | otherwise, or when no such version is proved | a floor: an explicit dependency with `because(...)`, plus its entry in `.github/dependency-floors.json` (the PR notes why no parent could move) |
    | Actions | any | pin to the tag's commit |
+
+   A young npm carrier passes as a `bundle-fix` only when it fixes at least one reviewed bundled advisory. Its own
+   reviewed targets join that choice; an own-only fix needs the ordinary young-fix proof or an explicit `releaseAge`
+   exception. Verification refuses a carrier choice that neither proof nor an exception justifies.
+
    - **Young fixes go apart, each group in its own PR.** Fixes whose target is younger than the release-age wait,
      everything coupled to them, and any fix whose required npm dependency is young leave the aged batch, so the aged
      fixes aren't held back. They're then split as far as they can be, one held routine unit (topic
@@ -57,20 +62,34 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
      can be taken when it ages or by a person's call:
      - **Always together, the couplings known when splitting:** coupled npm peers, a carrier and its carried package,
        and what planning the aged batch finds (a root that needs another root's fix). Planning a held group can find
-       more; those don't rejoin groups already split unless a group can't be planned without them (below), and each PR
+       more; those don't rejoin groups already split unless a preflight fails (below), and each PR
        proves what it moves alone.
      - **Together, roots that only wait for the same young npm companion:** fixes that are aged themselves but require
        one young dependency wait for it alike, so one PR moves it for all.
      - **Apart on purpose, young fixes that share a young companion:** joined, each would wait for the other's
        version too. Each PR chooses and verifies the companion version its own requirements prove; when one merges,
        the other's review rebases it.
-     - **Rejoined, groups that can't be planned apart:** each held group is then planned alone. When some fail (two
-       young roots that each require one exact companion keep the other's old requirement when planned alone), the
-       failing groups are planned together when there are several, then every held group together (v0.7's single
-       held batch). The first that plans replaces its groups; otherwise each stays apart and reports its own failure.
-       That fallback can gather groups that would have planned alone, even those apart on purpose above, and their PR
-       waits for its youngest version; a failure that happens only once (a registry error) can gather them too, so
-       each is logged. Runs and reviews regroup the same way.
+     - **Rejoined when planning or Gradle resolution needs it:** with two or more held groups, each is planned alone.
+       For a plan with Maven moves, Gradle also applies its declaration moves and floors to an exported base and
+       resolves the reference: two young Gradle fixes can plan separately yet conflict until both declarations move.
+       A returned inventory must have the planned declarations and no resolution failures. When some preflights fail
+       (npm requirements or Gradle references), the failing groups are tried together when there are several, then
+       every held group together (v0.7's single held batch). The first group whose preflight passes replaces its groups;
+       otherwise each stays apart and reports its own failure. The actual agent edit is still verified before publication.
+       The fallback can gather groups that would have passed alone, even those apart on purpose above, and their PR
+       waits for its youngest version. Planning errors retain the existing fallback, so a transient npm registry
+       failure can still regroup groups. A thrown Gradle execution error (sandbox failure, timeout or OOM), or a missing
+       reference inventory, instead makes grouping unknown for every held routine unit, including npm-only units:
+       the run fails all of them while other units continue. A base-movement review reports an error for every held
+       routine PR without closing it, while other PRs still rebase. Any held group could have joined the failing group
+       in the all-held fallback. Returned reference problems still allow regrouping. Each failure is logged with its
+       unit and reason.
+       One held unit skips this preflight; npm-only groups cost no extra Gradle resolution. Preflight results, including
+       execution errors, are shared by base commit and plan identity for one run or review tick; the next invocation
+       retries. K PRs reviewing identical K groups on the same base use K preflight resolutions, plus up to two distinct
+       joint trials, rather than K²; final verification always runs separately. Planning itself is still repeated.
+       Runs and base-movement reviews regroup the same way, before PR claims. A tick on an unchanged base keeps the
+       recorded plan; the next regular run recomputes grouping.
 
      A major or malware unit with a young version stays whole and is held. What the PR finally holds is the
      verifying comparison's call, not this prediction.
@@ -159,11 +178,12 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
    run reconsiders omitted fixes.
 
    Advisories only the project's own repository publishes (unreviewed) plan no fix: such a version is reported, and
-   waits for a reviewed source; when a reviewed fix moves the package anyway, they're a note on that fix instead. They still rule candidates out, and the plan notes each candidate ruled out that way
-   ("ruled out by …, not corroborated by the sources this decision used"), carrier versions included. A required npm
-   dependency's version is set by its requirement, so there a veto refuses the fix, and the refusal names each advisory
-   the version adds, marked when unreviewed. See
-   [how each source counts](../core/gate/README.md#how-each-source-counts).
+   waits for a reviewed source; when a reviewed fix moves the package anyway, they're a note on that fix instead.
+   They still rule candidates out, and the plan notes the ten candidates ruled out that way nearest the choice, on
+   either side ("ruled out by …, not corroborated by the sources this decision used"), carrier versions included, and
+   counts the rest: a sample, not every veto that shaped the choice. A required npm dependency's version is set by
+   its requirement, so there a veto refuses the fix, and the refusal names each advisory the version adds, marked
+   when unreviewed. See [how each source counts](../core/gate/README.md#how-each-source-counts).
 
    Before that reduction, a first refusal gets the agent asked once more for the same plan, from the base, with the
    refusal (`rejected`): an agent that moved a parent instead of the planned floor, say. The reduction then works
@@ -258,27 +278,35 @@ aged, and how a person takes it earlier: every other check green, the reason wri
 planned as aged that the comparison holds anyway is held the same way. A cooldown the comparison couldn't evaluate
 fails verification.
 
-For a security or bundle fix, and for a required version or an exception that fixes advisories itself (the gate
-records them, and an exception's named one, reviewed or not), the warning also says where the advisories behind it
-appear. After the verification,
-secure-it reads each advisory, and every alias the responses name, from the dependency's own repository advisories,
-GitHub's database and OSV, fresh and only to inform. A table shows each source as it says: the fix it declares, and
-whether its ranges put each replaced and proposed version among the affected ones; a bundled package is named as
-bundled, and a removal as a removal. A lookup that fails reads "couldn't be fully checked", never "not found".
+For every held version that fixes advisories (the gate records them, whether or not anything justified the version,
+and an exception's named one, reviewed or not), the warning also says where those advisories appear. After the
+verification, secure-it reads each advisory, and every alias the responses name, from the dependency's own repository
+advisories, GitHub's database and OSV, fresh and only to inform. A table shows each source as it says: the fix it
+declares, and whether its ranges put each replaced and proposed version among the affected ones; a bundled package is
+named as bundled, and a removal as a removal. A lookup that fails reads "couldn't be fully checked", never "not
+found".
 
-A fixed line opens the warning: that a reviewed record (OSV, or GitHub's reviewed database) still backs every fix as
-read now, or, with those rows marked ⚠, that none does for some (withdrawn since, ranges that changed, or sources that
-couldn't be read). A fix whose evidence couldn't be read, wasn't recorded, or covers only some of its targets gets
-its own line and is listed: the notice never says every fix is backed while one is unchecked. The comparison's verdict
-stands either way. A fix's targets are reviewed advisories by the time it's proposed, except the one a release-age
+The notice reports problems only, so a gap in it shows less, never a false all-clear. When no reviewed record (OSV, or
+GitHub's reviewed database) backs some advisory as read now (withdrawn since, ranges that changed, or sources that
+couldn't be read), a line opens the warning and those rows are marked ⚠. A fix whose evidence couldn't be read, wasn't
+recorded, or covers only some of its targets is listed with its reason. The comparison's verdict stands either way. A fix's targets are reviewed advisories by the time it's proposed, except the one a release-age
 exception names, which the owner's call lets in whichever source lists it; how each source counts is in
 [the gate's rules](../core/gate/README.md#how-each-source-counts).
 
-When the table would push the PR body past GitHub's limit, only the table is left out, with a line saying so: the
-plan's block keeps the whole evidence, the ⚠ packages are named in the opening line, each with its newest proposed
-versions, and the rest of the warning stays. When even that can't be written (the plan with the evidence passes its
-block's or section's limit, or the body GitHub's), the evidence gives way, never the fix: the PR is written without
-any, and each fix that had some is listed as unchecked, saying why.
+The table lists its ⚠ rows first. Composition uses raw UTF-16 length budgets: 61,440 for fresh text (including a fresh
+agent description updating an existing PR), or 65,280 for text carrying a publication state marker, already published
+and including its marker. The latter leaves 256 units below the client's limit for replacement and re-cleaning.
+When the table would push the body past its budget, only its last rows give way: it shows the most that fit, with a line saying how many are left out, the plan's block keeps the whole evidence, and the
+rest of the warning stays. When even no row fits (the plan with the evidence passes its block's or section's limit,
+or the body its raw budget), the PR is written without the evidence, and each fix that had some is listed as unchecked,
+saying why. A body that still cannot fit is refused. These conservative budgets can drop rows or evidence, or refuse
+a body, even when GitHub could store it.
+
+Agent descriptions must not include reserved plan or publication state markers; those are written by the tool.
+Publication separately checks the cleaned title (nonblank, at most 256 UTF-16 units) and marked body (at most 65,536)
+against the client's limits on both create and update. Enough path expansion can still exceed a limit; the final guard
+refuses before the push, or before a text-only API update. This guard does not retry without evidence.
+It also protects bump-it and non-held publications, whose composition keeps its existing raw check.
 
 The agent never writes any of this.
 
@@ -319,3 +347,13 @@ field.
 - **OSV-Scanner:** the version pinned in [`core/gate/tools.json`](../core/gate/tools.json), installed into the tool's
   state directory (out of reach of sandboxed commands) and verified by sha256 before every run.
 - **Schedule:** launchd or cron calls `run.sh`.
+
+## Tests
+
+Run the held-Gradle reproduction from the repository root:
+
+```sh
+SUPPLY_CHAIN_GRADLE_TESTS=1 SUPPLY_CHAIN_GRADLE_BIN=/path/to/installed/gradle npm test --workspace secure-it -- gradle-real.test.ts -t 'aligned security moves'
+```
+
+It uses a local POM repository and an isolated Gradle cache; selecting an installed distribution avoids wrapper downloads.

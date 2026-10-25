@@ -4,7 +4,7 @@
 // the pre-push journal stores the matching title, body, plan and adaptation count for recovery;
 // adds the current label when publishing, restoring a body, recording state or marking a PR ready; published text keeps
 // local paths out.
-import { GitHubApiError } from "@leanish/agent-runtime/github/github-client";
+import { GitHubApiError, MAX_BODY_CHARS, MAX_TITLE_CHARS } from "@leanish/agent-runtime/github/github-client";
 import type { GitHubClient, GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
 import type { Logger } from "@leanish/agent-runtime/types/logger";
 import type { PreparedBranch, WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
@@ -59,6 +59,19 @@ function rootsOf(context: PublicationContext): LocalRoots {
   return { workingCopy: withCanonical([context.workingCopy.path]), other: context.localRoots };
 }
 
+/**
+ * Apply the client's title/body checks to the actual cleaned, marked output before any push/API write. Raw composition
+ * budgets leave ordinary publications room; extreme path expansion can still exceed them. Refuse here rather than
+ * letting the client reject the text after a push. This final guard only refuses: it does not recompose the plan or
+ * drop informational evidence.
+ */
+function checkedText(title: string, body: string): string {
+  if (title.trim() === "") throw new Error("the PR title is empty");
+  if (title.length > MAX_TITLE_CHARS) throw new Error(`the PR title would be ${title.length} UTF-16 units, over the client's ${MAX_TITLE_CHARS} limit`);
+  if (body.length > MAX_BODY_CHARS) throw new Error(`the PR body would be ${body.length} UTF-16 units, over the client's ${MAX_BODY_CHARS} limit`);
+  return body;
+}
+
 /** A PR's title, description and the commit message of the agent's change. */
 export interface PullRequestContent {
   readonly title: string;
@@ -104,7 +117,10 @@ export async function publishNew(
   if (prepared.remoteHeadSha !== null) throw new Error(`${context.rules.tool}: ${prepared.branch} exists already; update its PR instead`);
   const verified = await expectedTree(context);
   const parent = await context.publicationParent?.(prepared) ?? prepared;
-  const pushed = await context.workspace.publishBranch(context.workingCopy, parent, { message: content.commitMessage, ...verified });
+  const pushed = await context.workspace.publishBranch(context.workingCopy, parent, {
+    message: content.commitMessage, ...verified,
+    beforePush: async (head) => { checkedText(content.title, withMarker(context.rules, content.body, { head, base: prepared.baseSha, adaptations: 0 })); },
+  });
   if (pushed.kind === "unchanged") return undefined;
   const created = await createDraftPullRequest(context, prepared.branch, content, { head: pushed.sha, base: prepared.baseSha, adaptations: 0 });
   await ensureLabel(context, created);
@@ -130,7 +146,9 @@ export async function publishUpdate(
   const remoteHead = existingHead(context, prepared);
   const current = await reReadOwn(context, number, remoteHead);
   const attempts = adaptations ?? stateOf(current.body)?.adaptations ?? 0;
-  const bodyAt = (head: string) => withMarker(context.rules, content.body, { head, base: prepared.baseSha, adaptations: attempts });
+  const bodyAt = (head: string) => checkedText(content.title, withMarker(context.rules, content.body, { head, base: prepared.baseSha, adaptations: attempts }));
+  // Also before drafting a ready PR, or a no-push update (which has no beforePush callback).
+  bodyAt(remoteHead);
   const verified = await expectedTree(context);
   const parent = await context.publicationParent?.(prepared) ?? prepared;
   if (!current.isDraft) await github.convertToDraft({ nodeId: current.nodeId });
@@ -167,7 +185,7 @@ export async function recoverPublication(context: PublicationContext, pr: GitHub
     throw new Error(`${pr.url}: the journal has no matching publication content; rerun the tool to recompute before reviewing`);
   }
   await reReadOwn(context, pr.number, pr.headSha);
-  const updated = await context.github.updatePullRequest({ repo: context.repo, number: pr.number, title: saved.title, body: saved.body });
+  const updated = await context.github.updatePullRequest({ repo: context.repo, number: pr.number, title: saved.title, body: checkedText(saved.title, saved.body) });
   await ensureLabel(context, updated);
   return updated;
 }
@@ -179,7 +197,7 @@ export async function recoverPublication(context: PublicationContext, pr: GitHub
  */
 export async function recordState(context: PublicationContext, number: number, expectedHead: string, state: PullRequestState): Promise<GitHubPullRequest> {
   const current = await reReadOwn(context, number, expectedHead);
-  const updated = await context.github.updatePullRequest({ repo: context.repo, number, title: current.title, body: withMarker(context.rules, current.body, state) });
+  const updated = await context.github.updatePullRequest({ repo: context.repo, number, title: current.title, body: checkedText(current.title, withMarker(context.rules, current.body, state)) });
   await ensureLabel(context, updated);
   return updated;
 }
@@ -193,7 +211,7 @@ export async function rewriteText(context: PublicationContext, number: number, e
   const state = stateOf(current.body);
   if (state === undefined) throw new Error(`${current.url}: no recorded state to keep while rewriting its text`);
   // From the body as it is now, so an edit made since the caller read it (an owner's note, say) is kept.
-  const updated = await context.github.updatePullRequest({ repo: context.repo, number, title: current.title, body: withMarker(context.rules, cleanBody(rewrite(current.body), rootsOf(context)), state) });
+  const updated = await context.github.updatePullRequest({ repo: context.repo, number, title: current.title, body: checkedText(current.title, withMarker(context.rules, cleanBody(rewrite(current.body), rootsOf(context)), state)) });
   await ensureLabel(context, updated);
   return updated;
 }
@@ -242,7 +260,7 @@ async function createDraftPullRequest(
   state: PullRequestState,
 ): Promise<GitHubPullRequest> {
   const { github, repo, base, rules } = context;
-  const request = { repo, head: branch, base, title: content.title, body: withMarker(rules, content.body, state), draft: true };
+  const request = { repo, head: branch, base, title: content.title, body: checkedText(content.title, withMarker(rules, content.body, state)), draft: true };
   try {
     return await github.createPullRequest(request);
   } catch (err) {

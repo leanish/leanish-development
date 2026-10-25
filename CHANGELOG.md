@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 - 2026-10-25
 
 ### Changed
 
@@ -13,36 +13,42 @@
   by their own packages (`members` in the plan), the same way in runs and reviews, so v0.7's single held PR is taken
   over by one group and the others open their own; a PR someone else pushed to, or a held one a person marked ready,
   is never claimed. Branches created in one run no longer collide when two topics cut to the same name. Held groups
-  that can't be planned apart (two young roots that each require one exact companion keep the other's old requirement
-  when planned alone) are planned and opened together: the failing groups first, then every held group, v0.7's single
-  held batch, which can gather groups that would have planned alone (their PR then waits for its youngest version);
-  otherwise each stays apart and reports its failure. Each group that doesn't plan alone is logged.
+  whose planning or Gradle reference resolution fails apart (npm roots keeping each other's old requirements, or
+  Gradle declarations that must move together) are tried together before publication: the failing groups when there
+  are several, then every held group, v0.7's single held batch, which can gather groups that would have passed alone
+  (their PR then waits for its youngest version); otherwise each stays apart and reports its failure. Each preflight
+  failure is logged with its unit and reason.
 
 - A project's own repository advisories, unreviewed and published at will by whoever controls the repository, no
   longer trigger a fix nor justify a young version: they still detect (a finding, a PR adding one fails) and rule
   versions out. Only reviewed advisories (OSV, or GitHub's database for Actions) make secure-it plan a fix and make a
   young version the rule-picked fix, a bundle fix or a required npm dependency. A version affected only by unreviewed
   advisories is reported, not fixed, until a reviewed source lists it. An unreviewed advisory can still rule out the
-  version the rule would take and steer it to another, even a young one (held); secure-it's plan notes each such
-  candidate, carrier versions included. A required npm dependency's version is set by its requirement, so a veto there
-  refuses the fix, and the refusal now names each advisory it adds, marked when unreviewed. A `releaseAge` exception
-  may still name one: the owner's override. The rules are in the gate's README ("How each source counts"). GitHub's
-  Actions advisories that aren't `reviewed` or `malware` now fail the run.
+  version the rule would take and steer it to another, even a young one (held); secure-it's plan notes the ten such
+  candidates nearest the choice, on either side, carrier versions included, and counts the rest. A required npm
+  dependency's version is set by its requirement, so a veto there refuses the fix, and the refusal now names each
+  advisory it adds, marked when unreviewed. A `releaseAge` exception may still name one: the owner's override. The
+  rules are in the gate's README ("How each source counts"). GitHub's Actions advisories that aren't `reviewed` or
+  `malware` now fail the run.
+
+- A young npm carrier's `bundle-fix` justification requires at least one reviewed bundled advisory it fixes. Its own
+  reviewed targets still join the combined choice; an own-only fix must satisfy the ordinary young-fix proof or an
+  explicit `releaseAge` exception.
 
 ### Added
 
-- secure-it's cooldown warning now says where the advisories behind each held security or bundle fix appear, and
-  behind a held required version or exception that fixes advisories itself: the
+- secure-it's cooldown warning now says where the advisories each held version fixes appear: the
   dependency's own repository advisories, GitHub's database and OSV, each read after the verification and shown as
   that source says (its declared fix, and whether its ranges put each replaced and proposed version among the affected
-  ones). A fixed line opens the warning: that a reviewed record (OSV, or GitHub's reviewed database) still backs every
-  fix as read now, or, marking the rows, that none does for some; a fix it couldn't check gets its own line and is
-  listed. A lookup that fails is shown as such, never as "not found". When the table would push the PR body past
-  GitHub's limit, only the table is left out, with a line saying so, and the plan's block keeps the evidence; when
-  the PR still can't be written with the evidence, it's left out, and each fix that had some is listed as unchecked. The
-  gate's comparison report records, for each held fix, the advisories behind it (`targets`), and for a required
-  version or an exception the ones it fixes (an exception's named one, whichever source lists it); nothing in the
-  evidence changes a verdict.
+  ones). It reports problems only: a line opens the warning when no reviewed record (OSV, or GitHub's reviewed
+  database) backs some advisory as read now, with those rows marked, and a fix it couldn't check is listed with its
+  reason. A lookup that fails is shown as such, never as "not found". The table lists its ⚠ rows first; when it
+  would push a held PR body's raw UTF-16 length past 61,440 for fresh text or 65,280 for text already carrying a
+  publication state marker (marker included), it shows the rows that fit, with a line saying how many are left out,
+  and the plan's block keeps the evidence; when the PR still can't be written with the evidence, it's left out, and
+  each fix that had some is listed as unchecked. The gate's comparison report records, for each held version, the
+  advisories it fixes (`targets`), whether or not anything justified it (an exception's named one, whichever source
+  lists it); nothing in the evidence changes a verdict.
 - When verification refuses an edit the agent wrote, bump-it and secure-it now ask the agent once more, from the base,
   with the refusal (`rejected` in the skill input). In bump-it a second refusal fails the unit as before; in secure-it
   the existing retry without the named package groups still follows, from the second refusal, or from the first when
@@ -53,10 +59,27 @@
 
 ### Fixed
 
-- The evidence in secure-it's cooldown warning covers every advisory a held fix brings: a young carrier proved both as
-  the fix for its own advisory and for its bundle's now lists both, and each advisory group carries every alias the
-  package's own records name (another version's record linking a CVE to its GHSA included), so a backed fix isn't
-  flagged as having no GHSA id, and the "every advisory is backed" line no longer leaves a bundled one unchecked.
+- Held Gradle fixes that resolve only together no longer fail in separate PRs: preflight checks the planned reference
+  resolution as well as plan construction before assigning PRs, using the same regrouping in runs and base-movement
+  reviews. It runs only with two or more held routine units and resolves only plans with Maven moves. Normal edit
+  verification still runs before publication. For Gradle, only recorded reference problems regroup units; a thrown
+  execution error or missing inventory makes grouping unknown for all held routine units, including npm-only ones.
+  All fail for that run; base-movement reviews error for all held routine PRs without closing them, since any could
+  have joined the failing group in the all-held fallback. Other run units and PR rebases continue. Preflight results
+  (including errors) are shared by base commit and plan identity for one run/review tick;
+  verification is not cached. The existing fallback for npm planning errors stays; each preflight failure is logged.
+
+- Both tools now check the actual cleaned title (nonblank, at most 256 UTF-16 units) and marked body (at most 65,536)
+  against the client's limits before a push or a text-only API update, instead of letting the client refuse them after
+  the push. This final guard only refuses; it does not retry composition without evidence. The held-body raw budgets may drop rows or evidence, or
+  refuse an otherwise publishable body; excessive path expansion is refused by the final guard.
+
+- Agent PR descriptions may not carry a `<!-- leanish:state` marker, just as they may not carry a plan marker: fresh
+  text cannot pretend to be already published and receive the larger held-body budget.
+- The evidence in secure-it's cooldown warning now includes bundled advisories and every alias: a young carrier proved
+  both as the fix for its own advisory and for its bundle's now lists both, and each advisory group carries every alias
+  the package's own records name (another version's record linking a CVE to its GHSA included), so a backed fix isn't
+  flagged as having no GHSA id.
 - No text a tool writes in a PR body can carry a plan block of its own any more: bump-it's and secure-it's plan
   sections, secure-it's cooldown warning and every published body defuse any `<!-- leanish:plan` they quote (from an
   advisory, a name, an error or a cleaned path), and replacing a body's state markers never joins the text around

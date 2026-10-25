@@ -11,6 +11,23 @@ const ATC: Project = {
 };
 
 describe("InMemoryWorkspace.sync", () => {
+  it("records pushes at the push point, not failed callbacks or a caller's eventual result", async () => {
+    const workspace = new InMemoryWorkspace();
+    const workingCopy = (await workspace.sync([ATC])).workingCopies[0]!;
+    const prepared = { branch: "secure-it/test", baseSha: workingCopy.headSha, remoteHeadSha: null, preparedSha: workingCopy.headSha };
+    await expect(workspace.publishBranch(workingCopy, prepared, { message: "fixing", beforePush: async () => { throw new Error("refused"); } }))
+      .rejects.toThrow("refused");
+    expect(workspace.pushes).toEqual([]);
+    await expect((async () => {
+      await workspace.publishBranch(workingCopy, prepared, { message: "fixing" });
+      throw new Error("failed after the push");
+    })()).rejects.toThrow("failed after the push");
+    expect(workspace.pushes).toEqual([{ projectId: ATC.id, branch: prepared.branch, sha: "c".repeat(40) }]);
+    workspace.setPublishUnchanged();
+    await workspace.publishBranch(workingCopy, prepared, { message: "fixing" });
+    expect(workspace.pushes).toHaveLength(1);
+  });
+
   it("first sync reports 'cloned' with the synthesised sha", async () => {
     const ws = new InMemoryWorkspace();
     const result = await ws.sync([ATC]);

@@ -109,11 +109,11 @@ describe("moving a Gradle parent instead of flooring what it brings", () => {
   });
 
   it("makes one move fix okhttp's own advisory and the okio it brings", async () => {
-    const own: SecurityFix = { ...okio(), name: OKHTTP, from: "4.9.1", targets: ["GHSA-okhttp"], to: { version: "4.9.2", line: "4", aged: true, major: false, blockers: [] }, vetoed: [{ version: "4.9.1.1", advisories: ["GHSA-repo"] }] };
+    const own: SecurityFix = { ...okio(), name: OKHTTP, from: "4.9.1", targets: ["GHSA-okhttp"], to: { version: "4.9.2", line: "4", aged: true, major: false, blockers: [] }, vetoed: [{ version: "4.9.1.1", advisories: ["GHSA-repo"] }], vetoesLeftOut: 2 };
     const probes: string[] = [];
     const { plan } = await search([own, okio()], { base: "4.9.1", probes });
-    // Its veto was recorded for 4.9.2; the fold moves it to 4.12.0, another choice, so no note claims "this takes 4.9.2".
-    expect(plan.moves.every((move) => move.vetoed === undefined)).toBe(true);
+    // Its veto was recorded around 4.9.2; the fold moves it to 4.12.0, another choice, so its vetoes don't describe this one.
+    expect(plan.moves.every((move) => move.vetoed === undefined && move.vetoesLeftOut === undefined)).toBe(true);
     expect(probes[0]).toBe("4.9.2");
     expect(plan.moves).toEqual([expect.objectContaining({ name: OKHTTP, from: "4.9.1", to: "4.12.0", advisories: ["GHSA-okhttp"], carries: [expect.objectContaining({ name: OKIO, advisories: ["GHSA-okio"] })] })]);
   });
