@@ -39,7 +39,7 @@ import type { NpmRegistry } from "./npm-registry.ts";
 import type { PackageName, PackageVersion } from "./package-version.ts";
 import type { Snapshot } from "./snapshot.ts";
 import { versionScheme } from "./versions.ts";
-import { compatibleLine, fixes, groupsOf, nearestVetoes, reviewedGroups, unreviewedGroups, type VersionCatalog, type Veto, vetoNote } from "./young-fixes.ts";
+import { compatibleLine, fixes, groupsOf, nearestVetoes, reviewedGroups, unreviewedGroups, type VersionCatalog, type Veto } from "./young-fixes.ts";
 
 const DAY_MS = 86_400_000;
 /** Bundles read before each new advisory snapshot. */
@@ -86,7 +86,14 @@ export type CarrierChoice =
     /** How many more it read (`nearestVetoes`). */
     readonly vetoesLeftOut: number;
   }
-  | { readonly kind: "none"; readonly reason: string }
+  | {
+    readonly kind: "none"; readonly reason: string;
+    /**
+     * Read versions ruled out only by unreviewed advisories, for planning's report (`vetoNote`); kept out of `reason`,
+     * which verification also reports and can publish.
+     */
+    readonly vetoed: ReadonlyArray<Veto>;
+  }
   | { readonly kind: "incomplete"; readonly reason: string };
 
 /** The carrier version the rule picks for `search`. */
@@ -128,7 +135,7 @@ async function fixTargets(search: CarrierSearch, services: CarrierServices, stat
     return state.chosen(version, line(version), true);
   }
   if (first !== undefined) return state.chosen(first, line(first), false);
-  return { kind: "none", reason: `no ${search.carrier} version above ${search.from} ships a bundle without ${describe(search.carried)}${search.own.length === 0 ? "" : ` and fixes ${search.own.join(", ")}`}${vetoNote(state.vetoes())}` };
+  return { kind: "none", reason: `no ${search.carrier} version above ${search.from} ships a bundle without ${describe(search.carried)}${search.own.length === 0 ? "" : ` and fixes ${search.own.join(", ")}`}`, vetoed: state.vetoes() };
 }
 
 async function leaveMalware(search: CarrierSearch, services: CarrierServices, state: SearchState): Promise<CarrierChoice> {
@@ -147,7 +154,7 @@ async function leaveMalware(search: CarrierSearch, services: CarrierServices, st
     if (verdict.kind === "incomplete") return verdict;
     if (verdict.fixes) return state.chosen(version, line(version), !search.ownPackage, order);
   }
-  return { kind: "none", reason: `no clean ${search.carrier} version${search.ownPackage ? "" : ` at least ${services.config.releaseAgeDays} days old`} to leave the malicious bundle of ${search.from} for` };
+  return { kind: "none", reason: `no clean ${search.carrier} version${search.ownPackage ? "" : ` at least ${services.config.releaseAgeDays} days old`} to leave the malicious bundle of ${search.from} for`, vetoed: [] };
 }
 
 /** Reads bundles in batches and judges versions on one snapshot extended with each batch. */
