@@ -330,6 +330,10 @@ jobs:
     const inside = await readActionsInventory(recorded({ ".github/workflows/ci.yml": step("./a/../b"), "b/action.yml": "runs:\n  using: composite\n  steps:\n    - uses: actions/setup-node@v7\n" }));
     expect(inside.files).toEqual([".github/workflows/ci.yml", "b/action.yml"]);
     expect(inside.uses.map((use) => use.name)).toEqual(["actions/setup-node"]);
+    // `./` is the root action, read and counted once though it's also read on its own.
+    const root = await readActionsInventory(recorded({ ".github/workflows/ci.yml": step("./"), "action.yml": "runs:\n  using: composite\n  steps:\n    - uses: actions/setup-node@v7\n" }));
+    expect(root.files).toEqual([".github/workflows/ci.yml", "action.yml"]);
+    expect(root.uses.map((use) => use.name)).toEqual(["actions/setup-node"]);
   });
 
   it("reads a local reusable workflow once, as the workflow it is, and reports one that doesn't exist", async () => {
