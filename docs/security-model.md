@@ -113,8 +113,10 @@ Both tools are in this tree: [`secure-it`](../secure-it) and [`bump-it`](../bump
   CI CLI discovers its checkout's metadata once before reading commits. Both agent runners also make the working copy's
   `.git` entry unwritable, as well as the external metadata directory.
 - **The tool decides versions, verifies the result with this gate, and publishes.** Every write to a PR re-reads it first and stops unless it's still the tool's, at the expected head. Nothing merges by itself.
-- **Published text keeps the machine out.** A PR's title, description and commit message carry no local paths, and the
-  tool's own plan block is always the first one read; this cleans what readers see, not every byte. The rules are in
+- **Published text keeps the machine out.** In a PR's title, description and commit message, absolute paths inside the
+  working copy become repository-relative and paths under the home, temp, state and cache directories become
+  `<local path>`; a path outside those roots is published as it is. The tool's own plan block is always the first one
+  read; this cleans what readers see, not every byte. The rules are in
   [tool-runtime](../core/tool-runtime/README.md) ([`publication-text.ts`](../core/tool-runtime/src/publication-text.ts)).
 - **Floor history stays intact.** secure-it compares recorded floors and their declarations before `compare`:
   compatibility floors never change, and security floors change only at exact planned targets, or in a dedicated
