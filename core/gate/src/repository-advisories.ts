@@ -180,14 +180,20 @@ export async function fetchRepositoryAdvisories(
 }
 
 function parseRepositoryAdvisory(entry: unknown, repo: string): RepositoryAdvisory | undefined {
-  const { record, ghsaId, where, state, withdrawn } = entryHeader(entry, repo);
-  return state !== "published" || withdrawn ? undefined : advisoryOf(record, ghsaId, where);
+  const { record, ghsaId, where, state } = entryHeader(entry, repo);
+  // Anything not published (a draft, say) is skipped before its optional fields are read, so a malformed one can't fail the gate.
+  if (state !== "published" || isWithdrawn(record, state, where)) return undefined;
+  return advisoryOf(record, ghsaId, where);
 }
 
-/** An entry of a repository's advisory list, whatever its state: the evidence reader keeps withdrawn ones. */
-export function parseRepositoryEntry(entry: unknown, repo: string): { readonly advisory: RepositoryAdvisory; readonly state: string | undefined; readonly withdrawn: boolean } {
-  const { record, ghsaId, where, state, withdrawn } = entryHeader(entry, repo);
-  return { advisory: advisoryOf(record, ghsaId, where), state, withdrawn };
+/**
+ * A published or withdrawn entry of a repository's advisory list, for the evidence reader, which keeps withdrawn ones;
+ * any other (a draft, say) is skipped before its optional fields are read.
+ */
+export function parseRepositoryEntry(entry: unknown, repo: string): { readonly advisory: RepositoryAdvisory; readonly withdrawn: boolean } | undefined {
+  const { record, ghsaId, where, state } = entryHeader(entry, repo);
+  if (state !== "published" && state !== "withdrawn") return undefined;
+  return { advisory: advisoryOf(record, ghsaId, where), withdrawn: isWithdrawn(record, state, where) };
 }
 
 function entryHeader(entry: unknown, repo: string) {
@@ -195,11 +201,12 @@ function entryHeader(entry: unknown, repo: string) {
     throw new Error(`GitHub repository advisories of ${repo}: an entry has no ghsa_id`);
   }
   const ghsaId = entry["ghsa_id"];
-  const where = `repository advisory ${ghsaId} (${repo})`;
   const state = typeof entry["state"] === "string" ? entry["state"] : undefined;
-  const withdrawn = state === "withdrawn" || optionalString(entry, "withdrawn_at", where) !== undefined;
-  return { record: entry, ghsaId, where, state, withdrawn };
+  return { record: entry, ghsaId, where: `repository advisory ${ghsaId} (${repo})`, state };
 }
+
+const isWithdrawn = (entry: Record<string, unknown>, state: string | undefined, where: string) =>
+  state === "withdrawn" || optionalString(entry, "withdrawn_at", where) !== undefined;
 
 function advisoryOf(entry: Record<string, unknown>, ghsaId: string, where: string): RepositoryAdvisory {
   const vulnerabilities = entry["vulnerabilities"] ?? [];

@@ -12,6 +12,8 @@
  * A use resolves to a version when its ref is a full commit SHA and its
  * comment names a tag that points at that commit (checked with GitHub).
  */
+import { posix } from "node:path";
+
 import { isAlias, isMap, isScalar, isSeq, parseDocument } from "yaml";
 
 import type { ActionsGitHub } from "./actions-github.ts";
@@ -143,11 +145,13 @@ export async function readActionsInventory(tree: Tree): Promise<ActionsInventory
       uses.push(...parsed.uses);
       docker.push(...parsed.docker);
       for (const local of parsed.local) {
-        const path = local.replace(/^\.\//, "").replace(/\/+$/, "");
+        const path = posix.normalize(local.replace(/\/+$/, ""));
+        // A working tree would read it from outside the checkout, a commit can't: refused before any read, the same on both.
+        if (path === ".." || path.startsWith("../")) throw new Error(`${file}: \`uses: ${local}\` points outside the repository`);
         queue.push(
           LOCAL_WORKFLOW.test(path)
             ? { files: [path], missing: `GitHub Actions local workflow ${local} (${file}) doesn't exist, so what it uses isn't read` }
-            : { files: [`${path}/action.yml`, `${path}/action.yaml`], missing: `GitHub Actions local action ${local} (${file}) has no action.yml, so what it uses isn't read` },
+            : { files: [posix.join(path, "action.yml"), posix.join(path, "action.yaml")], missing: `GitHub Actions local action ${local} (${file}) has no action.yml, so what it uses isn't read` },
         );
       }
     }
