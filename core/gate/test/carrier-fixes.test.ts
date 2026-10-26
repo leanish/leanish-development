@@ -239,7 +239,7 @@ describe("carrier versions ruled out only by unreviewed advisories", () => {
       vetoed: [{ version: "2.10.0", advisories: ["GHSA-glob-repo"] }, { version: "2.11.0", advisories: ["GHSA-glob-repo"] }],
     });
     // Verification reports the reason too (bundle-fix proof), so it stays v0.8.0's and names no veto.
-    expect(choice.kind === "none" ? choice.reason : "").not.toContain("corroborates");
+    expect(choice.kind === "none" ? choice.reason : "").toBe("no cdk version above 2.9.0 ships a bundle without brace GHSA-brace");
   });
 
   it("records the nearest ten it read and counts the rest", async () => {

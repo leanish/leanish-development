@@ -31,9 +31,10 @@
 
 - When a package's reviewed fix is blocked, secure-it's report keeps its unreviewed-only findings with the blocker's
   reason, where 0.8.0 left them out (the gate still failed on them).
-- A refusal because no version fixes (or no single version fixes every fixable target) names the candidates that
-  advisories no reviewed source corroborates ruled out for the targets it names (at most ten, the rest counted), for
-  ordinary fixes and npm carriers alike.
+- In secure-it's report, a refusal because no version fixes (or no single version fixes every fixable target) names
+  the candidates that advisories no reviewed source corroborates ruled out for the targets it names (at most ten, the
+  rest counted), for ordinary fixes and npm carriers alike. Verification's messages, which a PR can show, are
+  unchanged.
 - Repository advisories that are neither published nor withdrawn (drafts) are skipped before their optional fields are
   read, in the gate's scan as v0.7.5 did and in secure-it's evidence lookups, so a malformed draft no longer fails
   either.
