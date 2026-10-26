@@ -83,9 +83,10 @@ function cleanPaths(text: string, roots: LocalRoots): string {
   let cleaned = text;
   for (const { root, relative } of all) {
     const at = escape(root);
-    // In double or single quotes the path runs to the closing quote, spaces included. Backticks hold commands as often
-    // as file names, so there a path ends where a bare one does.
-    cleaned = cleaned.replace(new RegExp(`(["'])(?:file://)?${at}(?=[/"'])([^"'\\n]*)(?=\\1)`, "g"), (_, quote: string, rest: string) => `${quote}${replacement(rest, relative)}`);
+    // In double or single quotes the path runs to the closing quote, spaces included, but never past a backtick: a quote
+    // in one code span must not pair with one in the next and swallow the fences between them. Backticks hold commands
+    // as often as file names, so there a path ends where a bare one does.
+    cleaned = cleaned.replace(new RegExp(`(["'])(?:file://)?${at}(?=[/"'])([^"'\`\\n]*)(?=\\1)`, "g"), (_, quote: string, rest: string) => `${quote}${replacement(rest, relative)}`);
     // Bare: from the start of a token to whitespace or punctuation that can't be part of it.
     cleaned = cleaned.replace(new RegExp(`${TOKEN_START}(?:file://)?${at}(?=$|[/\\s"'\`)\\]>,;:])([^\\s"'\`)\\]>,;]*)`, "g"), (_, rest: string) => replacement(rest, relative));
   }

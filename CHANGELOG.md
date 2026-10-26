@@ -6,6 +6,9 @@
 
 - Documentation: repeated rules now live in one place each, linked from the others. Two 0.8.0 limits are now listed
   with the others: a young own-only carrier refused only by verification, and no run-level budget for evidence lookups.
+- secure-it's PR text shows what registries, lockfiles and advisory sources supply (names, versions, advisory ids,
+  locations, notes and failure reasons) as literal code spans, so a link, mention, comment or table pipe in them stays
+  text; it replaces the per-case escaping. Path cleaning never lets a quoted path run past a backtick.
 
 ### Added
 
