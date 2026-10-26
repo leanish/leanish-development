@@ -80,11 +80,14 @@ describe("deciding a carrier move", () => {
       versions: Object.fromEntries(Object.keys(releases).map((version) => [version, { dist: { integrity: archives[version]!.integrity } }])),
     } },
   }));
-  const context = (identity: string[] = []) => ({
+  /** `repoOnly` adds, per `name@version`, advisories only the project's repository publishes. */
+  const context = (identity: string[] = [], repoOnly: Record<string, string[]> = {}) => ({
     reader: new BundleReader(serving(Object.fromEntries(Object.entries(archives).map(([version, { bytes }]) => [tarball("carrier", version), bytes])))),
     registry, catalog: new NpmCatalog(registry), config: parseConfig({}), now: NOW,
-    scan: async (packages: ReadonlyArray<PackageVersion>) => new Snapshot(new Map(packages.map((pkg) => [versionKey(pkg),
-      (pkg.name === "brace" && pkg.version === "5.0.9" ? ["GHSA-brace"] : []).map((id): Advisory => ({ id, ids: [id], source: "osv", malicious: false, summary: undefined, severity: undefined }))])), [], NOW),
+    scan: async (packages: ReadonlyArray<PackageVersion>) => new Snapshot(new Map(packages.map((pkg) => [versionKey(pkg), [
+      ...(pkg.name === "brace" && pkg.version === "5.0.9" ? ["GHSA-brace"] : []).map((id): Advisory => ({ id, ids: [id], source: "osv", malicious: false, summary: undefined, severity: undefined })),
+      ...(repoOnly[`${pkg.name}@${pkg.version}`] ?? []).map((id): Advisory => ({ id, ids: [id], source: "repository", malicious: false, summary: undefined, severity: undefined })),
+    ]])), [], NOW),
     identity: async () => identity,
   });
   const group = (lockedBundle: string): CarrierGroup => {
@@ -103,6 +106,14 @@ describe("deciding a carrier move", () => {
       unfixable: [],
       to: { version: "1.1.0", line: "1", aged: true, major: false, blockers: ["an identity break"] },
       problem: undefined,
+    });
+  });
+
+  it("names in its refusal the versions only unreviewed advisories ruled out", async () => {
+    const decision = await decideCarrier(group("5.0.9"), [], false, context([], { "brace@5.0.12": ["GHSA-brace-repo"] }));
+    expect(decision).toMatchObject({
+      to: undefined,
+      problem: "no carrier version above 1.0.0 ships a bundle without brace GHSA-brace; advisories no reviewed source corroborates ruled out 1.1.0 (GHSA-brace-repo)",
     });
   });
 

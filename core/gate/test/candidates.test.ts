@@ -281,6 +281,24 @@ describe("securityCandidates and repository-only advisories", () => {
     expect(fix).toMatchObject({ targets: ["GHSA-a"], to: { version: "1.0.2", aged: false }, vetoed: [{ version: "1.0.1", advisories: ["GHSA-b"] }] });
   });
 
+  it("names the vetoes when they rule out every fix, and counts what it doesn't show", async () => {
+    const env = withRepositoryAdvisories(environment({ "lib@1.0.0": ["GHSA-a"] }, { lib: { "1.0.0": OLD, "1.0.1": OLD, "1.0.2": OLD } }), [repositoryAdvisory("GHSA-b", ">= 1.0.1")]);
+    const [fix] = (await securityCandidates(await tree({ lib: "1.0.0" }), env)).fixes;
+    expect(fix?.problem).toBe("no version above 1.0.0 fixes GHSA-a; advisories no reviewed source corroborates ruled out 1.0.1 (GHSA-b), 1.0.2 (GHSA-b)");
+    const versions = Object.fromEntries(Array.from({ length: 13 }, (_, i) => [`1.0.${i}`, OLD]));
+    const many = withRepositoryAdvisories(environment({ "lib@1.0.0": ["GHSA-a"] }, { lib: versions }), [repositoryAdvisory("GHSA-b", ">= 1.0.1")]);
+    const [counted] = (await securityCandidates(await tree({ lib: "1.0.0" }), many)).fixes;
+    expect(counted?.problem).toBe(`no version above 1.0.0 fixes GHSA-a; advisories no reviewed source corroborates ruled out ${Array.from({ length: 10 }, (_, i) => `1.0.${i + 1} (GHSA-b)`).join(", ")} and 2 more`);
+  });
+
+  it("names, when no single version fixes every fixable target, the vetoes against those targets only", async () => {
+    // GHSA-c has no fix anywhere; 1.0.3 alone fixes GHSA-a and GHSA-b, but a repository advisory rules it out.
+    const affected = { "lib@1.0.0": ["GHSA-a", "GHSA-b", "GHSA-c"], "lib@1.0.1": ["GHSA-b", "GHSA-c"], "lib@1.0.2": ["GHSA-a", "GHSA-c"], "lib@1.0.3": ["GHSA-c"] };
+    const env = withRepositoryAdvisories(environment(affected, { lib: { "1.0.0": OLD, "1.0.1": OLD, "1.0.2": OLD, "1.0.3": OLD } }), [repositoryAdvisory("GHSA-u", ">= 1.0.3")]);
+    const [fix] = (await securityCandidates(await tree({ lib: "1.0.0" }), env)).fixes;
+    expect(fix?.problem).toBe("no single version above 1.0.0 fixes all of GHSA-a, GHSA-b, though each has a fix; advisories no reviewed source corroborates ruled out 1.0.3 (GHSA-u)");
+  });
+
   it("records the vetoes nearest the choice, on either side, and counts the rest", async () => {
     // One open-ended repository advisory over 24 candidates below the aged fix 1.0.25.
     const versions = Object.fromEntries(Array.from({ length: 31 }, (_, i) => [`1.0.${i}`, OLD]));

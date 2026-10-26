@@ -86,7 +86,14 @@ export type CarrierChoice =
     /** How many more it read (`nearestVetoes`). */
     readonly vetoesLeftOut: number;
   }
-  | { readonly kind: "none"; readonly reason: string }
+  | {
+    readonly kind: "none"; readonly reason: string;
+    /**
+     * Read versions ruled out only by unreviewed advisories, for planning's report (`vetoNote`); kept out of `reason`,
+     * which verification also reports and can publish.
+     */
+    readonly vetoed: ReadonlyArray<Veto>;
+  }
   | { readonly kind: "incomplete"; readonly reason: string };
 
 /** The carrier version the rule picks for `search`. */
@@ -128,7 +135,7 @@ async function fixTargets(search: CarrierSearch, services: CarrierServices, stat
     return state.chosen(version, line(version), true);
   }
   if (first !== undefined) return state.chosen(first, line(first), false);
-  return { kind: "none", reason: `no ${search.carrier} version above ${search.from} ships a bundle without ${describe(search.carried)}${search.own.length === 0 ? "" : ` and fixes ${search.own.join(", ")}`}` };
+  return { kind: "none", reason: `no ${search.carrier} version above ${search.from} ships a bundle without ${describe(search.carried)}${search.own.length === 0 ? "" : ` and fixes ${search.own.join(", ")}`}`, vetoed: state.vetoes() };
 }
 
 async function leaveMalware(search: CarrierSearch, services: CarrierServices, state: SearchState): Promise<CarrierChoice> {
@@ -147,7 +154,7 @@ async function leaveMalware(search: CarrierSearch, services: CarrierServices, st
     if (verdict.kind === "incomplete") return verdict;
     if (verdict.fixes) return state.chosen(version, line(version), !search.ownPackage, order);
   }
-  return { kind: "none", reason: `no clean ${search.carrier} version${search.ownPackage ? "" : ` at least ${services.config.releaseAgeDays} days old`} to leave the malicious bundle of ${search.from} for` };
+  return { kind: "none", reason: `no clean ${search.carrier} version${search.ownPackage ? "" : ` at least ${services.config.releaseAgeDays} days old`} to leave the malicious bundle of ${search.from} for`, vetoed: [] };
 }
 
 /** Reads bundles in batches and judges versions on one snapshot extended with each batch. */
@@ -184,14 +191,19 @@ class SearchState {
   chosen(version: string, line: string, aged: boolean, order: ReadonlyArray<string> = this.#search.versions): CarrierChoice {
     const bundle = this.#bundles.get(version);
     if (bundle === undefined || !bundle.complete || this.#snapshot === undefined) throw new Error(`${this.#search.carrier}@${version} was chosen unread`);
+    return { kind: "chosen", version, line, aged, bundle, snapshot: this.#snapshot, ...nearestVetoes(this.vetoes(version), order, version) };
+  }
+
+  /** The versions read so far, `except` aside, that only advisories no reviewed source corroborates rule out. */
+  vetoes(except?: string): Veto[] {
     const snapshot = this.#snapshot;
-    const vetoed = this.#search.versions.flatMap((other) => {
+    if (snapshot === undefined) return [];
+    return this.#search.versions.flatMap((other) => {
       const read = this.#bundles.get(other);
-      if (other === version || read === undefined || !read.complete) return [];
+      if (other === except || read === undefined || !read.complete) return [];
       const veto = carrierVeto(this.#search, other, read, snapshot);
       return veto === undefined ? [] : [veto];
     });
-    return { kind: "chosen", version, line, aged, bundle, snapshot, ...nearestVetoes(vetoed, order, version) };
   }
 
   #covered(): PackageVersion[] {
