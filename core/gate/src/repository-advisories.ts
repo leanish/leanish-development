@@ -186,10 +186,14 @@ function parseRepositoryAdvisory(entry: unknown, repo: string): RepositoryAdviso
   return advisoryOf(record, ghsaId, where);
 }
 
-/** An entry of a repository's advisory list, whatever its state: the evidence reader keeps withdrawn ones. */
-export function parseRepositoryEntry(entry: unknown, repo: string): { readonly advisory: RepositoryAdvisory; readonly state: string | undefined; readonly withdrawn: boolean } {
+/**
+ * A published or withdrawn entry of a repository's advisory list, for the evidence reader, which keeps withdrawn ones;
+ * any other (a draft, say) is skipped before its optional fields are read.
+ */
+export function parseRepositoryEntry(entry: unknown, repo: string): { readonly advisory: RepositoryAdvisory; readonly withdrawn: boolean } | undefined {
   const { record, ghsaId, where, state } = entryHeader(entry, repo);
-  return { advisory: advisoryOf(record, ghsaId, where), state, withdrawn: isWithdrawn(record, state, where) };
+  if (state !== "published" && state !== "withdrawn") return undefined;
+  return { advisory: advisoryOf(record, ghsaId, where), withdrawn: isWithdrawn(record, state, where) };
 }
 
 function entryHeader(entry: unknown, repo: string) {
