@@ -2,7 +2,7 @@
 // Local changes: write access in Claude Code's sandbox, usage and failure reasons from its stream-json events.
 import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
-import { mkdir, realpath, rm, rmdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, rmdir, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -143,7 +143,10 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
       pluginName: PLUGIN_NAME,
       ...(this.#stagingParentDir !== undefined ? { parentDir: this.#stagingParentDir } : {}),
     });
-    const mount = resolveWorkingCopyMount(invocation.workingCopies);
+    // The file tools may read cwd, so with no working copy they get an empty directory of their own instead of
+    // wherever the tool was started.
+    const emptyCwd = invocation.workingCopies.length === 0 ? await mkdtemp(join(tmpdir(), "claude-code-runner-empty-")) : undefined;
+    const mount = emptyCwd !== undefined ? { cwd: emptyCwd, addDirs: [] } : resolveWorkingCopyMount(invocation.workingCopies);
     const sessionId = randomUUID();
     const sessionDir = join(homedir(), ".claude", "projects", (await realpath(mount.cwd).catch(() => mount.cwd)).replace(/[^A-Za-z0-9]/g, "-"), sessionId);
     let failed = false;
@@ -189,7 +192,8 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
       if (invocation.effort !== undefined) {
         args.push("--effort", mapEffortForClaudeCli(invocation.effort));
       }
-      args.push(slashCommandPrompt(invocation));
+      // `--add-dir` takes any number of values: without `--`, the prompt after the last one would be read as a directory.
+      args.push("--", slashCommandPrompt(invocation));
 
       onSpawn();
       let stderrTail: string | undefined;
@@ -247,6 +251,7 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
       // The working copy's project dir, once no session is left in it; another session may still be using it.
       await rmdir(dirname(sessionDir)).catch(() => undefined);
       await staged.cleanup().catch((err: Error) => leftBehind.push(`the staged skills and shell (${err.message})`));
+      if (emptyCwd !== undefined) await rm(emptyCwd, { recursive: true, force: true }).catch((err: Error) => leftBehind.push(`the empty working directory (${err.message})`));
       if (leftBehind.length > 0 && !failed) throw new Error(`ClaudeCodeRunner: the run ended, but cleaning up failed: ${leftBehind.join("; ")}`);
     }
   }
@@ -323,6 +328,14 @@ export function claudeSettings(request: ClaudeSettingsRequest): Record<string, u
     autoMemoryEnabled: false,
     // Nothing runs besides the agent's own tool calls: no hooks from settings or from a skill (managed policy aside).
     disableAllHooks: true,
+    // Nor anything the claude.ai account connects.
+    disableClaudeAiConnectors: true,
+    // Claude Code's own skills (`/loop`, `/schedule`) read files or call services while they start, outside the
+    // sandbox's and the file tools' limits. The switch keeps a few built-ins, handled below.
+    disableBundledSkills: true,
+    // With these flags, `plugin-authoring` is the one kept built-in the model can invoke (`/doctor` and `/design`
+    // refuse model invocation), so its plugin goes; a Skill deny rule would leave it listed.
+    enabledPlugins: { "cc-plugin-plugin-authoring@builtin": false },
   };
 }
 
