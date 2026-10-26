@@ -51,9 +51,8 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
    | Gradle | otherwise, or when no such version is proved | a floor: an explicit dependency with `because(...)`, plus its entry in `.github/dependency-floors.json` (the PR notes why no parent could move) |
    | Actions | any | pin to the tag's commit |
 
-   A young npm carrier passes as a `bundle-fix` only when it fixes at least one reviewed bundled advisory. Its own
-   reviewed targets join that choice; an own-only fix needs the ordinary young-fix proof or an explicit `releaseAge`
-   exception. Verification refuses a carrier choice that neither proof nor an exception justifies.
+   A young npm carrier passes as a `bundle-fix` only under [the gate's proof](../core/gate/README.md#a-young-carrier-with-a-bundled-fix-npm).
+   Verification refuses a carrier choice that neither that proof nor an exception justifies.
 
    - **Young fixes go apart, each group in its own PR.** Fixes whose target is younger than the release-age wait,
      everything coupled to them, and any fix whose required npm dependency is young leave the aged batch, so the aged
@@ -154,7 +153,7 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
      security-floor updates match exact planned moves and retain their scope and history; only planned security
      floors may be added, or removed in an explicit floor-removal plan;
      for an unchanged Maven security floor record, planned plugins may add declarations while every base version/reason
-     occurrence remains. Head must resolve at or above the floor by Maven ordering; an absent resolution is allowed
+     occurrence remains, duplicates and declarations without a version counted. Head must resolve at or above the floor by Maven ordering; an absent resolution is allowed
      only if base did not resolve the package at that location either. Compatibility floors require exact declaration comparison.
      Every added declaration must also appear in the independent Gradle reference built from base plus the plan;
      a planned plugin move alone does not authorize extra declarations;
@@ -179,11 +178,9 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
 
    Advisories only the project's own repository publishes (unreviewed) plan no fix: such a version is reported, and
    waits for a reviewed source; when a reviewed fix moves the package anyway, they're a note on that fix instead.
-   They still rule candidates out, and the plan notes the ten candidates ruled out that way nearest the choice, on
-   either side ("ruled out by …, not corroborated by the sources this decision used"), carrier versions included, and
-   counts the rest: a sample, not every veto that shaped the choice. A required npm dependency's version is set by
-   its requirement, so there a veto refuses the fix, and the refusal names each advisory the version adds, marked
-   when unreviewed. See [how each source counts](../core/gate/README.md#how-each-source-counts).
+   They still rule candidates out, and the plan notes the candidates ruled out that way ("ruled out by …, not
+   corroborated by the sources this decision used"); the sampling and the required-npm-dependency case are in
+   [how each source counts](../core/gate/README.md#how-each-source-counts).
 
    Before that reduction, a first refusal gets the agent asked once more for the same plan, from the base, with the
    refusal (`rejected`): an agent that moved a parent instead of the planned floor, say. The reduction then works
@@ -239,9 +236,6 @@ Hidden plans record complete floor identities and file hashes, never npm file co
 
 ## What a review does
 
-A verified CI adaptation replaces the PR title and description with the agent's new verdict and check results,
-keeping the verified plan and publication state markers.
-
 The tick from [`core/tool-runtime`](../core/tool-runtime), with secure-it's steps:
 
 - **The base moved:**
@@ -260,8 +254,6 @@ The tick from [`core/tool-runtime`](../core/tool-runtime), with secure-it's step
     pushed, with the plan in the PR. Fixes remained on the new base, so an edit that leaves the base as it was fails
     verification; it doesn't retire the PR.
 - **CI failed (version-fix units):** the agent adapts, at most twice, and the result is verified before it's pushed.
-  CI and failing names come from the head SHA's Actions runs/jobs plus commit statuses; no Checks permission is
-  needed.
 - **A held PR** (the verifying comparison held young versions; its plan records them) never becomes ready on the
   tool's say. Green CI, or only the gate's `cooldown` job failing in its hold step after a passing comparison, is
   `held`; any other failure is adapted as usual. Once the last held version has aged, the draft is closed with a
@@ -302,9 +294,8 @@ or the body its raw budget), the PR is written without the evidence, and each fi
 saying why. A body that still cannot fit is refused. These conservative budgets can drop rows or evidence, or refuse
 a body, even when GitHub could store it.
 
-Agent descriptions must not include reserved plan or publication state markers; those are written by the tool.
-Publication separately checks the cleaned title (nonblank, at most 256 UTF-16 units) and marked body (at most 65,536)
-against the client's limits on both create and update. Enough path expansion can still exceed a limit; the final guard
+Publication also checks the cleaned title and marked body against the client's limits on create and update
+([tool-runtime](../core/tool-runtime/README.md)). Enough path expansion can still exceed a limit; the final guard
 refuses before the push, or before a text-only API update. This guard does not retry without evidence.
 It also protects bump-it and non-held publications, whose composition keeps its existing raw check.
 
@@ -312,41 +303,19 @@ The agent never writes any of this.
 
 ## Isolation
 
-Tokens, sandboxes and trust boundaries are in the [security model](../docs/security-model.md#secure-it-and-bump-it).
-What applies to secure-it:
-
-- The tool's process reads its two tokens from the Keychain and runs no repository code. The agent gets the
-  read-only token alone.
-- The Gradle inventory and tool-run npm run under `codex sandbox` with the agent's write profile, whichever coding
-  agent is configured.
-- npm dependency edits use `--package-lock-only --ignore-scripts` under the configured release-age window, which
-  agent check commands inherit too. Planned young/unreadable targets and young/unreadable base versions in the
-  affected lockfiles get explicit `--min-release-age-exclude` flags, alongside own-scope patterns. Each exclusion is
-  reported; exact target checks and `compare` still judge all induced versions, including age and identity. This
-  applies to initial edits, rebases/conflict resolution and CI adaptation.
-- npm 11.17.0 or later is required whenever exclusions are needed. The tool checks the sandbox's npm before starting
-  the agent and reports the required exclusions and detected version on failure.
+Tokens, sandboxes, trust boundaries and the npm release-age exclusions are in the
+[security model](../docs/security-model.md#secure-it-and-bump-it). For secure-it, the exclusions apply to initial edits,
+rebases/conflict resolution and CI adaptation, and npm 11.17.0 or later is required whenever they're needed
+([prerequisites](../docs/adopting-tools.md#prerequisites)).
 
 ## Setup
 
-See [Adopting the tools](../docs/adopting-tools.md) for prerequisites, the first candidate preview, live run,
-Keychain permissions and launchd schedules, and the [config reference](../docs/tool-configuration.md) for every
-field.
-
-- **Config:** `~/.config/leanish/secure-it/agent.yaml`.
-- **Tokens:** two fine-grained tokens in the Keychain, default services `leanish-secure-it-write` and
-  `leanish-secure-it-read`:
-  - one that writes (Contents, Pull requests and Workflows: write; Actions, Commit statuses and Metadata: read);
-  - a read-only one for the agent.
-
-  Optional `secrets` overrides may share a pair with bump-it; every opted-in repo uses this pair, and write/read
-  values must differ. PAT mode remains an alternative when GitHub App mode lands.
-- **Tools:** Node 24, git, `gh`, npm and the Codex CLI (for the sandbox, whichever agent runs); a Codex login for
-  `codingAgent: codex` or the logged-in `claude` CLI for `codingAgent: claude-code`; npm >= 11.17.0 when a planned
-  npm fix or an own scope needs a release-age exclusion.
-- **OSV-Scanner:** the version pinned in [`core/gate/tools.json`](../core/gate/tools.json), installed into the tool's
-  state directory (out of reach of sandboxed commands) and verified by sha256 before every run.
-- **Schedule:** launchd or cron calls `run.sh`.
+See [Adopting the tools](../docs/adopting-tools.md) for prerequisites, the two Keychain tokens and their permissions,
+the first candidate preview, live run and launchd schedules, and the [config reference](../docs/tool-configuration.md)
+for every field. The config is `~/.config/leanish/secure-it/agent.yaml`, with default Keychain services
+`leanish-secure-it-write` and `leanish-secure-it-read`. The OSV-Scanner version pinned in
+[`core/gate/tools.json`](../core/gate/tools.json) is installed into the tool's state directory (out of reach of
+sandboxed commands) and verified by sha256 before every run; launchd or cron calls `run.sh`.
 
 ## Tests
 
