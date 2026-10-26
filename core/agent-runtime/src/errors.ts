@@ -1,9 +1,12 @@
 // Copied from leanish/leanish-development core/runtime/src/errors.ts at c6282df; see PROVENANCE.md.
-// Local changes: only the classes the copied modules use; parameter properties written as fields.
+// Local changes: only the base and the entry-point errors every host shares; parameter properties written as fields.
 
 /**
  * Common base — every runtime-thrown error extends this so callers can
- * branch on `instanceof RuntimeError` without listing each subclass.
+ * branch on `instanceof RuntimeError` without listing each subclass. A host's
+ * own runtime errors extend this class rather than declaring another base, so
+ * there is one `RuntimeError` and `instanceof` holds for them across the
+ * package boundary (errors that aren't the runtime's needn't extend it).
  */
 export class RuntimeError extends Error {
   constructor(message: string) {

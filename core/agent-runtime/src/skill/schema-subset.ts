@@ -1,14 +1,13 @@
-// Copied from leanish/leanish-development core/runtime/src/skill/schema-subset.ts at c6282df; see PROVENANCE.md.
-// Local changes: allow only the nullable-object union and a constant-property if/then requirement.
+// Copied from leanish/leanish-development-incubator core/runtime/src/skill/schema-subset.ts at 17883e3; see PROVENANCE.md.
 import { EntrypointSchemaError } from "../errors.ts";
 
 /**
  * The minimal structural JSON Schema subset the runtime accepts for an
- * Entry-point Skill's `inputSchema` / `outputSchema`. Per ADR-0004.
+ * Entry-point Skill's `inputSchema` / `outputSchema`.
  *
  * Allowed keywords:
  *   - type — object / array / string / number / integer / boolean, or [object, null]
- *   - if / then — one constant-property condition with a required non-null object
+ *   - if / then — one string constant-property condition requiring one non-null object
  *   - properties, required
  *   - additionalProperties — omitted, false, or a sub-schema
  *   - items
@@ -77,7 +76,8 @@ function walk(schema: unknown, pointer: string, entrypoint: string): void {
   // type
   if ("type" in obj) {
     const t = obj["type"];
-    const nullableObject = Array.isArray(t) && t.length === 2 && t[0] === "object" && t[1] === "null";
+    const nullableObject =
+      Array.isArray(t) && t.length === 2 && t[0] === "object" && t[1] === "null";
     if (!nullableObject && (typeof t !== "string" || !ALLOWED_TYPES.has(t))) {
       throw new EntrypointSchemaError(
         entrypoint,
@@ -133,24 +133,59 @@ function escapePointer(segment: string): string {
   return segment.replace(/~/g, "~0").replace(/\//g, "~1");
 }
 
-/** Keep the only conditional form bounded: when a discriminator equals a constant, require one object. */
-function assertConditional(obj: Record<string, unknown>, pointer: string, entrypoint: string): void {
+/** When a discriminator equals a string constant, require exactly one non-null object. */
+function assertConditional(
+  obj: Record<string, unknown>,
+  pointer: string,
+  entrypoint: string,
+): void {
   if (!("if" in obj) && !("then" in obj)) return;
+
+  const invalid = () => new EntrypointSchemaError(
+    entrypoint,
+    `at '${pointer}': only constant-property if/then with one required non-null object is supported`,
+  );
   const condition = obj["if"] as { properties?: Record<string, unknown> } | undefined;
-  const consequent = obj["then"] as { required?: unknown; properties?: Record<string, unknown> } | undefined;
-  const invalid = () => new EntrypointSchemaError(entrypoint, `at '${pointer}': only constant-property if/then with one required non-null object is supported`);
-  if (condition === null || typeof condition !== "object" || Object.keys(condition).join() !== "properties") throw invalid();
+  if (
+    condition === null || typeof condition !== "object" ||
+    Object.keys(condition).join() !== "properties"
+  ) throw invalid();
+
   const properties = condition.properties;
-  if (properties === undefined || properties === null || typeof properties !== "object" || Object.keys(properties).length !== 1) throw invalid();
+  if (
+    properties === undefined || properties === null || typeof properties !== "object" ||
+    Object.keys(properties).length !== 1
+  ) throw invalid();
+
   const test = Object.values(properties)[0];
-  if (test === null || typeof test !== "object" || Object.keys(test).join() !== "const" || typeof (test as { const?: unknown }).const !== "string") throw invalid();
-  if (consequent === null || typeof consequent !== "object" || Object.keys(consequent).some((key) => key !== "required" && key !== "properties")) throw invalid();
+  if (
+    test === null || typeof test !== "object" ||
+    Object.keys(test).join() !== "const" ||
+    typeof (test as { const?: unknown }).const !== "string"
+  ) throw invalid();
+
+  const consequent = obj["then"] as {
+    required?: unknown;
+    properties?: Record<string, unknown>;
+  } | undefined;
+  if (
+    consequent === null || typeof consequent !== "object" ||
+    Object.keys(consequent).some((key) => key !== "required" && key !== "properties")
+  ) throw invalid();
+
   const required = consequent.required;
-  if (!Array.isArray(required) || required.length !== 1 || typeof required[0] !== "string") throw invalid();
+  if (!Array.isArray(required) || required.length !== 1 || typeof required[0] !== "string") {
+    throw invalid();
+  }
   const fields = consequent.properties;
-  if (fields === undefined || fields === null || typeof fields !== "object" || Object.keys(fields).length !== 1 || !(required[0] in fields)) throw invalid();
+  if (
+    fields === undefined || fields === null || typeof fields !== "object" ||
+    Object.keys(fields).length !== 1 || !(required[0] in fields)
+  ) throw invalid();
+
   const field = fields[required[0]] as { type?: unknown } | undefined;
   if (field === null || typeof field !== "object" || field.type !== "object") throw invalid();
+
   walk(condition, `${pointer}/if`, entrypoint);
   walk(consequent, `${pointer}/then`, entrypoint);
 }

@@ -1,8 +1,8 @@
 // Copied from leanish/leanish-development core/runtime/test/unit/github-client.test.ts at c6282df; see PROVENANCE.md.
-// Local changes: imports this package's modules from `../src/` instead of `../../src/`, the GitHub client from its module instead of the runtime's package barrel; CI tests use Actions runs/jobs and commit statuses without Checks, including pagination, reruns, separate workflow/event groups, pending/jobless runs (with older jobless failures superseded by newer runs in the same group), skipped jobs and continue-on-error failures, and job steps; requiredChecks pages, refusals and malformed answers.
+// Local changes: imports this package's modules from `../src/` instead of `../../src/`, the GitHub client from its module instead of the runtime's package barrel; CI tests for both `headChecks` modes: Actions runs/jobs and commit statuses without Checks, including pagination, reruns, separate workflow/event groups, pending/jobless runs (with older jobless failures superseded by newer runs in the same group), skipped jobs and continue-on-error failures, and job steps; check runs with the Actions-jobs fallback only on a Checks 403; the mode required at runtime.
 import { describe, expect, it } from "vitest";
 
-import { createGitHubClient, GitHubApiError } from "../src/github/github-client.ts";
+import { createGitHubClient, GitHubApiError, type HeadChecksMode } from "../src/github/github-client.ts";
 
 const TOKEN = "ghp_secret-token-value";
 const SHA = "c".repeat(40);
@@ -47,8 +47,8 @@ function apiPr(overrides: Record<string, unknown> = {}): Record<string, unknown>
   };
 }
 
-function client(fetchFn: typeof fetch, env: Record<string, string | undefined> = { GITHUB_TOKEN: TOKEN }) {
-  return createGitHubClient({ env, fetch: fetchFn });
+function client(fetchFn: typeof fetch, env: Record<string, string | undefined> = { GITHUB_TOKEN: TOKEN }, headChecks: HeadChecksMode = "actions-jobs") {
+  return createGitHubClient({ env, fetch: fetchFn, headChecks });
 }
 
 describe("createGitHubClient", () => {
@@ -78,6 +78,17 @@ describe("createGitHubClient", () => {
     const pulls = await client(fetch).findPullRequests({ repo: "leanish/widget", branch: "b" });
     expect(pulls).toHaveLength(101);
     expect(calls[1]?.url).toContain("&page=2");
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["unknown", "check-runs"],
+  ])("refuses a %s headChecks mode at construction, calling nothing", (_name, headChecks) => {
+    const { fetch, calls } = scripted();
+    expect(() => createGitHubClient({ env: { GITHUB_TOKEN: TOKEN }, fetch, headChecks } as unknown as Parameters<typeof createGitHubClient>[0])).toThrow(
+      `headChecks must be 'check-runs-then-jobs' or 'actions-jobs'; got '${headChecks}'`,
+    );
+    expect(calls).toHaveLength(0);
   });
 
   it("reads every page of the combined status", async () => {
@@ -227,6 +238,92 @@ describe("createGitHubClient", () => {
     const failed = scripted(json({ total_count: 1, workflow_runs: [wfRun(5, "CI", "completed", "success")] }),
       json({ total_count: 101, jobs: page }), json({}, 502));
     await expect(client(failed.fetch).headChecks({ repo: "leanish/widget", sha: SHA })).rejects.toThrow(GitHubApiError);
+  });
+
+  describe("with check-runs-then-jobs", () => {
+    const checkRunsClient = (fetchFn: typeof fetch) => client(fetchFn, { GITHUB_TOKEN: TOKEN }, "check-runs-then-jobs");
+
+    it("reads the latest check runs and the combined status across pages, never the Actions jobs", async () => {
+      const page1 = Array.from({ length: 100 }, (_, i) => ({ name: `c${i}`, status: "completed", conclusion: "success" }));
+      const { fetch, calls } = scripted(
+        json({ total_count: 101, check_runs: page1 }),
+        json({ total_count: 101, check_runs: [{ name: "last", status: "in_progress", conclusion: null }] }),
+        json({ total_count: 1, statuses: [{ context: "ci/legacy", state: "success" }] }),
+      );
+      const checks = await checkRunsClient(fetch).headChecks({ repo: "leanish/widget", sha: SHA });
+
+      expect(calls.map((call) => call.url)).toEqual([
+        `https://api.github.com/repos/leanish/widget/commits/${SHA}/check-runs?filter=latest&per_page=100&page=1`,
+        `https://api.github.com/repos/leanish/widget/commits/${SHA}/check-runs?filter=latest&per_page=100&page=2`,
+        `https://api.github.com/repos/leanish/widget/commits/${SHA}/status?per_page=100&page=1`,
+      ]);
+      expect(checks.source).toBe("check-runs");
+      expect(checks.checkRuns).toHaveLength(101);
+      expect(checks.checkRuns.at(-1)).toEqual({ name: "last", status: "in_progress", conclusion: null });
+      expect(checks.statuses).toEqual([{ context: "ci/legacy", state: "success" }]);
+    });
+
+    it("rejects a malformed check run", async () => {
+      const { fetch } = scripted(json({ total_count: 1, check_runs: [{ name: "c", status: 1, conclusion: null }] }));
+      await expect(checkRunsClient(fetch).headChecks({ repo: "leanish/widget", sha: SHA })).rejects.toThrow("malformed check run");
+    });
+
+    it("falls back to the latest Actions jobs, grouped and with their steps, when check runs are forbidden", async () => {
+      const steps = [{ name: "Hold the young versions", status: "completed", conclusion: "failure" }];
+      const { fetch, calls } = scripted(
+        json({ message: "Resource not accessible by personal access token" }, 403),
+        json({ total_count: 2, workflow_runs: [wfRun(5, "CI", "completed", "startup_failure"), wfRun(6, "CI", "completed", "failure")] }),
+        json({ total_count: 0, jobs: [] }),
+        json({ total_count: 1, jobs: [{ ...job(60, "gate / cooldown", "completed", "failure"), steps }] }),
+        json({ total_count: 0, statuses: [] }),
+      );
+      const checks = await checkRunsClient(fetch).headChecks({ repo: "leanish/widget", sha: SHA });
+
+      expect(calls.map((call) => call.url.replace("https://api.github.com/repos/leanish/widget", ""))).toEqual([
+        `/commits/${SHA}/check-runs?filter=latest&per_page=100&page=1`,
+        `/actions/runs?head_sha=${SHA}&per_page=100&page=1`,
+        "/actions/runs/5/jobs?filter=latest&per_page=100&page=1",
+        "/actions/runs/6/jobs?filter=latest&per_page=100&page=1",
+        `/commits/${SHA}/status?per_page=100&page=1`,
+      ]);
+      expect(checks.source).toBe("actions-jobs");
+      // The older jobless run is superseded by the newer run in its group.
+      expect(checks.checkRuns).toEqual([{ name: "gate / cooldown", status: "completed", conclusion: "failure", steps }]);
+    });
+
+    it.each([
+      ["a secondary rate limit", { "retry-after": "60" }],
+      ["the primary rate limit", { "x-ratelimit-remaining": "0" }],
+    ])("doesn't fall back when check runs hit %s, which is a 403 too", async (_, headers) => {
+      const { fetch, calls } = scripted(new Response(JSON.stringify({ message: "rate limit" }), { status: 403, headers }));
+      await expect(checkRunsClient(fetch).headChecks({ repo: "leanish/widget", sha: SHA })).rejects.toMatchObject({ status: 403, reason: "rate limited" });
+      expect(calls).toHaveLength(1);
+    });
+
+    it.each([404, 502])("doesn't fall back when check runs fail with %i", async (status) => {
+      const { fetch, calls } = scripted(json({ message: "nope" }, status));
+      await expect(checkRunsClient(fetch).headChecks({ repo: "leanish/widget", sha: SHA })).rejects.toMatchObject({ status });
+      expect(calls).toHaveLength(1);
+    });
+
+    it("doesn't fall back on a network failure", async () => {
+      const { fetch, calls } = scripted(new TypeError("fetch failed"));
+      await expect(checkRunsClient(fetch).headChecks({ repo: "leanish/widget", sha: SHA })).rejects.toThrow(GitHubApiError);
+      expect(calls).toHaveLength(1);
+    });
+
+    it("fails when the Actions runs are forbidden too", async () => {
+      const { fetch, calls } = scripted(json({}, 403), json({}, 403));
+      await expect(checkRunsClient(fetch).headChecks({ repo: "leanish/widget", sha: SHA })).rejects.toMatchObject({ status: 403 });
+      expect(calls[1]?.url).toContain("/actions/runs?");
+    });
+
+    it("fails the whole read when a later page fails", async () => {
+      const page1 = Array.from({ length: 100 }, () => ({ name: "c", status: "completed", conclusion: "success" }));
+      const { fetch, calls } = scripted(json({ total_count: 150, check_runs: page1 }), json({ message: "boom" }, 502));
+      await expect(checkRunsClient(fetch).headChecks({ repo: "leanish/widget", sha: SHA })).rejects.toThrow(GitHubApiError);
+      expect(calls).toHaveLength(2);
+    });
   });
 
   it("marks a PR ready through GraphQL with the node id as a variable", async () => {

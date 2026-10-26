@@ -133,7 +133,7 @@ export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray
     return finish(64, "error", { error: (err as Error).message });
   }
 
-  report.identified(handlers.tool, repoName);
+  report.identified({ tool: handlers.tool, repo: repoName });
   const logger = new ConsoleLogger({ minLevel: "info", stream: m.stderr }).with({ tool: handlers.tool, repo: repoName, command });
   try {
     const config = parseToolConfig(handlers.tool, await m.readText(configPath), configPath);
@@ -145,7 +145,8 @@ export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray
     // before a call, but sandboxed commands (inventories, npm, Gradle) can run first: on a fresh installation's
     // missing `dirs.cache` they failed with EPERM.
     await m.ensureDir(config.dirs.cache);
-    const github = createGitHubClient({ env: { GITHUB_TOKEN: write }, fetch });
+    // The tools' fine-grained token has no Checks permission, so CI is read from Actions jobs and commit statuses.
+    const github = createGitHubClient({ env: { GITHUB_TOKEN: write }, fetch, headChecks: "actions-jobs" });
     const base = repo.branch ?? (await defaultBranch(repo.repo, write, fetch));
     const workspace = m.workspace(join(config.dirs.state, "workspaces"), write, config);
     const synced = await workspace.sync([{ id: repo.repo, source: { url: `https://github.com/${repo.repo}.git`, branch: base } }]);
