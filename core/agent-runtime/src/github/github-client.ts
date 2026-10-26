@@ -1,5 +1,7 @@
 // Copied from leanish/leanish-development core/runtime/src/needs/github-client.ts at c6282df; see PROVENANCE.md.
-// Local changes: `GitHubApiError`'s parameter properties written as fields; headChecks reads Actions runs/jobs and commit statuses directly (no Checks API), paginates and retains latest jobs per workflow/event/name, pending runs, and jobless runs only when no newer run in their workflow/event group supersedes them; keeps each job's steps; requiredChecks reads the branch's ruleset status checks, unknown (not empty) when refused.
+// Local changes: `GitHubApiError`'s parameter properties written as fields; the body and title caps exported; the
+// required `headChecks` option picks check runs with the Actions-jobs fallback, or Actions jobs only; the Actions
+// path keeps a jobless run only when no newer run in its workflow/event group supersedes it, and each job's steps.
 import { RuntimeError } from "../errors.ts";
 import type {
   GitHubCheckRun,
@@ -44,14 +46,41 @@ export class GitHubApiError extends RuntimeError {
   }
 }
 
+/**
+ * Why GitHub refused a request: a rate limit (primary or secondary) whose headers say so, or a refusal. A limit without
+ * those headers can't be told from a refusal, so it counts as one.
+ */
+function refusal(response: Response): string {
+  const limited = response.headers.get("x-ratelimit-remaining") === "0" || response.headers.has("retry-after");
+  if (limited && (response.status === 403 || response.status === 429)) return "rate limited";
+  return response.status === 403 ? "forbidden" : "unexpected response";
+}
+
+/**
+ * Where `headChecks` reads the head's CI from; the host's token decides which it can read:
+ *   - `check-runs-then-jobs`: the latest check runs of every app, and the Actions jobs only when the Checks API answers
+ *     403 (a token without Checks read on a private repo);
+ *   - `actions-jobs`: only the Actions jobs, for a token that never has Checks read (a fine-grained PAT offers none).
+ */
+export type HeadChecksMode = "check-runs-then-jobs" | "actions-jobs";
+
+const HEAD_CHECKS_MODES: ReadonlySet<string> = new Set<HeadChecksMode>(["check-runs-then-jobs", "actions-jobs"]);
+
 export interface CreateGitHubClientOptions {
   /** Read on every call, so a missing `GITHUB_TOKEN` fails the call, not the cold start. */
   readonly env: Readonly<Record<string, string | undefined>>;
+  /** Required: no default fits every host, and the wrong one hides checks or calls an API the token can't read. */
+  readonly headChecks: HeadChecksMode;
   readonly fetch?: typeof globalThis.fetch;
   readonly timeoutMs?: number;
 }
 
 export function createGitHubClient(options: CreateGitHubClientOptions): GitHubClient {
+  // JavaScript callers get no type check.
+  if (!HEAD_CHECKS_MODES.has(options.headChecks)) {
+    throw new Error(`createGitHubClient: headChecks must be 'check-runs-then-jobs' or 'actions-jobs'; got '${String(options.headChecks)}'`);
+  }
+  const headChecksMode = options.headChecks;
   const doFetch = options.fetch ?? globalThis.fetch;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
@@ -83,7 +112,7 @@ export function createGitHubClient(options: CreateGitHubClientOptions): GitHubCl
       throw new GitHubApiError(operation, err instanceof Error ? err.name : "network error");
     }
     if (!response.ok) {
-      throw new GitHubApiError(operation, response.status === 403 ? "forbidden" : "unexpected response", response.status);
+      throw new GitHubApiError(operation, refusal(response), response.status);
     }
     if (response.status === 204) return undefined;
     try {
@@ -91,6 +120,26 @@ export function createGitHubClient(options: CreateGitHubClientOptions): GitHubCl
     } catch {
       throw new GitHubApiError(operation, "response is not JSON", response.status);
     }
+  }
+
+  /** The head's latest check runs, with the Actions jobs instead only when the mode says so or Checks read is refused. */
+  async function headCheckRuns(repo: string, sha: string): Promise<Pick<GitHubHeadChecks, "source" | "checkRuns">> {
+    if (headChecksMode === "actions-jobs") return { source: "actions-jobs", checkRuns: await latestWorkflowJobs(repo, sha) };
+    try {
+      return { source: "check-runs", checkRuns: await latestCheckRuns(repo, sha) };
+    } catch (err) {
+      // A token without Checks read (a fine-grained PAT offers none) gets 403 for a private repo's check runs; its
+      // Actions jobs are readable with Actions: read.
+      // A rate limit is a 403 too, and falling back on it would silently drop every other app's check runs.
+      if (!(err instanceof GitHubApiError) || err.status !== 403 || err.reason !== "forbidden") throw err;
+      return { source: "actions-jobs", checkRuns: await latestWorkflowJobs(repo, sha) };
+    }
+  }
+
+  async function latestCheckRuns(repo: string, sha: string): Promise<GitHubCheckRun[]> {
+    const operation = "headChecks";
+    // `filter=latest`: one entry per check name, its most recent run.
+    return paged(operation, `/repos/${repo}/commits/${sha}/check-runs?filter=latest`, "check_runs", (value) => toCheckRun(operation, value));
   }
 
   /**
@@ -160,8 +209,7 @@ export function createGitHubClient(options: CreateGitHubClientOptions): GitHubCl
       const operation = "headChecks";
       splitRepo(operation, repo);
       if (!SHA_PATTERN.test(sha)) throw new GitHubApiError(operation, "invalid commit sha");
-      const source = "actions-jobs";
-      const checkRuns = await latestWorkflowJobs(repo, sha);
+      const { source, checkRuns } = await headCheckRuns(repo, sha);
       // The combined status already keeps only the latest status per context.
       const statuses = await paged(operation, `/repos/${repo}/commits/${sha}/status`, "statuses", (value) => toStatus(operation, value));
       return { source, checkRuns, statuses } satisfies GitHubHeadChecks;
@@ -388,6 +436,15 @@ function toPullRequest(operation: string, value: unknown): GitHubPullRequest {
     headRef: head["ref"],
     headRepo,
   };
+}
+
+function toCheckRun(operation: string, value: unknown): GitHubCheckRun {
+  const run = record(operation, value);
+  const conclusion = run["conclusion"];
+  if (typeof run["name"] !== "string" || typeof run["status"] !== "string" || (conclusion !== null && typeof conclusion !== "string")) {
+    throw new GitHubApiError(operation, "malformed check run");
+  }
+  return { name: run["name"], status: run["status"], conclusion };
 }
 
 interface IdentifiedRun extends GitHubCheckRun {

@@ -327,7 +327,7 @@ What runs where:
 **Limits**
 
 - **Fork PRs:** their workflow runs from the fork's own files, with a read-only token and no secrets, so their check is only as trustworthy as the PR: review workflow and build changes, require approval for outside contributors' runs, and check the PR against the default branch yourself before merging: nothing re-runs it from trusted files.
-- **Scheduled runs** are best effort: GitHub may delay or skip them under load, and disables them in a public repository after 60 days without activity.
+- **Scheduled runs** are best effort ([coverage gaps](../../docs/coverage-gaps.md#limits)).
 - **Gradle builds** can alter their own inventory (see [Gradle builds](#gradle-builds)).
 
 **Updating the pin:** a PR that changes the SHA (and its `# vX.Y.Z` comment); bump-it does it like any other action update.

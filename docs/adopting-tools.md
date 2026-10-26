@@ -33,8 +33,8 @@ and [coverage gaps](coverage-gaps.md) before giving a tool repository access.
 - **npm 11.17.0 or newer** whenever there are own npm scopes, planned young
   security targets or young/unreadable locked base versions: these need
   `min-release-age-exclude`. Older npm fails the affected unit before
-  publication, reporting the needed exclusions and the detected version.
-  Starting with 11.17+ avoids that.
+  publication, reporting the excluded names and the required and detected versions. Starting with 11.17+ avoids that;
+  without exclusions, any npm with min-release-age support works.
 - **For `codingAgent: codex`: a file-backed Codex login** for the same user that
   will run launchd. The runner reuses `auth.json` under `$CODEX_HOME` or
   `~/.codex`; a keyring-only login cannot be reused. See [Codex credential storage](https://developers.openai.com/codex/auth/#credential-storage).
@@ -79,10 +79,9 @@ keep its path unchanged in your schedules.
 
 ## Two fine-grained PATs per tool
 
-By default, create a separate write/read pair of fine-grained PATs for each tool;
-the optional `secrets` overrides let both tools share one pair. The write and read
-PATs must have different values. Every opted-in repository uses the tool's pair.
-For each PAT:
+By default, create a separate write/read pair of fine-grained PATs for each tool
+(the `secrets` overrides in the [config reference](tool-configuration.md) can share
+one pair); the write and read PATs must have different values. For each PAT:
 
 - select the resource owner and only the repositories it needs;
 - set an expiry, and renew the matching Keychain item before it expires;
@@ -192,8 +191,7 @@ updates or verify an agent's edits. The first actual tool run below can publish.
 Run one opted-in repository interactively before installing schedules. These
 commands may open/update draft PRs; review may also mark them ready or close
 them. Neither merges. secure-it holds versions younger than the release-age wait
-in draft PRs, one per group of young fixes, each with a warning on top, until it
-retires each draft once its versions have aged; require the gate's
+in draft PRs with a [warning](../secure-it/README.md#the-cooldown-warning); require the gate's
 `supply-chain / cooldown` check too (see the gate's
 [adoption steps](../core/gate/README.md#adopting-the-gate)).
 
@@ -285,7 +283,7 @@ Estimates are not a subscription bill.
 
 | Symptom | Cause and action |
 |---|---|
-| `UND_ERR_CONNECT_TIMEOUT` or a connection reset during a registry/POM lookup | The gate and tools retry GET/HEAD reads twice with backoff and jitter, without an overall timeout; caller cancellation and fetch timeouts still apply. If every attempt fails, the unit/check fails closed and reports the URL and final cause. Source-repository lookups run at most 16 packages at a time per pass; overlap alone does not prove concurrency caused the failure. See the [network behavior](security-model.md#the-gate-itself). |
+| `UND_ERR_CONNECT_TIMEOUT` or a connection reset during a registry/POM lookup | The gate and tools already retry these reads, and fail closed reporting the URL and final cause when every attempt fails; the retry rules and the cap of 16 concurrent source-repository lookups are in the [network behavior](security-model.md#the-gate-itself). Overlap alone does not prove concurrency caused the failure. |
 | OSV-Scanner refused because sandboxed commands can write its path | `dirs.state` is under `/tmp`, the cache or a writable checkout. Move state to its default home path, outside those roots; do not bypass the check. Stop schedules while moving it so publication journals and workspace metadata move together. A symlink alias is canonicalized, not an escape. |
 | Gradle `fileHashes.lock (Operation not permitted)` although plain writes work | A reused daemon kept an earlier sandbox's writable root. Inventories, floor probes and wrapper generation use `--no-daemon`, so their daemon is single-use and never one an agent started; keep that flag on any custom tool-run Gradle command. `GRADLE_OPTS` and repository JVM settings are not overwritten. |
 | npm `notarget` for a young version already locked | npm's own age window can reject even a previously accepted security fix. The tools report young/unreadable locked-base exclusions (and secure-it's planned young targets); npm >=11.17 reads them, while the tool's targets and `compare` still enforce the policy. Do not turn off the window globally. Check the npm version on **launchd's** PATH. |
@@ -295,9 +293,5 @@ Estimates are not a subscription bill.
 | Keychain/login works interactively but launchd fails | Check service names, token expiry/repository approval, the logged-in user and the unlocked keychain; check the plist's absolute PATH/HOME, the file-backed Codex login (keyring-only is not reused) and, for `claude-code`, the same user's `claude` login. Do not add credentials to a plist as a workaround. |
 | CI results unavailable or pending | Grant Actions and Commit statuses read to the write PAT; Checks permission is unnecessary. Confirm the workflow/status is on the PR head SHA. Other apps' checks-only results are outside this client's coverage. |
 
-The real-run [validation record](validation.md) covers floor removal and refusal:
-synthetic Gradle and npm projects removed unnecessary security floors and kept
-their compatibility floors; java-conventions kept its Guava floor because parents
-still resolve vulnerable Guava without it. E2 also opened the wrapper fixture's
-PR #1 (9.7.1 → 9.8.0) with green CI and no model call. Before merging any wrapper
-PR, inspect the generated bytes, checksums and current-head CI.
+Before merging any wrapper PR, inspect the generated bytes, checksums and current-head CI. The real-run
+[validation record](validation.md) covers floor removal and refusal and the wrapper fixture's first PR.

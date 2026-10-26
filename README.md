@@ -19,7 +19,8 @@ version/advisory policy shared by CI and the update tools.
 
 The gate runs in GitHub Actions. The tools run on macOS and propose PRs; they do
 not merge them. Node 24 is required; npm 11.17+ is needed for release-age exclusions.
-Packages remain private: adoption uses a reviewed Git commit, with no npm publish.
+Adoption uses a reviewed Git commit; only `@leanish/agent-runtime` may also be published to npm, for other
+repositories that share it ([releasing](docs/releasing.md#publishing-leanishagent-runtime)).
 The current release is **v0.8.0**; the [CHANGELOG](CHANGELOG.md) lists its changes
 and what's unreleased. Licensed under Apache-2.0.
 
@@ -53,8 +54,8 @@ In Claude Code or Codex desktop, ask "install bump-it", "install secure-it", or 
 - [`@leanish/tool-runtime`](core/tool-runtime): shared config, sandboxed inventories,
   publication (PR text cleanup, race checks, journal recovery), review ticks and `run.sh`
 - [`@leanish/agent-runtime`](core/agent-runtime): the Codex and Claude Code runners and their
-  support, mostly copied from leanish-development's runtime, with
-  [provenance](core/agent-runtime/PROVENANCE.md)
+  support; the shared core the incubator's runtime is to consume, and the one package that may be published to
+  npm ([provenance](core/agent-runtime/PROVENANCE.md))
 
 ## Development
 
@@ -62,6 +63,10 @@ In Claude Code or Codex desktop, ask "install bump-it", "install secure-it", or 
 npm ci --ignore-scripts
 npm run check
 ```
+
+`npm run clean` removes Vitest's caches (`node_modules/.vite`, `node_modules/.vite-temp`) and `coverage/` from the root
+and each workspace; `npm run clean:deps` also removes every `node_modules`, which `npm ci --ignore-scripts` restores.
+Both run `rm -rf` through `npm exec --workspaces`, so they need no installed dependencies.
 
 Some integration tests skip locally (real Gradle unless `SUPPLY_CHAIN_GRADLE_TESTS=1`,
 as CI sets; the Seatbelt probe without a usable `codex sandbox`). A skip isn't a

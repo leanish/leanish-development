@@ -1,9 +1,10 @@
 // New in this repository; the signal cases are adapted from leanish/leanish-development
 // core/runtime/test/unit/run-local-cli.test.ts at c6282df (see PROVENANCE.md).
 import { spawn } from "node:child_process";
+import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { RunReport, type RunFinished } from "../src/report/run-report.ts";
 import { unreportedSkillUsage, toSkillUsageRecord } from "../src/usage/skill-usage-record.ts";
@@ -11,7 +12,7 @@ import { unreportedSkillUsage, toSkillUsageRecord } from "../src/usage/skill-usa
 const SIGNALLED = fileURLToPath(new URL("./fixtures/report-on-signal.ts", import.meta.url));
 
 /** Runs the fixture until it's ready, sends `signal`, and returns how it died and its final lines. */
-async function killed(signal: NodeJS.Signals, mode: "idle" | "in-flight"): Promise<{ signal: NodeJS.Signals | null; finals: RunFinished[] }> {
+async function killed(signal: NodeJS.Signals, mode: "idle" | "in-flight" | "extra" | "bad-extra" | "unserializable-extra"): Promise<{ signal: NodeJS.Signals | null; finals: RunFinished[] }> {
   const child = spawn(process.execPath, [SIGNALLED, mode], { stdio: ["ignore", "ignore", "pipe"] });
   let log = "";
   const ready = new Promise<void>((done) =>
@@ -39,7 +40,7 @@ function parse(line: string | undefined): RunFinished {
 describe("RunReport", () => {
   it("ends a command with one line: tool, repo, status, result and its skill runs", () => {
     const report = new RunReport(CLOCK);
-    report.identified("secure-it", "acme/widget");
+    report.identified({ tool: "secure-it", repo: "acme/widget" });
     report.usageRecorder.started?.({ invocationId: "i-1", entrypoint: "secure-it" });
     report.usageRecorder.record(
       toSkillUsageRecord(unreportedSkillUsage("codex", 12, "sol"), { invocationId: "i-1", entrypoint: "secure-it", outcome: "succeeded" }, { usd: null, complete: false, byModel: [], gaps: [] }),
@@ -67,6 +68,70 @@ describe("RunReport", () => {
     expect(line).not.toHaveProperty("result");
     expect(report.finish({ status: "ok", exitCode: 0 })).toBeUndefined();
   });
+
+  it("keeps the tools' line byte for byte, field order included", () => {
+    const now = vi.spyOn(performance, "now").mockReturnValueOnce(1_000).mockReturnValueOnce(1_234.4);
+    try {
+      const report = new RunReport(CLOCK);
+      report.identified({ tool: "secure-it", repo: "acme/widget" });
+      const line = report.finish({ status: "interrupted", exitCode: 143, error: "stopped by SIGTERM", signal: "SIGTERM", result: { pullRequest: "https://github.com/acme/widget/pull/7" } });
+      const zero = '{"input":0,"cachedInput":0,"cacheWriteInput":0,"output":0,"reasoningOutput":0,"total":0}';
+      expect(line).toBe(
+        '{"ts":"2026-10-07T05:00:00.000Z","level":"error","msg":"run finished","tool":"secure-it","repo":"acme/widget",' +
+          '"status":"interrupted","exitCode":143,"error":"stopped by SIGTERM","signal":"SIGTERM","durationMs":234,' +
+          '"result":{"pullRequest":"https://github.com/acme/widget/pull/7"},"skills":[],' +
+          `"totals":{"skillRuns":0,"skillRunsInProgress":0,"tokens":${zero},"tokensLowerBound":${zero},` +
+          '"estimatedApiCostUsd":0,"estimatedApiCostUsdLowerBound":0,"pricingBases":[],"gaps":[]}}\n',
+      );
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("puts a host's identity after msg and its extras after result, in the order given", () => {
+    const report = new RunReport(CLOCK);
+    report.identified({ agent: "atc" });
+    const line = parse(report.finish({ status: "ok", exitCode: 0, extra: { dispatches: { attempted: 2, completed: 1, failed: 1 }, selfPublishesDropped: 0 } }));
+    expect(Object.keys(line)).toEqual(["ts", "level", "msg", "agent", "status", "exitCode", "durationMs", "dispatches", "selfPublishesDropped", "skills", "totals"]);
+    expect(line).toMatchObject({ agent: "atc", dispatches: { attempted: 2, completed: 1, failed: 1 }, selfPublishesDropped: 0 });
+  });
+
+  it("adds to the identity on a later call, keeping each field's place", () => {
+    const report = new RunReport(CLOCK);
+    report.identified({ tool: "secure-it", repo: "acme/widget" });
+    report.identified({ tool: "bump-it", command: "run" });
+    const line = parse(report.finish({ status: "ok", exitCode: 0 }));
+    expect(Object.keys(line).slice(3, 6)).toEqual(["tool", "repo", "command"]);
+    expect(line).toMatchObject({ tool: "bump-it", repo: "acme/widget", command: "run" });
+  });
+
+  it.each(["ts", "level", "msg", "status", "exitCode", "error", "signal", "durationMs", "result", "skills", "totals"])(
+    "refuses a host field named %s, as identity or extra",
+    (field) => {
+      const report = new RunReport(CLOCK);
+      expect(() => report.identified({ [field]: "x" })).toThrow(`may not replace '${field}'`);
+      expect(() => report.finish({ status: "ok", exitCode: 0, extra: { [field]: "x" } })).toThrow(`may not replace '${field}'`);
+    },
+  );
+
+  it("refuses an extra that would replace the identity, and stays unfinished", () => {
+    const report = new RunReport(CLOCK);
+    report.identified({ agent: "atc" });
+    expect(() => report.finish({ status: "ok", exitCode: 0, extra: { agent: "other" } })).toThrow("extra fields may not replace 'agent'");
+    expect(parse(report.finish({ status: "ok", exitCode: 0 }))).toMatchObject({ agent: "atc" });
+  });
+
+  it("refuses a toJSON field, which would replace the whole line when it's written", () => {
+    const report = new RunReport(CLOCK);
+    expect(() => report.identified({ toJSON: "x" })).toThrow("may not replace 'toJSON'");
+    expect(() => report.finish({ status: "error", exitCode: 1, extra: { toJSON: () => ({ status: "ok" }) } })).toThrow("may not replace 'toJSON'");
+  });
+
+  it("stays unfinished when its extras can't be serialized, so it can still finish without them", () => {
+    const report = new RunReport(CLOCK);
+    expect(() => report.finish({ status: "ok", exitCode: 0, extra: { count: 1n } })).toThrow(TypeError);
+    expect(parse(report.finish({ status: "ok", exitCode: 0 }))).toMatchObject({ status: "ok" });
+  });
 });
 
 // The source's "writes the line before dying of SIGTERM" and "interrupted mid-skill" cases, on a bare command.
@@ -84,6 +149,21 @@ describe("reportOnTerminationSignals", () => {
       repo: "acme/widget",
       totals: { skillRuns: 0, skillRunsInProgress: 0, tokens: { total: 0 }, estimatedApiCostUsd: 0, gaps: [] },
     });
+  }, 20_000);
+
+  it("adds the host's extras as they stand when the signal arrives", async () => {
+    const { signal, finals } = await killed("SIGTERM", "extra");
+    expect(signal).toBe("SIGTERM");
+    expect(finals).toHaveLength(1);
+    expect(finals[0]).toMatchObject({ status: "interrupted", tool: "secure-it", dispatches: 1 });
+    expect(Object.keys(finals[0]!).indexOf("dispatches")).toBe(Object.keys(finals[0]!).indexOf("skills") - 1);
+  }, 20_000);
+
+  it.each(["bad-extra", "unserializable-extra"] as const)("still writes the final line, without the host's fields, when they're invalid on a signal (%s)", async (mode) => {
+    const { signal, finals } = await killed("SIGTERM", mode);
+    expect(signal).toBe("SIGTERM");
+    expect(finals).toHaveLength(1);
+    expect(finals[0]).toMatchObject({ status: "interrupted", error: expect.stringContaining("the host's fields were left out: ") });
   }, 20_000);
 
   it("reports a skill run still in flight as unknown usage, with only lower bounds", async () => {
