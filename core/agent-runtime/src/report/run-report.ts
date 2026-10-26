@@ -107,13 +107,12 @@ export class RunReport {
 
   /**
    * The final line, once: later calls (a signal racing the normal end) get undefined. Throws, without finishing, when
-   * `end.extra` names a shared or identity field.
+   * `end.extra` names a shared or identity field or can't be serialized, so a caller can still finish without it.
    */
   finish(end: RunEnd): string | undefined {
     if (this.#finished) return undefined;
     const extra = end.extra ?? {};
     assertHostFields("extra", extra, this.#identity);
-    this.#finished = true;
     const totals = totalSkillUsage(this.#skills, this.#inFlight.size);
     const line: RunFinished = {
       ts: this.#clock(),
@@ -130,13 +129,16 @@ export class RunReport {
       skills: [...this.#skills],
       totals,
     };
-    return `${JSON.stringify(line)}\n`;
+    const serialized = `${JSON.stringify(line)}\n`;
+    this.#finished = true;
+    return serialized;
   }
 }
 
 /** A host field may neither replace a shared one nor, as an extra, its identity: the spread would silently win. */
 function assertHostFields(kind: "identity" | "extra", fields: Readonly<Record<string, unknown>>, identity: Readonly<Record<string, string>>): void {
-  const clashing = Object.keys(fields).filter((field) => SHARED_FIELDS.has(field) || Object.hasOwn(identity, field));
+  // `toJSON` would replace the whole line when it's serialized.
+  const clashing = Object.keys(fields).filter((field) => SHARED_FIELDS.has(field) || field === "toJSON" || Object.hasOwn(identity, field));
   if (clashing.length > 0) throw new Error(`run report ${kind} fields may not replace '${clashing.join("', '")}'`);
 }
 
