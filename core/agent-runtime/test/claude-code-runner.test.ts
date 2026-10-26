@@ -4,12 +4,12 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { ClaudeCodeRunner, claudeSettings, DENIED_TOOLS, scrubProxyCredentials } from "../src/skill/claude-code-runner.ts";
+import { ClaudeCodeRunner, claudeSettings, DENIED_TOOLS, RESTRICTED_TOOLS, restrictedClaudeSettings, scrubProxyCredentials } from "../src/skill/claude-code-runner.ts";
 import { SkillLoader } from "../src/skill/skill-loader.ts";
 import type { LoadedSkill } from "../src/skill/skill.ts";
 import type { WorkingCopy } from "../src/types/working-copy.ts";
@@ -97,7 +97,7 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
 
   it("stages skills, invokes the entrypoint by its plugin namespace and returns the result text", async () => {
     const { bin, record } = await makeStub([init(), result(ANSWER)]);
-    const answer = await new ClaudeCodeRunner({ bin }).run(call());
+    const answer = await new ClaudeCodeRunner({ confinement: "sandbox", bin }).run(call());
     expect(answer.responseText).toContain('"answer": "fake answer"');
     const text = await readFile(record, "utf8");
     expect(args(text).slice(0, 4)).toEqual(["--print", "--output-format", "stream-json", "--verbose"]);
@@ -110,7 +110,7 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
 
   it("loads no MCP servers, using strict MCP configuration without a supplied config", async () => {
     const { bin, record } = await makeStub([result(ANSWER)]);
-    await new ClaudeCodeRunner({ bin }).run(call());
+    await new ClaudeCodeRunner({ confinement: "sandbox", bin }).run(call());
     const argv = args(await readFile(record, "utf8"));
     expect(argv).toContain("--strict-mcp-config");
     expect(argv.some((arg) => arg === "--mcp-config" || arg.startsWith("--mcp-config="))).toBe(false);
@@ -120,7 +120,7 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     const wc1 = await mkdtemp(join(tmpdir(), "claude-runner-wc1-"));
     const wc2 = await mkdtemp(join(tmpdir(), "claude-runner-wc2-"));
     const { bin, record } = await makeStub([result(ANSWER)]);
-    await new ClaudeCodeRunner({ bin }).run(call({
+    await new ClaudeCodeRunner({ confinement: "sandbox", bin }).run(call({
       workingCopies: [
         { projectId: "p1", path: wc1, branch: "main", headSha: "0".repeat(40) },
         { projectId: "p2", path: wc2, branch: "main", headSha: "0".repeat(40) },
@@ -139,13 +139,13 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
 
   it("runs without a working copy in an empty directory of its own, removed afterwards", async () => {
     const { bin, record } = await makeStub([result(ANSWER)]);
-    await new ClaudeCodeRunner({ bin }).run(call());
+    await new ClaudeCodeRunner({ confinement: "sandbox", bin }).run(call());
     const cwd = /^CWD=(.*)$/m.exec(await readFile(record, "utf8"))![1]!;
     expect(cwd).toMatch(/claude-code-runner-empty-/);
     expect(existsSync(cwd)).toBe(false);
     // Removed when the run fails too.
     const failing = await makeStub([], { exitCode: 3, stderr: "boom" });
-    await expect(new ClaudeCodeRunner({ bin: failing.bin }).run(call())).rejects.toThrow();
+    await expect(new ClaudeCodeRunner({ confinement: "sandbox", bin: failing.bin }).run(call())).rejects.toThrow();
     const failedCwd = /^CWD=(.*)$/m.exec(await readFile(failing.record, "utf8"))![1]!;
     expect(failedCwd).toMatch(/claude-code-runner-empty-/);
     expect(existsSync(failedCwd)).toBe(false);
@@ -153,7 +153,7 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
 
   it("merges per-invocation env over the runner's configured base and isolates the commands' shell", async () => {
     const { bin, record } = await makeStub([result(ANSWER)]);
-    await new ClaudeCodeRunner({ bin, env: { BASE_VAR: "from-runner", OVERLAP_VAR: "from-runner" } }).run(
+    await new ClaudeCodeRunner({ confinement: "sandbox", bin, env: { BASE_VAR: "from-runner", OVERLAP_VAR: "from-runner" } }).run(
       call({ env: { OVERLAP_VAR: "from-invocation", CRED_VAR: "tok" } }),
     );
     const text = await readFile(record, "utf8");
@@ -165,7 +165,7 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
   it("passes --effort through, mapping the suite-level `minimal` to the CLI's `low`", async () => {
     for (const [effort, expected] of [["high", "high"], ["minimal", "low"]] as const) {
       const { bin, record } = await makeStub([result(ANSWER)]);
-      await new ClaudeCodeRunner({ bin }).run(call({ effort }));
+      await new ClaudeCodeRunner({ confinement: "sandbox", bin }).run(call({ effort }));
       const argv = args(await readFile(record, "utf8"));
       expect(argv[argv.indexOf("--effort") + 1]).toBe(expected);
     }
@@ -178,7 +178,7 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     const deniedFile = join(deniedDir, "secret.txt");
     await writeFile(deniedFile, "x");
     const { bin, record } = await makeStub([result(ANSWER)]);
-    await new ClaudeCodeRunner({ bin, buildCacheRoot: cache, readDenied: [deniedDir.replace(/$/, "-other"), deniedFile] }).run(
+    await new ClaudeCodeRunner({ confinement: "sandbox", bin, buildCacheRoot: cache, readDenied: [deniedDir.replace(/$/, "-other"), deniedFile] }).run(
       call({ workingCopies: [workingCopy], access: "write", env: { GH_TOKEN: "ghs_read" }, secrets: [{ name: "GH_TOKEN", value: "ghs_read" }] }),
     );
     const text = await readFile(record, "utf8");
@@ -238,7 +238,7 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     const stagingParentDir = await mkdtemp(join(tmpdir(), "claude-runner-staging-"));
     const { bin } = await makeStub([result(ANSWER)]);
     const usages: SkillUsage[] = [];
-    await expect(new ClaudeCodeRunner({ bin, stagingParentDir }).run(call({ access: "write", onUsage: (usage) => usages.push(usage) })))
+    await expect(new ClaudeCodeRunner({ confinement: "sandbox", bin, stagingParentDir }).run(call({ access: "write", onUsage: (usage) => usages.push(usage) })))
       .rejects.toThrowError(/needs at least one working copy/);
     expect(await readdir(stagingParentDir)).toEqual([]);
     expect(usages).toEqual([
@@ -249,16 +249,16 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
   it("propagates non-zero exit codes with the stderr tail, keeping the usage streamed so far", async () => {
     const usages: SkillUsage[] = [];
     const { bin } = await makeStub([init(), message("m1", { input_tokens: 10, output_tokens: 2 })], { exitCode: 7, stderr: "boom" });
-    await expect(new ClaudeCodeRunner({ bin }).run(call({ onUsage: (usage) => usages.push(usage) }))).rejects.toThrowError(/exited with code 7.*boom/);
+    await expect(new ClaudeCodeRunner({ confinement: "sandbox", bin }).run(call({ onUsage: (usage) => usages.push(usage) }))).rejects.toThrowError(/exited with code 7.*boom/);
     expect(usages[0]).toMatchObject({ measurement: "partial", model: "claude-x", tokens: { input: 10, output: 2, total: 12 } });
     expect(usages[0]?.gaps).toEqual([expect.stringMatching(/no terminal result event/)]);
   });
 
   it("fails on an error result or a missing result event", async () => {
     const failed = await makeStub([result("ran out of turns", { subtype: "error_max_turns", is_error: true })]);
-    await expect(new ClaudeCodeRunner({ bin: failed.bin }).run(call())).rejects.toThrowError(/ended with error_max_turns: ran out of turns/);
+    await expect(new ClaudeCodeRunner({ confinement: "sandbox", bin: failed.bin }).run(call())).rejects.toThrowError(/ended with error_max_turns: ran out of turns/);
     const silent = await makeStub([init()]);
-    await expect(new ClaudeCodeRunner({ bin: silent.bin }).run(call())).rejects.toThrowError(/without a result event/);
+    await expect(new ClaudeCodeRunner({ confinement: "sandbox", bin: silent.bin }).run(call())).rejects.toThrowError(/without a result event/);
   });
 
   it("reports tokens per request, the CLI's cost and the plan windows it saw", async () => {
@@ -282,7 +282,7 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
         },
       }),
     ]);
-    const answer = await new ClaudeCodeRunner({ bin }).run(call({ model: "claude-sonnet-x", onUsage: (usage) => usages.push(usage) }));
+    const answer = await new ClaudeCodeRunner({ confinement: "sandbox", bin }).run(call({ model: "claude-sonnet-x", onUsage: (usage) => usages.push(usage) }));
     expect(answer.model).toBeUndefined();
     const usage = usages[0]!;
     expect(usage).toMatchObject({ measurement: "complete", model: "claude-sonnet-x", providerCostUsd: 0.0123, gaps: [] });
@@ -307,37 +307,37 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
       [init(), result("", { subtype: "error_during_execution", is_error: true, errors: ["You've hit your limit · resets 5pm"] })],
       { exitCode: 1 },
     );
-    await expect(new ClaudeCodeRunner({ bin: limited.bin }).run(call())).rejects.toThrowError(/exited with code 1.*the CLI reported: You've hit your limit · resets 5pm/s);
+    await expect(new ClaudeCodeRunner({ confinement: "sandbox", bin: limited.bin }).run(call())).rejects.toThrowError(/exited with code 1.*the CLI reported: You've hit your limit · resets 5pm/s);
   });
 
   it("keeps the sandbox proxy's credentials out of the answer and of failures", async () => {
     const leaky = "Picked up JAVA_TOOL_OPTIONS: -Dhttps.proxyUser=srt.abc -Dhttps.proxyPassword=s3cret via http://srt.abc:s3cret@localhost:1";
     const ok = await makeStub([result(`${leaky}\n${ANSWER}`)]);
-    const answer = await new ClaudeCodeRunner({ bin: ok.bin }).run(call());
+    const answer = await new ClaudeCodeRunner({ confinement: "sandbox", bin: ok.bin }).run(call());
     expect(answer.responseText).not.toContain("s3cret");
     expect(answer.responseText).toContain("proxyPassword=<redacted>");
     const failed = await makeStub([result(leaky, { subtype: "error_during_execution", is_error: true })], { exitCode: 1 });
-    const error = await new ClaudeCodeRunner({ bin: failed.bin }).run(call()).catch((err: Error) => err);
+    const error = await new ClaudeCodeRunner({ confinement: "sandbox", bin: failed.bin }).run(call()).catch((err: Error) => err);
     expect((error as Error).message).toContain("http://<redacted>@localhost:1");
     expect((error as Error).message).not.toContain("s3cret");
     expect(scrubProxyCredentials("proxyUser=srt.x proxyPassword=y")).toBe("proxyUser=<redacted> proxyPassword=<redacted>");
   });
 
   it("refuses a denied path with a glob character, which a permission rule would read as a pattern", () => {
-    expect(() => new ClaudeCodeRunner({ readDenied: ["/work/repo/secrets[prod].json"] })).toThrowError(/'\/work\/repo\/secrets\[prod\]\.json' has a glob character/);
-    expect(() => new ClaudeCodeRunner({ readDenied: ["/work/private"] })).not.toThrow();
+    expect(() => new ClaudeCodeRunner({ confinement: "sandbox", readDenied: ["/work/repo/secrets[prod].json"] })).toThrowError(/'\/work\/repo\/secrets\[prod\]\.json' has a glob character/);
+    expect(() => new ClaudeCodeRunner({ confinement: "sandbox", readDenied: ["/work/private"] })).not.toThrow();
   });
 
   it("refuses a relocated Claude config dir before spawning", async () => {
     const { bin, record } = await makeStub([result(ANSWER)]);
-    await expect(new ClaudeCodeRunner({ bin, env: { CLAUDE_CONFIG_DIR: "/elsewhere" } }).run(call())).rejects.toThrowError(/CLAUDE_CONFIG_DIR \('\/elsewhere'\) isn't supported/);
+    await expect(new ClaudeCodeRunner({ confinement: "sandbox", bin, env: { CLAUDE_CONFIG_DIR: "/elsewhere" } }).run(call())).rejects.toThrowError(/CLAUDE_CONFIG_DIR \('\/elsewhere'\) isn't supported/);
     await expect(readFile(record, "utf8")).rejects.toThrowError(/ENOENT/);
   });
 
   it("scrubs a failure's reason before cutting it short, so a cut can't leave part of a credential", async () => {
     const reason = `${"p".repeat(10)} -Dhttps.proxyPassword=s3cretvalue ${"y".repeat(1985)}`;
     const { bin } = await makeStub([result(reason, { subtype: "error_during_execution", is_error: true })], { exitCode: 1 });
-    const error = (await new ClaudeCodeRunner({ bin }).run(call()).catch((err: Error) => err)) as Error;
+    const error = (await new ClaudeCodeRunner({ confinement: "sandbox", bin }).run(call()).catch((err: Error) => err)) as Error;
     expect(error.message).not.toMatch(/cretvalue/);
   });
 
@@ -346,16 +346,67 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     // The CLI makes its staged dir undeletable (the shell's ZDOTDIR lives in it).
     const { bin } = await makeStub([result(ANSWER)], { script: 'chmod 500 "$ZDOTDIR/.."' });
     try {
-      await expect(new ClaudeCodeRunner({ bin, stagingParentDir }).run(call())).rejects.toThrowError(/the run ended, but cleaning up failed: the staged skills and shell/);
+      await expect(new ClaudeCodeRunner({ confinement: "sandbox", bin, stagingParentDir }).run(call())).rejects.toThrowError(/the run ended, but cleaning up failed: the staged skills and shell/);
     } finally {
       for (const dir of await readdir(stagingParentDir)) await chmod(join(stagingParentDir, dir), 0o700);
     }
   });
 
+  it("needs a confinement named, at runtime too", () => {
+    expect(() => new ClaudeCodeRunner({} as never)).toThrow("confinement must be 'sandbox' or 'restricted', not 'undefined'");
+    expect(() => new ClaudeCodeRunner({ confinement: "none" } as never)).toThrow("not 'none'");
+  });
+
+  it("runs restricted with only the read tools, no sandbox, and Bash, edits and the network denied", async () => {
+    const { bin, record } = await makeStub([result(ANSWER)]);
+    const denied = join(tmpdir(), "claude-runner-denied-secret");
+    await new ClaudeCodeRunner({ confinement: "restricted", bin, readDenied: [denied] }).run(call());
+    const text = await readFile(record, "utf8");
+    const argv = args(text);
+    expect(argv.slice(argv.indexOf("--restricted"), argv.indexOf("--restricted") + 3)).toEqual(["--restricted", "--tools", "Read,Glob,Grep,Skill"]);
+    expect(argv[argv.indexOf("--permission-mode") + 1]).toBe("default");
+    // The runner hands its own denied paths to the settings, as Read rules.
+    expect(settingsOf(text)).toEqual(restrictedClaudeSettings({ readDenied: [denied], home: homedir() }));
+    expect(settingsOf(text).permissions.deny).toEqual(expect.arrayContaining([`Read(/${denied})`]));
+    // A sandboxed run gets neither switch.
+    const sandboxed = await makeStub([result(ANSWER)]);
+    await new ClaudeCodeRunner({ confinement: "sandbox", bin: sandboxed.bin }).run(call());
+    const sandboxedArgs = args(await readFile(sandboxed.record, "utf8"));
+    expect(sandboxedArgs).not.toContain("--restricted");
+    expect(sandboxedArgs).not.toContain("--tools");
+  });
+
+  it("pins a restricted run's settings: no sandbox, the denied paths and tools, and what every run gets", () => {
+    expect(RESTRICTED_TOOLS).toEqual(["Read", "Glob", "Grep", "Skill"]);
+    expect(restrictedClaudeSettings({ readDenied: ["/x"], home: "/home/u" })).toEqual({
+      permissions: { deny: ["Read(//x)", "Read(//x/**)", "Bash", "Edit", "Write", "NotebookEdit", ...DENIED_TOOLS] },
+      claudeMdExcludes: ["**/CLAUDE.md", "**/CLAUDE.local.md", "/home/u/.claude/CLAUDE.md"],
+      includeCoAuthoredBy: false,
+      attribution: { commit: "", pr: "" },
+      autoMemoryEnabled: false,
+      disableAllHooks: true,
+      disableClaudeAiConnectors: true,
+      disableBundledSkills: true,
+      enabledPlugins: { "cc-plugin-plugin-authoring@builtin": false },
+    });
+  });
+
+  it("refuses a write run when restricted, before staging anything or spawning", async () => {
+    const stagingParentDir = await mkdtemp(join(tmpdir(), "claude-runner-staging-"));
+    const wc = await separateGitCopy();
+    const { bin, record } = await makeStub([result(ANSWER)]);
+    const usages: SkillUsage[] = [];
+    await expect(new ClaudeCodeRunner({ confinement: "restricted", bin, stagingParentDir }).run(call({ workingCopies: [wc], access: "write", onUsage: (usage) => usages.push(usage) })))
+      .rejects.toThrow("access 'write' needs the 'sandbox' confinement");
+    expect(await readdir(stagingParentDir)).toEqual([]);
+    expect(existsSync(record)).toBe(false);
+    expect(usages).toEqual([expect.objectContaining({ tokens: expect.objectContaining({ total: 0 }), quota: { status: "not-applicable", reason: "no provider call was made" } })]);
+  });
+
   it("cleans up its staged dir and its empty working directory after a timeout", async () => {
     const stagingParentDir = await mkdtemp(join(tmpdir(), "claude-runner-staging-"));
     const { bin, record } = await makeStub([result(ANSWER)], { script: "sleep 5" });
-    await expect(new ClaudeCodeRunner({ bin, stagingParentDir, timeoutMs: 200 }).run(call())).rejects.toThrowError(/did not return within 200ms/);
+    await expect(new ClaudeCodeRunner({ confinement: "sandbox", bin, stagingParentDir, timeoutMs: 200 }).run(call())).rejects.toThrowError(/did not return within 200ms/);
     expect(await readdir(stagingParentDir)).toEqual([]);
     const cwd = /^CWD=(.*)$/m.exec(await readFile(record, "utf8"))![1]!;
     expect(existsSync(cwd)).toBe(false);

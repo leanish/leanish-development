@@ -271,7 +271,7 @@ function defaultMachine(): Machine {
     runner: (codingAgent, isolation) =>
       codingAgent === "codex"
         ? new CodexRunner(isolation)
-        : new ClaudeCodeRunner({ env: isolation.env ?? {}, readDenied: isolation.readDenied ?? [], ...(isolation.buildCacheRoot !== undefined ? { buildCacheRoot: isolation.buildCacheRoot } : {}) }),
+        : new ClaudeCodeRunner({ confinement: "sandbox", env: isolation.env ?? {}, readDenied: isolation.readDenied ?? [], ...(isolation.buildCacheRoot !== undefined ? { buildCacheRoot: isolation.buildCacheRoot } : {}) }),
   };
 }
 
