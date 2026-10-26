@@ -2,7 +2,7 @@
 // Local changes: imports this package's modules from `../src/` instead of `../../src/`; stub binaries speak stream-json;
 // write access, usage and failure reasons are covered.
 import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -131,6 +131,24 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     expect(text).toMatch(new RegExp(`CWD=.*${wc1.replace(/^.*\//, "")}`));
     const argv = args(text);
     expect(argv[argv.indexOf("--add-dir") + 1]).toBe(wc2);
+    // `--add-dir` takes any number of values, so the prompt comes after `--`, not as one more directory.
+    expect(argv.at(-2)).toBe("--");
+    // The stub records one line per argument line: the prompt's first line is its command.
+    expect(argv.at(-1)).toBe("/agent-runtime-staged:ask");
+  });
+
+  it("runs without a working copy in an empty directory of its own, removed afterwards", async () => {
+    const { bin, record } = await makeStub([result(ANSWER)]);
+    await new ClaudeCodeRunner({ bin }).run(call());
+    const cwd = /^CWD=(.*)$/m.exec(await readFile(record, "utf8"))![1]!;
+    expect(cwd).toMatch(/claude-code-runner-empty-/);
+    expect(existsSync(cwd)).toBe(false);
+    // Removed when the run fails too.
+    const failing = await makeStub([], { exitCode: 3, stderr: "boom" });
+    await expect(new ClaudeCodeRunner({ bin: failing.bin }).run(call())).rejects.toThrow();
+    const failedCwd = /^CWD=(.*)$/m.exec(await readFile(failing.record, "utf8"))![1]!;
+    expect(failedCwd).toMatch(/claude-code-runner-empty-/);
+    expect(existsSync(failedCwd)).toBe(false);
   });
 
   it("merges per-invocation env over the runner's configured base and isolates the commands' shell", async () => {
@@ -181,7 +199,7 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     expect(settings.permissions.deny).toEqual(expect.arrayContaining([
       "Artifact", "ArtifactComments", "ArtifactData", "ShareOnboardingGuide", "DesignSync", "PushNotification", "SendMessage",
       "RemoteTrigger", "CronCreate", "CronDelete", "ScheduleWakeup", "Workflow", "WebFetch", "WebSearch",
-      "EnterWorktree", "ExitWorktree", "ListAgents", "Monitor", "Task", "Agent",
+      "EnterWorktree", "ExitWorktree", "ListAgents", "Monitor", "Task", "Agent", "PublishPlugin",
     ]));
     expect(settings.disableAllHooks).toBe(true);
     expect(settings.claudeMdExcludes).toContain("**/CLAUDE.md");
@@ -198,6 +216,13 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
       claudeMdExcludes: ["**/CLAUDE.md", "**/CLAUDE.local.md", "/home/u/.claude/CLAUDE.md"],
     });
     expect(settings["disableAllHooks"]).toBe(true);
+  });
+
+  it("leaves the account's connectors, Claude Code's bundled skills and its authoring plugin out of every run", () => {
+    for (const access of ["read-only", "write"] as const) {
+      const settings = claudeSettings({ access, workingCopies: ["/wc"], gitDirs: [], writableRoots: [], readDenied: [], home: "/home/u", sessionDir: "/home/u/.claude/projects/-wc/s" });
+      expect(settings).toMatchObject({ disableClaudeAiConnectors: true, disableBundledSkills: true, enabledPlugins: { "cc-plugin-plugin-authoring@builtin": false } });
+    }
   });
 
   it("re-opens only the session's own output directory inside a denied ~/.claude, for Bash", () => {
@@ -327,10 +352,12 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     }
   });
 
-  it("cleans up its staged dir after a timeout", async () => {
+  it("cleans up its staged dir and its empty working directory after a timeout", async () => {
     const stagingParentDir = await mkdtemp(join(tmpdir(), "claude-runner-staging-"));
-    const { bin } = await makeStub([result(ANSWER)], { script: "sleep 5" });
+    const { bin, record } = await makeStub([result(ANSWER)], { script: "sleep 5" });
     await expect(new ClaudeCodeRunner({ bin, stagingParentDir, timeoutMs: 200 }).run(call())).rejects.toThrowError(/did not return within 200ms/);
     expect(await readdir(stagingParentDir)).toEqual([]);
+    const cwd = /^CWD=(.*)$/m.exec(await readFile(record, "utf8"))![1]!;
+    expect(existsSync(cwd)).toBe(false);
   });
 });
