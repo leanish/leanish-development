@@ -44,7 +44,7 @@ export function planSection(plan: ChangePlan): string {
   if (plan.kind === "floor-removal" && plan.floorRemoval !== undefined) return removalSection(plan);
   const rows = plan.moves.map(
     (move) =>
-      `| ${move.ecosystem} | \`${move.name}\` | ${move.from} → ${move.to}${move.major ? " (major)" : ""} | ${move.mechanism} | ${fixesLabel(plan, move)} | ${move.locations.map((location) => `\`${location}\``).join(", ")} |`,
+      `| ${move.ecosystem} | ${cell(move.name)} | ${cell(move.from)} → ${cell(move.to)}${move.major ? " (major)" : ""} | ${move.mechanism} | ${fixesLabel(plan, move)} | ${move.locations.map(cell).join(", ")} |`,
   );
   const people = [
     "| Ecosystem | Package | Version | How | Fixes | Where |",
@@ -61,7 +61,7 @@ export function planSection(plan: ChangePlan): string {
 function removalSection(plan: ChangePlan): string {
   const removal = plan.floorRemoval!;
   const escape = (text: string) => text.replaceAll("|", "\\|").replace(/\s+/g, " ");
-  const rows = removal.floors.map((floor) => `| ${floor.ecosystem} | ${escape(floor.package)} | ${floor.version} | ${escape(floor.declaredIn)} | ${floor.advisories.join(", ")} |`);
+  const rows = removal.floors.map((floor) => `| ${floor.ecosystem} | ${cell(floor.package)} | ${cell(floor.version)} | ${cell(floor.declaredIn)} | ${cell(floor.advisories.join(", "))} |`);
   const people = ["Security floors removed after one joint resolution without dependency locks kept every recorded advisory fixed.", "",
     "| Ecosystem | Package | Floor | Declaration | Advisories |", "|---|---|---|---|---|", ...rows, "",
     ...removal.notes.map((note) => `- ${escape(note)}`)].join("\n");
@@ -75,16 +75,21 @@ function fixesLabel(plan: ChangePlan, move: PlannedMove): string {
     const own = move.advisories;
     const where = move.ecosystem === "npm" ? "in bundled" : "in the";
     const brought = move.ecosystem === "npm" ? "" : " it brings";
-    const inside = move.carries.map((entry) => `${entry.advisories.join(", ")} ${where} \`${entry.name}\`${brought} ${entry.from.join(", ")} → ${entry.to.length === 0 ? "removed" : entry.to.join(", ")}`);
-    return [...(own.length === 0 ? [] : [own.join(", ")]), ...inside].join("; ");
+    const inside = move.carries.map((entry) => `${cell(entry.advisories.join(", "))} ${where} ${cell(entry.name)}${brought} ${cell(entry.from.join(", "))} → ${entry.to.length === 0 ? "removed" : cell(entry.to.join(", "))}`);
+    return [...(own.length === 0 ? [] : [cell(own.join(", "))]), ...inside].join("; ");
   }
-  if (move.unblocks !== undefined && move.advisories.length === 0) return `a range admitting the fix at ${move.unblocks.map((location) => `\`${location}\``).join(", ")}`;
-  if (move.advisories.length > 0 || plan.malware) return move.advisories.join(", ");
+  if (move.unblocks !== undefined && move.advisories.length === 0) return `a range admitting the fix at ${move.unblocks.map(cell).join(", ")}`;
+  if (move.advisories.length > 0 || plan.malware) return cell(move.advisories.join(", "));
   if (plan.requiredNpm?.some((target) => target.name === move.name && target.version === move.to)) return "required dependency compatibility";
   const coupled = plan.coupled?.some((set) => set.includes(`${move.ecosystem}|${move.name}`));
   return coupled ? "direct peer compatibility" : "";
 }
 
+
+/** Text from elsewhere in a table cell of the plan. */
+function cell(text: string): string {
+  return literal(text, { table: true });
+}
 
 /** A fixed line per candidate the gate ruled out only by advisories no reviewed source corroborates. */
 function vetoLines(move: PlannedMove): string[] {
@@ -180,7 +185,6 @@ function withoutWarning(body: string): string {
 export function cooldownWarning(held: ReadonlyArray<PlannedHold>, options: { readonly rows?: number } = {}): string | undefined {
   const until = heldUntil(held);
   if (until === undefined) return undefined;
-  const cell = (text: string) => literal(text, { table: true });
   const minute = (instant: string) => `${instant.slice(0, 10)} ${instant.slice(11, 16)}`;
   const why = { "security-fix": "the security fix the version rule picks", "bundle-fix": "the carrier version the rule picks for advisories in its bundle", required: "required by a security fix", exception: "a release-age exception", unjustified: "not justified: the gate fails it" } as const;
   const rows = held.map((entry) =>

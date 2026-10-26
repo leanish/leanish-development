@@ -22,6 +22,12 @@ describe("literal", () => {
     expect(literal("a|b", { table: true })).toBe("`a\\|b`");
     expect(literal("a|b")).toBe("`a|b`");
     expect(literal(" a\n\tb  ")).toBe("`a b`");
+    expect(literal("a\rb")).toBe("`a b`");
+    expect(literal("x|`", { table: true })).toBe("`` x\\|` ``");
+  });
+
+  it("handles any number of backtick runs", () => {
+    expect(literal("a`".repeat(200_000))).toMatch(/^`` a`/);
   });
 
   it("leaves empty text empty", () => {

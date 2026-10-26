@@ -50,6 +50,10 @@ describe("batch retry", () => {
     // An advisory id from elsewhere can't open a comment hiding the rest of the section.
     const quoting = plan({ ...move("lib"), vetoed: [{ version: "1.0.0.1", advisories: ["<!-- x"] }] });
     expect(planSection(quoting)).toContain("was ruled out by `< !-- x`, not corroborated");
+    // Nor can one in the table add a cell or hide the rows below.
+    const table = planSection(plan({ ...move("lib"), advisories: ["GHSA-a|b <!-- x"] }, move("other")));
+    expect(table).toContain("| `GHSA-a\\|b < !-- x` |");
+    expect(table).toMatch(/\| `other` \|/);
   });
 
   it("counts the vetoes left out, keeps eight such moves well within every limit, and refuses a malformed count", () => {
@@ -94,7 +98,7 @@ describe("batch retry", () => {
     const carrier: PlannedMove = { ...move("carrier"), mechanism: "npm-direct", advisories: [], carries: [carried] };
     const original = plan(carrier, move("other"));
     const section = planSection(original);
-    expect(section).toContain("| npm | `carrier` | 1.0.0 → 1.0.1 | npm-direct | GHSA-brace in bundled `brace` 5.0.9 → 5.0.12 |");
+    expect(section).toContain("| npm | `carrier` | `1.0.0` → `1.0.1` | npm-direct | `GHSA-brace` in bundled `brace` `5.0.9` → `5.0.12` |");
     expect(planOf(section)).toEqual(original);
     expect(planOf(planBlock({ ...original, moves: [{ ...carrier, carries: [{ ...carried, to: "5.0.12" }] }] }))).toBeUndefined();
     const retry = retryWithoutNamed(original, ["brace@5.0.9 still has GHSA-brace, which moving carrier was to fix"]);

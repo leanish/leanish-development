@@ -34,7 +34,7 @@ export function tableCut(left: number, total: number): string {
   return `${left} of the table's ${total} rows are left out: with them, this PR's body would exceed GitHub's limit. The plan's block keeps all of it.`;
 }
 
-/** How many unchecked fixes are listed, and the length (in characters) of a reason, a name and a version they show. */
+/** How many unchecked fixes are listed, and the length (in characters) a reason, a name and a version are cut to before they are shown. */
 const LISTED_LIMIT = 10;
 const REASON_LIMIT = 300;
 const NAME_LIMIT = 120;

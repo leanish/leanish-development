@@ -12,7 +12,9 @@ export function literal(text: string, options: { readonly table?: boolean } = {}
   let inner = text.replace(/\s+/g, " ").trim().replaceAll("<!--", "< !--");
   if (inner === "") return "";
   if (options.table === true) inner = inner.replaceAll("|", "\\|");
-  const fence = "`".repeat(Math.max(0, ...[...inner.matchAll(/`+/g)].map((run) => run[0].length)) + 1);
+  let longest = 0;
+  for (const run of inner.matchAll(/`+/g)) longest = Math.max(longest, run[0].length);
+  const fence = "`".repeat(longest + 1);
   const pad = inner.startsWith("`") || inner.endsWith("`") ? " " : "";
   return `${fence}${pad}${inner}${pad}${fence}`;
 }
