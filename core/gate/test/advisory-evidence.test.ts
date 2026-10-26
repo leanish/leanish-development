@@ -120,14 +120,18 @@ describe("the evidence behind a held version", () => {
     expect(new Set(urls).size).toBe(urls.length);
   });
 
-  it("keeps a withdrawn record, and reads a range it can't judge as unknown", async () => {
+  it("keeps a withdrawn record, skips a draft unread, and reads a range it can't judge as unknown", async () => {
+    // The draft's malformed optional fields would fail the lookup if they were read.
+    const draft = repositoryAdvisory({ ghsa_id: "GHSA-draft", state: "draft", withdrawn_at: 1, vulnerabilities: "x" });
     const found = await evidence({
-      [REPO_LIST]: { body: [repositoryAdvisory({ state: "withdrawn", withdrawn_at: "2026-10-22T00:00:00Z" })] },
+      [REPO_LIST]: { body: [draft, repositoryAdvisory({ state: "withdrawn", withdrawn_at: "2026-10-22T00:00:00Z" })] },
       "https://api.osv.dev/v1/vulns/GHSA-m8xf-2cr7-77ph": { body: {
         id: "GHSA-m8xf-2cr7-77ph", affected: [{ package: { ecosystem: "Maven", name: PKG }, ranges: [{ type: "GIT", events: [{ introduced: "abc" }, { fixed: "def" }] }] }],
       } },
     });
     const groups = found.targets[0]!.groups;
+    expect(source(groups, "repository").lookup).toBe("checked");
+    expect(source(groups, "repository").records).toHaveLength(1);
     const repository = source(groups, "repository").records[0]!;
     expect(repository.withdrawn).toBe(true);
     expect(backsFix(repository, found.targets[0]!.groups[0]!, found.targets[0]!)).toBe(false);

@@ -31,9 +31,9 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 - **Repository advisories OSV also lists (gate)**: a project's repository advisory that isn't malware is
   dropped for a version when OSV has a record with the same id for the package, whatever its ranges. So a repository
   range wider than OSV's is ignored for the versions only the repository names. Pre-existing in 0.7.5; not fixed in 0.8.0.
-- **Local actions outside the repository (gate)**: read from the working tree, a local action such as `uses: ./../x`
-  can resolve outside the repository root; read from a commit, it's refused. Pre-existing in 0.7.5; not fixed in
-  0.8.0.
+- **Local actions behind a symbolic link (gate)**: a local action path that leaves the repository (`uses: ./../x`)
+  fails the read, but one reached through a committed symbolic link pointing outside it (`uses: ./link`) is read
+  from the working tree, while a commit's tree has no such file and reports a gap.
 - **Gradle floor removal and parent configurations (secure-it)**: the reference build that checks a floor removal
   snapshots what the configuration inherits, after the projects are evaluated. A dependency the build adds to a
   parent configuration later is missing from it, so a correct removal fails verification and needs a person. An

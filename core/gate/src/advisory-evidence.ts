@@ -237,7 +237,7 @@ class Lookups {
       if (!Array.isArray(page)) throw new Error(`GitHub repository advisories of ${repo} aren't a list`);
       for (const entry of page) {
         const parsed = parseRepositoryEntry(entry, repo);
-        if (parsed.state === "published" || parsed.withdrawn) entries.push({ advisory: parsed.advisory, withdrawn: parsed.withdrawn });
+        if (parsed !== undefined) entries.push(parsed);
       }
       url = nextLink(response.headers.get("link"));
     }

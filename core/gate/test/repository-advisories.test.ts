@@ -254,6 +254,12 @@ describe("repository advisories", () => {
     await expect(fetchRepositoryAdvisories("acme/lib", { fetch: limited, token: undefined })).rejects.toThrow("HTTP 403 (rate limited? set GITHUB_TOKEN)");
     const malformed = fakeFetch({ [first]: { body: { message: "nope" } } });
     await expect(fetchRepositoryAdvisories("acme/lib", { fetch: malformed, token: undefined })).rejects.toThrow("aren't a list");
+    // A draft is skipped before its optional fields are read, as in v0.7.5; a published entry still fails on a malformed one.
+    const draft = { ...SNAPPY_ADVISORIES[0], ghsa_id: "GHSA-draft", state: "draft", withdrawn_at: 1 };
+    const withDraft = fakeFetch({ [first]: { body: [draft, SNAPPY_ADVISORIES[1]] } });
+    expect((await fetchRepositoryAdvisories("acme/lib", { fetch: withDraft, token: undefined }))!.map((advisory) => advisory.ghsaId)).toEqual(["GHSA-6gp7-6wmv-gxqw"]);
+    const malformedPublished = fakeFetch({ [first]: { body: [{ ...draft, state: "published" }] } });
+    await expect(fetchRepositoryAdvisories("acme/lib", { fetch: malformedPublished, token: undefined })).rejects.toThrow("withdrawn_at");
     const noId = fakeFetch({ [first]: { body: [{ state: "published" }] } });
     await expect(fetchRepositoryAdvisories("acme/lib", { fetch: noId, token: undefined })).rejects.toThrow("has no ghsa_id");
     // A next page off GitHub's API host is refused, never followed with the token, and never cached as a full list.

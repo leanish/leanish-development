@@ -318,6 +318,24 @@ jobs:
     expect(read.gaps).toEqual(["GitHub Actions local action ./missing-action (.github/workflows/ci.yml) has no action.yml, so what it uses isn't read"]);
   });
 
+  it("refuses a local action outside the repository before reading it, and reads one that only passes through a parent", async () => {
+    const reads: string[] = [];
+    const recorded = (files: Record<string, string>): Tree => ({ ...tree(files), read: async (path) => (reads.push(path), files[path]) });
+    const step = (uses: string) => `on: push\njobs:\n  a:\n    steps:\n      - uses: ${uses}\n`;
+    for (const uses of ["./../x", "./a/../../x", "./.."]) {
+      reads.length = 0;
+      await expect(readActionsInventory(recorded({ ".github/workflows/ci.yml": step(uses) }))).rejects.toThrow(`\`uses: ${uses}\` points outside the repository`);
+      expect(reads).toEqual([".github/workflows/ci.yml"]);
+    }
+    const inside = await readActionsInventory(recorded({ ".github/workflows/ci.yml": step("./a/../b"), "b/action.yml": "runs:\n  using: composite\n  steps:\n    - uses: actions/setup-node@v7\n" }));
+    expect(inside.files).toEqual([".github/workflows/ci.yml", "b/action.yml"]);
+    expect(inside.uses.map((use) => use.name)).toEqual(["actions/setup-node"]);
+    // `./` is the root action, read and counted once though it's also read on its own.
+    const root = await readActionsInventory(recorded({ ".github/workflows/ci.yml": step("./"), "action.yml": "runs:\n  using: composite\n  steps:\n    - uses: actions/setup-node@v7\n" }));
+    expect(root.files).toEqual([".github/workflows/ci.yml", "action.yml"]);
+    expect(root.uses.map((use) => use.name)).toEqual(["actions/setup-node"]);
+  });
+
   it("reads a local reusable workflow once, as the workflow it is, and reports one that doesn't exist", async () => {
     const caller = `on: push
 jobs:

@@ -34,6 +34,12 @@
 - A refusal because no version fixes (or no single version fixes every fixable target) names the candidates that
   advisories no reviewed source corroborates ruled out for the targets it names (at most ten, the rest counted), for
   ordinary fixes and npm carriers alike.
+- Repository advisories that are neither published nor withdrawn (drafts) are skipped before their optional fields are
+  read, in the gate's scan as v0.7.5 did and in secure-it's evidence lookups, so a malformed draft no longer fails
+  either.
+- A local action or workflow whose path leaves the repository (`uses: ./../x`) fails the read from the working tree,
+  as it already did from a commit, instead of being read from outside the checkout. A symbolic link pointing outside
+  is still followed from the working tree (see coverage gaps).
 - The Claude Code runner leaves the claude.ai account's connectors, Claude Code's bundled skills (`/loop`,
   `/schedule`, `security-review` and the rest; a real run listed 17 besides the agent's own) and its authoring plugin
   out of every run, and denies `PublishPlugin` with the other outward tools. It puts `--` before the prompt (with two
