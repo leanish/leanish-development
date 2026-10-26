@@ -359,12 +359,15 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
 
   it("runs restricted with only the read tools, no sandbox, and Bash, edits and the network denied", async () => {
     const { bin, record } = await makeStub([result(ANSWER)]);
-    await new ClaudeCodeRunner({ confinement: "restricted", bin }).run(call());
+    const denied = join(tmpdir(), "claude-runner-denied-secret");
+    await new ClaudeCodeRunner({ confinement: "restricted", bin, readDenied: [denied] }).run(call());
     const text = await readFile(record, "utf8");
     const argv = args(text);
     expect(argv.slice(argv.indexOf("--restricted"), argv.indexOf("--restricted") + 3)).toEqual(["--restricted", "--tools", "Read,Glob,Grep,Skill"]);
     expect(argv[argv.indexOf("--permission-mode") + 1]).toBe("default");
-    expect(settingsOf(text)).toEqual(restrictedClaudeSettings({ readDenied: [], home: homedir() }));
+    // The runner hands its own denied paths to the settings, as Read rules.
+    expect(settingsOf(text)).toEqual(restrictedClaudeSettings({ readDenied: [denied], home: homedir() }));
+    expect(settingsOf(text).permissions.deny).toEqual(expect.arrayContaining([`Read(/${denied})`]));
     // A sandboxed run gets neither switch.
     const sandboxed = await makeStub([result(ANSWER)]);
     await new ClaudeCodeRunner({ confinement: "sandbox", bin: sandboxed.bin }).run(call());
