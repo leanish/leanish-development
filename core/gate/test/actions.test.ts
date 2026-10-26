@@ -325,7 +325,7 @@ jobs:
     for (const uses of ["./../x", "./a/../../x", "./.."]) {
       reads.length = 0;
       await expect(readActionsInventory(recorded({ ".github/workflows/ci.yml": step(uses) }))).rejects.toThrow(`\`uses: ${uses}\` points outside the repository`);
-      expect(reads.filter((path) => path.startsWith(".."))).toEqual([]);
+      expect(reads).toEqual([".github/workflows/ci.yml"]);
     }
     const inside = await readActionsInventory(recorded({ ".github/workflows/ci.yml": step("./a/../b"), "b/action.yml": "runs:\n  using: composite\n  steps:\n    - uses: actions/setup-node@v7\n" }));
     expect(inside.files).toEqual([".github/workflows/ci.yml", "b/action.yml"]);
