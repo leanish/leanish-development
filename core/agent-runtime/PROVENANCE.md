@@ -66,7 +66,7 @@ Lambda), and the target-credentials resolver (the tools pass the agent's read-on
 | `src/skill/wc-mount.ts` | `core/runtime/src/skill/wc-mount.ts` | copied | — |
 | `src/types/access.ts` | — | new | — |
 | `src/types/clients.ts` | `core/runtime/src/types/clients.ts` | copied | only the GitHub client's types; a job's steps |
-| `src/types/effort.ts` | `core/runtime/src/types/execution-override.ts` at `17883e3` | copied | only `Effort` and `EFFORTS`; `ExecutionOverride` stays in the incubator |
+| `src/types/effort.ts` | `core/runtime/src/types/execution-override.ts` at `17883e3` | derived | only `Effort` and `EFFORTS`; `ExecutionOverride` stays in the incubator |
 | `src/types/logger.ts` | `core/runtime/src/types/logger.ts` | copied | — |
 | `src/types/repo-source.ts` | — | new | — |
 | `src/types/working-copy.ts` | `core/runtime/src/types/working-copy.ts` | copied | the `remote-merging` start and its `conflicted` result; `PublishBranchArgs.beforePush` |

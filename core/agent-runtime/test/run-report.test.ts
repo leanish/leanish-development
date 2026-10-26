@@ -12,7 +12,7 @@ import { unreportedSkillUsage, toSkillUsageRecord } from "../src/usage/skill-usa
 const SIGNALLED = fileURLToPath(new URL("./fixtures/report-on-signal.ts", import.meta.url));
 
 /** Runs the fixture until it's ready, sends `signal`, and returns how it died and its final lines. */
-async function killed(signal: NodeJS.Signals, mode: "idle" | "in-flight" | "extra"): Promise<{ signal: NodeJS.Signals | null; finals: RunFinished[] }> {
+async function killed(signal: NodeJS.Signals, mode: "idle" | "in-flight" | "extra" | "bad-extra"): Promise<{ signal: NodeJS.Signals | null; finals: RunFinished[] }> {
   const child = spawn(process.execPath, [SIGNALLED, mode], { stdio: ["ignore", "ignore", "pipe"] });
   let log = "";
   const ready = new Promise<void>((done) =>
@@ -145,6 +145,13 @@ describe("reportOnTerminationSignals", () => {
     expect(finals).toHaveLength(1);
     expect(finals[0]).toMatchObject({ status: "interrupted", tool: "secure-it", dispatches: 1 });
     expect(Object.keys(finals[0]!).indexOf("dispatches")).toBe(Object.keys(finals[0]!).indexOf("skills") - 1);
+  }, 20_000);
+
+  it("still writes the final line, without the host's fields, when they're invalid on a signal", async () => {
+    const { signal, finals } = await killed("SIGTERM", "bad-extra");
+    expect(signal).toBe("SIGTERM");
+    expect(finals).toHaveLength(1);
+    expect(finals[0]).toMatchObject({ status: "interrupted", error: expect.stringContaining("the host's fields were left out: ") });
   }, 20_000);
 
   it("reports a skill run still in flight as unknown usage, with only lower bounds", async () => {

@@ -291,6 +291,15 @@ describe("createGitHubClient", () => {
       expect(checks.checkRuns).toEqual([{ name: "gate / cooldown", status: "completed", conclusion: "failure", steps }]);
     });
 
+    it.each([
+      ["a secondary rate limit", { "retry-after": "60" }],
+      ["the primary rate limit", { "x-ratelimit-remaining": "0" }],
+    ])("doesn't fall back when check runs hit %s, which is a 403 too", async (_, headers) => {
+      const { fetch, calls } = scripted(new Response(JSON.stringify({ message: "rate limit" }), { status: 403, headers }));
+      await expect(checkRunsClient(fetch).headChecks({ repo: "leanish/widget", sha: SHA })).rejects.toMatchObject({ status: 403, reason: "rate limited" });
+      expect(calls).toHaveLength(1);
+    });
+
     it.each([404, 502])("doesn't fall back when check runs fail with %i", async (status) => {
       const { fetch, calls } = scripted(json({ message: "nope" }, status));
       await expect(checkRunsClient(fetch).headChecks({ repo: "leanish/widget", sha: SHA })).rejects.toMatchObject({ status });

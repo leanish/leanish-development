@@ -46,6 +46,13 @@ export class GitHubApiError extends RuntimeError {
   }
 }
 
+/** Why GitHub refused a request: a rate limit (primary or secondary) says so in its headers, other 403s are a refusal. */
+function refusal(response: Response): string {
+  const limited = response.headers.get("x-ratelimit-remaining") === "0" || response.headers.has("retry-after");
+  if (limited && (response.status === 403 || response.status === 429)) return "rate limited";
+  return response.status === 403 ? "forbidden" : "unexpected response";
+}
+
 /**
  * Where `headChecks` reads the head's CI from; the host's token decides which it can read:
  *   - `check-runs-then-jobs`: the latest check runs of every app, and the Actions jobs only when the Checks API answers
@@ -102,7 +109,7 @@ export function createGitHubClient(options: CreateGitHubClientOptions): GitHubCl
       throw new GitHubApiError(operation, err instanceof Error ? err.name : "network error");
     }
     if (!response.ok) {
-      throw new GitHubApiError(operation, response.status === 403 ? "forbidden" : "unexpected response", response.status);
+      throw new GitHubApiError(operation, refusal(response), response.status);
     }
     if (response.status === 204) return undefined;
     try {
@@ -120,7 +127,8 @@ export function createGitHubClient(options: CreateGitHubClientOptions): GitHubCl
     } catch (err) {
       // A token without Checks read (a fine-grained PAT offers none) gets 403 for a private repo's check runs; its
       // Actions jobs are readable with Actions: read.
-      if (!(err instanceof GitHubApiError) || err.status !== 403) throw err;
+      // A rate limit is a 403 too, and falling back on it would silently drop every other app's check runs.
+      if (!(err instanceof GitHubApiError) || err.status !== 403 || err.reason !== "forbidden") throw err;
       return { source: "actions-jobs", checkRuns: await latestWorkflowJobs(repo, sha) };
     }
   }

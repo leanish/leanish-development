@@ -49,8 +49,9 @@ export interface GitIdentity {
 
 export interface IsolationSettings {
   /**
-   * Who the host's commits are by; the agent's commands get the same identity. Absent: none is set (the home's git
-   * config is replaced), so git guesses one from the user and host names, or refuses to commit.
+   * Who the host's commits are by; the agent's commands get the same identity. Absent: none is set, so the host's own
+   * `GIT_AUTHOR_*`/`GIT_COMMITTER_*` variables pass through when it has them; otherwise (the home's git config is
+   * replaced) git guesses one from the user and host names, or refuses to commit.
    */
   readonly commitIdentity?: GitIdentity | undefined;
   /** Absolute paths the agent's commands may not read, on top of sensitive home paths and the Codex login source. */

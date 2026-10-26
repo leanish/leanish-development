@@ -173,13 +173,14 @@ export function reportOnTerminationSignals(report: RunReport, stream: NodeJS.Wri
       stop();
       process.kill(process.pid, signal);
     };
-    const line = report.finish({
-      status: "interrupted",
-      exitCode: 128 + (constants.signals[signal] ?? 0),
-      signal,
-      error: `stopped by ${signal}`,
-      ...(extra !== undefined ? { extra: extra() } : {}),
-    });
+    const end = { status: "interrupted", exitCode: 128 + (constants.signals[signal] ?? 0), signal, error: `stopped by ${signal}` } as const;
+    let line: string | undefined;
+    try {
+      line = report.finish({ ...end, ...(extra !== undefined ? { extra: extra() } : {}) });
+    } catch (err) {
+      // A throw here would leave the run without its final line and the process dying of the throw, not the signal.
+      line = report.finish({ ...end, error: `${end.error}; the host's fields were left out: ${(err as Error).message}` });
+    }
     if (line === undefined) {
       raise();
       return;
