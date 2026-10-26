@@ -6,6 +6,11 @@
 
 - Documentation: repeated rules now live in one place each, linked from the others.
 
+### Added
+
+- `npm run clean` removes generated outputs (Vitest's caches and coverage) from the root and each workspace, and
+  `npm run clean:deps` also removes `node_modules`; both are documented in the README's Development section.
+
 ### Fixed
 
 - bump-it's "What bump-it moved" table lists lockfile-only copy changes (an in-range npm update) as rows, next to the
