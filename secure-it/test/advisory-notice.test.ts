@@ -39,13 +39,13 @@ describe("the advisory notice on a held PR", () => {
   it("says a reviewed record still backs the fix, and shows each source as it says", () => {
     const notice = advisoryNotice([hold({ evidence: reviewed })]);
     expect(notice.paragraphs).toEqual([]);
-    const fix = "GHSA-m8xf-2cr7-77ph: declares the fix 3.2.4, 3.2.3 affected, 3.2.4 not affected";
+    const fix = "`GHSA-m8xf-2cr7-77ph`: declares the fix `3.2.4`, `3.2.3` affected, `3.2.4` not affected";
     expect(notice.details).toEqual([
       "**Where the advisories behind these versions appear**, as read during this verification (2026-10-23 16:57 UTC), each source as it says:",
       "",
       "| Advisory | Package | Project's repository | GitHub database | OSV |",
       "|---|---|---|---|---|",
-      `| GHSA-m8xf-2cr7-77ph | \`tools.jackson.core:jackson-databind\` 3.2.3 → 3.2.4 | ${fix} | ${fix} | ${fix} |`,
+      `| \`GHSA-m8xf-2cr7-77ph\` | \`tools.jackson.core:jackson-databind\` \`3.2.3\` → \`3.2.4\` | ${fix} | ${fix} | ${fix} |`,
     ]);
   });
 
@@ -63,12 +63,12 @@ describe("the advisory notice on a held PR", () => {
   ] as Array<[string, SourceEvidence[]]>)("flags a fix no reviewed record backs now: %s", (_name, sources) => {
     const notice = advisoryNotice([hold({ evidence: evidence(sources) })]);
     expect(notice.paragraphs).toEqual([EVIDENCE_DIFFERS]);
-    expect(notice.details.at(-1)).toMatch(/^\| ⚠ GHSA-m8xf-2cr7-77ph \|/);
+    expect(notice.details.at(-1)).toMatch(/^\| ⚠ `GHSA-m8xf-2cr7-77ph` \|/);
   });
 
   it("says what couldn't be checked instead of calling it absent", () => {
     const unchecked = evidence([checked("repository", [record()]), { source: "github", lookup: "incomplete", reason: "GitHub advisory GHSA-m8xf-2cr7-77ph failed with HTTP 502", records: [] }, checked("osv", [record()])]);
-    expect(advisoryNotice([hold({ evidence: unchecked })]).details.at(-1)).toContain("| couldn't be fully checked: GitHub advisory GHSA-m8xf-2cr7-77ph failed with HTTP 502 |");
+    expect(advisoryNotice([hold({ evidence: unchecked })]).details.at(-1)).toContain("| couldn't be fully checked: `GitHub advisory GHSA-m8xf-2cr7-77ph failed with HTTP 502` |");
   });
 
   it("judges each advisory against the replaced versions it affects, not all of them", () => {
@@ -83,8 +83,8 @@ describe("the advisory notice on a held PR", () => {
     const notice = advisoryNotice([hold({ version: "3.0.0", replaced: ["1.0.0", "2.0.0"], evidence: both })]);
     expect(notice.paragraphs).toEqual([]);
     expect(notice.details.slice(-2)).toEqual([
-      "| GHSA-a | `tools.jackson.core:jackson-databind` 1.0.0 → 3.0.0 | not found | not found | GHSA-a: declares the fix 3.2.4, 1.0.0 affected, 3.0.0 not affected |",
-      "| GHSA-b | `tools.jackson.core:jackson-databind` 2.0.0 → 3.0.0 | not found | not found | GHSA-b: declares the fix 3.2.4, 2.0.0 affected, 3.0.0 not affected |",
+      "| `GHSA-a` | `tools.jackson.core:jackson-databind` `1.0.0` → `3.0.0` | not found | not found | `GHSA-a`: declares the fix `3.2.4`, `1.0.0` affected, `3.0.0` not affected |",
+      "| `GHSA-b` | `tools.jackson.core:jackson-databind` `2.0.0` → `3.0.0` | not found | not found | `GHSA-b`: declares the fix `3.2.4`, `2.0.0` affected, `3.0.0` not affected |",
     ]);
   });
 
@@ -93,20 +93,20 @@ describe("the advisory notice on a held PR", () => {
       ecosystem: "npm", name: "brace", bundled: true, replaced: ["5.0.9"], proposed: [],
     });
     const notice = advisoryNotice([hold({ ecosystem: "npm", name: "carrier", version: "1.1.0", replaced: ["1.0.0"], justification: "bundle-fix", evidence: bundled })]);
-    expect(notice.details.at(-1)).toContain("| `brace` 5.0.9 → removed (bundled in `carrier` 1.1.0) |");
+    expect(notice.details.at(-1)).toContain("| `brace` `5.0.9` → removed (bundled in `carrier` `1.1.0`) |");
     expect(notice.paragraphs).toEqual([]);
   });
 
   it("reports evidence it couldn't read, or never recorded, and stays out of other holds", () => {
-    expect(advisoryNotice([hold({ evidenceFailure: "boom" })])).toEqual({ paragraphs: [INCOMPLETE], details: ["These fixes couldn't be checked:", `- ${PKG}@3.2.4: boom`] });
-    expect(advisoryNotice([hold()])).toEqual({ paragraphs: [INCOMPLETE], details: ["These fixes couldn't be checked:", `- ${PKG}@3.2.4: ${NOT_RECORDED}`] });
+    expect(advisoryNotice([hold({ evidenceFailure: "boom" })])).toEqual({ paragraphs: [INCOMPLETE], details: ["These fixes couldn't be checked:", `- \`${PKG}\`@\`3.2.4\`: \`boom\``] });
+    expect(advisoryNotice([hold()])).toEqual({ paragraphs: [INCOMPLETE], details: ["These fixes couldn't be checked:", `- \`${PKG}\`@\`3.2.4\`: \`${NOT_RECORDED}\``] });
     expect(advisoryNotice([hold({ justification: "required", targets: undefined }), hold({ justification: "exception", targets: undefined })])).toEqual({ paragraphs: [], details: [] });
     // The list stays short however many fixes are unchecked, and a long reason is cut by character, not mid-pair.
     const many = advisoryNotice(Array.from({ length: 25 }, (_, i) => hold({ name: `g:lib${i}`, evidenceFailure: "HTTP 502" })));
     expect(many.details).toHaveLength(12);
     expect(many.details.at(-1)).toBe("- and 15 more");
     const long = advisoryNotice([hold({ evidenceFailure: `${"a".repeat(299)}😀 | tail` })]).details.at(-1)!;
-    expect(long).toBe(`- ${PKG}@3.2.4: ${"a".repeat(299)}😀…`);
+    expect(long).toBe(`- \`${PKG}\`@\`3.2.4\`: \`${"a".repeat(299)}😀\`…`);
   });
 
   it("lists a fix that couldn't be checked beside the others", () => {
@@ -115,11 +115,11 @@ describe("the advisory notice on a held PR", () => {
     for (const unchecked of [other({ evidenceFailure: "HTTP 502" }), other({}), other({ evidence: noGroups }), other({ evidence: { ...reviewed, targets: [] } })]) {
       const notice = advisoryNotice([hold({ evidence: reviewed }), unchecked]);
       expect(notice.paragraphs).toEqual([INCOMPLETE]);
-      expect(notice.details.at(-1)).toMatch(/^- g:other@2\.0\.0: /);
+      expect(notice.details.at(-1)).toMatch(/^- `g:other`@`2\.0\.0`: /);
     }
     // A bundle's other target with no advisory group isn't covered by the first target's rows.
     const bundle: AdvisoryEvidence = { ...reviewed, targets: [reviewed.targets[0]!, { ...reviewed.targets[0]!, name: "brace", bundled: true, groups: [] }] };
-    expect(advisoryNotice([hold({ evidence: bundle })]).details.at(-1)).toBe(`- ${PKG}@3.2.4: no advisory recorded for \`brace\``);
+    expect(advisoryNotice([hold({ evidence: bundle })]).details.at(-1)).toBe(`- \`${PKG}\`@\`3.2.4\`: \`no advisory recorded for brace\``);
     // Both warnings together, when a row differs and another fix is unchecked.
     const differs = evidence([checked("repository", [record()]), checked("github"), checked("osv")]);
     expect(advisoryNotice([hold({ evidence: differs }), other({ evidenceFailure: "HTTP 502" })]).paragraphs).toEqual([EVIDENCE_DIFFERS, INCOMPLETE]);
@@ -129,8 +129,8 @@ describe("the advisory notice on a held PR", () => {
     const differs = hold({ name: "g:other", evidence: evidence([checked("repository", [record()]), checked("github"), checked("osv")], { name: "g:other" }) });
     const rows = (notice: { details: ReadonlyArray<string> }) => notice.details.filter((line) => line.startsWith("| ") && !line.startsWith("| Advisory"));
     const full = advisoryNotice([hold({ evidence: reviewed }), differs]);
-    expect(rows(full).map((row) => row.slice(0, 4))).toEqual(["| ⚠ ", "| GH"]);
-    expect(full.details.at(-1)).toMatch(/^\| GHSA-m8xf-2cr7-77ph \| `tools/);
+    expect(rows(full).map((row) => row.slice(0, 4))).toEqual(["| ⚠ ", "| `G"]);
+    expect(full.details.at(-1)).toMatch(/^\| `GHSA-m8xf-2cr7-77ph` \| `tools/);
     const one = advisoryNotice([hold({ evidence: reviewed }), differs], { rows: 1 });
     expect(one.paragraphs).toEqual([EVIDENCE_DIFFERS]);
     expect(rows(one)).toEqual([rows(full)[0]]);
@@ -184,7 +184,7 @@ describe("the advisory notice on a held PR", () => {
     for (const options of [{}, { rows: 0 }]) {
       const warning = cooldownWarning(failing, options)!;
       expect(warning).not.toMatch(/<!-- leanish:plan|<!-- hides/);
-      expect(warning).toContain("&lt;!-- hides the rest");
+      expect(warning).toContain("`< !-- hides the rest`");
     }
     const held: ChangePlan = { ...plan, cooldown: failing };
     expect(planOf(withPlanSection("Description.", held))).toEqual(held);
@@ -262,7 +262,7 @@ describe("the advisory notice on a held PR", () => {
       // The holds as verified, the failure recorded before kept: only the evidence is gone, and the warning says why.
       expect(planOf(published)?.cooldown).toEqual([{ ...hold(), evidenceFailure: EVIDENCE_LEFT_OUT }, written.cooldown![1]]);
       expect(published).toContain(`> ${INCOMPLETE}`);
-      expect(published).toContain(`${PKG}@3.2.4: ${EVIDENCE_LEFT_OUT}`);
+      expect(published).toContain(`\`${PKG}\`@\`3.2.4\`: \`${EVIDENCE_LEFT_OUT}\``);
       expect(published).not.toMatch(/rows are left out/);
     }
     // A long description that leaves even the row-less body one character over the target: the evidence gives way.
@@ -303,7 +303,7 @@ describe("the advisory notice on a held PR", () => {
     for (const unread of [companion({}), companion({ evidenceFailure: EVIDENCE_LEFT_OUT }), companion({ justification: "exception" })]) {
       const notice = advisoryNotice([fix, unread]);
       expect(notice.paragraphs).toEqual([INCOMPLETE]);
-      expect(notice.details).toContain(`- g:companion@1.0.1: ${unread.evidenceFailure ?? NOT_RECORDED}`);
+      expect(notice.details).toContain(`- \`g:companion\`@\`1.0.1\`: \`${unread.evidenceFailure ?? NOT_RECORDED}\``);
     }
     // A pure companion fixes nothing: it neither blocks nor joins the assurance.
     expect(advisoryNotice([fix, hold({ name: "g:pure", justification: "required", targets: undefined })]).paragraphs).toEqual([]);

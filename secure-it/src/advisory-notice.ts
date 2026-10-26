@@ -15,6 +15,7 @@
 import { backsFix, type EvidenceRecord, type GroupEvidence, type SourceEvidence, type TargetEvidence } from "@leanish/gate/advisory-evidence";
 
 import type { PlannedHold } from "./plan.ts";
+import { literal } from "./pr-text.ts";
 
 export const EVIDENCE_DIFFERS =
   "**Some advisories recorded for these held fixes are not backed by reviewed records as read now.** For the advisories marked ⚠ in the table below (the plan's block keeps every row, should the table be cut), no reviewed record (OSV, or GitHub's reviewed advisory database) lists the replaced versions as affected and the proposed one as not, or one was withdrawn or couldn't be read. The comparison's verdict stands; check them before taking this early.";
@@ -84,7 +85,7 @@ function uncheckedOf(entry: PlannedHold): string[] {
   if (entry.evidence === undefined) return [NOT_RECORDED];
   if (entry.evidence.targets.length === 0) return ["no advisory recorded for it"];
   // Unescaped: the reason is bounded and escaped once where it's shown.
-  return entry.evidence.targets.filter((target) => target.groups.length === 0).map((target) => `no advisory recorded for \`${target.name}\``);
+  return entry.evidence.targets.filter((target) => target.groups.length === 0).map((target) => `no advisory recorded for ${target.name}`);
 }
 
 interface TableRow {
@@ -106,10 +107,10 @@ export function tableRowCount(held: ReadonlyArray<PlannedHold>): number {
   return tableRows(held.filter((entry) => (entry.targets?.length ?? 0) > 0)).length;
 }
 
-/** `text` escaped for a cell, at most `limit` characters, cut by code point before escaping, so no surrogate pair or `\|` is split. */
+/** `text` as a literal, at most `limit` characters, cut by code point before it's rendered, so no surrogate pair is split. */
 function bounded(text: string, limit: number): string {
   const characters = Array.from(text.replace(/\s+/g, " "));
-  return characters.length <= limit ? cell(text) : `${cell(characters.slice(0, limit).join(""))}…`;
+  return characters.length <= limit ? literal(text) : `${literal(characters.slice(0, limit).join(""))}…`;
 }
 
 /** Some reviewed record, read now, still backs the fix the comparison proved: OSV's, or a GitHub-reviewed one. */
@@ -119,9 +120,9 @@ function backed(target: TargetEvidence, group: GroupEvidence): boolean {
 }
 
 function packageCell(entry: PlannedHold, group: GroupEvidence, target: TargetEvidence): string {
-  const to = target.proposed.length === 0 ? "removed" : target.proposed.join(", ");
-  const where = target.bundled ? ` (bundled in \`${cell(entry.name)}\` ${cell(entry.version)})` : "";
-  return `\`${cell(target.name)}\` ${cell(group.replaced.join(", "))} → ${cell(to)}${where}`;
+  const to = target.proposed.length === 0 ? "removed" : cell(target.proposed.join(", "));
+  const where = target.bundled ? ` (bundled in ${cell(entry.name)} ${cell(entry.version)})` : "";
+  return `${cell(target.name)} ${cell(group.replaced.join(", "))} → ${to}${where}`;
 }
 
 function sourceCell(source: SourceEvidence | undefined, group: GroupEvidence, target: TargetEvidence): string {
@@ -141,7 +142,5 @@ function recordText(record: EvidenceRecord, group: GroupEvidence, target: Target
 
 const VERDICT_TEXT: Readonly<Record<EvidenceRecord["verdicts"][string], string>> = { affected: "affected", "not-affected": "not affected", unknown: "unknown" };
 
-/** Advisory text comes from elsewhere: `<` is escaped so it can't open a comment that hides the rest, or end the warning. */
-function cell(text: string): string {
-  return text.replaceAll("|", "\\|").replaceAll("<", "&lt;").replace(/\s+/g, " ");
-}
+/** Text from elsewhere in a table cell. */
+const cell = (text: string) => literal(text, { table: true });

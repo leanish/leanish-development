@@ -1228,7 +1228,7 @@ describe("the cooldown hold", () => {
     expect(aged!.body).not.toContain("[!WARNING]");
     expect(planOf(aged!.body)?.cooldown).toBeUndefined();
     expect(held!.body.startsWith("<!-- secure-it cooldown warning -->\n> [!WARNING]\n> **Release-age cooldown bypassed.**")).toBe(true);
-    expect(held!.body).toContain("> | npm `vite` | 8.3.1 → 8.3.3 | 2026-10-06 00:00 | 2026-10-13 00:00 | the security fix the version rule picks | registry metadata unreadable |");
+    expect(held!.body).toContain("> | npm `vite` | `8.3.1` → `8.3.3` | 2026-10-06 00:00 | 2026-10-13 00:00 | the security fix the version rule picks | `registry metadata unreadable` |");
     expect(held!.isDraft).toBe(true);
     expect(planOf(held!.body)?.cooldown).toEqual([{ ...HELD, signals: ["registry metadata unreadable"] }]);
   });
@@ -1248,7 +1248,7 @@ describe("the cooldown hold", () => {
       { source: "repository", lookup: "incomplete" }, { source: "github", lookup: "checked", records: [] }, { source: "osv", lookup: "checked", records: [] },
     ] }] }] });
     expect(body).toContain("> **Some advisories recorded for these held fixes are not backed by reviewed records as read now.**");
-    expect(body).toContain("> | ⚠ GHSA-vite-0001 | `vite` 8.3.1 → 8.3.3 | couldn't be fully checked: its source repository can't be found: registry lookup of vite@8.3.1 failed with HTTP 404 | not found | not found |");
+    expect(body).toContain("> | ⚠ `GHSA-vite-0001` | `vite` `8.3.1` → `8.3.3` | couldn't be fully checked: `its source repository can't be found: registry lookup of vite@8.3.1 failed with HTTP 404` | not found | not found |");
   });
 
   it("still opens a held draft with its targets when its evidence leaves the body over GitHub's limit, without the evidence", async () => {
@@ -1268,7 +1268,7 @@ describe("the cooldown hold", () => {
     const [hold] = planOf(pr.body)!.cooldown!;
     expect(hold).toMatchObject({ targets: targeted.targets, evidenceFailure: EVIDENCE_LEFT_OUT });
     expect(hold!.evidence).toBeUndefined();
-    expect(pr.body).toContain(`vite@8.3.3: ${EVIDENCE_LEFT_OUT}`);
+    expect(pr.body).toContain(`\`vite\`@\`8.3.3\`: \`${EVIDENCE_LEFT_OUT}\``);
   });
 
   it("publishes and refreshes a large held body, including changed notes and a review rebase", async () => {
@@ -1350,7 +1350,7 @@ describe("the cooldown hold", () => {
     expect(await secureIt({ ...h.deps, verify }).run(h.context)).toMatchObject({ outcome: "published" });
     const body = h.github.prs.get(42)!.body;
     expect(planOf(body)!.cooldown![1]!.evidence).toMatchObject({ targets: [{ name: "postcss", groups: [{ ids: ["GHSA-postcss-0001"] }] }] });
-    expect(body).toContain("| ⚠ GHSA-postcss-0001 | `postcss` 8.5.28 → 8.5.29 |");
+    expect(body).toContain("| ⚠ `GHSA-postcss-0001` | `postcss` `8.5.28` → `8.5.29` |");
     expect(body).toContain(`> ${EVIDENCE_DIFFERS}`);
   });
 

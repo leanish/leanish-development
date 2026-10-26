@@ -46,17 +46,17 @@ describe("batch retry", () => {
     const retry = retryWithoutNamed(original, ["other at node_modules/other is gone, not 1.0.1"]);
     expect(retry.plan?.moves).toEqual([vetoed]);
     expect(retry.plan?.notes).toEqual(original.notes);
-    expect(planSection(retry.plan!)).toContain("- lib 1.0.0.1 was ruled out by GHSA-repo, not corroborated by the sources this decision used.");
+    expect(planSection(retry.plan!)).toContain("- `lib` `1.0.0.1` was ruled out by `GHSA-repo`, not corroborated by the sources this decision used.");
     // An advisory id from elsewhere can't open a comment hiding the rest of the section.
     const quoting = plan({ ...move("lib"), vetoed: [{ version: "1.0.0.1", advisories: ["<!-- x"] }] });
-    expect(planSection(quoting)).toContain("was ruled out by &lt;!-- x, not corroborated");
+    expect(planSection(quoting)).toContain("was ruled out by `< !-- x`, not corroborated");
   });
 
   it("counts the vetoes left out, keeps eight such moves well within every limit, and refuses a malformed count", () => {
     const vetoed = Array.from({ length: 10 }, (_, i) => ({ version: `1.0.0.${i}`, advisories: ["GHSA-repo", "CVE-2026-1"] }));
     const counted = { ...move("lib"), vetoed, vetoesLeftOut: 1_990 };
     expect(planSection(plan(counted))).toContain(
-      "- lib: 1990 more candidates were ruled out the same way, by advisories not corroborated by the sources this decision used.",
+      "- `lib`: 1990 more candidates were ruled out the same way, by advisories not corroborated by the sources this decision used.",
     );
     // Eight projects locking eight versions of one package, one open-ended repository advisory over 2,000 candidates.
     const eight = plan(...Array.from({ length: 8 }, (_, i) => ({ ...counted, from: `1.0.${i}`, locations: [`p${i}/node_modules/lib`] })));

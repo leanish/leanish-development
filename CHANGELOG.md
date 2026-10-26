@@ -5,6 +5,8 @@
 ### Changed
 
 - Documentation: repeated rules now live in one place each, linked from the others.
+- secure-it's PR text shows the names, versions, advisory ids and reasons that registries and advisory sources supply
+  as literal code spans, so a link, mention or markup in them stays text; it replaces the per-case escaping.
 
 ### Fixed
 

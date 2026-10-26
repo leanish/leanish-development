@@ -84,13 +84,15 @@ function assembled(parts: PlanSectionParts, people: string, block: string): stri
 const notShown = (count: number) => `_${count} more line${count === 1 ? "" : "s"} of this plan ${count === 1 ? "isn't" : "aren't"} shown here; the hidden plan below has all of it._`;
 
 /**
- * `text` with every plan marker's opening defused as `&lt;!-- leanish:plan`: people read the same, no reader takes it for
- * a block. Reads take a body's first block, so text a tool writes before its own block, which can quote advisories,
- * names or errors from elsewhere, never carries one.
+ * `text` with every tool marker's opening (`<!-- leanish:`, plans and state alike) defused as `&lt;!-- leanish:`: people
+ * read the same, no reader takes it for a marker. Reads take a body's first block, so text a tool writes before its own
+ * block, which can quote advisories, names or errors from elsewhere, never carries one.
  */
 export function defused(text: string): string {
-  return text.replaceAll(RESERVED, `&lt;${RESERVED.slice(1)}`);
+  return text.replaceAll(MARKER_OPENING, `&lt;${MARKER_OPENING.slice(1)}`);
 }
+
+const MARKER_OPENING = "<!-- leanish:";
 
 /**
  * Refuses reserved plan or state markers in an agent's PR description. A copied plan before the tool's section could

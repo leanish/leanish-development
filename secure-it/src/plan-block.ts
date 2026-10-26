@@ -16,6 +16,7 @@ import { defused, planPayload, planSection as sectionOf, TooLargeError, withPlan
 import { advisoryNotice, EVIDENCE_LEFT_OUT, tableRowCount } from "./advisory-notice.ts";
 import { floorIdentity, validRemoval } from "./floor-removal.ts";
 import type { ChangePlan, PlannedHold, PlannedMove } from "./plan.ts";
+import { literal } from "./pr-text.ts";
 
 const HEADING = "### What secure-it moved";
 /** Fresh agent text: leave room for cleaning and the publication marker below the client's body limit. */
@@ -84,16 +85,14 @@ function fixesLabel(plan: ChangePlan, move: PlannedMove): string {
   return coupled ? "direct peer compatibility" : "";
 }
 
-/** Text from elsewhere in a line of the plan's section: `<` escaped, so it can't open a comment hiding what follows. */
-const quoted = (text: string) => text.replaceAll("<", "&lt;").replace(/\s+/g, " ");
 
 /** A fixed line per candidate the gate ruled out only by advisories no reviewed source corroborates. */
 function vetoLines(move: PlannedMove): string[] {
   const left = move.vetoesLeftOut === undefined ? [] : [
-    `- ${quoted(move.name)}: ${move.vetoesLeftOut} more candidates were ruled out the same way, by advisories not corroborated by the sources this decision used.`,
+    `- ${literal(move.name)}: ${move.vetoesLeftOut} more candidates were ruled out the same way, by advisories not corroborated by the sources this decision used.`,
   ];
   return [...(move.vetoed ?? []).map((veto) =>
-    `- ${quoted(move.name)} ${quoted(veto.version)} was ruled out by ${quoted(veto.advisories.join(", "))}, not corroborated by the sources this decision used.`), ...left];
+    `- ${literal(move.name)} ${literal(veto.version)} was ruled out by ${literal(veto.advisories.join(", "))}, not corroborated by the sources this decision used.`), ...left];
 }
 
 /** Omissions are visible to reviewers as well as the command report and persisted plan. */
@@ -181,12 +180,11 @@ function withoutWarning(body: string): string {
 export function cooldownWarning(held: ReadonlyArray<PlannedHold>, options: { readonly rows?: number } = {}): string | undefined {
   const until = heldUntil(held);
   if (until === undefined) return undefined;
-  // `<` too: a name or signal from elsewhere can't open a comment that hides the rest, or end the warning early.
-  const cell = (text: string) => text.replaceAll("|", "\\|").replaceAll("<", "&lt;").replace(/\s+/g, " ");
+  const cell = (text: string) => literal(text, { table: true });
   const minute = (instant: string) => `${instant.slice(0, 10)} ${instant.slice(11, 16)}`;
   const why = { "security-fix": "the security fix the version rule picks", "bundle-fix": "the carrier version the rule picks for advisories in its bundle", required: "required by a security fix", exception: "a release-age exception", unjustified: "not justified: the gate fails it" } as const;
   const rows = held.map((entry) =>
-    `> | ${entry.ecosystem} \`${cell(entry.name)}\` | ${entry.replaced.length === 0 ? "new" : cell(entry.replaced.join(", "))} → ${cell(entry.version)} | ${minute(entry.published)} | ${minute(entry.eligibleAt)} | ${why[entry.justification]} | ${cell(entry.signals.join("; ")) || "—"} |`);
+    `> | ${entry.ecosystem} ${cell(entry.name)} | ${entry.replaced.length === 0 ? "new" : cell(entry.replaced.join(", "))} → ${cell(entry.version)} | ${minute(entry.published)} | ${minute(entry.eligibleAt)} | ${why[entry.justification]} | ${cell(entry.signals.join("; ")) || "—"} |`);
   const notice = advisoryNotice(held, options);
   const quoted = (lines: ReadonlyArray<string>) => lines.map((line) => (line === "" ? ">" : `> ${line}`));
   // Above the plan's section, so its block must stay the body's first: the advisory text in it comes from elsewhere.
