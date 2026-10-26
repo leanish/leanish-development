@@ -33,6 +33,20 @@ Skill schemas also accept the `[object, null]` type union and a restricted const
 `publication` null; applied still needs the complete publication text. Other unions, general conditionals, unknown
 keywords and malformed objects are still rejected.
 
+## Known limits
+
+secure-it and bump-it use neither of these; a host that adopts one should handle it first.
+
+- **`restricted` confinement:** it denies the edit and shell tools and the paths given as `readDenied` (none by
+  default). Any other read is bounded only by Claude Code's own file-tool permissions, which this package doesn't
+  verify. A host should pass an explicit read-denial policy (credentials and the other sensitive paths) and test it
+  against those files.
+- **`headChecks: "check-runs-then-jobs"`:** a 403 counts as a rate limit only with `x-ratelimit-remaining: 0` or a
+  `retry-after` header. Any other 403 is taken as a token without Checks read, and the head's CI is read from the
+  Actions jobs instead. So a rate limit GitHub sends without those headers loses every other app's check runs. The
+  result's `source` (`actions-jobs`) shows the fallback happened, but not why; a host that requires checks from other
+  apps should fail closed on it.
+
 ## Publishing
 
 In this repository the package stays private at `0.0.0` and exports `src`, which the tools run directly. For npm,
