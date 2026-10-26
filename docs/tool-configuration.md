@@ -33,9 +33,6 @@ permissions and schedules are in the [adoption guide](adopting-tools.md).
 | `modelPrices` | Built-in dated OpenAI Standard prices | Absolute path to an optional JSON table replacing the built-in rates; see [below](#optional-price-table). Claude models have no built-in rate. |
 | `maxNewMajorsPerRun` | bump-it only, `3` | Nonnegative integer. Caps newly opened major PRs, never updates to existing ones. `0` defers all new majors. Deferred majors have priority next run. |
 
-Strict-pin verification uses the Gradle inventory and planned reference comparison. It adds no separate Java parser
-run, compiler download, `unzip` requirement or parser state directory; Gradle still uses its normal build toolchain.
-
 Notes on `secrets`:
 
 - The defaults (`leanish-secure-it-write` / `leanish-secure-it-read`,
@@ -106,8 +103,7 @@ files as the gate, documented there:
 The tools preserve this policy and its exceptions. bump-it never raises floors;
 secure-it removes only the exact security floors in a jointly verified
 [floor-removal plan](../secure-it/README.md#removing-redundant-security-floors).
-Compatibility floors stay. An own npm scope exempts its own packages from age,
-not their dependencies or the other checks.
+Compatibility floors stay.
 
 ## Optional price table
 

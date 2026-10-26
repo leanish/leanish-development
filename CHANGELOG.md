@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Documentation: repeated rules now live in one place each, linked from the others.
+
 ### Fixed
 
 - bump-it's "What bump-it moved" table lists lockfile-only copy changes (an in-range npm update) as rows, next to the

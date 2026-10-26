@@ -191,12 +191,9 @@ holds where the fix would act, and the gate keeps failing until the owner moves
 it. A strictly pinned parent is never moved to carry a fix; the vulnerable
 dependency gets a floor instead. Gradle's own strict constraints on its embedded
 Kotlin (buildscript and settings classpaths) don't block fixes elsewhere.
-Verification compares the edit with the planned reference through Gradle's inventory, configuration by
-configuration. It refuses changed, added or removed strict declarations and strict constraints, including pins
-supplied by catalogs, and a pin turned into a plain declaration at the same version. There is no separate source or
-catalog parser, Java parser run or compiler download for this check.
-By the owner's decision, pins Gradle doesn't resolve, such as an inactive branch or unused catalog entry, aren't
-checked. The agent's instructions still forbid changing them, and the PR diff covers those Gradle didn't see.
+Verification refuses an edit that changes, adds or removes a strict pin Gradle interprets (catalogs included), or
+turns one into a plain declaration at the same version. How it compares, and the pins it can't see, are in the
+[security model](security-model.md#secure-it-and-bump-it) and [coverage gaps](coverage-gaps.md#limits).
 
 ### What bump-it updates
 
@@ -247,12 +244,10 @@ versions an action can move to, since a pin's comment can name no other: a
 partial one (`v1.1`) is left for a person.
 
 The gate reads a workflow, local reusable workflow or action metadata file (`action.yml`) that is a symbolic link as
-the path it points to, so the actions behind it aren't read; this is a documented gap, see
-[coverage gaps](coverage-gaps.md). The tools refuse an edit that adds or changes a symbolic link or a submodule, or
-changes anything an existing link leads to, since a commit records only where a link points. A repository with a
-link leading out of it, or through a path it has only by another case or Unicode form, can't be updated by the
-tools, since a checkout could take that link anywhere; an edit that removes such a link passes. Other links the edit leaves alone are the repository's own and are
-tolerated.
+the path it points to, so the actions behind it aren't read ([coverage gaps](coverage-gaps.md#limits)). The tools
+refuse an edit that adds or changes a symbolic link or a submodule, or changes what an existing link leads to, and
+can't update a repository with a link leading out of it unless the edit removes that link; the reasons are in the
+[security model](security-model.md#secure-it-and-bump-it).
 
 ## Pull requests over time
 
@@ -324,16 +319,14 @@ BeanUtils. It can go after that dependency is removed or naturally resolves safe
   local Actions. Every report lists its reported gaps; the limits go unmentioned.
 - Yarn and pnpm lockfiles are not read. Dockerfile CLIs are covered only through
   configured npm manifests and locks.
-- A build or plugin can hide dependencies from its own inventory. Job isolation
-  protects credentials, not the truth of that inventory. Review build and workflow
-  changes, especially on forks.
+- A build or plugin can hide dependencies from its own inventory ([security
+  model](security-model.md#the-ci-gate)). Review build and workflow changes, especially on forks.
 - The local tools reuse a repository's advisory listing for
   [up to an hour](tool-configuration.md#github-api-usage-and-advisory-cache), so an
   advisory published meanwhile can wait for a later run. The CI gate always reads
   fresh advisories.
 - Signatures, provenance and a seven-day wait do not prove an archive harmless.
-  Wrapper checks do not scan the distribution's contents or separately compare
-  generated scripts with official scripts.
+  The [wrapper checks](coverage-gaps.md#gradle-wrapper-updates) don't scan the distribution either.
 
 ### What may need a manual update
 
@@ -359,9 +352,9 @@ BeanUtils. It can go after that dependency is removed or naturally resolves safe
   miss a later fix. Several parents each covering only part of the affected build
   cannot replace the floor through this search.
 - A fix behind a `strictly(...)` pin waits for the owner to move the pin.
-- Gradle source recognition is text-based. It misses `kotlin("stdlib")`, escapes
-  inside Kotlin or Groovy strings, and files outside the repository. Comments or
-  names in another build can cause an attempted update that verification rejects.
+- Gradle source recognition is text-based; [candidate selection](../core/gate/README.md#picking-a-fix-candidates)
+  lists what it misses. Comments or names in another build can cause an attempted
+  update that verification rejects.
 - Several declared versions, shared catalog versions that move unplanned packages,
   replaced declarations, or a plugin major that stops the base build configuring
   can block verification. Routine edits cannot change convention code or catalogs
@@ -373,8 +366,7 @@ BeanUtils. It can go after that dependency is removed or naturally resolves safe
 - Wrapper regeneration must configure the build inside the sandbox, including any
   Kotlin `buildSrc`. If that work is blocked, there is no special fallback: bump-it
   reports the generation failure, skips the wrapper, and continues other updates.
-  Nested wrappers, mirrors, custom distributions and prerelease base wrappers are
-  not upgraded.
+  Which wrappers are out of scope is in the [coverage gaps](coverage-gaps.md#gradle-wrapper-updates).
 - Direct bumps check only the ten newest aged versions per line and can miss older
   eligible updates. More than 2,000 Actions releases prevents a complete young-fix
   proof. Coordinated major migrations are not automated. bump-it caps new major PRs
@@ -384,9 +376,7 @@ BeanUtils. It can go after that dependency is removed or naturally resolves safe
 
 ### Operating limits
 
-- Local tools need macOS on Apple Silicon, Keychain-held PATs, Node 24+, the Codex
-  CLI (for the tool's sandboxed commands) and a coding agent, Codex or Claude Code.
-  npm 11.17+ is needed for the tools' age exclusions. See the
+- Local tools need macOS on Apple Silicon and the other
   [prerequisites](adopting-tools.md#prerequisites). GitHub App mode and
   Linux/Windows launchers are deferred.
 - Candidate preview is read-only, but is not a full dry run. `run` and `review`
@@ -394,12 +384,11 @@ BeanUtils. It can go after that dependency is removed or naturally resolves safe
   app's Checks-only results. Of the checks GitHub requires, they see only the
   rulesets' Actions-bound ones (a draft marked ready before one reported is flagged), not
   classic branch protection's.
-- Schedules can be delayed, skipped or disabled after 60 days of public-repository
-  inactivity. There is no separate watchdog.
+- Scheduled runs are best effort, with no separate watchdog
+  ([coverage gaps](coverage-gaps.md#limits)).
 - Open PRs aren't rescanned daily. An advisory published after a PR's last check
   shows up when it's pushed to again, or in the default branch's daily scan after
-  merging. A person's PR held by the cooldown stays red until it's pushed to or its
-  whole workflow is re-run after the date the hold gives.
+  merging.
 - Verification is about dependencies and policy, not whether a migration behaves
   correctly. Agent adaptations are bounded (see above). Human pushes are left
   alone. Publication guards reduce races, but GitHub writes cannot be made atomic
@@ -414,12 +403,9 @@ For fork PRs, check them against the default branch yourself before merging.
 
 Young fixes stay draft, with a warning and the date the wait ends. To take one
 early, make every other check green, write the reason on the PR, and make an admin
-merge past cooldown. Without an enforcing ruleset, still record the decision.
-Young routine fixes and their required companion updates go apart from aged fixes.
-Major repairs stay together even when some of their versions are young.
-The build and tests can already execute a young release while its PR is held.
-For a person's PR, rerun the whole workflow on its current revision: rerunning
-only the cooldown check reuses the old report.
+merge past cooldown. The build and tests can already execute a young release while
+its PR is held. [The gate's cooldown](../core/gate/README.md#the-cooldown-young-versions-are-held-however-justified)
+has the details, including how a person's PR is re-checked.
 
 For details: [scenario rules](requirements.md), [coverage gaps](coverage-gaps.md),
 [security boundaries](security-model.md),
