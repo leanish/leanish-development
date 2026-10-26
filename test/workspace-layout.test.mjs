@@ -77,6 +77,11 @@ const ALLOWED = {
   "@leanish/secure-it": ["@leanish/agent-runtime", "@leanish/gate", "@leanish/tool-runtime"],
 };
 
+// Published packages' public API that may have no consumer in this repository; every other export needs one.
+const PUBLIC_EXPORTS = {
+  "@leanish/agent-runtime": ["./guard-dir"],
+};
+
 function directionProblem(source, target, testFile = false) {
   if (target === "@leanish/setup" && testFile && source !== target) return undefined;
   return ALLOWED[source]?.includes(target) ? undefined : `${source} must not import ${target}`;
@@ -114,10 +119,11 @@ test("package imports follow the dependency direction and declare their dependen
   assert.deepEqual(problems, []);
 });
 
-test("exports list exactly the TypeScript modules consumed by other packages", () => {
+test("exports list exactly the TypeScript modules consumed by other packages, plus the named public API", () => {
   for (const [directory, manifest] of packages) {
     const consumed = new Set(imports.filter((entry) => entry.directory !== directory && entry.specifier.startsWith(`${manifest.name}/`))
       .map((entry) => `.${entry.specifier.slice(manifest.name.length)}`));
+    for (const subpath of PUBLIC_EXPORTS[manifest.name] ?? []) consumed.add(subpath);
     assert.deepEqual(Object.keys(manifest.exports).sort(), [...consumed].sort(), manifest.name);
     for (const [subpath, target] of Object.entries(manifest.exports)) {
       assert.ok(target.startsWith("./") && target.endsWith(".ts") && !target.includes("*"), `${manifest.name}/${subpath}: explicit TypeScript source required`);

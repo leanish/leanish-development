@@ -12,6 +12,10 @@
 
 ### Added
 
+- `@leanish/agent-runtime` can be packed for npm as compiled JavaScript with declarations
+  (`npm run pack -w @leanish/agent-runtime`), versioned as the release, so other repositories can install it;
+  publishing it is the owner's optional step (see [releasing](docs/releasing.md#publishing-leanishagent-runtime)). Its
+  new `guardDir()` (`@leanish/agent-runtime/guard-dir`) finds the guards from the sources and from the package.
 - `npm run clean` removes generated outputs (Vitest's caches and coverage) from the root and each workspace, and
   `npm run clean:deps` also removes `node_modules`; both are documented in the README's Development section.
 

@@ -30,3 +30,23 @@ One such change: skill schemas also accept the `[object, null]` type union and a
 `if`/`then` that requires one non-null object. Both tools' answers use them so that only cannot-apply may leave
 `publication` null; applied still needs the complete publication text. Other unions, general conditionals, unknown
 keywords and malformed objects are still rejected.
+
+## Publishing
+
+In this repository the package stays private at `0.0.0` and exports `src`, which the tools run directly. For npm,
+`npm run pack -- --out <absolute-dir>` (or `npm run pack -w @leanish/agent-runtime -- ...` from the root) compiles
+`src` with `tsconfig.build.json`, stages it with a generated manifest in a temporary directory, packs it and prints the
+tarball's path. The version is the root `package.json`'s unless `--version <version>` is given; without `--out` the
+tarball goes to a new temporary directory. [Releasing](../../docs/releasing.md#publishing-leanishagent-runtime) says
+when it's published.
+
+The published package has:
+
+- `dist/`: every module as `.js` with its `.d.ts`; each export of this `package.json` points at them (`types` and
+  `default`), so the two export maps can't drift apart;
+- `guard/`, with `gh` and `git` executable; `guardDir()` (`./guard-dir`) returns its path from either form;
+- `README.md`, `PROVENANCE.md` and the repository's `LICENSE`;
+- the same dependencies (`ajv`, `yaml`), and no scripts or devDependencies.
+
+`test/packed-package.test.ts` packs it, installs the tarball into a consumer outside the repository, loads every export
+with plain Node and type-checks a consumer against the declarations.
