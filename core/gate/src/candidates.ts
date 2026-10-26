@@ -370,10 +370,10 @@ async function chooseMove(
     }
     return none(`no clean version of ${pkg.name} at least ${config.releaseAgeDays} days old to leave the malicious ${pkg.version} for`);
   }
-  // A refusal names what unreviewed advisories alone ruled out, judged against every target.
-  const refused = (why: string) => none(`${why}${vetoNote(vetoesOf(snapshot, name, pkg.version, targets, moves))}`);
-  if (fixable.length === 0) return refused(`no version above ${pkg.version} fixes ${targets.join(", ")}`);
-  if (fixing.length === 0) return refused(`no single version above ${pkg.version} fixes all of ${fixable.join(", ")}, though each has a fix`);
+  // A refusal names what unreviewed advisories alone ruled out, judged against the targets it names.
+  const refused = (why: string, named: ReadonlyArray<string>) => none(`${why}${vetoNote(vetoesOf(snapshot, name, pkg.version, named, moves))}`);
+  if (fixable.length === 0) return refused(`no version above ${pkg.version} fixes ${targets.join(", ")}`, targets);
+  if (fixing.length === 0) return refused(`no single version above ${pkg.version} fixes all of ${fixable.join(", ")}, though each has a fix`, fixable);
   if (own) {
     // Own packages skip the wait: the lowest fix in the first line that has one.
     const first = line(fixing[0]!);
