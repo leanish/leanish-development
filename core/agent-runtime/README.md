@@ -1,6 +1,6 @@
 # @leanish/agent-runtime
 
-What secure-it and bump-it need to run a coding agent, without leanish-development's agent framework:
+What secure-it and bump-it need to run a coding agent, without leanish-development-incubator's agent framework:
 
 - **Skills:** loading `SKILL.md` entrypoints and support skills, rendering the input as YAML, and reading back the final
   fenced JSON block, both checked against the skill's schemas (`skill/run-skill.ts`, `skill-loader.ts`,
@@ -22,11 +22,11 @@ What secure-it and bump-it need to run a coding agent, without leanish-developme
   [security model](../../docs/security-model.md#secure-it-and-bump-it).
 - **Secrets:** `SecretStore`, with macOS Keychain as its one implementation for now (`secret-store.ts`).
 
-Most of it is copied from leanish-development's runtime, temporarily: [PROVENANCE.md](PROVENANCE.md) lists every file,
-where it comes from and what changed. A fix to a copied file is made in both repositories until a shared
-`leanish/agent-kit` replaces the copies.
+Most of it is copied from the runtime of leanish-development-incubator (private), which is to consume this package
+instead of its copies; until it does, a fix to a copied file is made in both repositories.
+[PROVENANCE.md](PROVENANCE.md) lists every file, where it comes from and what changed.
 
-One such change: skill schemas also accept the `[object, null]` type union and a restricted constant-property
+Skill schemas also accept the `[object, null]` type union and a restricted constant-property
 `if`/`then` that requires one non-null object. Both tools' answers use them so that only cannot-apply may leave
 `publication` null; applied still needs the complete publication text. Other unions, general conditionals, unknown
 keywords and malformed objects are still rejected.

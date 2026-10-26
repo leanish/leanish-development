@@ -4,6 +4,12 @@
 
 ### Changed
 
+- `@leanish/agent-runtime` is now the shared core that leanish-development-incubator's runtime is to consume instead of
+  its copies; until it does, fixes are still made in both. Where the two differ, the host now says so explicitly: the
+  run report takes the host's identity and extra fields (also on a signal) and refuses any that would replace its own;
+  the agent's commit identity is optional; the GitHub client requires a `headChecks` mode (the tools keep reading
+  Actions jobs, never Checks). It also gains skill compatibility validation and the shared `Effort` vocabulary.
+  secure-it's and bump-it's behavior and their `run finished` line are unchanged.
 - Documentation: repeated rules now live in one place each, linked from the others. Two 0.8.0 limits are now listed
   with the others: a young own-only carrier refused only by verification, and no run-level budget for evidence lookups.
 - secure-it's PR text shows what registries, lockfiles and advisory sources supply (names, versions, advisory ids,

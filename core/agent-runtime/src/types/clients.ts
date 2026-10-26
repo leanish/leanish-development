@@ -1,5 +1,5 @@
 // Copied from leanish/leanish-development core/runtime/src/types/clients.ts at c6282df; see PROVENANCE.md.
-// Local changes: only the GitHub client's types; headChecks uses Actions jobs and commit statuses, with an actions-jobs source; a job's steps; requiredChecks reads the branch's ruleset status checks.
+// Local changes: only the GitHub client's types; an Actions job's steps.
 /**
  * Narrow GitHub REST/GraphQL client for handler-side, model-free work (see
  * `github/github-client.ts`): the decisions a handler settles without a skill,
@@ -15,9 +15,13 @@ export interface GitHubClient {
   listOpenPullRequests(args: { readonly repo: string }): Promise<ReadonlyArray<GitHubPullRequest>>;
   getPullRequest(args: { readonly repo: string; readonly number: number }): Promise<GitHubPullRequest>;
   /**
-   * The head's latest Actions jobs and commit statuses, all pages read.
-   * Requires Actions and Commit statuses read, never Checks. Checks from other
-   * apps are visible only if they publish commit statuses.
+   * The head's latest check runs and commit statuses, all pages read, as the
+   * client's `headChecks` mode says: with `check-runs-then-jobs`, when the
+   * token can't read check runs (403 on a private repo without Checks read),
+   * the head's latest Actions jobs stand in for them; with `actions-jobs`,
+   * only those are read, needing Actions and Commit statuses read, never
+   * Checks. Either way, with Actions jobs, checks from other apps are visible
+   * only if they publish commit statuses.
    */
   headChecks(args: { readonly repo: string; readonly sha: string }): Promise<GitHubHeadChecks>;
   /**
@@ -87,7 +91,7 @@ export type GitHubRequiredChecks =
 
 export interface GitHubHeadChecks {
   /** Where `checkRuns` came from. */
-  readonly source: "actions-jobs";
+  readonly source: "check-runs" | "actions-jobs";
   readonly checkRuns: ReadonlyArray<GitHubCheckRun>;
   readonly statuses: ReadonlyArray<GitHubCommitStatus>;
 }
