@@ -63,6 +63,10 @@ npm ci --ignore-scripts
 npm run check
 ```
 
+`npm run clean` removes Vitest's caches (`node_modules/.vite`, `node_modules/.vite-temp`) and `coverage/` from the root
+and each workspace; sources, manifests, lockfiles and local configuration stay. `npm run clean:deps` also removes every
+`node_modules`; restore them with `npm ci --ignore-scripts`. Neither needs installed dependencies.
+
 Some integration tests skip locally (real Gradle unless `SUPPLY_CHAIN_GRADLE_TESTS=1`,
 as CI sets; the Seatbelt probe without a usable `codex sandbox`). A skip isn't a
 pass: see [automated checks and skips](docs/validation.md#automated-checks-and-skips).
