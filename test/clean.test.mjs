@@ -82,9 +82,29 @@ test("clean refuses workspaces outside the root, through a parent path or a symb
   assert.ok(existsSync(join(outside, "coverage")));
 });
 
+test("clean refuses targets whose real parent is outside the root, such as a linked node_modules", (t) => {
+  const outside = mkdtempSync(join(tmpdir(), "clean-outside-"));
+  const root = workspace();
+  t.after(() => [root, outside].forEach((directory) => rmSync(directory, { recursive: true, force: true })));
+  mkdirSync(join(outside, ".vite"));
+  rmSync(join(root, "tool", "node_modules"), { recursive: true });
+  symlinkSync(outside, join(root, "tool", "node_modules"));
+  assert.throws(() => clean(root), /targets outside/);
+  assert.ok(existsSync(join(outside, ".vite")));
+  assert.deepEqual(present(root, GENERATED.filter((file) => !file.startsWith("tool/"))), GENERATED.filter((file) => !file.startsWith("tool/")));
+});
+
 test("the command rejects unknown arguments before removing anything", () => {
   const script = fileURLToPath(new URL("../scripts/clean.mjs", import.meta.url));
   const result = spawnSync(process.execPath, [script, "--all"], { encoding: "utf8" });
   assert.equal(result.status, 2);
   assert.match(result.stderr, /usage: node scripts\/clean.mjs \[--deps\] \(unknown: --all\)/);
+});
+
+test("the command runs when reached through a symbolic link", (t) => {
+  const links = mkdtempSync(join(tmpdir(), "clean-link-"));
+  t.after(() => rmSync(links, { recursive: true, force: true }));
+  symlinkSync(fileURLToPath(new URL("../scripts", import.meta.url)), join(links, "scripts"));
+  const result = spawnSync(process.execPath, [join(links, "scripts", "clean.mjs"), "--all"], { encoding: "utf8" });
+  assert.equal(result.status, 2);
 });
