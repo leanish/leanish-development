@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- The gate skips a repository advisory that isn't published (a draft) before reading its optional fields, as v0.7.5
+  did, so a malformed draft no longer fails it.
+- A local action or workflow whose path leaves the repository (`uses: ./../x`) fails the read, the same from the
+  working tree as from a commit, instead of being read from outside the checkout.
 - bump-it's "What bump-it moved" table lists lockfile-only copy changes (an in-range npm update) as rows, next to the
   declared moves, instead of bullets under an empty table; a PR with no rows shows no table.
 
