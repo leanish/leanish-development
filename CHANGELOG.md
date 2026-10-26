@@ -4,7 +4,8 @@
 
 ### Changed
 
-- Documentation: repeated rules now live in one place each, linked from the others.
+- Documentation: repeated rules now live in one place each, linked from the others. Two 0.8.0 limits are now listed
+  with the others: a young own-only carrier refused only by verification, and no run-level budget for evidence lookups.
 
 ### Fixed
 
