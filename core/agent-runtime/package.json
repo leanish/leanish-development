@@ -4,6 +4,11 @@
   "private": true,
   "description": "What secure-it and bump-it need to run a coding agent: Codex and Claude runners, skills, usage, git workspace, GitHub client, logger. Copied from leanish-development's runtime (see PROVENANCE.md).",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/leanish/leanish-development.git",
+    "directory": "core/agent-runtime"
+  },
   "type": "module",
   "engines": {
     "node": ">=24"
@@ -11,7 +16,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "pack": "node scripts/pack.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
@@ -24,6 +30,7 @@
   },
   "exports": {
     "./github/github-client": "./src/github/github-client.ts",
+    "./guard-dir": "./src/guard-dir.ts",
     "./isolation": "./src/isolation.ts",
     "./logger/console-logger": "./src/logger/console-logger.ts",
     "./report/run-report": "./src/report/run-report.ts",

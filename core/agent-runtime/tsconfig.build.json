@@ -1,0 +1,14 @@
+{
+  // Compiles src for the published package; scripts/pack.mjs passes --outDir in its staging directory, outside the checkout
+  // (`dist` only when run by hand, and ignored).
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "allowImportingTsExtensions": false,
+    "rewriteRelativeImportExtensions": true,
+    "declaration": true,
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src/**/*.ts"]
+}
