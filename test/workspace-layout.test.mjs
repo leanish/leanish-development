@@ -78,9 +78,7 @@ const ALLOWED = {
 };
 
 // Published packages' public API that may have no consumer in this repository; every other export needs one.
-const PUBLIC_EXPORTS = {
-  "@leanish/agent-runtime": ["./guard-dir"],
-};
+const PUBLIC_EXPORTS = {};
 
 function directionProblem(source, target, testFile = false) {
   if (target === "@leanish/setup" && testFile && source !== target) return undefined;
