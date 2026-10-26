@@ -20,9 +20,12 @@ package is the code around them. Setup and operation are in [Adopting the tools]
     expected head.
   - **Published text** (`publication-text.ts`): the title, body and commit message keep the machine out. A path in the
     working copy becomes repository-relative; one under the home, temp, state or cache directories becomes
-    `<local path>`. The tool's own `<!-- leanish:… -->` markers (state and plan) pass through untouched; any other
-    `<!-- leanish:plan` in the text, or one cleaning would leave, is defused (`defused()` in `plan-blocks.ts`), so a
-    body's first plan block is always the tool's own.
+    `<local path>`. The tool's own `<!-- leanish:… -->` markers (state and plan) pass through untouched, so this cleans
+    what readers see, not every byte; any other `<!-- leanish:plan` in the text, or one cleaning would leave, is
+    defused (`defused()` in `plan-blocks.ts`, written `&lt;!-- leanish:plan`), and removing old markers never joins the
+    text around them, so a body's first plan block is always the tool's own. Agent descriptions must not include the
+    reserved plan or state markers. On create and update, publication checks the cleaned title (nonblank, at most 256
+    UTF-16 units) and the marked body (at most 65,536) against the client's limits.
   - **Journal** (`journal.ts`): before each update push, the tool records the head/base, title, full body (plan
     included) and adaptation count in its state directory. If the body update fails, the next run or review
     recognises the tool's exact head and restores that publication before reuse or CI handling. An old head/base-only
@@ -45,15 +48,18 @@ package is the code around them. Setup and operation are in [Adopting the tools]
   2. The base moved: the tool recomputes on the new base, before anything else, with the base merged in or the
      conflicting merge left in progress for it to resolve.
   3. CI pending: nothing. Green: mark a draft ready. When a check the base's rulesets require from Actions hasn't
-     reported, the outcome is `ready-missing-required` (a workflow can start only once a PR is ready, so the tool
+     reported (required checks of classic branch protection aren't read), the outcome is `ready-missing-required` (a workflow can start only once a PR is ready, so the tool
      doesn't wait for it; GitHub still blocks the merge); the rules are read with Metadata: read, which every
      fine-grained token has, and rules GitHub refuses or fails to return, or requirements another app may
      report, add a note. No checks: report. CI comes from the head SHA's Actions workflow
-     runs/jobs and commit statuses (Actions and Commit statuses: read; no Checks permission), so Checks-only results
+     runs/jobs and commit statuses, including the failing names the agent adapts to (Actions and Commit statuses: read; no
+     Checks permission), so Checks-only results
      from other apps are not read.
   4. CI failed: version-fix secure-it units and bump-it majors can adapt, at most twice, each attempt counted before it
      starts. bump-it routines and floor-removal units report failures without an agent; the shared attempt budget
-     still applies. After exhaustion, the PR is closed with a comment.
+     still applies. After exhaustion, the PR is closed with a comment. A verified adaptation replaces the PR's title
+     and description with the agent's new verdict and check results, keeping the verified plan and publication state
+     markers.
 
   Steps 1 and 3 use no model. A PR held by the gate's cooldown stays a draft rather than counting as a failure; see
   [requirements](../../docs/requirements.md). A problem with one PR doesn't stop the others.
@@ -62,17 +68,15 @@ package is the code around them. Setup and operation are in [Adopting the tools]
   token. It always ends with one `run finished` line on stderr, and tells run.sh once that line is out.
 - **Repository code under the sandbox** (`sandboxed.ts`): a command that runs the repository's code (the Gradle
   inventory, bump-it's npm resolution and wrapper generation) runs under `codex sandbox` with the agent's write
-  profile, whichever coding agent is configured. It can't reach the Keychain or the sensitive home paths, and writes
-  only to the working copy, the temp dirs and the build cache. Tool-run Gradle builds always use `--no-daemon`, so they
-  never connect to a daemon started under another sandbox; `GRADLE_OPTS` and repository JVM settings are left intact.
+  profile, whichever coding agent is configured. Tool-run Gradle builds always use `--no-daemon`, so they never connect
+  to a daemon started under another sandbox; `GRADLE_OPTS` and repository JVM settings are left intact. What the
+  sandbox denies and allows is in the security model, linked above.
 - **Git copies** (`git-copies.ts`): a commit's files exported to a temporary directory (to inventory a commit the
   working copy doesn't have checked out), and what the working tree changed since a commit. These are read-only git
   commands on the git metadata the workspace created.
 - **Strict pins** (`gradle-reference.ts`): compares the strict declarations and strict constraints Gradle interprets
-  in each configuration with the planned reference, including pins supplied by catalogs. Changes, additions,
-  removals and loss of strictness fail verification. By the owner's decision, pins Gradle doesn't resolve, such as
-  an inactive branch or unused catalog entry, are left to the agent's instructions and the PR diff. There is no
-  separate source parser, compiler download or parser state directory.
+  in each configuration with the planned reference; what fails verification, and the pins it can't see, are in the
+  [security model](../../docs/security-model.md#secure-it-and-bump-it).
 - **OSV-Scanner** (`osv-scanner.ts`): the version `core/gate/tools.json` pins, installed into protected tool state by
   CI's installer and checked by sha256 before every use.
 - **`run.sh`**: `run.sh <tool> run|review <owner/repo>`, what launchd or cron calls. It takes one lock per tool and

@@ -14,9 +14,9 @@
     "secure-it"
   ],
   "scripts": {
-    "check": "node --test test/workspace-layout.test.mjs test/clean.test.mjs && npm run check --workspaces",
-    "clean": "node scripts/clean.mjs",
-    "clean:deps": "node scripts/clean.mjs --deps"
+    "check": "node --test test/workspace-layout.test.mjs && npm run check --workspaces",
+    "clean": "npm exec --workspaces --include-workspace-root -c 'rm -rf coverage node_modules/.vite node_modules/.vite-temp'",
+    "clean:deps": "npm exec --workspaces --include-workspace-root -c 'rm -rf coverage node_modules'"
   },
   "devDependencies": {
     "rolldown": "^1.2.14"
