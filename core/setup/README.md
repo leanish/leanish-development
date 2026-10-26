@@ -98,8 +98,9 @@ node core/setup/src/cli.ts release --candidate v0.7.0-rc.1
   Service and login are single-quoted after validation. `-U` updates an existing
   item for re-enrollment or token rotation.
   The **person** runs these in their own Terminal; bare `-w` comes last and
-  prompts privately. The agent never executes them or handles a token (see the
-  [guided workflow](install.md), step 4). This command never reads Keychain.
+  prompts privately. The agent never executes them, receives a token or puts a
+  value in arguments, files, shell history or logs (see the [guided workflow](install.md),
+  step 4). This command never reads Keychain.
 - **`verify-tokens <tool> --owner <owner>`** reads the two configured items inside
   its own process through the runtime's Keychain store, refuses empty/identical
   tokens, then makes read-only GitHub requests with redirects disabled. Results
