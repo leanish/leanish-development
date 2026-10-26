@@ -42,6 +42,16 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 - **Removing a configuration's only declared floor (secure-it)**: when the floor is the configuration's only
   dependency of its own, removing it lets its default dependencies apply (checkstyle's tool version, for instance),
   which exact declaration preservation refuses; the removal fails visibly. Pre-existing in 0.7.1.
+- **A young own-only npm carrier is refused late (secure-it)**: when a carrier's bundle fixes nothing reviewed (its
+  bundled findings are only in the project's repository advisories), secure-it may still pick a young carrier version
+  for the carrier's own advisories that the ordinary young-fix rule refuses. Unless another justification applies (a
+  required-dependency proof or a valid release-age exception), verification refuses it before anything is published,
+  after the agent's work. Refusing it while planning would need what only verification knows (versions
+  another fix requires, the whole PR's candidates), so it's left to verification. New in 0.8.0.
+- **No run-level budget for advisory evidence (secure-it)**: evidence is collected separately per held version, with up
+  to 16 id lookups per advisory group for each of GitHub's advisory database and OSV; repository-advisory pagination
+  has a separate cap. No request budget spans the run, so many held versions can spend much of the shared GitHub API
+  quota. New in 0.8.0.
 - **Optional root peers and the npm deprecation check (bump-it)**: a transitive version a major brings is exempt when the root declares the package, including as an optional peer it never installed, so a deprecated or unreadable version of it isn't refused. Pre-existing in 0.6.0; not fixed in 0.8.0.
 - **npm aliases without a version** (`"compat": "npm:lib"`): the inventory reads them, but neither tool can rewrite them, so an update fails visibly and a person makes it.
 - **Scheduled runs are best effort**: GitHub may delay or skip them, and disables them after 60 days without activity in a public repository. Nothing else watches that the scheduled scan still runs.
