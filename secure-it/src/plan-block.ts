@@ -52,7 +52,7 @@ export function planSection(plan: ChangePlan): string {
     ...rows,
     ...omittedSection(plan),
     ...plan.moves.flatMap(vetoLines),
-    ...(plan.notes ?? []).map((note) => `- ${note.replace(/\s+/g, " ")}`),
+    ...(plan.notes ?? []).map((note) => `- ${literal(note)}`),
   ].join("\n");
   const footer = "Security targets are the versions the supply-chain gate's rule picks (`supply-chain candidates --rule security`); code chose any required direct-peer companions at their lowest safe compatible versions. The gate verified the change before it was published.";
   return sectionOf({ heading: HEADING, people, footer, payload: plan, name: "security plan" });
