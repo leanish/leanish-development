@@ -800,7 +800,8 @@ describe("secure-it run", () => {
     expect(h.agentCalls.map((call) => call.input["rejected"])).toEqual([undefined, ["compare: new: left-pad@1.0.1: GHSA-new has no exception"], undefined]);
     const pr = h.github.prs.get(42)!;
     expect(pr.body).toContain("Left out after verification failed");
-    expect(pr.body).toContain("left-pad");
+    expect(pr.body).toContain("- npm `left-pad` `1.0.0` → `1.0.1`: omitted");
+    expect(pr.body).toContain("  - `compare: new: left-pad@1.0.1: GHSA-new has no exception`");
     expect(planOf(pr.body)?.packages).toEqual(["npm|vite"]);
     expect(planOf(pr.body)?.leftOut?.[0]?.moves[0]?.name).toBe("left-pad");
     expect(h.workspace.publications).toHaveLength(1);

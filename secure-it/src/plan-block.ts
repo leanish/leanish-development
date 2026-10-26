@@ -60,11 +60,10 @@ export function planSection(plan: ChangePlan): string {
 
 function removalSection(plan: ChangePlan): string {
   const removal = plan.floorRemoval!;
-  const escape = (text: string) => text.replaceAll("|", "\\|").replace(/\s+/g, " ");
   const rows = removal.floors.map((floor) => `| ${floor.ecosystem} | ${cell(floor.package)} | ${cell(floor.version)} | ${cell(floor.declaredIn)} | ${cell(floor.advisories.join(", "))} |`);
   const people = ["Security floors removed after one joint resolution without dependency locks kept every recorded advisory fixed.", "",
     "| Ecosystem | Package | Floor | Declaration | Advisories |", "|---|---|---|---|---|", ...rows, "",
-    ...removal.notes.map((note) => `- ${escape(note)}`)].join("\n");
+    ...removal.notes.map((note) => `- ${literal(note)}`)].join("\n");
   const footer = "Compatibility floors are preserved. All induced versions are judged by compare before publication.";
   return sectionOf({ heading: HEADING, people, footer, payload: plan, name: "floor-removal plan" });
 }
@@ -108,8 +107,8 @@ function omittedSection(plan: ChangePlan): string[] {
     "#### Left out after verification failed",
     "",
     ...plan.leftOut.flatMap((entry) => [
-      ...entry.moves.map((move) => `- ${move.ecosystem} \`${move.name}\` ${move.from} → ${move.to}: omitted from this batch's explicit moves.`),
-      ...entry.problems.map((problem) => `  - ${problem.replace(/\s+/g, " ")}`),
+      ...entry.moves.map((move) => `- ${move.ecosystem} ${literal(move.name)} ${literal(move.from)} → ${literal(move.to)}: omitted from this batch's explicit moves.`),
+      ...entry.problems.map((problem) => `  - ${literal(problem)}`),
     ]),
     "",
     "The remaining batch was re-applied from the base and verified. npm may still induce transitive changes; omitted explicit moves are not claimed as completed.",
