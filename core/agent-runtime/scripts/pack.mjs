@@ -27,7 +27,9 @@ function publishedExports(exports) {
 
 function publishedManifest(manifest, version) {
   const { name, private: _private, version: _version, scripts: _scripts, devDependencies: _devDependencies, exports, ...kept } = manifest;
-  return { name, version, ...kept, files: ["dist", "guard", "PROVENANCE.md"], exports: publishedExports(exports) };
+  // The declarations name Node's types (`NodeJS.WritableStream`), so a consumer's compiler needs them too.
+  const peerDependencies = { "@types/node": ">=24" };
+  return { name, version, ...kept, peerDependencies, files: ["dist", "guard", "PROVENANCE.md"], exports: publishedExports(exports) };
 }
 
 function build(outDir) {

@@ -9,7 +9,7 @@ What secure-it and bump-it need to run a coding agent, without leanish-developme
   family resolved from Codex's own catalog) and Claude Code (`claude-code-runner.ts`: inline settings with no user,
   project or local ones loaded (an administrator's managed policy still applies), every command in Claude Code's sandbox, edits only in the working copies, usage and failure reasons
   from its stream-json events in `claude-code-stream.ts`). It needs the `claude` CLI 2.1.259 or later
-  (`--permission-prompts none`); see [Adopting the tools](../../docs/adopting-tools.md#prerequisites).
+  (`--permission-prompts none`); see [Adopting the tools](https://github.com/leanish/leanish-development/blob/main/docs/adopting-tools.md#prerequisites).
 - **Usage:** what each skill run consumed (tokens, quota, an API-price estimate) and the final `run finished` line
   every command ends with (`usage/`, `report/run-report.ts`).
 - **Git and GitHub:** a workspace whose git metadata the agent can't write, publishing with lease checks
@@ -19,7 +19,7 @@ What secure-it and bump-it need to run a coding agent, without leanish-developme
   (its symlink target included). They use the tool's commit identity, npm without lifecycle scripts and with the
   repository's release age, and the `gh`/`git` guards first on their PATH. The guards are guard rails, not a boundary;
   the boundaries are the read-only token, the read-only git metadata and the credential scrub. See the
-  [security model](../../docs/security-model.md#secure-it-and-bump-it).
+  [security model](https://github.com/leanish/leanish-development/blob/main/docs/security-model.md#secure-it-and-bump-it).
 - **Secrets:** `SecretStore`, with macOS Keychain as its one implementation for now (`secret-store.ts`).
 
 Most of it is copied from leanish-development's runtime, temporarily: [PROVENANCE.md](PROVENANCE.md) lists every file,
@@ -37,7 +37,7 @@ In this repository the package stays private at `0.0.0` and exports `src`, which
 `npm run pack -- --out <absolute-dir>` (or `npm run pack -w @leanish/agent-runtime -- ...` from the root) compiles
 `src` with `tsconfig.build.json`, stages it with a generated manifest in a temporary directory, packs it and prints the
 tarball's path. The version is the root `package.json`'s unless `--version <version>` is given; without `--out` the
-tarball goes to a new temporary directory. [Releasing](../../docs/releasing.md#publishing-leanishagent-runtime) says
+tarball goes to a new temporary directory. [Releasing](https://github.com/leanish/leanish-development/blob/main/docs/releasing.md#publishing-leanishagent-runtime) says
 when it's published.
 
 The published package has:

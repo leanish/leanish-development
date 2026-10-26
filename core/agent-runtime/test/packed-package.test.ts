@@ -30,7 +30,7 @@ beforeAll(() => {
   mkdirSync(consumer);
   writeFileSync(join(consumer, "package.json"), JSON.stringify({ name: "consumer", private: true, type: "module" }));
   // ajv and yaml come from the npm cache that installing this repository filled, so no registry is needed.
-  execFileSync("npm", ["install", "--offline", "--no-audit", "--no-fund", tarball], { cwd: consumer, stdio: ["ignore", "ignore", "inherit"] });
+  execFileSync("npm", ["install", "--prefer-offline", "--no-audit", "--no-fund", tarball], { cwd: consumer, stdio: ["ignore", "ignore", "inherit"] });
   installed = realpathSync(join(consumer, "node_modules", ...NAME.split("/")));
 }, 120_000);
 
@@ -67,6 +67,8 @@ describe("the packed package", () => {
     expect(manifest.version).toBe(JSON.parse(readFileSync(join(PACKAGE_DIR, "..", "..", "package.json"), "utf8")).version);
     expect(manifest.devDependencies).toBeUndefined();
     expect(manifest.scripts).toBeUndefined();
+    // Its declarations name Node's types, so a consumer's compiler gets them through this peer.
+    expect(manifest.peerDependencies).toEqual({ "@types/node": ">=24" });
     expect(Object.keys(manifest.exports).sort()).toEqual(subpaths);
     for (const subpath of subpaths) {
       const module = repoExports[subpath]!.replace(/^\.\/src\//, "").replace(/\.ts$/, "");
@@ -93,7 +95,7 @@ console.log(JSON.stringify({ loaded, guardDir: guardDir() }));
   });
 
   it("ships the guards executable", () => {
-    for (const guard of ["gh", "git"]) expect(statSync(join(installed, "guard", guard)).mode & 0o111, guard).toBe(0o111);
+    for (const guard of ["gh", "git"]) expect(statSync(join(installed, "guard", guard)).mode & 0o100, guard).toBe(0o100);
   });
 
   it("type-checks a consumer against its declarations", () => {

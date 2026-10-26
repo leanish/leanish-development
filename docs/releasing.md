@@ -123,7 +123,7 @@ step, with their npm credentials or trusted publishing.
 1. Check out the commit of a stable `v<version>` tag.
 2. Run `npm ci`, then `npm run pack -w @leanish/agent-runtime -- --out <absolute-dir>`.
    It stages the package outside the checkout with the release's version (the
-   root `package.json`'s) and prints the tarball's path; its
+   root `package.json`'s) and prints the tarball's path as its last line; its
    [README](../core/agent-runtime/README.md#publishing) says what it contains.
 3. Publish that tarball (`npm publish <tarball>`; a scoped package is
    restricted unless `--access public` is given).

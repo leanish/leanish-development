@@ -1,4 +1,5 @@
 node_modules/
 coverage/
+core/agent-runtime/dist/
 *.log
 .DS_Store
