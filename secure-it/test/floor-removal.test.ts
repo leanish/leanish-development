@@ -39,7 +39,7 @@ describe("joint unlocked floor selection", () => {
     expect(calls).toEqual([["a"], ["b"], ["c"], ["a", "b", "c"], ["b", "c"], ["c"]]);
     expect(result.plan?.floorRemoval?.floors.map((floor) => floor.package)).toEqual(["c"]);
     expect(result.notes).toEqual([expect.stringContaining("a in package.json: floor retained"), expect.stringContaining("b in package.json: floor retained")]);
-    expect(planSection(result.plan!)).toContain("floor retained");
+    expect(planSection(result.plan!)).toContain("- `a in package.json: floor retained");
   });
   it("reports vulnerable parents, incomplete proofs and exceptions without guessing a removal", async () => {
     const result = await selectRemovals([floor("affected"), floor("incomplete"), floor("failed")], async (removed) => {

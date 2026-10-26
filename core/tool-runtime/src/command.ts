@@ -17,6 +17,7 @@ import { Writable } from "node:stream";
 import { isDeepStrictEqual, parseArgs } from "node:util";
 
 import { createGitHubClient } from "@leanish/agent-runtime/github/github-client";
+import { guardDir } from "@leanish/agent-runtime/guard-dir";
 import { codexIsolation } from "@leanish/agent-runtime/isolation";
 import type { CodexRunnerOptions } from "@leanish/agent-runtime/skill/codex-runner";
 import { ConsoleLogger } from "@leanish/agent-runtime/logger/console-logger";
@@ -46,7 +47,7 @@ import { changedSince, fileState, type FileState, git } from "./git-copies.ts";
 import { runProcess } from "@leanish/gate/process";
 import { safePath } from "./local-files.ts";
 
-const GUARD_DIR = fileURLToPath(new URL("../../agent-runtime/guard", import.meta.url));
+const GUARD_DIR = guardDir();
 
 /** What a tool's `run` or `review` gets. */
 export interface ToolRunContext {
@@ -132,7 +133,7 @@ export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray
     return finish(64, "error", { error: (err as Error).message });
   }
 
-  report.identified(handlers.tool, repoName);
+  report.identified({ tool: handlers.tool, repo: repoName });
   const logger = new ConsoleLogger({ minLevel: "info", stream: m.stderr }).with({ tool: handlers.tool, repo: repoName, command });
   try {
     const config = parseToolConfig(handlers.tool, await m.readText(configPath), configPath);
@@ -144,7 +145,8 @@ export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray
     // before a call, but sandboxed commands (inventories, npm, Gradle) can run first: on a fresh installation's
     // missing `dirs.cache` they failed with EPERM.
     await m.ensureDir(config.dirs.cache);
-    const github = createGitHubClient({ env: { GITHUB_TOKEN: write }, fetch });
+    // The tools' fine-grained token has no Checks permission, so CI is read from Actions jobs and commit statuses.
+    const github = createGitHubClient({ env: { GITHUB_TOKEN: write }, fetch, headChecks: "actions-jobs" });
     const base = repo.branch ?? (await defaultBranch(repo.repo, write, fetch));
     const workspace = m.workspace(join(config.dirs.state, "workspaces"), write, config);
     const synced = await workspace.sync([{ id: repo.repo, source: { url: `https://github.com/${repo.repo}.git`, branch: base } }]);
@@ -271,7 +273,7 @@ function defaultMachine(): Machine {
     runner: (codingAgent, isolation) =>
       codingAgent === "codex"
         ? new CodexRunner(isolation)
-        : new ClaudeCodeRunner({ env: isolation.env ?? {}, readDenied: isolation.readDenied ?? [], ...(isolation.buildCacheRoot !== undefined ? { buildCacheRoot: isolation.buildCacheRoot } : {}) }),
+        : new ClaudeCodeRunner({ confinement: "sandbox", env: isolation.env ?? {}, readDenied: isolation.readDenied ?? [], ...(isolation.buildCacheRoot !== undefined ? { buildCacheRoot: isolation.buildCacheRoot } : {}) }),
   };
 }
 

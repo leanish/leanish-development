@@ -1,8 +1,7 @@
-// Copied from leanish/leanish-development core/runtime/src/skill/synthesize-fixture.ts at c6282df; see PROVENANCE.md.
-// Local changes: synthesize nullable-object schemas and their restricted conditional object requirements.
+// Copied from leanish/leanish-development-incubator core/runtime/src/skill/synthesize-fixture.ts at 17883e3; see PROVENANCE.md.
 /**
- * Walk an entry-point skill's `outputSchema` (in the ADR-0004 minimal
- * structural subset) and produce a minimum value that satisfies it. Used
+ * Walk an entry-point skill's `outputSchema` (in the minimal structural
+ * subset) and produce a minimum value that satisfies it. Used
  * by the local-mode `FakeCodingAgentRunner` default responder so the
  * `atc-dev-publish | run-local --fake-runner` smoke works end-to-end
  * without registering per-entrypoint fixture data.
@@ -13,6 +12,8 @@
  *   - `type: "boolean"` → `false`.
  *   - `type: "array"` → `[]`.
  *   - `type: "object"` → recursively fill `required` properties.
+ *   - `type: ["object", "null"]` → synthesize the object branch.
+ *   - Restricted `if` / `then` → fill the required object when the constant matches.
  *   - `const` / `enum` → first allowed value.
  *
  * This is intentionally minimum-shape, not realistic. Tests that need
@@ -51,15 +52,32 @@ export function synthesizeFixture(schema: unknown): unknown {
       for (const key of required) {
         out[key] = synthesizeFixture(properties[key]);
       }
-      const condition = s["if"] as { properties?: Record<string, { const?: unknown }> } | undefined;
-      const then = s["then"] as { required?: string[]; properties?: Record<string, unknown> } | undefined;
-      if (condition?.properties !== undefined && then !== undefined && Object.entries(condition.properties).every(([key, value]) => out[key] === value.const)) {
-        for (const key of then.required ?? []) out[key] = synthesizeFixture(properties[key] ?? then.properties?.[key]);
-      }
+      applyConditional(s, properties, out);
       return out;
     }
     default:
       return null;
+  }
+}
+
+function applyConditional(
+  schema: Record<string, unknown>,
+  properties: Record<string, unknown>,
+  out: Record<string, unknown>,
+): void {
+  const condition = schema["if"] as {
+    properties?: Record<string, { const?: unknown }>;
+  } | undefined;
+  const consequent = schema["then"] as {
+    required?: string[];
+    properties?: Record<string, unknown>;
+  } | undefined;
+  if (condition?.properties === undefined || consequent === undefined) return;
+  if (!Object.entries(condition.properties).every(([key, value]) => out[key] === value.const)) {
+    return;
+  }
+  for (const key of consequent.required ?? []) {
+    out[key] = synthesizeFixture(properties[key] ?? consequent.properties?.[key]);
   }
 }
 

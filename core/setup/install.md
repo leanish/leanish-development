@@ -5,8 +5,8 @@ The package [command reference](README.md) defines JSONL results and flags; scri
 perform the work. Reruns reconcile existing state safely. Do not replace a
 verified release pin, overwrite restored choices or touch unselected repositories.
 
-Read every result: exit 0 means changed/already-done, 1 means blocked, 2 means
-needs-confirmation, and 64 means invalid usage. A blocker wins. Resolve blockers
+Read every result: its statuses and exit codes are defined in the command
+reference, and a blocker wins. Resolve blockers
 before dependent steps; continue independent work when safe. Keep completed items
 and PR URLs after partial failures. Never claim a choice, admin action, permission
 or real run succeeded merely because a spec was generated. Batch/test-run use

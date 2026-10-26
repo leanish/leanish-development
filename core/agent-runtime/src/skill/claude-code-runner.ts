@@ -2,7 +2,7 @@
 // Local changes: write access in Claude Code's sandbox, usage and failure reasons from its stream-json events.
 import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
-import { mkdir, realpath, rm, rmdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, rmdir, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -47,6 +47,9 @@ import { resolveWorkingCopyMount } from "./wc-mount.ts";
  *   - `read-only`: no network, the working copies are denied to Bash's writes
  *     and edits need a prompt that never comes (Bash keeps the sandbox's own
  *     temp dir).
+ * That is the `sandbox` confinement. A host without Claude Code's sandbox (a Lambda function) runs `restricted`
+ * instead: `--restricted` with only the read tools (`--tools Read,Glob,Grep,Skill`), Bash, edits and the network
+ * denied, so nothing runs commands and nothing needs the sandbox; `write` is refused before anything is staged.
  * No hooks run (`disableAllHooks`), whether from settings or from a skill, except those an administrator's managed
  * policy enforces, which no inline setting can turn off.
  * The sandbox's proxy announces itself in `HTTPS_PROXY` with credentials the
@@ -59,7 +62,12 @@ import { resolveWorkingCopyMount } from "./wc-mount.ts";
  * request, the CLI's own list-price cost estimate (`providerCostUsd`) and the
  * account's plan windows when the CLI reports them.
  */
+/** How a run is confined; see the class comment. Each host names its own: neither is a safe default for the other. */
+export type ClaudeConfinement = "sandbox" | "restricted";
+
 export interface ClaudeCodeRunnerOptions {
+  /** `sandbox` where Claude Code's sandbox is available (write runs need it), `restricted` where it isn't. */
+  readonly confinement: ClaudeConfinement;
   /** Override the `claude` binary path. Defaults to `"claude"` (PATH lookup). */
   readonly bin?: string;
   /** Per-invocation timeout in ms. Defaults to 14 minutes (under Lambda's 15-min cap). */
@@ -93,8 +101,14 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
   readonly #writableRoots: ReadonlyArray<string>;
   readonly #cacheEnv: Readonly<Record<string, string>>;
   readonly #readDenied: ReadonlyArray<string>;
+  readonly #confinement: ClaudeConfinement;
 
-  constructor(options: ClaudeCodeRunnerOptions = {}) {
+  constructor(options: ClaudeCodeRunnerOptions) {
+    // Checked at runtime too: a caller in plain JavaScript gets no type error, and a missing policy must not mean one.
+    if (options.confinement !== "sandbox" && options.confinement !== "restricted") {
+      throw new Error(`ClaudeCodeRunner: confinement must be 'sandbox' or 'restricted', not '${String(options.confinement)}'`);
+    }
+    this.#confinement = options.confinement;
     this.#bin = options.bin ?? "claude";
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.#stagingParentDir = options.stagingParentDir;
@@ -130,6 +144,9 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
     const configDir = [process.env, this.#env, invocation.env ?? {}].map((env) => nonEmpty(env["CLAUDE_CONFIG_DIR"])).find((dir) => dir !== undefined);
     if (configDir !== undefined) throw new Error(`ClaudeCodeRunner: CLAUDE_CONFIG_DIR ('${configDir}') isn't supported; unset it so the CLI uses ~/.claude`);
     const access = invocation.access ?? "read-only";
+    if (access === "write" && this.#confinement === "restricted") {
+      throw new Error("ClaudeCodeRunner: access 'write' needs the 'sandbox' confinement; 'restricted' runs grant no tool that edits or runs commands");
+    }
     const workingCopies = invocation.workingCopies.map((wc) => wc.path);
     assertOutsideDenied(workingCopies, this.#readDenied, "working copy");
     const gitDirs = access === "write" ? await writeMountGitDirs(invocation.workingCopies) : [];
@@ -143,7 +160,15 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
       pluginName: PLUGIN_NAME,
       ...(this.#stagingParentDir !== undefined ? { parentDir: this.#stagingParentDir } : {}),
     });
-    const mount = resolveWorkingCopyMount(invocation.workingCopies);
+    // The file tools may read cwd, so with no working copy they get an empty directory of their own instead of
+    // wherever the tool was started.
+    const emptyCwd = invocation.workingCopies.length === 0
+      ? await mkdtemp(join(tmpdir(), "claude-code-runner-empty-")).catch(async (err: unknown) => {
+        await staged.cleanup().catch(() => undefined);
+        throw err;
+      })
+      : undefined;
+    const mount = emptyCwd !== undefined ? { cwd: emptyCwd, addDirs: [] } : resolveWorkingCopyMount(invocation.workingCopies);
     const sessionId = randomUUID();
     const sessionDir = join(homedir(), ".claude", "projects", (await realpath(mount.cwd).catch(() => mount.cwd)).replace(/[^A-Za-z0-9]/g, "-"), sessionId);
     let failed = false;
@@ -151,15 +176,17 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
       const shell = await shellIsolationEnv(staged.dir);
       await writeFile(join(shell["ZDOTDIR"]!, ".zshenv"), PROXY_SHIM);
       const githubEnv = nonEmpty({ ...this.#env, ...invocation.env }["GH_TOKEN"]) !== undefined ? await githubToolsEnv(staged.dir) : {};
-      const settings = claudeSettings({
-        access,
-        workingCopies,
-        gitDirs,
-        writableRoots: access === "write" ? [...this.#writableRoots, ...(await tempDirs())] : [],
-        readDenied: this.#readDenied,
-        home: homedir(),
-        sessionDir,
-      });
+      const settings = this.#confinement === "restricted"
+        ? restrictedClaudeSettings({ readDenied: this.#readDenied, home: homedir() })
+        : claudeSettings({
+          access,
+          workingCopies,
+          gitDirs,
+          writableRoots: access === "write" ? [...this.#writableRoots, ...(await tempDirs())] : [],
+          readDenied: this.#readDenied,
+          home: homedir(),
+          sessionDir,
+        });
       const args: string[] = [
         "--print",
         "--output-format",
@@ -168,6 +195,7 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
         "--session-id",
         sessionId,
         "--no-session-persistence",
+        ...(this.#confinement === "restricted" ? ["--restricted", "--tools", RESTRICTED_TOOLS.join(",")] : []),
         "--setting-sources",
         "",
         "--strict-mcp-config",
@@ -189,7 +217,8 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
       if (invocation.effort !== undefined) {
         args.push("--effort", mapEffortForClaudeCli(invocation.effort));
       }
-      args.push(slashCommandPrompt(invocation));
+      // `--add-dir` takes any number of values: without `--`, the prompt after the last one would be read as a directory.
+      args.push("--", slashCommandPrompt(invocation));
 
       onSpawn();
       let stderrTail: string | undefined;
@@ -247,6 +276,7 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
       // The working copy's project dir, once no session is left in it; another session may still be using it.
       await rmdir(dirname(sessionDir)).catch(() => undefined);
       await staged.cleanup().catch((err: Error) => leftBehind.push(`the staged skills and shell (${err.message})`));
+      if (emptyCwd !== undefined) await rm(emptyCwd, { recursive: true, force: true }).catch((err: Error) => leftBehind.push(`the empty working directory (${err.message})`));
       if (leftBehind.length > 0 && !failed) throw new Error(`ClaudeCodeRunner: the run ended, but cleaning up failed: ${leftBehind.join("; ")}`);
     }
   }
@@ -276,10 +306,10 @@ export interface ClaudeSettingsRequest {
 export const DENIED_TOOLS = [
   "Artifact", "ArtifactComments", "ArtifactData", "ShareOnboardingGuide", "DesignSync", "PushNotification", "SendMessage",
   "RemoteTrigger", "CronCreate", "CronDelete", "ScheduleWakeup", "Workflow", "WebFetch", "WebSearch",
-  "EnterWorktree", "ExitWorktree", "ListAgents", "Monitor", "Task", "Agent",
+  "EnterWorktree", "ExitWorktree", "ListAgents", "Monitor", "Task", "Agent", "PublishPlugin",
 ] as const;
 
-/** The inline settings of one run; see the class comment. Exported for tests. */
+/** The inline settings of a `sandbox` run; see the class comment. Exported for tests. */
 export function claudeSettings(request: ClaudeSettingsRequest): Record<string, unknown> {
   const write = request.access === "write";
   // The file tools can't read outside the working copies anyway (that needs a prompt, and none is answered); an explicit
@@ -315,14 +345,42 @@ export function claudeSettings(request: ClaudeSettingsRequest): Record<string, u
         ...DENIED_TOOLS,
       ],
     },
+    ...commonSettings(request.home),
+  };
+}
+
+/** The read tools a `restricted` run keeps (`--tools`); `--restricted` already drops the ones that run code. */
+export const RESTRICTED_TOOLS = ["Read", "Glob", "Grep", "Skill"] as const;
+
+/** The inline settings of a `restricted` run: no sandbox, so nothing that writes or runs commands. Exported for tests. */
+export function restrictedClaudeSettings(request: { readonly readDenied: ReadonlyArray<string>; readonly home: string }): Record<string, unknown> {
+  return {
+    permissions: {
+      deny: [...request.readDenied.flatMap(readRules), "Bash", "Edit", "Write", "NotebookEdit", ...DENIED_TOOLS],
+    },
+    ...commonSettings(request.home),
+  };
+}
+
+/** What every run gets, whatever confines it. */
+function commonSettings(home: string): Record<string, unknown> {
+  return {
     // The skill tells the agent to read the repository's own instructions; nothing else is injected.
-    claudeMdExcludes: ["**/CLAUDE.md", "**/CLAUDE.local.md", join(request.home, ".claude", "CLAUDE.md")],
+    claudeMdExcludes: ["**/CLAUDE.md", "**/CLAUDE.local.md", join(home, ".claude", "CLAUDE.md")],
     // The tools publish the agent's PR text and commit message as written: no Claude Code attribution in them.
     includeCoAuthoredBy: false,
     attribution: { commit: "", pr: "" },
     autoMemoryEnabled: false,
     // Nothing runs besides the agent's own tool calls: no hooks from settings or from a skill (managed policy aside).
     disableAllHooks: true,
+    // Nor anything the claude.ai account connects.
+    disableClaudeAiConnectors: true,
+    // Claude Code's own skills (`/loop`, `/schedule`) read files or call services while they start, outside the
+    // sandbox's and the file tools' limits. The switch keeps a few built-ins, handled below.
+    disableBundledSkills: true,
+    // With these flags, `plugin-authoring` is the one kept built-in the model can invoke (`/doctor` and `/design`
+    // refuse model invocation), so its plugin goes; a Skill deny rule would leave it listed.
+    enabledPlugins: { "cc-plugin-plugin-authoring@builtin": false },
   };
 }
 

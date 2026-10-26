@@ -16,6 +16,7 @@ import { defused, planPayload, planSection as sectionOf, TooLargeError, withPlan
 import { advisoryNotice, EVIDENCE_LEFT_OUT, tableRowCount } from "./advisory-notice.ts";
 import { floorIdentity, validRemoval } from "./floor-removal.ts";
 import type { ChangePlan, PlannedHold, PlannedMove } from "./plan.ts";
+import { literal } from "./pr-text.ts";
 
 const HEADING = "### What secure-it moved";
 /** Fresh agent text: leave room for cleaning and the publication marker below the client's body limit. */
@@ -43,7 +44,7 @@ export function planSection(plan: ChangePlan): string {
   if (plan.kind === "floor-removal" && plan.floorRemoval !== undefined) return removalSection(plan);
   const rows = plan.moves.map(
     (move) =>
-      `| ${move.ecosystem} | \`${move.name}\` | ${move.from} → ${move.to}${move.major ? " (major)" : ""} | ${move.mechanism} | ${fixesLabel(plan, move)} | ${move.locations.map((location) => `\`${location}\``).join(", ")} |`,
+      `| ${move.ecosystem} | ${cell(move.name)} | ${cell(move.from)} → ${cell(move.to)}${move.major ? " (major)" : ""} | ${move.mechanism} | ${fixesLabel(plan, move)} | ${move.locations.map(cell).join(", ")} |`,
   );
   const people = [
     "| Ecosystem | Package | Version | How | Fixes | Where |",
@@ -51,7 +52,7 @@ export function planSection(plan: ChangePlan): string {
     ...rows,
     ...omittedSection(plan),
     ...plan.moves.flatMap(vetoLines),
-    ...(plan.notes ?? []).map((note) => `- ${note.replace(/\s+/g, " ")}`),
+    ...(plan.notes ?? []).map((note) => `- ${literal(note)}`),
   ].join("\n");
   const footer = "Security targets are the versions the supply-chain gate's rule picks (`supply-chain candidates --rule security`); code chose any required direct-peer companions at their lowest safe compatible versions. The gate verified the change before it was published.";
   return sectionOf({ heading: HEADING, people, footer, payload: plan, name: "security plan" });
@@ -59,11 +60,10 @@ export function planSection(plan: ChangePlan): string {
 
 function removalSection(plan: ChangePlan): string {
   const removal = plan.floorRemoval!;
-  const escape = (text: string) => text.replaceAll("|", "\\|").replace(/\s+/g, " ");
-  const rows = removal.floors.map((floor) => `| ${floor.ecosystem} | ${escape(floor.package)} | ${floor.version} | ${escape(floor.declaredIn)} | ${floor.advisories.join(", ")} |`);
+  const rows = removal.floors.map((floor) => `| ${floor.ecosystem} | ${cell(floor.package)} | ${cell(floor.version)} | ${cell(floor.declaredIn)} | ${cell(floor.advisories.join(", "))} |`);
   const people = ["Security floors removed after one joint resolution without dependency locks kept every recorded advisory fixed.", "",
     "| Ecosystem | Package | Floor | Declaration | Advisories |", "|---|---|---|---|---|", ...rows, "",
-    ...removal.notes.map((note) => `- ${escape(note)}`)].join("\n");
+    ...removal.notes.map((note) => `- ${literal(note)}`)].join("\n");
   const footer = "Compatibility floors are preserved. All induced versions are judged by compare before publication.";
   return sectionOf({ heading: HEADING, people, footer, payload: plan, name: "floor-removal plan" });
 }
@@ -74,26 +74,29 @@ function fixesLabel(plan: ChangePlan, move: PlannedMove): string {
     const own = move.advisories;
     const where = move.ecosystem === "npm" ? "in bundled" : "in the";
     const brought = move.ecosystem === "npm" ? "" : " it brings";
-    const inside = move.carries.map((entry) => `${entry.advisories.join(", ")} ${where} \`${entry.name}\`${brought} ${entry.from.join(", ")} → ${entry.to.length === 0 ? "removed" : entry.to.join(", ")}`);
-    return [...(own.length === 0 ? [] : [own.join(", ")]), ...inside].join("; ");
+    const inside = move.carries.map((entry) => `${cell(entry.advisories.join(", "))} ${where} ${cell(entry.name)}${brought} ${cell(entry.from.join(", "))} → ${entry.to.length === 0 ? "removed" : cell(entry.to.join(", "))}`);
+    return [...(own.length === 0 ? [] : [cell(own.join(", "))]), ...inside].join("; ");
   }
-  if (move.unblocks !== undefined && move.advisories.length === 0) return `a range admitting the fix at ${move.unblocks.map((location) => `\`${location}\``).join(", ")}`;
-  if (move.advisories.length > 0 || plan.malware) return move.advisories.join(", ");
+  if (move.unblocks !== undefined && move.advisories.length === 0) return `a range admitting the fix at ${move.unblocks.map(cell).join(", ")}`;
+  if (move.advisories.length > 0 || plan.malware) return cell(move.advisories.join(", "));
   if (plan.requiredNpm?.some((target) => target.name === move.name && target.version === move.to)) return "required dependency compatibility";
   const coupled = plan.coupled?.some((set) => set.includes(`${move.ecosystem}|${move.name}`));
   return coupled ? "direct peer compatibility" : "";
 }
 
-/** Text from elsewhere in a line of the plan's section: `<` escaped, so it can't open a comment hiding what follows. */
-const quoted = (text: string) => text.replaceAll("<", "&lt;").replace(/\s+/g, " ");
+
+/** Text from elsewhere in a table cell of the plan. */
+function cell(text: string): string {
+  return literal(text, { table: true });
+}
 
 /** A fixed line per candidate the gate ruled out only by advisories no reviewed source corroborates. */
 function vetoLines(move: PlannedMove): string[] {
   const left = move.vetoesLeftOut === undefined ? [] : [
-    `- ${quoted(move.name)}: ${move.vetoesLeftOut} more candidates were ruled out the same way, by advisories not corroborated by the sources this decision used.`,
+    `- ${literal(move.name)}: ${move.vetoesLeftOut} more candidates were ruled out the same way, by advisories not corroborated by the sources this decision used.`,
   ];
   return [...(move.vetoed ?? []).map((veto) =>
-    `- ${quoted(move.name)} ${quoted(veto.version)} was ruled out by ${quoted(veto.advisories.join(", "))}, not corroborated by the sources this decision used.`), ...left];
+    `- ${literal(move.name)} ${literal(veto.version)} was ruled out by ${literal(veto.advisories.join(", "))}, not corroborated by the sources this decision used.`), ...left];
 }
 
 /** Omissions are visible to reviewers as well as the command report and persisted plan. */
@@ -104,8 +107,8 @@ function omittedSection(plan: ChangePlan): string[] {
     "#### Left out after verification failed",
     "",
     ...plan.leftOut.flatMap((entry) => [
-      ...entry.moves.map((move) => `- ${move.ecosystem} \`${move.name}\` ${move.from} → ${move.to}: omitted from this batch's explicit moves.`),
-      ...entry.problems.map((problem) => `  - ${problem.replace(/\s+/g, " ")}`),
+      ...entry.moves.map((move) => `- ${move.ecosystem} ${literal(move.name)} ${literal(move.from)} → ${literal(move.to)}: omitted from this batch's explicit moves.`),
+      ...entry.problems.map((problem) => `  - ${literal(problem)}`),
     ]),
     "",
     "The remaining batch was re-applied from the base and verified. npm may still induce transitive changes; omitted explicit moves are not claimed as completed.",
@@ -181,12 +184,10 @@ function withoutWarning(body: string): string {
 export function cooldownWarning(held: ReadonlyArray<PlannedHold>, options: { readonly rows?: number } = {}): string | undefined {
   const until = heldUntil(held);
   if (until === undefined) return undefined;
-  // `<` too: a name or signal from elsewhere can't open a comment that hides the rest, or end the warning early.
-  const cell = (text: string) => text.replaceAll("|", "\\|").replaceAll("<", "&lt;").replace(/\s+/g, " ");
   const minute = (instant: string) => `${instant.slice(0, 10)} ${instant.slice(11, 16)}`;
   const why = { "security-fix": "the security fix the version rule picks", "bundle-fix": "the carrier version the rule picks for advisories in its bundle", required: "required by a security fix", exception: "a release-age exception", unjustified: "not justified: the gate fails it" } as const;
   const rows = held.map((entry) =>
-    `> | ${entry.ecosystem} \`${cell(entry.name)}\` | ${entry.replaced.length === 0 ? "new" : cell(entry.replaced.join(", "))} → ${cell(entry.version)} | ${minute(entry.published)} | ${minute(entry.eligibleAt)} | ${why[entry.justification]} | ${cell(entry.signals.join("; ")) || "—"} |`);
+    `> | ${entry.ecosystem} ${cell(entry.name)} | ${entry.replaced.length === 0 ? "new" : cell(entry.replaced.join(", "))} → ${cell(entry.version)} | ${minute(entry.published)} | ${minute(entry.eligibleAt)} | ${why[entry.justification]} | ${cell(entry.signals.join("; ")) || "—"} |`);
   const notice = advisoryNotice(held, options);
   const quoted = (lines: ReadonlyArray<string>) => lines.map((line) => (line === "" ? ">" : `> ${line}`));
   // Above the plan's section, so its block must stay the body's first: the advisory text in it comes from elsewhere.

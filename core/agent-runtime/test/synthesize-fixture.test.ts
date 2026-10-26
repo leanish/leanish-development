@@ -1,8 +1,10 @@
-// Copied from leanish/leanish-development core/runtime/test/unit/synthesize-fixture.test.ts at c6282df; see PROVENANCE.md.
+// Copied from leanish/leanish-development-incubator core/runtime/test/unit/synthesize-fixture.test.ts at 17883e3; see PROVENANCE.md.
 // Local changes: imports this package's modules from `../src/` instead of `../../src/`.
 import { describe, expect, it } from "vitest";
 
+import { assertSubset } from "../src/skill/schema-subset.ts";
 import { synthesizeFixture } from "../src/skill/synthesize-fixture.ts";
+import { SchemaValidator } from "../src/skill/validator.ts";
 
 describe("synthesizeFixture", () => {
   it("returns the ask skill's required answer shape", () => {
@@ -55,6 +57,70 @@ describe("synthesizeFixture", () => {
 
   it("emits an empty object when no required keys are declared", () => {
     expect(synthesizeFixture({ type: "object" })).toEqual({});
+  });
+
+  it("synthesizes the object branch of a nullable object", () => {
+    const schema = {
+      type: ["object", "null"],
+      required: ["title"],
+      properties: { title: { type: "string" } },
+      additionalProperties: false,
+    };
+    const fixture = synthesizeFixture(schema);
+    expect(fixture).toEqual({ title: "fake-fixture" });
+    assertSubset(schema, "tool");
+    expect(new SchemaValidator().validate(schema, fixture)).toEqual([]);
+  });
+
+  it.each(["applied", "no-op"])("synthesizes a conditional answer for %s", (outcome) => {
+    const schema = {
+      type: "object",
+      required: ["outcome"],
+      properties: {
+        outcome: { type: "string", enum: [outcome] },
+        publication: {
+          type: ["object", "null"],
+          required: ["title"],
+          properties: { title: { type: "string" } },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+      if: { properties: { outcome: { const: "applied" } } },
+      then: {
+        required: ["publication"],
+        properties: { publication: { type: "object" } },
+      },
+    };
+    const fixture = synthesizeFixture(schema);
+    expect(fixture).toEqual(outcome === "applied"
+      ? { outcome, publication: { title: "fake-fixture" } }
+      : { outcome });
+    assertSubset(schema, "tool");
+    expect(new SchemaValidator().validate(schema, fixture)).toEqual([]);
+  });
+
+  it("uses the consequent's object schema when no base property is declared", () => {
+    const schema = {
+      type: "object",
+      required: ["outcome"],
+      properties: { outcome: { const: "applied" } },
+      if: { properties: { outcome: { const: "applied" } } },
+      then: {
+        required: ["publication"],
+        properties: {
+          publication: {
+            type: "object",
+            required: ["count"],
+            properties: { count: { type: "integer" } },
+          },
+        },
+      },
+    };
+    const fixture = synthesizeFixture(schema);
+    expect(fixture).toEqual({ outcome: "applied", publication: { count: 0 } });
+    assertSubset(schema, "tool");
+    expect(new SchemaValidator().validate(schema, fixture)).toEqual([]);
   });
 });
 

@@ -19,6 +19,8 @@ describe("published text keeps the machine out", () => {
       .toBe(`\`GRADLE_USER_HOME=${LOCAL_PATH} ./gradlew check\` passed`);
     expect(clean("wrote /private/var/folders/x1/T/out.log and /tmp/scratch, read '/Users/dev/My Documents/a.txt'"))
       .toBe(`wrote ${LOCAL_PATH} and ${LOCAL_PATH}, read '${LOCAL_PATH}'`);
+    // A quote in one code span never pairs with one in the next, so the fences between them stay.
+    expect(clean('| `"/tmp/x` | `" @someone https://evil.example` |')).toBe(`| \`"${LOCAL_PATH}\` | \`" @someone https://evil.example\` |`);
   });
 
   it("leaves alike-named paths, URLs, relative paths and portable home expressions alone", () => {
@@ -64,7 +66,7 @@ describe("published text keeps the machine out", () => {
     expect(clean(`a /tmp/x <!-- leanish:state /tmp/y --><!-- leanish:plan /tmp/z --> b /tmp/w`))
       .toBe(`a ${LOCAL_PATH} <!-- leanish:state /tmp/y --><!-- leanish:plan /tmp/z --> b ${LOCAL_PATH}`);
     expect(clean(`<!-- leanish:state /tmp/y --> --> /tmp/x`)).toBe(`<!-- leanish:state /tmp/y --> --> ${LOCAL_PATH}`);
-    expect(clean(`/tmp/x <!-- leanish:open /tmp/y`)).toBe(`${LOCAL_PATH} <!-- leanish:open ${LOCAL_PATH}`);
+    expect(clean(`/tmp/x <!-- leanish:open /tmp/y`)).toBe(`${LOCAL_PATH} &lt;!-- leanish:open ${LOCAL_PATH}`);
     // Thousands of unclosed openings: a lazy regex would rescan the rest from each.
     const started = Date.now();
     clean("<!-- leanish:".repeat(100_000));

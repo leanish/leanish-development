@@ -17,7 +17,7 @@ Those tools are good, and this repository uses two of them: [OSV-Scanner](https:
 
 ## What secure-it and bump-it add
 
-- **Transitive fixes at any depth.** A vulnerable package four levels down gets the smallest change that fixes it: a lockfile update, an override, or a Gradle floor recorded with its `because(...)`. Dependabot's security updates only see GitHub-reviewed advisories, don't write Gradle floors, and can be blocked by another open PR touching the same lockfile.
+- **Transitive fixes at any depth.** A vulnerable package four levels down gets the smallest change that fixes it: a lockfile update, an override, or a Gradle floor recorded with its `because(...)`. Gradle's native `constraints` blocks are another way to repair a transitive; this implementation writes and verifies explicit floors instead. Dependabot's security updates only see GitHub-reviewed advisories, don't write Gradle floors, and can be blocked by another open PR touching the same lockfile.
 - **One rule per job.** secure-it takes the smallest fix (lowest version, compatible line first), batching non-majors across ecosystems and keeping each major apart. bump-it takes the highest version past the wait that adds no finding, minors and patches together, each major apart. A coding agent (Codex or Claude Code) adapts code to a major.
 - **Floors come off when they're no longer needed:** secure-it resolves without them, together and without the lockfile's influence, and removes only the security floors that prove redundant. Compatibility floors stay.
 - **The owner's pins stay.** Neither tool moves a Gradle `strictly(...)` pin: secure-it reports a fix that needs one as blocked, and bump-it notes the pin.

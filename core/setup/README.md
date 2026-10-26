@@ -99,9 +99,8 @@ node core/setup/src/cli.ts release --candidate v0.7.0-rc.1
   item for re-enrollment or token rotation.
   The **person** runs these in their own Terminal; bare `-w` comes last and
   prompts privately. The agent never executes them, receives a token or puts a
-  value in arguments, files, shell history or logs. The person creates two
-  fine-grained PATs scoped only to selected repos and obtains any organization
-  approval/SSO authorization. This command never reads Keychain.
+  value in arguments, files, shell history or logs (see the [guided workflow](install.md),
+  step 4). This command never reads Keychain.
 - **`verify-tokens <tool> --owner <owner>`** reads the two configured items inside
   its own process through the runtime's Keychain store, refuses empty/identical
   tokens, then makes read-only GitHub requests with redirects disabled. Results
@@ -214,10 +213,8 @@ its final path until verification and npm succeed.
 
 `schedule <tool> --owner <owner> --release <tag> --agent codex|claude-code [--time HH:MM] [--day mon|...|sun]`
 reads the strict owner installation and verifies the selected installed release
-offline, refusing a release without `core/setup/run.sh` in v0.7.0 or newer.
-Until a stable release shipping it is published, use
-[the manual guide](../../docs/adopting-tools.md), rather than another existing
-older release. A supported release emits one
+offline, refusing a release without `core/setup/run.sh` (see `release` above).
+A supported release emits one
 `needs-confirmation` row (exit 2). Its `data` contains
 `taskId`/`title` (`leanish-<tool>-<owner>`), `agent`, five-field local-time `cron`,
 IANA `timeZone`, `folder` (the task's own folder, `~/.local/share/leanish/tasks/<taskId>`:

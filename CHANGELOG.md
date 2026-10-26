@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Changed
+
+- `@leanish/agent-runtime` is now the shared core that leanish-development-incubator's runtime is to consume instead of
+  its copies; until it does, fixes are still made in both. Where the two differ, the host now says so explicitly: the
+  run report takes the host's identity and extra fields (also on a signal) and refuses any that would replace its own;
+  the agent's commit identity is optional; the GitHub client requires a `headChecks` mode (the tools keep reading
+  Actions jobs, never Checks). It also gains skill compatibility validation and the shared `Effort` vocabulary.
+  secure-it's and bump-it's behavior and their `run finished` line are unchanged.
+- Documentation: repeated rules now live in one place each, linked from the others. Two 0.8.0 limits are now listed
+  with the others: a young own-only carrier refused only by verification, and no run-level budget for evidence lookups.
+- secure-it's PR text shows what registries, lockfiles and advisory sources supply (names, versions, advisory ids,
+  locations, notes and failure reasons) as literal code spans, so a link, mention, comment or table pipe in them stays
+  text; it replaces the per-case escaping. Path cleaning never lets a quoted path run past a backtick.
+
+### Added
+
+- `@leanish/agent-runtime` exports `errors`, `skill/validate-compat` and `types/effort`, which the incubator's adapters
+  will need once it adopts the package, and no tool here uses.
+- `@leanish/agent-runtime` can be packed for npm as compiled JavaScript with declarations
+  (`npm run pack -w @leanish/agent-runtime`), versioned as the release, so other repositories can install it;
+  publishing it is the owner's optional step (see [releasing](docs/releasing.md#publishing-leanishagent-runtime)). Its
+  new `guardDir()` (`@leanish/agent-runtime/guard-dir`) finds the guards from the sources and from the package.
+- `npm run clean` removes generated outputs (Vitest's caches and coverage) from the root and each workspace, and
+  `npm run clean:deps` also removes `node_modules`; both are documented in the README's Development section.
+
 ### Fixed
 
 - Repository advisories that are neither published nor withdrawn (drafts) are skipped before their optional fields are
@@ -10,6 +35,14 @@
 - A local action or workflow whose path leaves the repository (`uses: ./../x`) fails the read from the working tree,
   as it already did from a commit, instead of being read from outside the checkout. A symbolic link pointing outside
   is still followed from the working tree (see coverage gaps).
+- The Claude Code runner leaves the claude.ai account's connectors, Claude Code's bundled skills (`/loop`,
+  `/schedule`, `security-review` and the rest; a real run listed 17 besides the agent's own) and its authoring plugin
+  out of every run, and denies `PublishPlugin` with the other outward tools. It puts `--` before the prompt (with two
+  or more working copies and no model or effort, `--add-dir` read the prompt as one more directory), and runs a call
+  without a working copy in an empty directory of its own instead of the tool's (the Codex runner still uses the tool's).
+- Breaking for direct constructions: the Claude Code runner takes a required `confinement`: `sandbox`, what secure-it and bump-it use, or `restricted`
+  (only the read tools, no sandbox needed, write runs refused) for hosts without Claude Code's sandbox, such as the
+  incubator's Lambda functions.
 - bump-it's "What bump-it moved" table lists lockfile-only copy changes (an in-range npm update) as rows, next to the
   declared moves, instead of bullets under an empty table; a PR with no rows shows no table.
 

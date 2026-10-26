@@ -97,12 +97,8 @@ core/tool-runtime/run.sh bump-it review leanish/widget   # every few hours
 - Verification fences off policy changes first, then requires exact planned lockfiles and dependency fields, exact
   planned Gradle declarations, unchanged unplanned declarations and floors, interpreted strict declarations and strict
   constraints matching the Gradle reference, correct action pins, and all generated wrapper bytes/modes plus official checksums. Only after every local check passes does it run
-  `compare`, which must also pass. A report of local problems means `compare` has not run.
-  At each Maven security floor location, head must retain every base declaration with its original version, counting duplicates
-  and declarations without a version. A planned plugin may add declarations; head must resolve at or above the
-  recorded floor by Maven ordering. An absent head resolution is allowed only if base did not resolve the package there.
-  Compatibility floors retain exact declaration comparison. Every added declaration must also appear in the independent
-  Gradle reference built from base plus the plan; a planned plugin move alone does not authorize extra declarations.
+  `compare`, which must also pass. A report of local problems means `compare` has not run. Floor declarations are
+  checked as in [secure-it's verification](../secure-it/README.md#what-a-run-does) (step 6).
 - Open PRs count only when the head matches their body state or the exact tool journal entry. Same plan: leave it to
   review. Changed plan: redo on a clean base checkout, apply the new plan, verify and append a normal commit to the
   existing PR history. Earlier major adaptations are redone for the new target.
@@ -138,11 +134,6 @@ A routine with only npm and wrapper moves needs no agent.
 
 ## Review
 
-A verified CI adaptation replaces the PR title and description with the agent's new verdict and check results,
-keeping the verified plan and publication state markers. Agent descriptions must not include those reserved
-plan or state markers; the tool writes them. Before pushing or editing a PR, publication checks the cleaned title
-(nonblank, at most 256 UTF-16 units) and marked body (at most 65,536) against the client's limits.
-
 The [shared tick](../core/tool-runtime) leaves human pushes alone, recomputes on any base movement before reading CI, then
 handles pending/green checks without a model. A routine recomputes the whole routine; a major recomputes its package.
 
@@ -167,13 +158,10 @@ Use `~/.config/leanish/bump-it/agent.yaml`, with explicit repository opt-in; the
 preview, the first live run, and four complete launchd examples (a run and a review for each tool). Nothing
 merges itself.
 
-**npm 11.17.0 or later is required whenever the final age-exclusion list is non-empty**: own npm scopes or
-young/unreadable locked base versions need `min-release-age-exclude`. With older npm, the run reports the affected unit
-as failed with the reason, excluded names, and required and detected versions, before editing npm files or publishing.
-Without exclusions, use npm with min-release-age support. The unit tests need no npm installation or registry requests.
+**npm 11.17.0 or later is required whenever the final age-exclusion list is non-empty**
+([prerequisites](../docs/adopting-tools.md#prerequisites)): with older npm, the run reports the affected unit as failed
+before editing npm files or publishing. The unit tests need no npm installation or registry requests.
 
-The tool alone receives the write token (default Keychain service `leanish-bump-it-write`); the agent receives only the
-read token (`leanish-bump-it-read`). npm resolution, Gradle inventories and wrapper generation run under
-`codex sandbox`, and the agent's own commands in its CLI's sandbox, with protected home paths and git metadata, and
-writes restricted to the working copy, temp and build cache. The pinned OSV-Scanner stays in protected tool state,
-verified immediately before running. See [the security model](../docs/security-model.md#secure-it-and-bump-it).
+The default Keychain services are `leanish-bump-it-write` and `leanish-bump-it-read`. Which process gets which token,
+what the sandboxes allow and how the pinned OSV-Scanner is protected are in
+[the security model](../docs/security-model.md#secure-it-and-bump-it).

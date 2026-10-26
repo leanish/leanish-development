@@ -48,6 +48,16 @@ describe("codexIsolation", () => {
     });
   });
 
+  it("sets no git identity when none is given, leaving the rest of the env alone", () => {
+    const machine = { home: HOME, env: { PATH: "/usr/bin:/bin" }, exists: () => false };
+    const named = codexIsolation(SETTINGS, machine);
+    const anonymous = codexIsolation({ ...SETTINGS, commitIdentity: undefined }, machine);
+    const identityFree = Object.entries(named.env ?? {}).filter(([name]) => !/^GIT_(AUTHOR|COMMITTER)_/.test(name));
+    expect(identityFree).toHaveLength(Object.keys(named.env ?? {}).length - 4);
+    expect(anonymous.env).toEqual(Object.fromEntries(identityFree));
+    expect(anonymous.readDenied).toEqual(named.readDenied);
+  });
+
   it("reuses $CODEX_HOME's login and the repository's release age, its own scopes exempt", () => {
     const options = codexIsolation({ ...SETTINGS, releaseAgeDays: 3, releaseAgeExclude: ["@leanish/*", "@acme/*"], commandPath: [] }, { home: HOME, env: { CODEX_HOME: "/opt/codex" }, exists: () => false });
     expect(options.loginHome).toBe("/opt/codex");
