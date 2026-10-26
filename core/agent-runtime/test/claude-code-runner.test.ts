@@ -199,7 +199,7 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     expect(settings.permissions.deny).toEqual(expect.arrayContaining([
       "Artifact", "ArtifactComments", "ArtifactData", "ShareOnboardingGuide", "DesignSync", "PushNotification", "SendMessage",
       "RemoteTrigger", "CronCreate", "CronDelete", "ScheduleWakeup", "Workflow", "WebFetch", "WebSearch",
-      "EnterWorktree", "ExitWorktree", "ListAgents", "Monitor", "Task", "Agent",
+      "EnterWorktree", "ExitWorktree", "ListAgents", "Monitor", "Task", "Agent", "PublishPlugin",
     ]));
     expect(settings.disableAllHooks).toBe(true);
     expect(settings.claudeMdExcludes).toContain("**/CLAUDE.md");
