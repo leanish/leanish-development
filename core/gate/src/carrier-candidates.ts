@@ -17,7 +17,7 @@ import type { LockedPackage } from "./npm-lock.ts";
 import type { NpmRegistry } from "./npm-registry.ts";
 import { type PackageVersion, versionKey } from "./package-version.ts";
 import type { Snapshot } from "./snapshot.ts";
-import { compatibleLine, fixes, movesFrom, type VersionCatalog, type Veto, vetoFields } from "./young-fixes.ts";
+import { compatibleLine, fixes, movesFrom, type VersionCatalog, type Veto, vetoFields, vetoNote } from "./young-fixes.ts";
 
 /** A bundled package a carrier move replaces. */
 export interface CarriedPackage {
@@ -161,6 +161,8 @@ export async function decideCarrier(group: CarrierGroup, own: ReadonlyArray<stri
     config: context.config,
     now: context.now,
   });
+  // Only this report names the vetoes; verification's message keeps the bare reason.
+  if (choice.kind === "none") return { ...none(`${choice.reason}${vetoNote(choice.vetoed)}`), unfixable };
   if (choice.kind !== "chosen") return { ...none(choice.reason), unfixable };
   const line = (version: string) => compatibleLine(context.config, pkg, version);
   return {

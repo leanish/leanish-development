@@ -52,13 +52,16 @@ describe("selectWork", () => {
   it("keeps every failing copy together, and reports blocked groups without blocking the batch", () => {
     const old = fix({ name: "guava", from: "33.5.0-jre", ecosystem: "Maven" });
     const newer = fix({ name: "guava", from: "33.7.1-jre", ecosystem: "Maven" });
-    const blocked = fix({ name: "aaa", from: "1.0.0", severity: "CRITICAL", to: { version: "1.0.1", line: "1", aged: true, major: false, blockers: ["identity break"] } });
+    const blocked = fix({
+      name: "aaa", from: "1.0.0", severity: "CRITICAL", to: { version: "1.0.1", line: "1", aged: true, major: false, blockers: ["identity break"] },
+      notes: ["aaa@2.0.0 has GHSA-repo (unreviewed): these advisories alone don't trigger an update"],
+    });
     const partly = fix({ name: "aab", from: "1.0.0", severity: "CRITICAL" });
     const stuck = fix({ name: "aab", from: "2.0.0", severity: "CRITICAL", to: undefined, problem: "no fix" });
     const selection = selectWork([old, blocked, partly, stuck, newer]);
     expect(selection.units[0]!.work.map((f) => f.from)).toEqual(["33.5.0-jre", "33.7.1-jre"]);
     expect(selection.blocked).toEqual([
-      { packages: ["npm|aaa"], reasons: ["aaa@1.0.0: identity break"] },
+      { packages: ["npm|aaa"], reasons: ["aaa@1.0.0: identity break; aaa@2.0.0 has GHSA-repo (unreviewed): these advisories alone don't trigger an update"] },
       { packages: ["npm|aab"], reasons: ["aab@2.0.0: no fix"] },
     ]);
   });
