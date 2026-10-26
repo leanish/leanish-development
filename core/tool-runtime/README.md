@@ -83,4 +83,4 @@ package is the code around them. Setup and operation are in [Adopting the tools]
   repository (exit 75 while another run holds it), and writes the final line itself when it stops before the tool
   reports.
 
-Parts adapted from leanish-development's bump-it are listed in [PROVENANCE.md](PROVENANCE.md).
+Parts adapted from the incubator's bump-it are listed in [PROVENANCE.md](PROVENANCE.md).

@@ -2,7 +2,7 @@
   "name": "@leanish/agent-runtime",
   "version": "0.0.0",
   "private": true,
-  "description": "What secure-it and bump-it need to run a coding agent: Codex and Claude runners, skills, usage, git workspace, GitHub client, logger. Copied from leanish-development's runtime (see PROVENANCE.md).",
+  "description": "What secure-it and bump-it need to run a coding agent: Codex and Claude runners, skills, usage, git workspace, GitHub client, logger. The shared core the incubator's runtime is to consume (see PROVENANCE.md).",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -29,6 +29,7 @@
     "yaml": "^2.9.1"
   },
   "exports": {
+    "./errors": "./src/errors.ts",
     "./github/github-client": "./src/github/github-client.ts",
     "./guard-dir": "./src/guard-dir.ts",
     "./isolation": "./src/isolation.ts",
@@ -43,8 +44,10 @@
     "./skill/runner": "./src/skill/runner.ts",
     "./skill/skill-loader": "./src/skill/skill-loader.ts",
     "./skill/spawn-capture": "./src/skill/spawn-capture.ts",
+    "./skill/validate-compat": "./src/skill/validate-compat.ts",
     "./skill/validator": "./src/skill/validator.ts",
     "./types/clients": "./src/types/clients.ts",
+    "./types/effort": "./src/types/effort.ts",
     "./types/logger": "./src/types/logger.ts",
     "./types/repo-source": "./src/types/repo-source.ts",
     "./types/working-copy": "./src/types/working-copy.ts",

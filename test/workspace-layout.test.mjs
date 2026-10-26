@@ -78,7 +78,11 @@ const ALLOWED = {
 };
 
 // Published packages' public API that may have no consumer in this repository; every other export needs one.
-const PUBLIC_EXPORTS = {};
+const PUBLIC_EXPORTS = {
+  // What the incubator's adapters use and no tool here does: its errors extend the runtime's, and it validates its
+  // descriptors' skills and effort.
+  "@leanish/agent-runtime": ["./errors", "./skill/validate-compat", "./types/effort"],
+};
 
 function directionProblem(source, target, testFile = false) {
   if (target === "@leanish/setup" && testFile && source !== target) return undefined;
@@ -121,7 +125,11 @@ test("exports list exactly the TypeScript modules consumed by other packages, pl
   for (const [directory, manifest] of packages) {
     const consumed = new Set(imports.filter((entry) => entry.directory !== directory && entry.specifier.startsWith(`${manifest.name}/`))
       .map((entry) => `.${entry.specifier.slice(manifest.name.length)}`));
-    for (const subpath of PUBLIC_EXPORTS[manifest.name] ?? []) consumed.add(subpath);
+    for (const subpath of PUBLIC_EXPORTS[manifest.name] ?? []) {
+      // Once something here imports it, the export needs no exception.
+      assert.ok(!consumed.has(subpath), `${manifest.name}/${subpath}: consumed here, so drop it from PUBLIC_EXPORTS`);
+      consumed.add(subpath);
+    }
     assert.deepEqual(Object.keys(manifest.exports).sort(), [...consumed].sort(), manifest.name);
     for (const [subpath, target] of Object.entries(manifest.exports)) {
       assert.ok(target.startsWith("./") && target.endsWith(".ts") && !target.includes("*"), `${manifest.name}/${subpath}: explicit TypeScript source required`);
