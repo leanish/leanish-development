@@ -6,13 +6,15 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 
 - **Dependencies without a GitHub source repository** (npm `repository` and POM `scm` name none): OSV still covers them; their own repository advisories can't be read.
 - **A known source repository whose advisories can't be read**: renamed, deleted or made private (404).
-- **Repository advisory ranges the gate can't read**: free-text ranges are read as maintainers write them (`< 1.1.21, >= 2.0.0 < 2.1.7`, `6.x <6.1.2`, `4.0–33.7.1`, `≤ 3.4.1`, `4.1.91.Final =< 4.1.117.Final`), but prose such as `< 2.245.0 (on Windows, < 2.246.0)` is reported, not guessed. One reading is known to over-match: an AND range written upper bound first (`< 2.0.0, >= 1.0.0`) reads as every version.
+- **Repository advisory ranges the gate can't read**: free-text ranges are read as maintainers write them (`< 1.1.21, >= 2.0.0 < 2.1.7`, `6.x <6.1.2`, `4.0–33.7.1`, `≤ 3.4.1`, `4.1.91.Final =< 4.1.117.Final`), but prose such as `< 2.245.0 (on Windows, < 2.246.0)` is reported, not guessed.
 - **Unpinned or unverified remote actions** a PR didn't touch (`uses: actions/checkout@v7`): their version (and advisories) can't be told. A new or changed remote action or reusable workflow must be pinned; that fails, it isn't a gap.
 - **`docker://` actions**, new or not: no advisory source covers container images.
 - **Local actions without an `action.yml`**, and local reusable workflows that don't exist.
 
 ## Limits
 
+- **A repository advisory range read too wide**: an AND range written upper bound first (`< 2.0.0, >= 1.0.0`) reads
+  as every version, so versions outside it count as affected; nothing reports it.
 - **GitHub source repository matching stays as in v0.5.2**: a repository URL whose host only ends in `github.com`
   (`notgithub.com/acme/lib`), or names it in a path, query or fragment, can be read as the wrong GitHub repository.
   A numeric port in a URL (`https://github.com:443/acme/lib`) can be read as the owner (`443/acme`). These limits
