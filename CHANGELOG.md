@@ -5,8 +5,9 @@
 ### Changed
 
 - Documentation: repeated rules now live in one place each, linked from the others.
-- secure-it's PR text shows the names, versions, advisory ids and reasons that registries and advisory sources supply
-  as literal code spans, so a link, mention or markup in them stays text; it replaces the per-case escaping.
+- secure-it's PR text shows what registries, lockfiles and advisory sources supply (names, versions, advisory ids,
+  locations, notes and failure reasons) as literal code spans, so a link, mention, comment or table pipe in them stays
+  text; it replaces the per-case escaping. Path cleaning never lets a quoted path run past a backtick.
 
 ### Fixed
 
