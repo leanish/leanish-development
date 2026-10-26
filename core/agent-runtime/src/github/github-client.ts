@@ -46,7 +46,10 @@ export class GitHubApiError extends RuntimeError {
   }
 }
 
-/** Why GitHub refused a request: a rate limit (primary or secondary) says so in its headers, other 403s are a refusal. */
+/**
+ * Why GitHub refused a request: a rate limit (primary or secondary) whose headers say so, or a refusal. A limit without
+ * those headers can't be told from a refusal, so it counts as one.
+ */
 function refusal(response: Response): string {
   const limited = response.headers.get("x-ratelimit-remaining") === "0" || response.headers.has("retry-after");
   if (limited && (response.status === 403 || response.status === 429)) return "rate limited";
