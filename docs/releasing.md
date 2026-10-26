@@ -1,7 +1,9 @@
 # Releasing supply-chain
 
-All workspace packages remain private. Consumers use a reviewed Git commit;
-there is no npm publication. The root version identifies the release.
+All workspace packages stay private in this repository, and adopters use a
+reviewed Git commit. The root version identifies the release. One package,
+`@leanish/agent-runtime`, can also be published to npm from a release; see
+[Publishing @leanish/agent-runtime](#publishing-leanishagent-runtime).
 
 The flow follows java-conventions: a small release PR with a dated CHANGELOG
 entry, merged, its exact merge commit tagged, and a matching GitHub release. A
@@ -92,7 +94,7 @@ unreleased changes collect under its "Unreleased" heading.
    Squash-merge the release PR and create a lightweight `v<version>` tag at
    **its exact merge commit**. Create the matching GitHub release with the fixes
    and a link to `CHANGELOG.md`, as java-conventions does. Do not move an
-   existing tag or publish packages.
+   existing tag; publishing `@leanish/agent-runtime` is a separate step (below).
 6. When the reusable workflow or gate code changes, resolve the tag's full commit
    SHA and repin adopting workflows to
    `leanish/leanish-development/.github/workflows/supply-chain.yml@<full-sha> # v<version>`.
@@ -110,3 +112,21 @@ unreleased changes collect under its "Unreleased" heading.
 
 These steps release supply-chain only; consumer repository releases are separate
 decisions. Subsequent development must not move a released tag or an adopter's pin.
+
+## Publishing @leanish/agent-runtime
+
+`@leanish/agent-runtime` can be published to npm as compiled JavaScript with
+declarations, so other repositories can run a coding agent the same way. It is
+optional, not part of every release: publishing is the owner's decision and
+step, with their npm credentials or trusted publishing.
+
+1. Check out the commit of a stable `v<version>` tag.
+2. Run `npm ci`, then `npm run pack -w @leanish/agent-runtime -- --out <absolute-dir>`.
+   It stages the package outside the checkout with the release's version (the
+   root `package.json`'s) and prints the tarball's path as its last line; its
+   [README](../core/agent-runtime/README.md#publishing) says what it contains.
+3. Publish that tarball (`npm publish <tarball>`; a scoped package is
+   restricted unless `--access public` is given).
+
+The repository's manifest keeps `private: true` and `0.0.0`; only the staged
+one is published.

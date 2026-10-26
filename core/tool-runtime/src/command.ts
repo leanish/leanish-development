@@ -17,6 +17,7 @@ import { Writable } from "node:stream";
 import { isDeepStrictEqual, parseArgs } from "node:util";
 
 import { createGitHubClient } from "@leanish/agent-runtime/github/github-client";
+import { guardDir } from "@leanish/agent-runtime/guard-dir";
 import { codexIsolation } from "@leanish/agent-runtime/isolation";
 import type { CodexRunnerOptions } from "@leanish/agent-runtime/skill/codex-runner";
 import { ConsoleLogger } from "@leanish/agent-runtime/logger/console-logger";
@@ -46,7 +47,7 @@ import { changedSince, fileState, type FileState, git } from "./git-copies.ts";
 import { runProcess } from "@leanish/gate/process";
 import { safePath } from "./local-files.ts";
 
-const GUARD_DIR = fileURLToPath(new URL("../../agent-runtime/guard", import.meta.url));
+const GUARD_DIR = guardDir();
 
 /** What a tool's `run` or `review` gets. */
 export interface ToolRunContext {
