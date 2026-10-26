@@ -392,10 +392,12 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     const stagingParentDir = await mkdtemp(join(tmpdir(), "claude-runner-staging-"));
     const wc = await separateGitCopy();
     const { bin, record } = await makeStub([result(ANSWER)]);
-    await expect(new ClaudeCodeRunner({ confinement: "restricted", bin, stagingParentDir }).run(call({ workingCopies: [wc], access: "write" })))
+    const usages: SkillUsage[] = [];
+    await expect(new ClaudeCodeRunner({ confinement: "restricted", bin, stagingParentDir }).run(call({ workingCopies: [wc], access: "write", onUsage: (usage) => usages.push(usage) })))
       .rejects.toThrow("access 'write' needs the 'sandbox' confinement");
     expect(await readdir(stagingParentDir)).toEqual([]);
     expect(existsSync(record)).toBe(false);
+    expect(usages).toEqual([expect.objectContaining({ tokens: expect.objectContaining({ total: 0 }), quota: { status: "not-applicable", reason: "no provider call was made" } })]);
   });
 
   it("cleans up its staged dir and its empty working directory after a timeout", async () => {

@@ -22,7 +22,7 @@
   out of every run, and denies `PublishPlugin` with the other outward tools. It puts `--` before the prompt (with two
   or more working copies and no model or effort, `--add-dir` read the prompt as one more directory), and runs a call
   without a working copy in an empty directory of its own instead of the tool's (the Codex runner still uses the tool's).
-- The Claude Code runner takes a required `confinement`: `sandbox`, what secure-it and bump-it use, or `restricted`
+- Breaking for direct constructions: the Claude Code runner takes a required `confinement`: `sandbox`, what secure-it and bump-it use, or `restricted`
   (only the read tools, no sandbox needed, write runs refused) for hosts without Claude Code's sandbox, such as the
   incubator's Lambda functions.
 - bump-it's "What bump-it moved" table lists lockfile-only copy changes (an in-range npm update) as rows, next to the
