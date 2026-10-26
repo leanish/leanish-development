@@ -1,7 +1,7 @@
 // The package as npm would publish it: packed by scripts/pack.mjs, installed into a consumer outside this repository,
 // then loaded by plain Node and type-checked against its declarations.
 import { execFileSync, spawnSync } from "node:child_process";
-import { globSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, globSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -121,7 +121,8 @@ export function log(logger: Logger): Logger {
 // @ts-expect-error A RepoSource needs its source; this fails only while the declarations are really checked.
 export const incomplete: RepoSource = { id: "owner/repo" };
 `);
-    const typeRoots = dirname(dirname(require.resolve("@types/node/package.json")));
+    // Node's types come from the consumer's own install, through the package's peer dependency.
+    expect(existsSync(join(consumer, "node_modules", "@types", "node", "package.json"))).toBe(true);
     writeFileSync(join(consumer, "tsconfig.json"), JSON.stringify({
       compilerOptions: {
         target: "ES2024",
@@ -130,9 +131,7 @@ export const incomplete: RepoSource = { id: "owner/repo" };
         strict: true,
         skipLibCheck: false,
         noEmit: true,
-        // The consumer would install @types/node itself; this repository's copy stands in for it.
         types: ["node"],
-        typeRoots: [typeRoots],
       },
       files: ["consumer.ts"],
     }));
