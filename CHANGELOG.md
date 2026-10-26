@@ -18,6 +18,8 @@
 
 ### Added
 
+- `@leanish/agent-runtime` exports `errors`, `skill/validate-compat` and `types/effort`, which the incubator's adapters
+  need and no tool here uses.
 - `@leanish/agent-runtime` can be packed for npm as compiled JavaScript with declarations
   (`npm run pack -w @leanish/agent-runtime`), versioned as the release, so other repositories can install it;
   publishing it is the owner's optional step (see [releasing](docs/releasing.md#publishing-leanishagent-runtime)). Its

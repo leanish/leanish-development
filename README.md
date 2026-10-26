@@ -54,8 +54,8 @@ In Claude Code or Codex desktop, ask "install bump-it", "install secure-it", or 
 - [`@leanish/tool-runtime`](core/tool-runtime): shared config, sandboxed inventories,
   publication (PR text cleanup, race checks, journal recovery), review ticks and `run.sh`
 - [`@leanish/agent-runtime`](core/agent-runtime): the Codex and Claude Code runners and their
-  support, mostly copied from leanish-development's runtime, with
-  [provenance](core/agent-runtime/PROVENANCE.md)
+  support; the shared core the incubator's runtime is to consume, and the one package that may be published to
+  npm ([provenance](core/agent-runtime/PROVENANCE.md))
 
 ## Development
 

@@ -78,7 +78,11 @@ const ALLOWED = {
 };
 
 // Published packages' public API that may have no consumer in this repository; every other export needs one.
-const PUBLIC_EXPORTS = {};
+const PUBLIC_EXPORTS = {
+  // What the incubator's adapters use and no tool here does: its errors extend the runtime's, and it validates its
+  // descriptors' skills and effort.
+  "@leanish/agent-runtime": ["./errors", "./skill/validate-compat", "./types/effort"],
+};
 
 function directionProblem(source, target, testFile = false) {
   if (target === "@leanish/setup" && testFile && source !== target) return undefined;

@@ -1,6 +1,6 @@
 # Provenance
 
-Parts of this package are adapted from [leanish/leanish-development](https://github.com/leanish/leanish-development) (private) at `c6282df` (tag `agent-basics-source`), from its bump-it agent. As with [`agent-runtime`](../agent-runtime/PROVENANCE.md), the copy is temporary: a fix in one copy is replicated by hand in the other until a shared `leanish/agent-kit` replaces both.
+Parts of this package are adapted from the incubator ([leanish/leanish-development-incubator](https://github.com/leanish/leanish-development-incubator), private, then named leanish/leanish-development) at `c6282df` (tag `agent-basics-source`), from its bump-it agent. Unlike [`agent-runtime`](../agent-runtime/PROVENANCE.md), which the incubator is to consume, these stay tool code here: while both copies exist, a fix in one is replicated by hand in the other.
 
 | File | Source | How | Local changes |
 |---|---|---|---|
