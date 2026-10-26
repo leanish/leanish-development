@@ -50,7 +50,7 @@ import type { Snapshot } from "./snapshot.ts";
 import { takeSnapshot } from "./take-snapshot.ts";
 import type { Tree } from "./tree.ts";
 import { type Ecosystem, versionScheme } from "./versions.ts";
-import { compatibleLine, fixes, movesFrom, nearestVetoes, reviewedGroups, ruleChoice, targetsOf, type VersionCatalog, type Veto, vetoesOf, vetoFields } from "./young-fixes.ts";
+import { compatibleLine, fixes, movesFrom, nearestVetoes, reviewedGroups, ruleChoice, targetsOf, type VersionCatalog, type Veto, vetoesOf, vetoFields, vetoNote } from "./young-fixes.ts";
 
 const DAY_MS = 86_400_000;
 
@@ -370,8 +370,10 @@ async function chooseMove(
     }
     return none(`no clean version of ${pkg.name} at least ${config.releaseAgeDays} days old to leave the malicious ${pkg.version} for`);
   }
-  if (fixable.length === 0) return none(`no version above ${pkg.version} fixes ${targets.join(", ")}`);
-  if (fixing.length === 0) return none(`no single version above ${pkg.version} fixes all of ${fixable.join(", ")}, though each has a fix`);
+  // A refusal names what unreviewed advisories alone ruled out, judged against every target.
+  const refused = (why: string) => none(`${why}${vetoNote(vetoesOf(snapshot, name, pkg.version, targets, moves))}`);
+  if (fixable.length === 0) return refused(`no version above ${pkg.version} fixes ${targets.join(", ")}`);
+  if (fixing.length === 0) return refused(`no single version above ${pkg.version} fixes all of ${fixable.join(", ")}, though each has a fix`);
   if (own) {
     // Own packages skip the wait: the lowest fix in the first line that has one.
     const first = line(fixing[0]!);

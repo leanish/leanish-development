@@ -281,6 +281,16 @@ describe("securityCandidates and repository-only advisories", () => {
     expect(fix).toMatchObject({ targets: ["GHSA-a"], to: { version: "1.0.2", aged: false }, vetoed: [{ version: "1.0.1", advisories: ["GHSA-b"] }] });
   });
 
+  it("names the vetoes when they rule out every fix, and counts what it doesn't show", async () => {
+    const env = withRepositoryAdvisories(environment({ "lib@1.0.0": ["GHSA-a"] }, { lib: { "1.0.0": OLD, "1.0.1": OLD, "1.0.2": OLD } }), [repositoryAdvisory("GHSA-b", ">= 1.0.1")]);
+    const [fix] = (await securityCandidates(await tree({ lib: "1.0.0" }), env)).fixes;
+    expect(fix?.problem).toBe("no version above 1.0.0 fixes GHSA-a; advisories no reviewed source corroborates ruled out 1.0.1 (GHSA-b), 1.0.2 (GHSA-b)");
+    const versions = Object.fromEntries(Array.from({ length: 13 }, (_, i) => [`1.0.${i}`, OLD]));
+    const many = withRepositoryAdvisories(environment({ "lib@1.0.0": ["GHSA-a"] }, { lib: versions }), [repositoryAdvisory("GHSA-b", ">= 1.0.1")]);
+    const [counted] = (await securityCandidates(await tree({ lib: "1.0.0" }), many)).fixes;
+    expect(counted?.problem).toMatch(/ruled out 1\.0\.1 \(GHSA-b\), .*1\.0\.10 \(GHSA-b\) and 2 more$/);
+  });
+
   it("records the vetoes nearest the choice, on either side, and counts the rest", async () => {
     // One open-ended repository advisory over 24 candidates below the aged fix 1.0.25.
     const versions = Object.fromEntries(Array.from({ length: 31 }, (_, i) => [`1.0.${i}`, OLD]));

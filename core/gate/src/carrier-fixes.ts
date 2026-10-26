@@ -39,7 +39,7 @@ import type { NpmRegistry } from "./npm-registry.ts";
 import type { PackageName, PackageVersion } from "./package-version.ts";
 import type { Snapshot } from "./snapshot.ts";
 import { versionScheme } from "./versions.ts";
-import { compatibleLine, fixes, groupsOf, nearestVetoes, reviewedGroups, unreviewedGroups, type VersionCatalog, type Veto } from "./young-fixes.ts";
+import { compatibleLine, fixes, groupsOf, nearestVetoes, reviewedGroups, unreviewedGroups, type VersionCatalog, type Veto, vetoNote } from "./young-fixes.ts";
 
 const DAY_MS = 86_400_000;
 /** Bundles read before each new advisory snapshot. */
@@ -128,7 +128,7 @@ async function fixTargets(search: CarrierSearch, services: CarrierServices, stat
     return state.chosen(version, line(version), true);
   }
   if (first !== undefined) return state.chosen(first, line(first), false);
-  return { kind: "none", reason: `no ${search.carrier} version above ${search.from} ships a bundle without ${describe(search.carried)}${search.own.length === 0 ? "" : ` and fixes ${search.own.join(", ")}`}` };
+  return { kind: "none", reason: `no ${search.carrier} version above ${search.from} ships a bundle without ${describe(search.carried)}${search.own.length === 0 ? "" : ` and fixes ${search.own.join(", ")}`}${vetoNote(state.vetoes())}` };
 }
 
 async function leaveMalware(search: CarrierSearch, services: CarrierServices, state: SearchState): Promise<CarrierChoice> {
@@ -184,14 +184,19 @@ class SearchState {
   chosen(version: string, line: string, aged: boolean, order: ReadonlyArray<string> = this.#search.versions): CarrierChoice {
     const bundle = this.#bundles.get(version);
     if (bundle === undefined || !bundle.complete || this.#snapshot === undefined) throw new Error(`${this.#search.carrier}@${version} was chosen unread`);
+    return { kind: "chosen", version, line, aged, bundle, snapshot: this.#snapshot, ...nearestVetoes(this.vetoes(version), order, version) };
+  }
+
+  /** The versions read so far, `except` aside, that only advisories no reviewed source corroborates rule out. */
+  vetoes(except?: string): Veto[] {
     const snapshot = this.#snapshot;
-    const vetoed = this.#search.versions.flatMap((other) => {
+    if (snapshot === undefined) return [];
+    return this.#search.versions.flatMap((other) => {
       const read = this.#bundles.get(other);
-      if (other === version || read === undefined || !read.complete) return [];
+      if (other === except || read === undefined || !read.complete) return [];
       const veto = carrierVeto(this.#search, other, read, snapshot);
       return veto === undefined ? [] : [veto];
     });
-    return { kind: "chosen", version, line, aged, bundle, snapshot, ...nearestVetoes(vetoed, order, version) };
   }
 
   #covered(): PackageVersion[] {

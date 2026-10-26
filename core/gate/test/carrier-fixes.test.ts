@@ -230,6 +230,14 @@ describe("carrier versions ruled out only by unreviewed advisories", () => {
     });
   });
 
+  it("names the vetoes when they rule out every version it read", async () => {
+    const vetoing = bundle("brace@5.0.12", "minimatch@10.2.5", "glob@2.0.0");
+    const { services } = setup({ "2.10.0": { days: 30, bundle: vetoing }, "2.11.0": { days: 30, bundle: vetoing } });
+    const choice = await chooseCarrier(search(["2.10.0", "2.11.0"]), services);
+    expect(choice).toMatchObject({ kind: "none" });
+    expect(choice.kind === "none" ? choice.reason : "").toMatch(/; advisories no reviewed source corroborates ruled out 2\.10\.0 \(GHSA-glob-repo\), 2\.11\.0 \(GHSA-glob-repo\)$/);
+  });
+
   it("records the nearest ten it read and counts the rest", async () => {
     const vetoing = bundle("brace@5.0.12", "minimatch@10.2.5", "glob@2.0.0");
     const passed = Array.from({ length: 12 }, (_, i) => `2.10.${i}`);

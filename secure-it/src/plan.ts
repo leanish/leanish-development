@@ -111,9 +111,9 @@ export interface ChangePlan {
   /** For the branch name: `security`, `security-cooldown-<package>`, `<package>-major`, `malware`, or `floor-removal`. */
   readonly topic: string;
   /**
-   * A held routine unit's own packages (`ecosystem|name` of its fixes), without the companions planning adds to
-   * `packages`: what tells which open PR stands for which held unit (`heldMembers`). A retry that leaves moves out
-   * keeps them: the PR still stands for the whole unit.
+   * A held routine unit's `packages` as planned (`ecosystem|name` of its fixes and the npm peers selection adds), before
+   * `requiredNpmPlan` adds the required npm dependencies to `packages`: what tells which open PR stands for which held
+   * unit (`heldMembers`). A retry that leaves moves out keeps them: the PR still stands for the whole unit.
    */
   readonly members?: ReadonlyArray<string>;
   readonly malware: boolean;
@@ -262,7 +262,8 @@ export interface Selection {
 }
 
 const isActionable = (fix: SecurityFix) => fix.to !== undefined && fix.to.blockers.length === 0;
-const reasonOf = (fix: SecurityFix) => `${fix.name}@${fix.from}: ${fix.problem ?? fix.to?.blockers.join("; ") ?? "no move"}`;
+// A blocked fix's notes (the package's unreviewed-only findings) go with its reason: nothing else reports them.
+const reasonOf = (fix: SecurityFix) => [`${fix.name}@${fix.from}: ${fix.problem ?? fix.to?.blockers.join("; ") ?? "no move"}`, ...fix.notes ?? []].join("; ");
 
 /** Malware first and indivisible; otherwise a routine batch and one unit per major package. */
 export function selectWork(fixes: ReadonlyArray<SecurityFix>): Selection {

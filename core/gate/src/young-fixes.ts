@@ -144,6 +144,17 @@ export function vetoesOf(snapshot: Snapshot, pkg: PackageName, from: string, tar
   });
 }
 
+/**
+ * For a refusal: the candidates advisories no reviewed source corroborates alone ruled out, lowest first and at most
+ * `VETOES_SHOWN`, so the message names what a person could override; "" when there were none.
+ */
+export function vetoNote(vetoes: ReadonlyArray<Veto>): string {
+  if (vetoes.length === 0) return "";
+  const shown = vetoes.slice(0, VETOES_SHOWN).map((veto) => `${veto.version} (${veto.advisories.join(", ")})`);
+  const more = vetoes.length - shown.length;
+  return `; advisories no reviewed source corroborates ruled out ${shown.join(", ")}${more === 0 ? "" : ` and ${more} more`}`;
+}
+
 /** At most this many vetoes are recorded with a choice, the ones nearest it; the rest are counted (`nearestVetoes`). */
 export const VETOES_SHOWN = 10;
 

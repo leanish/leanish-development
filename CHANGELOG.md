@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- When a package's reviewed fix is blocked, secure-it's report keeps its unreviewed-only findings with the blocker's
+  reason, where 0.8.0 left them out (the gate still failed on them).
+- A refusal because no version fixes names the candidates that advisories no reviewed source corroborates ruled out
+  (at most ten, the rest counted), for ordinary fixes and npm carriers alike.
 - bump-it's "What bump-it moved" table lists lockfile-only copy changes (an in-range npm update) as rows, next to the
   declared moves, instead of bullets under an empty table; a PR with no rows shows no table.
 
