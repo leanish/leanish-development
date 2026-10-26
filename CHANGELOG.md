@@ -18,9 +18,10 @@
 ### Fixed
 
 - The Claude Code runner leaves the claude.ai account's connectors, Claude Code's bundled skills (`/loop`,
-  `/schedule`) and its authoring plugin out of every run, puts `--` before the prompt (with two or more working copies
-  and no model or effort, `--add-dir` read the prompt as one more directory), and runs a call without a working copy in
-  an empty directory of its own instead of the tool's.
+  `/schedule`, `security-review` and the rest; a real run listed 17 besides the agent's own) and its authoring plugin
+  out of every run, and denies `PublishPlugin` with the other outward tools. It puts `--` before the prompt (with two
+  or more working copies and no model or effort, `--add-dir` read the prompt as one more directory), and runs a call
+  without a working copy in an empty directory of its own instead of the tool's (the Codex runner still uses the tool's).
 - bump-it's "What bump-it moved" table lists lockfile-only copy changes (an in-range npm update) as rows, next to the
   declared moves, instead of bullets under an empty table; a PR with no rows shows no table.
 

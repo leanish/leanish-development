@@ -145,7 +145,12 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
     });
     // The file tools may read cwd, so with no working copy they get an empty directory of their own instead of
     // wherever the tool was started.
-    const emptyCwd = invocation.workingCopies.length === 0 ? await mkdtemp(join(tmpdir(), "claude-code-runner-empty-")) : undefined;
+    const emptyCwd = invocation.workingCopies.length === 0
+      ? await mkdtemp(join(tmpdir(), "claude-code-runner-empty-")).catch(async (err: unknown) => {
+        await staged.cleanup().catch(() => undefined);
+        throw err;
+      })
+      : undefined;
     const mount = emptyCwd !== undefined ? { cwd: emptyCwd, addDirs: [] } : resolveWorkingCopyMount(invocation.workingCopies);
     const sessionId = randomUUID();
     const sessionDir = join(homedir(), ".claude", "projects", (await realpath(mount.cwd).catch(() => mount.cwd)).replace(/[^A-Za-z0-9]/g, "-"), sessionId);
@@ -281,7 +286,7 @@ export interface ClaudeSettingsRequest {
 export const DENIED_TOOLS = [
   "Artifact", "ArtifactComments", "ArtifactData", "ShareOnboardingGuide", "DesignSync", "PushNotification", "SendMessage",
   "RemoteTrigger", "CronCreate", "CronDelete", "ScheduleWakeup", "Workflow", "WebFetch", "WebSearch",
-  "EnterWorktree", "ExitWorktree", "ListAgents", "Monitor", "Task", "Agent",
+  "EnterWorktree", "ExitWorktree", "ListAgents", "Monitor", "Task", "Agent", "PublishPlugin",
 ] as const;
 
 /** The inline settings of one run; see the class comment. Exported for tests. */
