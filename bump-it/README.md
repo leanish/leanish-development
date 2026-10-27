@@ -145,7 +145,7 @@ handles pending/green checks without a model. A routine recomputes the whole rou
   conflicts go to the agent's `resolve` mode), verify, publish normally. Clean same-target major merges preserve
   existing script/config adaptations.
 - While any dependency's publisher identity can't be decided on the new base (its check failed), the tick reports an
-  `error` and keeps the PR as it is: a dependency left without a move that way doesn't have nothing left to move.
+  `error` and keeps the PR as it is: a dependency left without a move that way may still have something to move.
 - If recomputation blocks a major's direct-peer set, the tick reports an `error` with the reason and retains the PR and
   branch for a later tick; it does not treat the blocked move as completed work.
 - Failed major CI gets at most two adaptations, with the attempt counted before the agent starts. Routine CI failures
