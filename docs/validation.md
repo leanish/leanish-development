@@ -865,3 +865,75 @@ What each step added, with rough API-equivalent cost:
   from its PRs; none reached rc.1.
 
 v0.8.2 (`fe93583`) is rc.1 plus its release metadata (#285).
+
+## Release reviews and candidates of 0.9.0 — 2026-10-27
+
+0.9.0 settles four architecture candidates before the incubator adopts `@leanish/agent-runtime`, in nine planned
+changes agreed with Sol: young versions judged in one gate module (#289), planning's identity baseline aligned with
+verification's (#290), PR ownership decided in one module (#291), an agent-neutral `isolationPolicy` (#292),
+`startRunReport` owning a run report's lifecycle (#293), the repository-advisory precedence (#294), held units no longer
+regrouped by errors (#296), `gradle.ignoreConfigurations` in secure-it's reference checks (#295) and a regular-expression
+lint (#297). Item 9's own gate found a tenth: npm's SLSA v0.2 provenance aborted the gate (#298). The candidates' reviews
+found four more (#300 to #303).
+
+Each PR had a Haiku pair, then Sol; most were written by a Claude sub-agent from a brief Sol had agreed, and read by
+Claude before review. Sol raised nine P2 and one P3 on six PRs (#289, #290, #291, #293, #296, #301), all fixed before
+merge; Haiku's real findings were fixed on eight PRs. One Haiku point on #302 (an identity outage reading as a quiet run)
+became an amendment Sol agreed to: such a unit is reported under `errors`.
+
+- **rc.1 (`ff0d769`)**: `batch` for both tools on all fixtures, with both adapters. Claude Code: secure-it 12 of 12
+  (8 PRs), bump-it 12 of 12 after rerunning one repository whose units hit the Claude CLI's session limit (reported per
+  unit). Codex: secure-it 12 of 12 (8 PRs), bump-it 12 of 12 (15 PRs). Every PR green. Haiku ×2 on
+  `git diff v0.8.2 v0.9.0-rc.1` found no blocker (their points settled with Sol); Sol, unprimed, found nothing. Astra
+  found a blocker: #294 kept a repository-only finding on the base, so it made a reviewed finding the head introduced
+  look inherited, a PR passing with a warning that v0.8.2 failed. Fixed in #300: a reviewed finding inherits only from
+  reviewed evidence.
+- **rc.2 (`762e325`)**: Sol, unprimed, found a blocker and a minor point. Blocker: since #290 an ordinary npm fix's identity check reads its
+  unit's carrier copy too, so one carrier's unreadable provenance (HTTP 503) aborted candidate discovery for the whole
+  repository (#302: the unit is blocked and reported under `errors`). Minor, already in v0.8.2: a final-line write that
+  fails made the stream's later `error` end the process with exit code 1 (#301; Sol then found two listener leaks on
+  dead streams, fixed). Fixtures with Claude Code: 12 of 12 each, CI green on every open fixture PR.
+- **rc.3 (`f0bf06f`)**: Sol, unprimed, found one major, a consequence of #302: review read a move lost to a failed
+  identity check as work the base no longer needed, retiring valid PRs and deleting their branches on a provenance
+  503 (an undecided malware fix retired the malware PR), and a run rewrote an existing PR without the undecided
+  package. Fixed in #303: when a review recomputes a PR after its base moved, it keeps the PR while any publisher
+  identity is undecided; a run doesn't rewrite a PR that moves an undecided package. Fixtures: the first attempt hit
+  the Claude CLI's weekly limit (still logged in to the exhausted account; reported per unit); after the owner
+  switched it, secure-it 12 of 12 (8 PRs) and bump-it 12 of 12 (15 PRs), CI green on every open fixture PR.
+- **rc.4 (`34b9da0`)**: fixtures with Claude Code, secure-it 12 of 12 (8 PRs) and bump-it 12 of 12 (15 PRs), CI green
+  on every open fixture PR; the adapters are unchanged since rc.1.
+  Sol, unprimed on a fresh clone and label, found nothing; Astra, on its thread, found nothing.
+- **Passes on v0.9.0**: the six fixture repins (`fixture-repin`) merged green.
+  - Pass 1 (2026-10-27 18:29Z): 28 commands, two failed on infrastructure: secure-it on dtv (`ENOTFOUND
+    registry.npmjs.org`) and bump-it on kryptovero (GitHub's advisories API answered HTTP 500 for one unit). Both were
+    rerun at 18:31Z, clean. Its seven repins came as PRs of their own: leanish-development#306, java-conventions#103,
+    sqs-codec#181 and leanish-skills#43 merged once green; leanish-development-incubator#42, dtv#59 and kryptovero#22,
+    whose CI is off, merged as they were. Two dependency refreshes (leanish-development#305,
+    leanish-development-incubator#41) are left for the owner.
+  - Pass 2 (2026-10-27 19:32Z): 28 commands, each exited 0 and none reported `errors` (only
+    notes); it opened nothing new and kept the two refreshes up to date.
+
+Known limitations, for 0.9.1 (listed in [coverage gaps](coverage-gaps.md)):
+- bump-it's Gradle reference checks still include `gradle.ignoreConfigurations`.
+- secure-it compares a failure in an ignored Gradle configuration verbatim, so an export's absolute path can make the
+  same failure read as different (it fails closed).
+- A hand-built `IsolationPolicy` without a build cache root fails at the cache path rather than at its boundary.
+- A carrier's other read failures and a direct peer's identity error still block quietly (`waiting`), not under
+  `errors`.
+
+The runtime's limits are in its README, including the `start` marker's failure notice written without a listener; the
+incubator gets 0.9.0's runtime fixes only when it adopts the published package.
+
+What each step added, with rough API-equivalent cost (about $209.5 in all, the sub-agents' cache writes priced at the
+1-hour rate; about $197 at the 5-minute rate they were logged at):
+- Haiku, 32 runs (about $1.55, at most 67,979 prompt tokens each): no blocker; real findings fixed on eight PRs, and
+  the #302 visibility point that became its amendment.
+- Sol, 38 calls (about $11.40): the plan and the architecture opinion, ten findings on six PRs, and, as an unprimed
+  reviewer, rc.2's blocker and minor point and rc.3's blocker; nothing on rc.1 or rc.4 unprimed.
+- Astra, 3 calls (about $11.50): the architecture opinion, rc.1's blocker, and a clean rc.4.
+- Claude implemented the release with sub-agents (about $122 in the main sessions across two accounts, about $63 for
+  eleven implementing sub-agents and four explorations). The candidates' reviews found four problems: three
+  blocking regressions from earlier 0.9.0 changes (#294, #290, #302), caught by the release reviews and not by the
+  per-PR ones, and one reporting problem already in v0.8.2, fixed during the release (#301).
+
+v0.9.0 (`86f5f22`) is rc.4 plus its release metadata (#299).
