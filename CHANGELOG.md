@@ -33,6 +33,12 @@
 
 ### Fixed
 
+- The gate no longer drops a project's repository advisory for every version once OSV has a record of it for the
+  package: each version is judged on its own. Where OSV-Scanner (GitHub's database, for an action) reports the
+  advisory's alias group for that version, its record stands as before; a version only the repository's wider range
+  names keeps the repository's record, as an unreviewed finding. Base, head and young candidates follow the same rule.
+  Adopters may see new findings for such versions: a PR adding one fails, and it vetoes candidates, but triggers no
+  fix on its own. The gate no longer looks single OSV records up before scanning.
 - Errors no longer regroup secure-it's held work: held units are grouped only by couplings and required-young
   relationships, so a transient npm planning error or a recorded Gradle reference failure fails its own unit, reported
   with its error, while the other held units keep their topics, members and PRs. A Gradle execution error in a held
