@@ -90,7 +90,7 @@ export class NpmRegistry {
           continue;
         }
         const was = await this.provenance(url, pkg.name, version, shipped.get(version));
-        if (was.source !== candidate.source) {
+        if (was.identity !== candidate.identity) {
           breaks.push(`${label} was built from ${candidate.source}, but the version it replaces (${version}) from ${was.source}`);
         }
       }
@@ -234,8 +234,10 @@ interface Statement {
 }
 
 interface Provenance {
-  /** `repository (workflow path)`, as the statement names them. */
+  /** `repository (workflow path)`, as the statement names them; for messages. */
   readonly source: string;
+  /** The repository and workflow path, kept apart so no two sources compare equal by how they join. */
+  readonly identity: string;
   /** `owner/repo` in lower case, comparable with a manifest's `repository`. */
   readonly repository: string | undefined;
 }
@@ -245,11 +247,13 @@ async function fetchStatement(url: string, fetch: Fetch): Promise<Statement> {
   if (!response.ok) throw new Error(`attestation lookup ${url} failed with HTTP ${response.status}`);
   const json = await response.json();
   const attestations = isObject(json) ? json["attestations"] : undefined;
-  const entry = Array.isArray(attestations)
-    ? attestations.find(
+  const provenances = Array.isArray(attestations)
+    ? attestations.filter(
         (item: unknown) => isObject(item) && typeof item["predicateType"] === "string" && item["predicateType"].startsWith(SLSA_PROVENANCE),
       )
-    : undefined;
+    : [];
+  // One provenance statement per version: with two, which one names the source would be a guess.
+  const entry: unknown = provenances.length === 1 ? provenances[0] : undefined;
   const payload = dig(entry, ["bundle", "dsseEnvelope", "payload"]);
   let statement: unknown;
   try {
@@ -260,9 +264,9 @@ async function fetchStatement(url: string, fetch: Fetch): Promise<Statement> {
   const subjects = dig(statement, ["subject"]);
   const subject = Array.isArray(subjects) && subjects.length === 1 ? dig(subjects[0], ["name"]) : undefined;
   const sha512 = Array.isArray(subjects) && subjects.length === 1 ? dig(subjects[0], ["digest", "sha512"]) : undefined;
-  const workflow = dig(statement, ["predicate", "buildDefinition", "externalParameters", "workflow"]);
-  const repository = dig(workflow, ["repository"]);
-  const path = dig(workflow, ["path"]);
+  const predicateType = dig(entry, ["predicateType"]);
+  // The statement's own type must be the one its entry declares: the reader is chosen by it.
+  const { repository, path } = dig(statement, ["predicateType"]) === predicateType ? buildSource(predicateType, statement) : { repository: undefined, path: undefined };
   if (
     typeof subject !== "string" ||
     typeof sha512 !== "string" ||
@@ -276,8 +280,28 @@ async function fetchStatement(url: string, fetch: Fetch): Promise<Statement> {
   return {
     subject,
     sha512: sha512.toLowerCase(),
-    source: { source: `${repository} (${path})`, repository: githubRepository(repository) },
+    source: { source: `${repository} (${path})`, identity: JSON.stringify([repository, path]), repository: githubRepository(repository) },
   };
+}
+
+/**
+ * The repository and workflow path a provenance statement names, read by its SLSA version: v1's
+ * `buildDefinition.externalParameters.workflow`, or v0.2's `invocation.configSource` (npm's earlier format: `uri` is
+ * `git+https://<host>/<owner>/<repo>@<ref>`, `entryPoint` the workflow), so the two compare equal for the same source.
+ * Anything else, a v0.2 uri with any other path, query or fragment included, is left undefined, which the caller refuses.
+ */
+function buildSource(predicateType: unknown, statement: unknown): { readonly repository: unknown; readonly path: unknown } {
+  if (predicateType === `${SLSA_PROVENANCE}v1`) {
+    const workflow = dig(statement, ["predicate", "buildDefinition", "externalParameters", "workflow"]);
+    return { repository: dig(workflow, ["repository"]), path: dig(workflow, ["path"]) };
+  }
+  if (predicateType === `${SLSA_PROVENANCE}v0.2`) {
+    const configSource = dig(statement, ["predicate", "invocation", "configSource"]);
+    const uri = dig(configSource, ["uri"]);
+    const repository = typeof uri === "string" ? /^git\+(https:\/\/[^\s/@?#]+\/[^\s/@?#]+\/[^\s/@?#]+)@\S+$/.exec(uri)?.[1] : undefined;
+    return { repository, path: dig(configSource, ["entryPoint"]) };
+  }
+  return { repository: undefined, path: undefined };
 }
 
 /** The hex sha512 in a subresource-integrity string, if it has one. */

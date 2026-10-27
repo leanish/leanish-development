@@ -33,6 +33,13 @@
 
 ### Fixed
 
+- The gate reads npm's SLSA v0.2 provenance (`invocation.configSource`: the repository from its `git+<URL>@<ref>`
+  uri, the workflow from its `entryPoint`) as well as v1. Before, a package version published with it (npm's earlier
+  format) made the whole run fail to complete. Both name a source the same way, so a package moving from v0.2 to v1
+  with the same repository and workflow keeps its identity; another predicate type, or a v0.2 statement missing those
+  fields or naming anything but `https://<host>/<owner>/<repo>`, is still refused. Also refused now: more than one
+  provenance statement for a version, and a statement whose type isn't its entry's. A source's repository and workflow
+  are compared apart, so two can no longer match only because they join into the same text.
 - The gate no longer drops a project's repository advisory for every version once OSV has a record of it for the
   package: each version is judged on its own. Where OSV-Scanner (GitHub's database, for an action) reports the
   advisory's alias group for that version, its record stands as before; a version only the repository's wider range
