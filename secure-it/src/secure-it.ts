@@ -20,7 +20,6 @@ import { NpmRegistry, releaseSignals } from "@leanish/gate/npm-registry";
 import type { HeldVersion } from "@leanish/gate/release-age";
 import { runProcess } from "@leanish/gate/process";
 import { gitTree, type Tree, workingTree } from "@leanish/gate/tree";
-import { failingCheckNames } from "@leanish/tool-runtime/ci-state";
 import type { ToolHandlers, ToolRunContext } from "@leanish/tool-runtime/command";
 import { FLOORS_FILE, isMechanical } from "@leanish/tool-runtime/edit-checks";
 import { writeLocalFile } from "@leanish/tool-runtime/local-files";
@@ -148,7 +147,7 @@ function publicationOf(context: ToolRunContext, deps: SecureItDeps): Publication
 }
 
 interface SkillExtra {
-  readonly failingChecks?: string[];
+  readonly failingChecks?: ReadonlyArray<string>;
   readonly conflicted?: ReadonlyArray<string>;
   /** Why verification refused the previous attempt at this same plan. */
   readonly rejected?: ReadonlyArray<string>;
@@ -973,15 +972,13 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       await verifyAndPublish(pr, merge.prepared, { tree: base, gradle: baseGradle }, plan, content, "after merging the default branch");
       return "rebased";
     },
-    async adapt(pr, prepared, _context, attempt) {
+    async adapt(pr, prepared, _context, attempt, failingChecks) {
       execution.npmFiles.clear();
       const plan = planFrom(pr);
       if (plan.kind === "floor-removal") {
         context.logger.warn("secure-it: floor-removal CI failure cannot be adapted", { number: pr.number, detail: "the proved removal cannot legitimately be edited" });
         return false;
       }
-      const checks = await context.github.headChecks({ repo: context.repo.repo, sha: pr.headSha });
-      const failingChecks = failingCheckNames(checks);
       const base = await deps.trees.commit(context.workingCopy, prepared.baseSha);
       const answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({
         entrypoint: "secure-it",

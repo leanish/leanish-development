@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+- A full scan words an unpinned or unverified action's gap as compare does, with the folder it uses in the action's
+  repository (`owner/repo/path@ref`).
+- A PR's CI is read once per review tick: the adaptation gets the failed jobs and statuses of the same snapshot that
+  classified the head as failed, instead of reading the checks again.
+
 ### Fixed
 
 - secure-it's report keeps the unreviewed-only findings noted on every copy of a blocked package, not only on the
