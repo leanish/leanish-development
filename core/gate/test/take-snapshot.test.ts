@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { ActionsGitHub } from "../src/actions-github.ts";
+import { NO_EXCEPTIONS } from "../src/exceptions.ts";
 import { compareFindings, findingsOf } from "../src/findings.ts";
 import type { PackageVersion } from "../src/package-version.ts";
+import { comparisonVerdict } from "../src/policy.ts";
 import type { RunProcess } from "../src/process.ts";
 import { MAVEN_CENTRAL } from "../src/source-repos.ts";
 import { type SnapshotOptions, takeSnapshot } from "../src/take-snapshot.ts";
@@ -116,7 +118,7 @@ describe("advisory snapshot", () => {
     expect(sources(snapshot.advisories(OLD_VITE))).toEqual([["GHSA-malware-in-repo", "repository"]]);
   });
 
-  it("applies the same rule to base, head and young candidates, so an unchanged group stays inherited", async () => {
+  it("applies the same rule to base, head and young candidates, and a base's repository-only record doesn't make head's reviewed one inherited", async () => {
     // Base 8.2.0 is only in the repository's range, head 8.3.1 is in OSV's too, and candidate 8.3.2 is in neither scan.
     const snapshot = await takeSnapshot([OLD_VITE, VITE], options(
       [repositoryAdvisory("GHSA-wider-in-repo", ">=8.0.0,<=8.3.2")],
@@ -124,9 +126,18 @@ describe("advisory snapshot", () => {
     ), [YOUNG_VITE]);
     const base = findingsOf([{ ...OLD_VITE, locations: ["package-lock.json"] }], snapshot);
     const head = findingsOf([{ ...VITE, locations: ["package-lock.json"] }], snapshot);
+    expect(base.map((finding) => [finding.version, finding.advisory, finding.reviewed])).toEqual([["8.2.0", "GHSA-wider-in-repo", false]]);
+    expect(head.map((finding) => [finding.version, finding.advisory, finding.reviewed])).toEqual([["8.3.1", "GHSA-wider-in-repo", true]]);
     const comparison = compareFindings(base, head);
-    expect(comparison.added).toEqual([]);
-    expect(comparison.inherited.map((finding) => [finding.version, finding.advisory])).toEqual([["8.3.1", "GHSA-wider-in-repo"]]);
+    expect(comparison.inherited).toEqual([]);
+    expect(comparison.added.map((finding) => [finding.version, finding.advisory])).toEqual([["8.3.1", "GHSA-wider-in-repo"]]);
+    const verdict = comparisonVerdict(comparison, NO_EXCEPTIONS, snapshot, "2026-10-06");
+    expect(verdict.failures).toEqual(["new: vite@8.3.1: GHSA-wider-in-repo has no exception"]);
+    expect(verdict.warnings).toEqual([]);
+    // Moving the other way, from the reviewed record to the repository-only one, inherits it.
+    const back = compareFindings(head, base);
+    expect(back.added).toEqual([]);
+    expect(comparisonVerdict(back, NO_EXCEPTIONS, snapshot, "2026-10-06").warnings).toEqual(["inherited: vite@8.2.0: GHSA-wider-in-repo (MEDIUM)"]);
     expect(sources(snapshot.advisories(YOUNG_VITE))).toEqual([["GHSA-wider-in-repo", "repository"]]);
   });
 });

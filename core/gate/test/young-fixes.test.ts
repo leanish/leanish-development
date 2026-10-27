@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { type Config, parseConfig } from "../src/config.ts";
 import type { PackageName, PackageVersion } from "../src/package-version.ts";
 import { type Advisory, Snapshot } from "../src/snapshot.ts";
-import { candidateVersions, compatibleLine, gatherCandidates, nearestVetoes, type VersionCatalog, VETOES_SHOWN, vetoesOf, vetoFields, vetoNote, withoutVetoNote, youngFixProblem } from "../src/young-fixes.ts";
+import { candidateVersions, compatibleLine, fixes, gatherCandidates, nearestVetoes, unreviewedGroups, type VersionCatalog, VETOES_SHOWN, vetoesOf, vetoFields, vetoNote, withoutVetoNote, youngFixProblem } from "../src/young-fixes.ts";
 
 const NOW = new Date("2026-10-06T12:00:00Z");
 const DAY = 86_400_000;
@@ -143,6 +143,44 @@ describe("vetoesOf", () => {
     const pkg = { ecosystem: "npm" as const, name: "lib" };
     // 1.0.1 fixes A and keeps B (inherited), but adds C: C alone rules it out. 1.0.2 just keeps B: no veto.
     expect(vetoesOf(snapshot, pkg, "1.0.0", ["GHSA-a"], ["1.0.1", "1.0.2"])).toEqual([{ version: "1.0.1", advisories: ["GHSA-c"] }]);
+  });
+});
+
+describe("inheritance in fixes and vetoesOf", () => {
+  const sourced = (id: string, source: "osv" | "repository"): Advisory => ({ id, ids: [id], source, malicious: false, summary: undefined, severity: undefined });
+  const pkg = { ecosystem: "npm" as const, name: "lib" };
+  /** lib@1.0.0 has reviewed A and `before` for B; lib@1.0.1 drops A and has `after` for B, plus `extra`. */
+  const snapshotOf = (before: "osv" | "repository", after: "osv" | "repository", extra: Advisory[] = []) => new Snapshot(new Map([
+    ["npm|lib|1.0.0", [sourced("GHSA-a", "osv"), sourced("GHSA-b", before)]],
+    ["npm|lib|1.0.1", [sourced("GHSA-b", after), ...extra]],
+  ]), [], new Date(0));
+
+  it.each([
+    { before: "osv", after: "osv", fix: true },
+    { before: "osv", after: "repository", fix: true },
+    { before: "repository", after: "repository", fix: true },
+    { before: "repository", after: "osv", fix: false },
+  ] as const)("keeps a $after B over a $before one only when it's inherited (fixes: $fix)", ({ before, after, fix }) => {
+    expect(fixes(snapshotOf(before, after), pkg, "1.0.0", ["GHSA-a"], "1.0.1")).toBe(fix);
+  });
+
+  it("doesn't call a candidate that turns repository-only B into reviewed B a veto, alone or with another unreviewed blocker", () => {
+    const alone = snapshotOf("repository", "osv");
+    expect(vetoesOf(alone, pkg, "1.0.0", ["GHSA-a"], ["1.0.1"])).toEqual([]);
+    const blocked = snapshotOf("repository", "osv", [sourced("GHSA-c", "repository")]);
+    const unreviewed = unreviewedGroups(blocked, { ...pkg, version: "1.0.1" });
+    expect(unreviewed).toEqual(new Set(["GHSA-c"]));
+    // Ignoring the unreviewed groups still leaves it rejected: B isn't one of them.
+    expect(fixes(blocked, pkg, "1.0.0", ["GHSA-a"], "1.0.1", unreviewed)).toBe(false);
+    expect(vetoesOf(blocked, pkg, "1.0.0", ["GHSA-a"], ["1.0.1"])).toEqual([]);
+    // With B inherited, C alone rules it out: that one is a veto.
+    expect(vetoesOf(snapshotOf("osv", "osv", [sourced("GHSA-c", "repository")]), pkg, "1.0.0", ["GHSA-a"], ["1.0.1"])).toEqual([{ version: "1.0.1", advisories: ["GHSA-c"] }]);
+  });
+
+  it("never lets an inherited group excuse malware", () => {
+    const malware: Advisory = { ...sourced("MAL-1", "repository"), malicious: true };
+    const snapshot = new Snapshot(new Map([["npm|lib|1.0.0", [sourced("GHSA-a", "osv"), malware]], ["npm|lib|1.0.1", [malware]]]), [], new Date(0));
+    expect(fixes(snapshot, pkg, "1.0.0", ["GHSA-a"], "1.0.1")).toBe(false);
   });
 });
 

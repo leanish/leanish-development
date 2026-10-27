@@ -85,7 +85,7 @@ describe("floor-removal verification", () => {
   });
   it("checks recorded advisory aliases even if compare calls them inherited, and forwards all compare failures", async () => {
     const { input } = fixture();
-    vi.mocked(runCompare).mockResolvedValue({ failures: ["identity changed"], headFindings: [{ ecosystem: "npm", name: "lib", version: "1.0.0", advisory: "GHSA-rq7h-c2jc-7f22", ids: [ID], malicious: false, locations: ["node_modules/lib"], summary: undefined, severity: undefined }], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, group: (id: string) => id, cooldown: { evaluated: true, releaseAgeDays: 7, held: [] } });
+    vi.mocked(runCompare).mockResolvedValue({ failures: ["identity changed"], headFindings: [{ ecosystem: "npm", name: "lib", version: "1.0.0", advisory: "GHSA-rq7h-c2jc-7f22", ids: [ID], malicious: false, reviewed: true, locations: ["node_modules/lib"], summary: undefined, severity: undefined }], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, group: (id: string) => id, cooldown: { evaluated: true, releaseAgeDays: 7, held: [] } });
     expect(await verifyPlan(input)).toEqual(["compare: identity changed", "lib@1.0.0 still has GHSA-rq7h-c2jc-7f22"]);
   });
   it("removes multiple Gradle floors jointly and preserves every other declaration", async () => {

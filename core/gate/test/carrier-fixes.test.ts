@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { type CarrierSearch, type CarrierServices, chooseCarrier, type CompleteBundle, removedTargets } from "../src/carrier-fixes.ts";
+import { carrierFixes, type CarrierSearch, type CarrierServices, chooseCarrier, type CompleteBundle, removedTargets } from "../src/carrier-fixes.ts";
 import { parseConfig } from "../src/config.ts";
 import type { BundleContents } from "../src/npm-bundles.ts";
 import { type PackageVersion, versionKey } from "../src/package-version.ts";
@@ -27,6 +27,7 @@ const ADVISORIES: Record<string, string[]> = {
   "glob@2.0.0": ["repo:GHSA-glob-repo"],
   "glob@2.0.1": ["GHSA-glob-repo"],
   "fresh@1.0.0": ["repo:GHSA-fresh-repo", "MAL-fresh"],
+  "other@1.0.0": ["repo:GHSA-other-repo"],
 };
 
 function bundle(...packages: string[]): CompleteBundle {
@@ -289,6 +290,40 @@ describe("carrier versions ruled out only by unreviewed advisories", () => {
     });
     expect(await chooseCarrier(search(["2.10.0"], { fromBundle: inherited }), services)).toMatchObject({ kind: "chosen", version: "2.10.0", vetoed: [] });
     expect(await chooseCarrier(search(["2.11.0", "2.12.1"]), services)).toMatchObject({ kind: "chosen", version: "2.12.1", vetoed: [] });
+  });
+});
+
+describe("bundled pairs inherited by review status", () => {
+  // glob@2.0.0 has GHSA-glob-repo only from the repository's advisories; glob@2.0.1 has it from OSV.
+  const nested = "node_modules/x/node_modules/glob";
+
+  it("doesn't let a repository-only pair in the old bundle make a reviewed one inherited, nor call it a veto", async () => {
+    const fromBundle = bundle("brace@5.0.9", "minimatch@10.2.5", "glob@2.0.0");
+    const { services } = setup({
+      "2.10.0": { days: 30, bundle: bundle("brace@5.0.12", "minimatch@10.2.5", "glob@2.0.1") },
+      "2.11.0": { days: 30, bundle: bundle("brace@5.0.12", "minimatch@10.2.5", "glob@2.0.1", "other@1.0.0") },
+      "2.13.0": { days: 30, bundle: bundle("brace@5.0.12", "minimatch@10.2.5", "glob@2.0.0") },
+    });
+    // 2.11.0 has an unreviewed blocker too; ignoring it still leaves the reviewed pair, so it isn't a veto either.
+    expect(await chooseCarrier(search(["2.10.0", "2.11.0", "2.13.0"], { fromBundle }), services)).toMatchObject({ kind: "chosen", version: "2.13.0", vetoed: [] });
+    expect(await chooseCarrier(search(["2.10.0", "2.11.0"], { fromBundle }), services)).toMatchObject({ kind: "none", vetoed: [] });
+  });
+
+  it.each([[false], [true]])("counts every copy of a name in each bundle together (reviewed copy first: %s)", async (reviewedFirst) => {
+    const copies = (repository: string, reviewed: string) => (reviewedFirst ? [reviewed, repository] : [repository, reviewed]);
+    const { services } = setup({});
+    const snapshot = await services.scan(["cdk@2.9.0", "cdk@2.10.0", "brace@5.0.9", "brace@5.0.12", "glob@2.0.0", "glob@2.0.1"].map((label): PackageVersion => {
+      const at = label.lastIndexOf("@");
+      return { ecosystem: "npm", name: label.slice(0, at), version: label.slice(at + 1) };
+    }));
+    const judged = (from: CompleteBundle, to: CompleteBundle) => carrierFixes(search([], { fromBundle: from }), "2.10.0", to, snapshot);
+    const reviewedOld = bundle("brace@5.0.9", ...copies("glob@2.0.0", `${nested}=glob@2.0.1`));
+    const repositoryOld = bundle("brace@5.0.9", "glob@2.0.0");
+    // A reviewed copy in the old bundle covers the candidate's reviewed pair, whichever copy comes first.
+    expect(judged(reviewedOld, bundle("brace@5.0.12", "glob@2.0.1"))).toBe(true);
+    // A repository-only copy in the candidate bundle can't mask a reviewed copy beside it.
+    expect(judged(repositoryOld, bundle("brace@5.0.12", ...copies("glob@2.0.0", `${nested}=glob@2.0.1`)))).toBe(false);
+    expect(judged(repositoryOld, bundle("brace@5.0.12", "glob@2.0.0"))).toBe(true);
   });
 });
 

@@ -12,7 +12,7 @@ const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 const floor = (name: string, purpose = "security"): Floor => parseFloors({ floors: [{ ecosystem: "npm", package: name, version: "2.0.0", declaredIn: "package.json",
   selector: [name], purpose, advisories: purpose === "security" ? [ID] : [], reason: "needed", added: "2026-10-01" }] })[0]!;
 const findings = (name: string): Finding[] => [{ ecosystem: "npm", name, version: "1.0.0", advisory: "GHSA-rq7h-c2jc-7f22", ids: [ID, "GHSA-rq7h-c2jc-7f22"],
-  malicious: false, summary: undefined, severity: undefined, locations: ["node_modules/lib"] }];
+  malicious: false, reviewed: true, summary: undefined, severity: undefined, locations: ["node_modules/lib"] }];
 const files = new Map([[FLOORS_PATH, '{"floors":[]}'], ["package.json", "{}"], ["package-lock.json", "joint unlocked bytes"]]);
 
 describe("joint unlocked floor selection", () => {

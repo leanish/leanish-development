@@ -17,6 +17,8 @@ function sources(findings: Record<string, Advisory[]> = {}): TargetSources {
   return { now: NOW, releaseAgeDays: 7, isOwn: () => false, versions: async () => ["1.0.0", "1.1.0", "1.2.0", "1.3.0"], published: async () => new Date("2026-09-01"), identity: async () => [], snapshot: async (base, candidates) => new Snapshot(new Map([...base, ...candidates].map((pkg) => [versionKey(pkg), findings[pkg.version] ?? []])), [], NOW) };
 }
 const advisory = (id: string, malicious = false): Advisory => ({ id, ids: [id], malicious, source: "osv", summary: undefined, severity: undefined });
+/** `id` as only the project's own repository advisories publish it. */
+const repository = (id: string): Advisory => ({ ...advisory(id), source: "repository" });
 const child = (result: Awaited<ReturnType<typeof decideTargets>>) => result.find((decision) => decision.copy.name === "child");
 
 describe("code-decided transitive targets", () => {
@@ -74,6 +76,20 @@ describe("code-decided transitive targets", () => {
   it("keeps repository pins and reports complex override constraints without claiming R3", async () => {
     expect(child(await decideTargets(inputs("^1", { overrides: { child: "1.1.0" } }), sources()))).toMatchObject({ target: "1.1.0", kind: "pinned" });
     expect(child(await decideTargets(inputs("^1", { overrides: { parent: { child: "1.0.0" } } }), sources()))).toMatchObject({ target: "1.0.0", kind: "unresolved" });
+  });
+  it("inherits a reviewed group only from reviewed evidence on the base copies", async () => {
+    // Base 1.0.0 has GHSA-x only from the repository's advisories; OSV reports it on 1.3.0 alone, the repository on 1.2.0.
+    const s = sources({ "1.0.0": [repository("GHSA-x")], "1.1.0": [repository("GHSA-x")], "1.2.0": [repository("GHSA-x")], "1.3.0": [advisory("GHSA-x")] });
+    expect(child(await decideTargets(inputs(), s))).toMatchObject({ kind: "target", target: "1.2.0" });
+    // A reviewed base copy lets it stay, and a repository-only one is inherited from either.
+    expect(child(await decideTargets(inputs(), sources({ "1.0.0": [advisory("GHSA-x")], "1.2.0": [repository("GHSA-x")], "1.3.0": [advisory("GHSA-x")] })))).toMatchObject({ target: "1.3.0" });
+  });
+  it.each([[["1.0.0", "1.1.0"]], [["1.1.0", "1.0.0"]]])("counts every base copy together, a reviewed one among them in any order (%j)", async (baseVersions) => {
+    const withBase = { ...inputs(), baseVersions: new Map([["child", baseVersions], ["parent", ["1.0.0"]]]) };
+    const s = sources({ "1.0.0": [repository("GHSA-x")], "1.1.0": [advisory("GHSA-x")], "1.2.0": [repository("GHSA-x")], "1.3.0": [advisory("GHSA-x")] });
+    expect(child(await decideTargets(withBase, s))).toMatchObject({ target: "1.3.0" });
+    const repositoryOnly = sources({ "1.0.0": [repository("GHSA-x")], "1.1.0": [repository("GHSA-x")], "1.2.0": [repository("GHSA-x")], "1.3.0": [advisory("GHSA-x")] });
+    expect(child(await decideTargets(withBase, repositoryOnly))).toMatchObject({ target: "1.2.0" });
   });
   it("uses any base copy for inherited findings, and all incoming ranges for the target", async () => {
     const i = inputs();
