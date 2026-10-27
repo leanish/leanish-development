@@ -71,7 +71,8 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
      - **Rejoined when planning or Gradle resolution needs it:** with two or more held groups, each is planned alone.
        For a plan with Maven moves, Gradle also applies its declaration moves and floors to an exported base and
        resolves the reference: two young Gradle fixes can plan separately yet conflict until both declarations move.
-       A returned inventory must have the planned declarations and no resolution failures. When some preflights fail
+       A returned inventory must have the planned declarations and no resolution failures (outside the gate's
+       `gradle.ignoreConfigurations`). When some preflights fail
        (npm requirements or Gradle references), the failing groups are tried together when there are several, then
        every held group together (v0.7's single held batch). The first group whose preflight passes replaces its groups;
        otherwise each stays apart and reports its own failure. The actual agent edit is still verified before publication.
@@ -141,8 +142,9 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
    - **The agent** never changes npm dependency fields or lockfiles; only a major may adapt manifest scripts or
      config, and it changes code only for a major move. Direct dependencies outside the plan stay unchanged. In
      Gradle, the edit must resolve and declare exactly what the plan's reference does (the base with the plan applied
-     by Gradle, so a planned plugin fix's own fallout is in it; [`core/gate/README.md`](../core/gate/README.md)). Every
-     apply, resolve and adapt path verifies the tool-written files before publishing.
+     by Gradle, so a planned plugin fix's own fallout is in it; [`core/gate/README.md`](../core/gate/README.md)); a
+     configuration the gate's `gradle.ignoreConfigurations` lists may fail to resolve in either, as in the gate, but
+     must still match. Every apply, resolve and adapt path verifies the tool-written files before publishing.
    - **The skill asks for** focused edits in each file's style; comments the edit made false fixed without losing
      their context; code kept only for an unsupported old major removed; the repository's checks in every mode; for
      each major, the release notes or changelog it crosses, linked in its verdict; and PR text that maps advisories

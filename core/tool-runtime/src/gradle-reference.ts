@@ -9,7 +9,7 @@
  */
 import { fileURLToPath } from "node:url";
 
-import { gradleLocation, type DeclaredConstraint, type GradleInventory } from "@leanish/gate/gradle";
+import { gradleLocation, type DeclaredConstraint, type GradleInventory, ignoresResolution } from "@leanish/gate/gradle";
 
 import { declaredAt, UNVERSIONED } from "./edit-checks.ts";
 import type { GradleTransform } from "./inventories.ts";
@@ -82,13 +82,14 @@ export function referenceProblems(base: GradleInventory | undefined, reference: 
 /**
  * Where `head` differs from `reference`: a build or configuration only one has (or of another kind), the modules a
  * configuration resolves, its declarations and dependency constraints (every rich-version facet, versionless ones
- * included), and anything either fails to resolve.
+ * included), and anything either fails to resolve. As in the gate, a configuration `ignored` lists
+ * (`gradle.ignoreConfigurations`) may fail to resolve; everything else about it is still compared.
  */
-export function referenceDifferences(reference: GradleInventory | undefined, head: GradleInventory | undefined): string[] {
+export function referenceDifferences(reference: GradleInventory | undefined, head: GradleInventory | undefined, ignored: ReadonlyArray<string> = []): string[] {
   if (reference === undefined && head === undefined) return [];
   if (reference === undefined || head === undefined) return [`the edit ${head === undefined ? "removed" : "added"} the Gradle inventory the plan's reference ${head === undefined ? "has" : "doesn't have"}`];
-  const was = locations(reference);
-  const now = locations(head);
+  const was = locations(reference, ignored);
+  const now = locations(head, ignored);
   const problems: string[] = [];
   for (const location of [...new Set([...was.keys(), ...now.keys()])].sort()) {
     const expected = was.get(location);
@@ -122,11 +123,12 @@ interface LocationEntries {
   readonly failures: ReadonlyArray<string>;
 }
 
-function locations(inventory: GradleInventory): Map<string, LocationEntries> {
+function locations(inventory: GradleInventory, ignored: ReadonlyArray<string>): Map<string, LocationEntries> {
   const entries = new Map<string, LocationEntries>();
   for (const build of inventory.builds) {
     for (const configuration of build.configurations) {
-      entries.set(gradleLocation(build.build, configuration.id), {
+      const location = gradleLocation(build.build, configuration.id);
+      entries.set(location, {
         kind: configuration.kind,
         resolved: configuration.resolved.map((module) => `${module.group}:${module.name}:${module.version}`).sort(),
         // Compare every rich-version facet, retaining the old diagnostics for plain versions and simple strict pins.
@@ -139,7 +141,9 @@ function locations(inventory: GradleInventory): Map<string, LocationEntries> {
               return `${constraint.group}:${constraint.name} ${constraintVersion(constraint, strict)} (${strict ? "strict constraint" : "constraint"})`;
             })),
         ].sort(),
-        failures: [...(configuration.error === undefined ? [] : [configuration.error]), ...configuration.unresolved.map((entry) => `${entry.requested}: ${entry.failure}`)],
+        failures: ignoresResolution(ignored, location)
+          ? []
+          : [...(configuration.error === undefined ? [] : [configuration.error]), ...configuration.unresolved.map((entry) => `${entry.requested}: ${entry.failure}`)],
       });
     }
   }

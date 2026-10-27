@@ -46,6 +46,11 @@
   refused that the gate accepts; a malicious copy, leaving on its own, borrows no other copy's history. Planning
   checks no longer borrow a copy (or its integrity) from another lockfile, and a required version is judged against
   the copy it replaces at its own path, not retained ones. The remaining planners' limit is in coverage gaps.
+- secure-it's Gradle reference checks, in the held preflight and in verification (floor removals' too), leave out the
+  resolution failures of the configurations `gradle.ignoreConfigurations` lists, as the gate does: a fix the gate
+  would pass is no longer blocked by one. Those configurations are still compared with the reference, and every
+  planned move must still land there; a parent move and a floor removal are still proved only where everything
+  resolved. bump-it's reference comparison is unchanged (in coverage gaps).
 
 ## 0.8.2 - 2026-10-27
 

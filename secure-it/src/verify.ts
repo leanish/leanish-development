@@ -28,7 +28,9 @@
  *      no action use outside the plan changed, and Gradle resolves and declares
  *      exactly what the plan's reference does (the base with the planned
  *      declaration moves and floors applied by Gradle, so a planned plugin
- *      update's own fallout is in it: `gradle-reference.ts`);
+ *      update's own fallout is in it: `gradle-reference.ts`); a configuration
+ *      the gate's `gradle.ignoreConfigurations` lists may fail to resolve there,
+ *      as in the gate, but must still match;
  *   5. only dependency files changed, unless a move is a major.
  */
 import { computedNpmProblems } from "@leanish/tool-runtime/npm-file-checks";
@@ -37,7 +39,7 @@ import { type BundleReader, bundleMismatches } from "@leanish/gate/npm-bundles";
 import { lockedPackages } from "@leanish/gate/npm-lock";
 import { NpmRegistry } from "@leanish/gate/npm-registry";
 import type { CooldownEvaluation } from "@leanish/gate/cooldown";
-import { bundleReader, type GateEnvironment, type GradleInputs, runCompare } from "@leanish/gate/gate";
+import { bundleReader, type GateEnvironment, type GradleInputs, readSettings, runCompare } from "@leanish/gate/gate";
 import type { GradleInventory } from "@leanish/gate/gradle";
 import type { Tree } from "@leanish/gate/tree";
 import { versionScheme } from "@leanish/gate/versions";
@@ -93,7 +95,9 @@ export async function verifyPlan(inputs: VerifyInputs): Promise<string[]> {
   const floors = await preservedFloors(plan, base, head, gradle);
   if (floors.length > 0) return floors;
 
-  if (plan.kind === "floor-removal") return verifyRemovalEdit(inputs);
+  // The gate reads head's config; the policy fence above has kept it base's.
+  const ignored = (await readSettings(base)).config.gradle.ignoreConfigurations;
+  if (plan.kind === "floor-removal") return verifyRemovalEdit(inputs, ignored);
 
   const compared = await runCompare(base, head, env, gradle);
   problems.push(...compared.failures.map((failure) => `compare: ${failure}`));
@@ -119,7 +123,7 @@ export async function verifyPlan(inputs: VerifyInputs): Promise<string[]> {
 
   problems.push(...directChangesOutside(await directVersions(base), await directVersions(head), (ecosystem, name) => planned.has(`${ecosystem}|${name}`)));
   const reference = referencePlan(plan, gradle.base);
-  problems.push(...reference.problems, ...referenceProblems(gradle.base, inputs.reference, reference.moves, reference.floors), ...referenceDifferences(inputs.reference, gradle.head));
+  problems.push(...reference.problems, ...referenceProblems(gradle.base, inputs.reference, reference.moves, reference.floors), ...referenceDifferences(inputs.reference, gradle.head, ignored));
   problems.push(...(await actionsOutsidePlan(pins, base, head)));
 
   if (!plan.moves.some((move) => move.major)) {

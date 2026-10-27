@@ -104,6 +104,22 @@ describe("the plan's Gradle reference", () => {
     expect(referenceDifferences(undefined, undefined)).toEqual([]);
     expect(referenceDifferences(reference, undefined)).toHaveLength(1);
   });
+
+  it("leaves out only the resolution failures of the gate's ignored configurations", () => {
+    const unresolved = [{ requested: "g:lib:2.0.0", failure: "not found" }];
+    const reference = inventory(["1.0.0"], "1.0.0", { error: "boom" });
+    const head = inventory(["1.0.0"], "1.0.0", { unresolved });
+    expect(referenceDifferences(reference, head, [":runtimeClasspath"])).toEqual([]);
+    expect(referenceDifferences(reference, head, ["tools/:runtimeClasspath"])).toEqual([
+      ":runtimeClasspath doesn't resolve in the plan's reference: boom",
+      ":runtimeClasspath doesn't resolve in the edit: g:lib:2.0.0: not found",
+    ]);
+    // What an ignored configuration resolves and declares still has to match.
+    expect(referenceDifferences(reference, inventory(["1.1.0"], "1.1.0", { unresolved }), [":runtimeClasspath"])).toEqual([
+      ":runtimeClasspath, unlike the plan's reference, also resolves g:lib:1.1.0 and no longer resolves g:lib:1.0.0",
+      ":runtimeClasspath, unlike the plan's reference, also declares g:lib 1.1.0 and no longer declares g:lib 1.0.0",
+    ]);
+  });
 });
 
 describe.each(["declaration", "constraint"] as const)("rich version of a %s", (kind) => {

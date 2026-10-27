@@ -490,8 +490,10 @@ async function heldGradleProblems(plan: ChangePlan, base: PlanBase, inventories:
   if (planned.problems.length > 0) return planned.problems;
   const reference = await referenceOf(plan, base.tree, base.gradle, inventories);
   if (reference === undefined) throw new Error("the held plan has no Gradle reference inventory");
-  // As in verification's reference comparison, even a returned inventory can contain resolution failures.
-  return [...referenceProblems(base.gradle, reference, planned.moves, planned.floors), ...gradleResolutionProblems(reference, [])];
+  // As in verification's reference comparison, even a returned inventory can contain resolution failures; the gate's
+  // `gradle.ignoreConfigurations` are left out, as the gate leaves them out.
+  const { config } = await readSettings(base.tree);
+  return [...referenceProblems(base.gradle, reference, planned.moves, planned.floors), ...gradleResolutionProblems(reference, config.gradle.ignoreConfigurations)];
 }
 
 /** The aged unit's fixes that need a young required npm companion, held with it (the first step of `holdRequiredYoung`). */

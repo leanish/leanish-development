@@ -1444,11 +1444,12 @@ describe("the cooldown hold", () => {
   });
 
   /** Base declarations are independent to the planner; Gradle refuses either half of this aligned pair. */
-  function heldGradle(options: { independent?: boolean; single?: boolean; extra?: boolean; broken?: "throw" | "missing" | "unresolved" | "declarations" } = {}) {
+  function heldGradle(options: { independent?: boolean; single?: boolean; extra?: boolean; broken?: "throw" | "missing" | "unresolved" | "declarations"; ignored?: string[] } = {}) {
     const allNames = ["a", "b", ...options.extra ? ["c"] : []];
     const fixes = allNames.slice(0, options.single ? 1 : allNames.length).map((name) => vite({ ecosystem: "Maven", name: `g:${name}`, from: "1.0.0", locations: [":runtimeClasspath"],
       to: { version: "1.0.1", line: "1", aged: false, major: false, blockers: [] } }));
-    const files = { "build.gradle": `dependencies { ${allNames.map((name) => `implementation "g:${name}:1.0.0"`).join("; ")} }` };
+    const files = { "build.gradle": `dependencies { ${allNames.map((name) => `implementation "g:${name}:1.0.0"`).join("; ")} }`,
+      ...options.ignored === undefined ? {} : { ".github/supply-chain.json": JSON.stringify({ gradle: { ignoreConfigurations: options.ignored } }) } };
     const base: GradleInventory = { schemaVersion: 3, tree: BASE_SHA, builds: [{ build: ".", configurations: [{ id: ":runtimeClasspath", kind: "project", error: undefined, unresolved: [],
       declared: allNames.map((name) => ({ group: "g", name, version: "1.0.0", reason: undefined })),
       resolved: allNames.map((name) => ({ group: "g", name, version: "1.0.0" })),
@@ -1476,7 +1477,7 @@ describe("the cooldown hold", () => {
     const verify: SecureItDeps["verify"] = async (inputs) => {
       if (inputs.reference === undefined) return ["no Gradle reference"];
       const planned = referencePlan(inputs.plan, inputs.gradle.base);
-      const problems = [...planned.problems, ...referenceProblems(inputs.gradle.base, inputs.reference, planned.moves, planned.floors), ...gradleResolutionProblems(inputs.reference, [])];
+      const problems = [...planned.problems, ...referenceProblems(inputs.gradle.base, inputs.reference, planned.moves, planned.floors), ...gradleResolutionProblems(inputs.reference, options.ignored ?? [])];
       if (problems.length === 0) inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: inputs.plan.moves.map((move) => ({ ...HELD, ecosystem: "Maven", name: move.name, version: move.to, replaced: [move.from] })) });
       return problems;
     };
@@ -1531,6 +1532,29 @@ describe("the cooldown hold", () => {
     expect(h.probes.slice(0, 3)).toEqual([["g:a"], ["g:b"], ["g:a", "g:b"]]);
     expect(warn).toHaveBeenCalledWith("secure-it: a held unit's preflight failed", expect.objectContaining({ topic: "security-cooldown-g:a", error: expect.any(String) }));
     expect([...h.github.prs.values()].map((pr) => planOf(pr.body)?.packages)).toEqual([["Maven|g:b"]]);
+  });
+
+  it("passes a held Gradle fix's preflight when its reference fails to resolve only in a configuration the gate ignores", async () => {
+    const h = heldGradle({ independent: true, broken: "unresolved", ignored: [":runtimeClasspath"] });
+    const warn = vi.spyOn(h.context.logger, "warn");
+    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ units: [
+      { topic: "security-cooldown-g:a", outcome: "published" }, { topic: "security-cooldown-g:b", outcome: "published" },
+    ] });
+    expect(h.probes).toEqual([["g:a"], ["g:b"], ["g:a"], ["g:b"]]); // No joint preflight: g:a's own one passed.
+    expect(warn).not.toHaveBeenCalledWith("secure-it: a held unit's preflight failed", expect.anything());
+  });
+
+  it.each([
+    { broken: "unresolved", ignored: ":testRuntimeClasspath", error: "couldn't resolve g:a:1.0.1" },
+    { broken: "declarations", ignored: ":runtimeClasspath", error: "the plan's reference declares g:a 1.0.0 at :runtimeClasspath, not 1.0.1" },
+  ] as const)("still fails a held Gradle fix's preflight on a $broken reference when the gate ignores $ignored", async ({ broken, ignored, error }) => {
+    const h = heldGradle({ independent: true, broken, ignored: [ignored] });
+    const warn = vi.spyOn(h.context.logger, "warn");
+    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ units: [
+      { topic: "security-cooldown-g:a", outcome: "verification-failed" }, { topic: "security-cooldown-g:b", outcome: "published" },
+    ] });
+    expect(h.probes.slice(0, 3)).toEqual([["g:a"], ["g:b"], ["g:a", "g:b"]]);
+    expect(warn).toHaveBeenCalledWith("secure-it: a held unit's preflight failed", expect.objectContaining({ topic: "security-cooldown-g:a", error: expect.stringContaining(error) }));
   });
 
   it.each(["throw", "missing"] as const)("fails only held units when the Gradle preflight is %s, without regrouping", async (broken) => {
