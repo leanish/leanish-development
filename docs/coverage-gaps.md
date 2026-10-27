@@ -52,10 +52,6 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   to 16 id lookups per advisory group for each of GitHub's advisory database and OSV; repository-advisory pagination
   has a separate cap. No request budget spans the run, so many held versions can spend much of the shared GitHub API
   quota. New in 0.8.0.
-- **Unreviewed-only findings of a package blocked elsewhere (secure-it)**: since 0.8.1 the report keeps a blocked
-  fix's unreviewed-only findings with its reason, but only for the copies that are blocked themselves. When another
-  copy blocks the package, the findings noted on its unblocked copies are left out, and so are a fix's when its peers
-  block it later. The gate still fails on them. Pre-existing in 0.8.0.
 - **bump-it's displayed values aren't literal (bump-it)**: plan table cells (package names, versions, lockfile paths)
   only escape `|` and line breaks, so an unusual name or path renders as Markdown; plan markers are still defused.
   secure-it shows external text as literal code spans since 0.8.1. Pre-existing in 0.8.0.

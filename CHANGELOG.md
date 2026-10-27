@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- secure-it's report keeps the unreviewed-only findings noted on every copy of a blocked package, not only on the
+  copies blocked themselves: also when another copy blocks it, when peers block it later (and the work tied to it), and
+  for a malware unit left out whole. A finding already reported isn't repeated.
+
 ## 0.8.1 - 2026-10-26
 
 ### Changed

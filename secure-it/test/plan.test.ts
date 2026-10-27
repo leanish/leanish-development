@@ -39,6 +39,21 @@ describe("selectWork", () => {
     expect((await coupledWork([{ ...vitest, malicious: true }, other], stuck)).units).toEqual([]);
   });
 
+  it("reports the notes of work peers leave out, transitively tied work's too, and all of a dropped malware unit's", async () => {
+    const note = (name: string) => `${name}@2.0.0 has GHSA-repo (unreviewed): these advisories alone don't trigger an update`;
+    const vitest = fix({ name: "vitest", from: "4.1.7", notes: [note("vitest")] });
+    const tied = fix({ name: "tied", from: "1.0.0", notes: [note("tied")] });
+    const other = fix({ name: "other", from: "1.0.0", notes: [note("other")] });
+    const stuck = { resolve: async () => ({ additions: [], blocked: [{ moves: [{ ...vitest, to: "9.9.9" }], reason: "UI has no safe compatible peer" }], sets: [["vitest", "tied"]] }) };
+    expect((await coupledWork([vitest, tied, other], stuck)).blocked).toEqual([{
+      packages: ["npm|tied", "npm|vitest"],
+      reasons: ["UI has no safe compatible peer", `tied@1.0.0: ${note("tied")}`, `vitest@4.1.7: ${note("vitest")}`],
+    }]);
+    const malware = await coupledWork([{ ...vitest, malicious: true }, { ...other, malicious: true }], stuck);
+    expect(malware.units).toEqual([]);
+    expect(malware.blocked[0]?.reasons).toEqual(["UI has no safe compatible peer", `vitest@4.1.7: ${note("vitest")}`, `other@1.0.0: ${note("other")}`]);
+  });
+
   it("takes malware together, otherwise batches non-majors in severity/name order", () => {
     const evil = fix({ name: "evil", from: "1.0.0", malicious: true, severity: undefined });
     const worse = fix({ name: "worse", from: "1.0.0", malicious: true });
@@ -79,6 +94,19 @@ describe("selectWork", () => {
   it("takes no malware at all when one malicious version can't move", () => {
     const selection = selectWork([fix({ name: "evil", from: "1.0.1", malicious: true }), fix({ name: "worse", from: "1.0.0", malicious: true, to: undefined, problem: "no clean version" }), fix({ name: "x", from: "1.0.0" })]);
     expect(selection).toEqual({ units: [], blocked: [{ packages: ["npm|evil", "npm|worse"], reasons: ["worse@1.0.0: no clean version"] }] });
+    const noted = selectWork([fix({ name: "evil", from: "1.0.1", malicious: true, notes: ["evil note"] }), fix({ name: "worse", from: "1.0.0", malicious: true, to: undefined, problem: "no clean version" }), fix({ name: "worse", from: "1.5.0", notes: ["clean copy note"] }), fix({ name: "x", from: "1.0.0", notes: ["unrelated"] })]);
+    expect(noted.blocked[0]?.reasons).toEqual(["worse@1.0.0: no clean version", "evil@1.0.1: evil note", "worse@1.5.0: clean copy note"]);
+  });
+
+  it("reports the notes of a blocked package's other copies once, beside the blocked copy's reason", () => {
+    const shared = "aab@3.0.0 has GHSA-repo (unreviewed): these advisories alone don't trigger an update";
+    const stuck = fix({ name: "aab", from: "2.0.0", to: undefined, problem: "no fix", notes: [shared] });
+    const first = fix({ name: "aab", from: "1.0.0", notes: [shared, "aab@4.0.0 has GHSA-other (unreviewed)"] });
+    const second = fix({ name: "aab", from: "1.5.0", notes: ["aab@4.0.0 has GHSA-other (unreviewed)"] });
+    expect(selectWork([stuck, first, second]).blocked).toEqual([{
+      packages: ["npm|aab"],
+      reasons: [`aab@2.0.0: no fix; ${shared}`, "aab@1.0.0: aab@4.0.0 has GHSA-other (unreviewed)"],
+    }]);
   });
 });
 
