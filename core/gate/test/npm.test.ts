@@ -6,6 +6,7 @@ import { DEFAULT_CONFIG, parseConfig, type Config } from "../src/config.ts";
 import { NO_EXCEPTIONS, parseExceptions, type Exceptions } from "../src/exceptions.ts";
 import type { Fetch } from "../src/http.ts";
 import { NpmCatalog } from "../src/catalogs.ts";
+import { IdentityCheck } from "../src/candidates.ts";
 import { npmChanges } from "../src/npm-changes.ts";
 import { isYoung, releaseAgeProblems } from "../src/release-age.ts";
 import { gatherCandidates } from "../src/young-fixes.ts";
@@ -472,6 +473,24 @@ describe("publisher identity", () => {
       "lib@1.1.0 was built from https://github.com/acme/lib (.github/workflows/other.yml), but the version it replaces (1.0.0) from https://github.com/acme/lib (.github/workflows/release.yml)",
     ]);
     expect(await changes(base, head, moved(RELEASE))).toEqual([]);
+  });
+
+  it("judges a publisher against every replaced copy, while planning checks each copy against its own version (a known limit)", async () => {
+    // Characterization: two copies (1.0.0 by alice, 2.0.0 bob's first) both move to bob's 3.0.0, without provenance.
+    const nested = (version: string) => ({ "node_modules/x/node_modules/lib": { version, resolved: `https://registry.npmjs.org/lib/-/lib-${version}.tgz`, integrity: `sha512-${sha512(`lib@${version}`).toString("base64")}` } });
+    const fetch = fake({
+      times: { lib: { "1.0.0": "2026-01-01T00:00:00Z", "2.0.0": "2026-06-01T00:00:00Z", "3.0.0": "2026-09-01T00:00:00Z" } },
+      publishers: { "lib@1.0.0": "alice", "lib@2.0.0": "bob", "lib@3.0.0": "bob" },
+    });
+    const base = pkgs({ lib: "1.0.0" }, nested("2.0.0"));
+    // Verification's baseline is every version the change replaces, so bob's own 2.0.0 is history.
+    expect(await changes(base, pkgs({ lib: "3.0.0" }, nested("3.0.0")), fetch)).toEqual([]);
+    // Planning checks 1.0.0 → 3.0.0 on its own, where bob hadn't published yet, and refuses what verification accepts.
+    const planning = new IdentityCheck(new NpmRegistry(fetch), [{ path: "package-lock.json", bundleProblems: [], packages: base }], NO_EXCEPTIONS, "2026-10-04");
+    expect(await planning.problems({ ecosystem: "npm", name: "lib", version: "1.0.0" }, "3.0.0")).toEqual([
+      "lib@3.0.0 has no provenance and its publisher bob hadn't published any version up to the one it replaces",
+    ]);
+    expect(await planning.problems({ ecosystem: "npm", name: "lib", version: "2.0.0" }, "3.0.0")).toEqual([]);
   });
 
   it("fails a publisher, without provenance, who hadn't published up to the replaced version", async () => {

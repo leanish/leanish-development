@@ -49,6 +49,23 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   to 16 id lookups per advisory group for each of GitHub's advisory database and OSV; repository-advisory pagination
   has a separate cap. No request budget spans the run, so many held versions can spend much of the shared GitHub API
   quota. New in 0.8.0.
+- **Publisher identity: planning and verification read different baselines (gate, secure-it)**: when neither the
+  candidate nor the replaced registry versions has provenance, verification checks the publisher against the registry's
+  publication history up to the latest publication time among the versions replaced in that lockfile; planning checks
+  each source version separately. When two copies (`lib@1.0.0` by one publisher, `lib@2.0.0` the first by another)
+  both move to a version the second publisher released, planning refuses the move for the first copy while
+  verification would accept it, so secure-it doesn't propose it. The gate's verdict on a PR is unaffected.
+  Pre-existing. In 0.9.0, planning is to use verification's replacement baseline, preserving its provenance checks.
+- **Held bodies keep raw length budgets (secure-it)**: a held PR's body is composed within raw UTF-16 budgets (61,440
+  for fresh text, 65,280 with its marker), which can cut table rows, drop evidence or refuse a body publication
+  would accept. Publication checks every body as it sends it. Kept since 0.8.0.
+- **Transient errors can regroup held work (secure-it)**: a transient npm planning error or a recorded Gradle reference
+  failure can split or merge held units differently from one run to the next (PR churn, and waiting for the youngest
+  version). An error running Gradle itself fails every held routine unit of that run instead, while other units
+  continue. Each failure is logged. New in 0.8.0.
+- **`gradle.ignoreConfigurations` in reference checks (secure-it)**: the Gradle reference checks in preflight and
+  verification include the configurations the gate is told to ignore, so a failure there can block a fix the gate
+  wouldn't. Pre-existing in 0.7.x.
 - **Optional root peers and the npm deprecation check (bump-it)**: a transitive version a major brings is exempt when the root declares the package, including as an optional peer it never installed, so a deprecated or unreadable version of it isn't refused. Pre-existing in 0.6.0; not fixed in 0.8.0.
 - **npm aliases without a version** (`"compat": "npm:lib"`): the inventory reads them, but neither tool can rewrite them, so an update fails visibly and a person makes it.
 - **Scheduled runs are best effort**: GitHub may delay or skip them, and disables them after 60 days without activity in a public repository. Nothing else watches that the scheduled scan still runs.

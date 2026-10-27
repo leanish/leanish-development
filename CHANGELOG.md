@@ -4,6 +4,10 @@
 
 ### Changed
 
+- Documentation: four known limits are now listed with the others, a test pins the first, and 0.9.0 is to fix it:
+  planning and verification read different baselines for publisher identity, so planning can refuse a move verification
+  would accept. The other three were 0.8.0's known limits: held bodies keep raw length budgets, transient errors can
+  regroup held work, and Gradle reference checks include `gradle.ignoreConfigurations`.
 - Verification's refusal of a young carrier whose bundled fix it can't justify names the versions advisories no reviewed
   source corroborates ruled out, as planning's does since 0.8.1. A refusal shows at most three advisories per version
   and counts the rest; the recorded vetoes stay whole. A retry still attributes the refusal by its own text, never by
