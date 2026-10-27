@@ -25,6 +25,13 @@
 
 ### Fixed
 
+- Errors no longer regroup secure-it's held work: held units are grouped only by couplings and required-young
+  relationships, so a transient npm planning error or a recorded Gradle reference failure fails its own unit, reported
+  with its error, while the other held units keep their topics, members and PRs. A Gradle execution error in a held
+  unit's preflight fails that unit alone, not every held unit of the run. Held groups that can only be planned or
+  resolved together now fail apart until they age, instead of joining (v0.8's fallback could gather every held group).
+  When the aged batch can't be planned it fails with its own error, without a second attempt, and if it has npm work
+  the held units fail too, since which of its roots join them is unknown; a review keeps their PRs as they are.
 - secure-it no longer plans an own package's young fix (or an own carrier's, or an own direct peer a fix moves with
   it) as held: the gate never holds an own package, so it now goes with the other fixes instead of waiting in a
   cooldown PR.

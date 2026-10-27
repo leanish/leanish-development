@@ -1486,23 +1486,26 @@ describe("the cooldown hold", () => {
     return { ...h, base, fixes, probes, deps };
   }
 
-  it("joins held Gradle fixes that plan alone but whose references only resolve together", async () => {
+  it("fails held Gradle fixes whose references only resolve together, each alone, instead of joining them", async () => {
     const h = heldGradle();
     const result = await secureIt(h.deps).run(h.context);
-    expect(result, JSON.stringify(result)).toMatchObject({ outcome: "published", topic: "security-cooldown-g:a", packages: ["Maven|g:a", "Maven|g:b"] });
-    expect(h.probes.slice(0, 3)).toEqual([["g:a"], ["g:b"], ["g:a", "g:b"]]);
-    expect(h.agentCalls).toHaveLength(1);
-    expect(planOf(h.github.prs.get(42)!.body)?.moves.map((move) => move.name)).toEqual(["g:a", "g:b"]);
+    expect(result, JSON.stringify(result)).toMatchObject({ units: [
+      { topic: "security-cooldown-g:a", outcome: "failed", detail: expect.stringContaining("conflict between g:b:1.0.0 and g:b:1.0.1") },
+      { topic: "security-cooldown-g:b", outcome: "failed", detail: expect.stringContaining("conflict between g:b:1.0.0 and g:b:1.0.1") },
+    ] });
+    expect(h.probes).toEqual([["g:a"], ["g:b"]]);
+    expect(h.agentCalls).toEqual([]);
+    expect(h.github.prs.size).toBe(0);
   });
 
-  it("tries only the failing Gradle groups together before gathering every held group", async () => {
+  it("fails only the held Gradle groups whose references fail, while a third one publishes", async () => {
     const h = heldGradle({ extra: true });
     expect(await secureIt(h.deps).run(h.context)).toMatchObject({ units: [
-      { packages: ["Maven|g:c"], outcome: "published" }, { packages: ["Maven|g:a", "Maven|g:b"], outcome: "published" },
+      { topic: "security-cooldown-g:a", outcome: "failed" }, { topic: "security-cooldown-g:b", outcome: "failed" },
+      { topic: "security-cooldown-g:c", packages: ["Maven|g:c"], outcome: "published" },
     ] });
-    expect(h.probes.slice(0, 4)).toEqual([["g:a"], ["g:b"], ["g:c"], ["g:a", "g:b"]]);
-    expect(h.probes).not.toContainEqual(["g:a", "g:b", "g:c"]);
-    expect(h.agentCalls).toHaveLength(2);
+    expect(h.probes).toEqual([["g:a"], ["g:b"], ["g:c"], ["g:c"]]);
+    expect(h.agentCalls).toHaveLength(1);
   });
 
   it.each(["aged", "major", "malware"] as const)("resolves only verification references for %s units, jointly except for majors", async (kind) => {
@@ -1522,30 +1525,34 @@ describe("the cooldown hold", () => {
     expect(h.agentCalls).toHaveLength(2);
   });
 
-  it.each(["unresolved", "declarations"] as const)("leaves a healthy held Gradle fix independent when a %s reference also prevents the joint preflight", async (broken) => {
+  it.each(["unresolved", "declarations"] as const)("fails a held Gradle fix whose %s reference fails before agent work, leaving the healthy one independent", async (broken) => {
     const h = heldGradle({ independent: true, broken });
     const warn = vi.spyOn(h.context.logger, "warn");
     expect(await secureIt(h.deps).run(h.context)).toMatchObject({ units: [
-      { topic: "security-cooldown-g:a", outcome: "verification-failed" }, { topic: "security-cooldown-g:b", outcome: "published" },
+      { topic: "security-cooldown-g:a", outcome: "failed", detail: expect.stringContaining("the held plan's Gradle reference doesn't resolve") },
+      { topic: "security-cooldown-g:b", outcome: "published" },
     ] });
-    expect(h.probes.slice(0, 3)).toEqual([["g:a"], ["g:b"], ["g:a", "g:b"]]);
+    expect(h.probes).toEqual([["g:a"], ["g:b"], ["g:b"]]);
+    expect(h.agentCalls).toHaveLength(1);
     expect(warn).toHaveBeenCalledWith("secure-it: a held unit's preflight failed", expect.objectContaining({ topic: "security-cooldown-g:a", error: expect.any(String) }));
     expect([...h.github.prs.values()].map((pr) => planOf(pr.body)?.packages)).toEqual([["Maven|g:b"]]);
   });
 
-  it.each(["throw", "missing"] as const)("fails only held units when the Gradle preflight is %s, without regrouping", async (broken) => {
+  it.each(["throw", "missing"] as const)("fails only the held unit whose Gradle preflight is %s; an unrelated held unit and the aged unit still run", async (broken) => {
     const h = heldGradle({ independent: true, broken, extra: true });
     const found = await h.deps.candidates(tree(BASE_SHA), await h.deps.gate(h.context), {});
     const fixes = h.fixes.map((fix) => fix.name === "g:c" ? { ...fix, to: { ...fix.to!, aged: true } } : fix);
     expect(await secureIt({ ...h.deps, candidates: async () => ({ ...found, fixes }) }).run(h.context)).toMatchObject({ units: [
-      { topic: "security", outcome: "published" }, { topic: "security-cooldown-g:a", outcome: "failed" }, { topic: "security-cooldown-g:b", outcome: "failed" },
+      { topic: "security", outcome: "published" },
+      { topic: "security-cooldown-g:a", outcome: "failed", detail: broken === "throw" ? "reference unavailable" : "the held plan has no Gradle reference inventory" },
+      { topic: "security-cooldown-g:b", outcome: "published" },
     ] });
-    expect(h.probes).toEqual([["g:a"], ["g:c"]]);
-    expect(h.agentCalls).toHaveLength(1);
-    expect([...h.github.prs.values()].map((pr) => planOf(pr.body)?.packages)).toEqual([["Maven|g:c"]]);
+    expect(h.probes).toEqual([["g:a"], ["g:b"], ["g:c"], ["g:b"]]);
+    expect(h.agentCalls).toHaveLength(2);
+    expect([...h.github.prs.values()].map((pr) => planOf(pr.body)?.packages)).toEqual([["Maven|g:c"], ["Maven|g:b"]]);
   });
 
-  it("fails npm-only and Maven held units on an unknown Gradle preflight while the aged unit still runs", async () => {
+  it("fails only the Maven held unit on its Gradle execution error; the npm-only held unit and the aged unit still run", async () => {
     const h = heldGradle({ single: true, broken: "throw" });
     const found = await h.deps.candidates(tree(BASE_SHA), await h.deps.gate(h.context), {});
     const fixes = [...h.fixes, YOUNG_VITE(), leftPad()];
@@ -1557,16 +1564,16 @@ describe("the cooldown hold", () => {
       commit: async (wc, sha) => withLockfile(await h.deps.trees.commit(wc, sha)),
       working: (wc) => withLockfile(h.deps.trees.working(wc)),
     };
-    const result = await secureIt({ ...h.deps, trees, candidates: async () => ({ ...found, fixes }), verify: async () => [] }).run(h.context);
+    const result = await secureIt({ ...h.deps, trees, candidates: async () => ({ ...found, fixes }), verify: holdingVerify }).run(h.context);
     expect(result).toMatchObject({ units: [
       { topic: "security", outcome: "published" },
       { topic: "security-cooldown-g:a", outcome: "failed", detail: "reference unavailable" },
-      { topic: "security-cooldown-vite", outcome: "failed", detail: "reference unavailable" },
+      { topic: "security-cooldown-vite", outcome: "published" },
     ] });
     expect(h.probes).toEqual([["g:a"]]);
-    expect(h.agentCalls).toHaveLength(1);
-    expect([...h.github.prs.values()].map((pr) => planOf(pr.body)?.packages)).toEqual([["npm|left-pad"]]);
-    expect(h.workspace.pushes).toHaveLength(1); // Only the aged unit publishes; neither held unit reaches the agent.
+    expect(h.agentCalls).toHaveLength(2);
+    expect([...h.github.prs.values()].map((pr) => planOf(pr.body)?.packages)).toEqual([["npm|left-pad"], ["npm|vite"]]);
+    expect(h.workspace.pushes).toHaveLength(2); // The Maven held unit never reaches the agent.
     expect(h.workspace.deletions).toEqual([]);
     expect(h.github.calls.some((call) => call.startsWith("closePullRequest"))).toBe(false);
   });
@@ -1582,9 +1589,11 @@ describe("the cooldown hold", () => {
     expect(npm.agentCalls).toHaveLength(2);
   });
 
-  it("still verifies the actual edit after the joint Gradle preflight passes", async () => {
-    const h = heldGradle();
-    expect(await secureIt({ ...h.deps, verify: async () => ["verification refused the edit"] }).run(h.context)).toMatchObject({ outcome: "verification-failed" });
+  it("still verifies the actual edit after the Gradle preflight passes", async () => {
+    const h = heldGradle({ independent: true });
+    expect(await secureIt({ ...h.deps, verify: async () => ["verification refused the edit"] }).run(h.context)).toMatchObject({ units: [
+      { outcome: "verification-failed" }, { outcome: "verification-failed" },
+    ] });
     expect(h.workspace.pushes).toEqual([]);
     expect(h.github.prs.size).toBe(0);
   });
@@ -1593,17 +1602,17 @@ describe("the cooldown hold", () => {
     for (const [i, fix] of h.fixes.entries()) {
       const topic = fix.to!.aged ? "security" : `security-cooldown-${fix.name}`;
       const plan = await planFor([fix], { lockfiles: new Map(), gradle: h.base, named: () => true, tagCommit: async () => undefined }, { kind: "routine", topic });
-      const pr = ownPr({ number: i + 7, nodeId: `node${i + 7}`, headRef: branchFor(RULES, new Date("2026-10-05T00:00:00Z"), topic), body: withMarker(RULES, withPlanSection("Fixes one.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+      const pr = ownPr({ number: i + 7, nodeId: `node${i + 7}`, url: `https://github.com/leanish/widget/pull/${i + 7}`, headRef: branchFor(RULES, new Date("2026-10-05T00:00:00Z"), topic), body: withMarker(RULES, withPlanSection("Fixes one.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
       h.github.prs.set(pr.number, pr);
       h.workspace.setRemoteHead(pr.headRef, pr.headSha);
     }
   }
 
-  it("leaves both split Gradle PRs untouched after one transient preflight execution error", async () => {
-    const h = heldGradle();
+  it("leaves only the held PR whose preflight hit a transient Gradle execution error untouched; the other rebases", async () => {
+    const h = heldGradle({ independent: true });
     await seedSplitGradlePrs(h);
-    const before = [...h.github.prs.values()];
-    h.github.before("updatePullRequest", () => h.github.push(7, PUSHED_SHA));
+    const failing = h.github.prs.get(7);
+    h.github.before("updatePullRequest", () => h.github.push(8, PUSHED_SHA));
     const inventories = h.deps.gradle(h.context);
     let attempts = 0;
     const gradle: SecureItDeps["gradle"] = () => ({ ...inventories, ofCommit: async (tree, change) => {
@@ -1611,22 +1620,21 @@ describe("the cooldown hold", () => {
       return inventories.ofCommit(tree, change);
     } });
     expect(await secureIt({ ...h.deps, gradle }).review({ ...h.context, workingCopy: { ...h.context.workingCopy, headSha: "f".repeat(40) } })).toMatchObject({ reviewed: [
-      { number: 7, outcome: "error", detail: "transient Gradle failure" }, { number: 8, outcome: "error", detail: "transient Gradle failure" },
+      { number: 7, outcome: "error", detail: "transient Gradle failure" }, { number: 8, outcome: "rebased" },
     ] });
-    expect([...h.github.prs.values()]).toEqual(before);
-    expect(h.workspace.pushes).toEqual([]);
+    expect(h.github.prs.get(7)).toEqual(failing);
+    expect(planOf(h.github.prs.get(8)!.body)?.members).toEqual(["Maven|g:b"]);
+    expect(h.workspace.pushes).toHaveLength(1);
     expect(h.workspace.deletions).toEqual([]);
-    expect(h.agentCalls).toEqual([]);
-    expect(attempts).toBe(1); // The second PR shares the rejected preflight; it cannot regroup on a lucky retry.
-    // A later invocation retries instead of keeping the transient rejection indefinitely.
-    expect(await secureIt({ ...h.deps, gradle }).run(h.context)).toMatchObject({ outcome: "updated", packages: ["Maven|g:a", "Maven|g:b"] });
+    // The second PR reuses the tick's preflight results; only its final verification resolves again.
+    expect(h.probes).toEqual([["g:b"], ["g:b"]]);
   });
 
-  it("rebases an aged PR while both held PRs report an unknown Gradle preflight", async () => {
+  it("rebases an aged PR and the other held PR while one held PR reports its Gradle execution error", async () => {
     const h = heldGradle({ independent: true, extra: true });
     const fixes = h.fixes.map((fix) => fix.name === "g:c" ? { ...fix, to: { ...fix.to!, aged: true } } : fix);
     await seedSplitGradlePrs({ ...h, fixes });
-    const heldBefore = [h.github.prs.get(7), h.github.prs.get(8)];
+    const failing = h.github.prs.get(7);
     const found = await h.deps.candidates(tree(BASE_SHA), await h.deps.gate(h.context), {});
     const inventories = h.deps.gradle(h.context);
     let attempts = 0;
@@ -1637,33 +1645,33 @@ describe("the cooldown hold", () => {
     const tool = secureIt({ ...h.deps, gradle, candidates: async () => ({ ...found, fixes }) });
     expect(await tool.review({ ...h.context, workingCopy: { ...h.context.workingCopy, headSha: "f".repeat(40) } })).toMatchObject({ reviewed: [
       { number: 7, outcome: "error", detail: "transient Gradle failure" },
-      { number: 8, outcome: "error", detail: "transient Gradle failure" },
+      { number: 8, outcome: "rebased" },
       { number: 9, outcome: "rebased" },
     ] });
-    expect([h.github.prs.get(7), h.github.prs.get(8)]).toEqual(heldBefore);
+    expect(h.github.prs.get(7)).toEqual(failing);
     expect(h.github.prs.get(9)?.state).toBe("open");
-    expect(h.workspace.pushes).toHaveLength(1);
+    expect(h.workspace.pushes).toHaveLength(2);
     expect(h.workspace.deletions).toEqual([]);
-    expect(h.probes).toEqual([["g:c"]]); // Only final verification resolves; the shared preflight rejected before returning an inventory.
+    // g:a's preflight rejected before returning an inventory; g:b's is shared; each final verification resolves its own.
+    expect(h.probes).toEqual([["g:b"], ["g:b"], ["g:c"]]);
   });
 
-  it("reviews two split held Gradle PRs on a moved base as one joint unit", async () => {
+  it("keeps two split held Gradle PRs apart on a moved base when their references only resolve together", async () => {
     const h = heldGradle();
     await seedSplitGradlePrs(h);
-    // The next PR's claims must see the first PR's newly pushed head, as GitHub does once the push is visible.
-    h.github.before("updatePullRequest", () => h.github.push(7, PUSHED_SHA));
+    const before = [...h.github.prs.values()];
     expect(await secureIt(h.deps).review({ ...h.context, workingCopy: { ...h.context.workingCopy, headSha: "f".repeat(40) } })).toMatchObject({ reviewed: [
-      { number: 7, outcome: "rebased" }, { number: 8, outcome: "retired" },
+      { number: 7, outcome: "error", detail: expect.stringContaining("conflict between g:b:1.0.0 and g:b:1.0.1") },
+      { number: 8, outcome: "error", detail: expect.stringContaining("conflict between g:b:1.0.0 and g:b:1.0.1") },
     ] });
-    expect(planOf(h.github.prs.get(7)!.body)?.members).toEqual(["Maven|g:a", "Maven|g:b"]);
-    expect(h.github.prs.get(8)?.state).toBe("closed");
-    expect(h.agentCalls).toHaveLength(1);
-    // One tick shares the three preflight references across PRs; the final verification builds its own fourth one.
-    expect(h.probes).toEqual([["g:a"], ["g:b"], ["g:a", "g:b"], ["g:a", "g:b"]]);
+    expect([...h.github.prs.values()]).toEqual(before);
+    expect(h.agentCalls).toEqual([]);
+    // One tick shares the two preflight references across PRs.
+    expect(h.probes).toEqual([["g:a"], ["g:b"]]);
   });
 
   it("does not share held Gradle preflight results across base commits in one review tick", async () => {
-    const h = heldGradle();
+    const h = heldGradle({ independent: true });
     await seedSplitGradlePrs(h);
     const prepare = h.workspace.prepareBranch.bind(h.workspace);
     const secondBranch = h.github.prs.get(8)!.headRef;
@@ -1674,9 +1682,39 @@ describe("the cooldown hold", () => {
     };
     h.github.before("updatePullRequest", () => h.github.push(7, PUSHED_SHA));
     expect(await secureIt(h.deps).review({ ...h.context, workingCopy: { ...h.context.workingCopy, headSha: "f".repeat(40) } })).toMatchObject({ reviewed: [
-      { number: 7, outcome: "rebased" }, { number: 8, outcome: "retired" },
+      { number: 7, outcome: "rebased" }, { number: 8, outcome: "rebased" },
     ] });
-    expect(h.probes).toEqual([["g:a"], ["g:b"], ["g:a", "g:b"], ["g:a", "g:b"], ["g:a"], ["g:b"], ["g:a", "g:b"]]);
+    expect(h.probes).toEqual([["g:a"], ["g:b"], ["g:a"], ["g:a"], ["g:b"], ["g:b"]]);
+  });
+
+  /** Three held Gradle units with an open PR each; `alone` makes g:a's reference record a failure only when it moves alone. */
+  async function threeHeldGradle(alone: boolean) {
+    const h = heldGradle({ independent: true, extra: true });
+    await seedSplitGradlePrs(h);
+    const inventories = h.deps.gradle(h.context);
+    const gradle: SecureItDeps["gradle"] = () => ({ ...inventories, ofCommit: async (tree, change) => {
+      const reference = await inventories.ofCommit(tree, change);
+      const { moves } = (change?.transform?.content("/fixture") ?? { moves: [] }) as { moves: Array<{ name: string }> };
+      if (!alone || reference === undefined || moves.map((move) => move.name).join() !== "g:a") return reference;
+      return { ...reference, builds: reference.builds.map((build) => ({ ...build, configurations: build.configurations.map((configuration) => ({ ...configuration, error: "g:a needs a sibling moved" })) })) };
+    } });
+    return { h, result: await secureIt({ ...h.deps, gradle }).run(h.context) };
+  }
+
+  it("keeps the other held units' topics, members and PRs when one held Gradle reference records a failure", async () => {
+    const healthy = await threeHeldGradle(false);
+    const failing = await threeHeldGradle(true);
+    // Before 0.9.0, the failing unit was tried with every held unit, and the joint reference passed: one PR for all three.
+    const others = (result: Readonly<Record<string, unknown>>) => (result["units"] as Array<Record<string, unknown>>)
+      .filter((unit) => unit["topic"] !== "security-cooldown-g:a").map(({ topic, packages, outcome, pullRequest }) => ({ topic, packages, outcome, pullRequest }));
+    expect(others(failing.result)).toEqual(others(healthy.result));
+    expect(others(healthy.result)).toEqual([
+      { topic: "security-cooldown-g:b", packages: ["Maven|g:b"], outcome: "already-open", pullRequest: "https://github.com/leanish/widget/pull/8" },
+      { topic: "security-cooldown-g:c", packages: ["Maven|g:c"], outcome: "already-open", pullRequest: "https://github.com/leanish/widget/pull/9" },
+    ]);
+    expect((failing.result["units"] as unknown[])[0]).toMatchObject({ topic: "security-cooldown-g:a", outcome: "failed", detail: expect.stringContaining("g:a needs a sibling moved") });
+    expect(failing.h.github.prs.get(7)?.state).toBe("open");
+    expect(failing.h.workspace.pushes).toEqual([]);
   });
 
   const YOUNG_PAD = () => leftPad({ to: { version: "1.0.1", line: "1", aged: false, major: false, blockers: [] } });
@@ -1702,26 +1740,30 @@ describe("the cooldown hold", () => {
     return plan;
   };
 
-  it("plans two young fixes together when neither can be planned apart", async () => {
+  it("fails each young fix that can't be planned apart on its own, rather than joining them", async () => {
     const h = harness({ fixes: [YOUNG_VITE(), YOUNG_PAD()] });
     const result = await secureIt({ ...h.deps, requiredNpm: apartFails, verify: holdingVerify }).run(h.context);
-    expect(result).toMatchObject({ topic: "security-cooldown-left-pad", packages: ["npm|left-pad", "npm|vite"], outcome: "published" });
-    expect([...h.github.prs.values()].map((pr) => planOf(pr.body)?.members)).toEqual([["npm|left-pad", "npm|vite"]]);
+    expect(result).toMatchObject({ units: [
+      { topic: "security-cooldown-left-pad", outcome: "failed", detail: "security-cooldown-left-pad keeps the other root's requirement" },
+      { topic: "security-cooldown-vite", outcome: "failed", detail: "security-cooldown-vite keeps the other root's requirement" },
+    ] });
+    expect(h.github.prs.size).toBe(0);
   });
 
-  it.each([false, true])("plans two young roots together when each requires one exact companion, as planning proves it (aged companion: %s)", async (aged) => {
+  it.each([false, true])("fails two young roots that each require one exact companion, each alone, as planning proves it (aged companion: %s)", async (aged) => {
     // securityBatch: vite and bundler 8.3.3 each require postcss 8.5.29 exactly, and 8.3.2 requires 8.5.28 exactly, so
-    // requiredNpmPlan can plan neither while the other stays at 8.3.2.
+    // requiredNpmPlan can plan neither while the other stays at 8.3.2; they wait until both age into the aged batch.
     const batch = securityBatch();
     const registry = environment({ ...batch, docs: aged ? { ...batch.docs, postcss: { ...postcss, time: { ...postcss.time, "8.5.29": OLD } } } : batch.docs });
     const young = (name: string) => vite({ name, from: "8.3.2", locations: [`node_modules/${name}`], to: { version: "8.3.3", line: "8", aged: false, major: false, blockers: [] } });
     const h = harness({ fixes: [young("vite"), young("bundler")], files: batch.base });
     const requiredNpm: SecureItDeps["requiredNpm"] = (base, plan) => requiredNpmPlan(base, plan, registry.env);
     const result = await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context);
-    expect(result).toMatchObject({ topic: "security-cooldown-bundler", packages: ["npm|bundler", "npm|vite"], outcome: "published" });
+    expect(result).toMatchObject({ units: [{ topic: "security-cooldown-bundler", outcome: "failed" }, { topic: "security-cooldown-vite", outcome: "failed" }] });
+    expect(h.github.prs.size).toBe(0);
   });
 
-  it("plans a young fix together with the aged fix its young requirement held, when they can't be planned apart", async () => {
+  it("fails a young fix and the aged fix its young requirement held, each alone, when they can't be planned apart", async () => {
     // left-pad is aged, but its young requirement c holds it; then it can't be planned without vite, nor vite without it.
     const h = harness({ fixes: [YOUNG_VITE(), leftPad()] });
     const young = { exempt: true, name: "c", version: "1.0.1", root: { name: "left-pad", version: "1.0.1", path: "node_modules/left-pad" } };
@@ -1730,20 +1772,101 @@ describe("the cooldown hold", () => {
       return plan.packages.includes("npm|left-pad") ? { ...planned, requiredNpm: [young] as never } : planned;
     };
     const result = await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context);
-    expect(result).toMatchObject({ topic: "security-cooldown-left-pad", packages: ["npm|left-pad", "npm|vite"], outcome: "published" });
+    expect(result).toMatchObject({ units: [{ topic: "security-cooldown-left-pad", outcome: "failed" }, { topic: "security-cooldown-vite", outcome: "failed" }] });
+    expect(h.github.prs.size).toBe(0);
   });
 
-  it("falls back to every held fix together, gathering one that plans alone, when only one can't be planned apart", async () => {
-    // vite needs left-pad's fix; other plans alone, yet the fallback, v0.7's single held batch, takes it too.
+  it("fails only the held fix that can't be planned apart; the others open on their own", async () => {
+    // vite needs left-pad's fix; v0.8's fallback, v0.7's single held batch, used to gather all three.
     const other = leftPad({ name: "other", locations: ["node_modules/other"], to: { version: "1.0.1", line: "1", aged: false, major: false, blockers: [] } });
     const h = harness({ fixes: [YOUNG_VITE(), YOUNG_PAD(), other] });
     const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => {
       if (plan.packages.includes("npm|vite") && !plan.packages.includes("npm|left-pad")) throw new Error("vite needs left-pad's fix");
       return plan;
     };
-    expect(await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context)).toMatchObject({
-      topic: "security-cooldown-left-pad", packages: ["npm|left-pad", "npm|other", "npm|vite"], outcome: "published",
-    });
+    expect(await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context)).toMatchObject({ units: [
+      { topic: "security-cooldown-left-pad", packages: ["npm|left-pad"], outcome: "published" },
+      { topic: "security-cooldown-other", packages: ["npm|other"], outcome: "published" },
+      { topic: "security-cooldown-vite", outcome: "failed", detail: "vite needs left-pad's fix" },
+    ] });
+  });
+
+  it("keeps the other held units' topics, members and PRs when a transient npm planning error hits one", async () => {
+    const other = leftPad({ name: "other", locations: ["node_modules/other"], to: { version: "1.0.1", line: "1", aged: false, major: false, blockers: [] } });
+    const fixes = () => [YOUNG_VITE(), YOUNG_PAD(), other];
+    const runWith = async (transient: boolean) => {
+      const prs = await Promise.all(fixes().map(async (fix, i) => ownPr({ number: 7 + i, nodeId: `node${7 + i}`, url: `https://github.com/leanish/widget/pull/${7 + i}`, headRef: `secure-it/2026-10-05-security-cooldown-${fix.name}`,
+        body: withMarker(RULES, withPlanSection(`Fixes ${fix.name}.`, await heldPlan(fix)), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) })));
+      const h = harness({ prs, fixes: fixes() });
+      for (const pr of prs) h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
+      let failures = transient ? 1 : 0;
+      // Only left-pad's first planning fails, as a registry blip would; a later plan would succeed.
+      const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => {
+        if (plan.packages.includes("npm|left-pad") && failures-- > 0) throw new Error("registry 502");
+        return plan;
+      };
+      return { h, result: await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context) };
+    };
+    const healthy = await runWith(false);
+    const failing = await runWith(true);
+    // Before 0.9.0, the failing unit was tried with every held unit, and that plan passed: one PR for all three.
+    const others = (result: Readonly<Record<string, unknown>>) => (result["units"] as Array<Record<string, unknown>>)
+      .filter((unit) => unit["topic"] !== "security-cooldown-left-pad").map(({ topic, packages, outcome, pullRequest }) => ({ topic, packages, outcome, pullRequest }));
+    expect(others(failing.result)).toEqual(others(healthy.result));
+    expect(others(healthy.result)).toEqual([
+      { topic: "security-cooldown-other", packages: ["npm|other"], outcome: "already-open", pullRequest: "https://github.com/leanish/widget/pull/9" },
+      { topic: "security-cooldown-vite", packages: ["npm|vite"], outcome: "already-open", pullRequest: "https://github.com/leanish/widget/pull/7" },
+    ]);
+    expect((failing.result["units"] as unknown[])[0]).toMatchObject({ topic: "security-cooldown-left-pad", outcome: "failed", detail: "registry 502" });
+    expect(failing.h.github.prs.get(8)?.state).toBe("open");
+    expect(failing.h.workspace.pushes).toEqual([]);
+  });
+
+  it("fails the aged unit and the held units on a failed aged plan, instead of grouping held work without it", async () => {
+    // The aged plan decides which of its roots a young requirement holds; without it, the held grouping is unknown.
+    const h = harness({ fixes: [YOUNG_VITE(), leftPad()] });
+    let plans = 0;
+    const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => {
+      if (plan.topic === "security") throw new Error(`registry 502 (${++plans})`);
+      return plan;
+    };
+    expect(await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context)).toMatchObject({ units: [
+      { topic: "security", outcome: "failed", detail: "registry 502 (1)" },
+      { topic: "security-cooldown-vite", outcome: "failed", detail: expect.stringContaining("the aged unit's plan, which decides which of its fixes join held work, failed: registry 502 (1)") },
+    ] });
+    expect(plans).toBe(1); // Not planned again: a lucky retry could send a root that must wait out aged.
+    expect(h.github.prs.size).toBe(0);
+    expect(h.agentCalls).toEqual([]);
+  });
+
+  it("keeps a held PR on a failed aged plan rather than retiring it against a grouping without it", async () => {
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite",
+      body: withMarker(RULES, withPlanSection("Fixes vite.", { ...await heldPlan(YOUNG_VITE()), cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pr], baseSha: "f".repeat(40), fixes: [YOUNG_VITE(), leftPad()] });
+    h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
+    const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => {
+      if (plan.topic === "security") throw new Error("registry 502");
+      return plan;
+    };
+    expect(await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).review(h.context)).toMatchObject({ reviewed: [
+      { number: 7, outcome: "error", detail: expect.stringContaining("registry 502") },
+    ] });
+    expect(h.github.prs.get(7)).toEqual(pr);
+  });
+
+  it("keeps held units running when an aged unit without npm work can't be planned", async () => {
+    const h = heldGradle({ independent: true, extra: true });
+    const found = await h.deps.candidates(tree(BASE_SHA), await h.deps.gate(h.context), {});
+    const fixes = h.fixes.map((fix) => fix.name === "g:c" ? { ...fix, to: { ...fix.to!, aged: true } } : fix);
+    const requiredNpm: SecureItDeps["requiredNpm"] = async (base, plan, env) => {
+      if (plan.topic === "security") throw new Error("actions lookup failed");
+      return h.deps.requiredNpm(base, plan, env);
+    };
+    expect(await secureIt({ ...h.deps, requiredNpm, candidates: async () => ({ ...found, fixes }) }).run(h.context)).toMatchObject({ units: [
+      { topic: "security", outcome: "failed", detail: "actions lookup failed" },
+      { topic: "security-cooldown-g:a", outcome: "published" },
+      { topic: "security-cooldown-g:b", outcome: "published" },
+    ] });
   });
 
   it("keeps a held fix that can't be planned apart from one that can, so the other still opens", async () => {
@@ -1758,13 +1881,15 @@ describe("the cooldown hold", () => {
     ] });
   });
 
-  it("reviews a held PR as the joint unit a run would plan, when its fix can't be planned apart any more", async () => {
+  it("keeps a held PR whose fix can't be planned apart any more, reporting its planning error", async () => {
     const pr = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite",
       body: withMarker(RULES, withPlanSection("Fixes vite.", { ...await heldPlan(YOUNG_VITE()), cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr], baseSha: "f".repeat(40), fixes: [YOUNG_VITE(), YOUNG_PAD()] });
     h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
-    expect(await secureIt({ ...h.deps, requiredNpm: apartFails, verify: holdingVerify }).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "rebased" }] });
-    expect(planOf(h.github.prs.get(7)!.body)).toMatchObject({ topic: "security-cooldown-left-pad", members: ["npm|left-pad", "npm|vite"] });
+    expect(await secureIt({ ...h.deps, requiredNpm: apartFails, verify: holdingVerify }).review(h.context)).toMatchObject({ reviewed: [
+      { number: 7, outcome: "error", detail: "security-cooldown-vite keeps the other root's requirement" },
+    ] });
+    expect(h.github.prs.get(7)).toEqual(pr);
   });
 
   it("reuses v0.7's single held PR for the unit holding its lowest package, and opens the other", async () => {
