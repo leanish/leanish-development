@@ -453,7 +453,8 @@ export class IdentityCheck {
       bundled: false,
       integrity: typeof manifest?.dist?.integrity === "string" ? manifest.dist.integrity : undefined,
     };
-    // With no registry copy of `from` there's no baseline, but the candidate's own provenance is still checked.
+    // With no registry copy of `from` there's no baseline to compare, so no break is reported, but the candidate's
+    // own provenance is still read and validated: a malformed or mismatched statement fails.
     const problems: string[] = [];
     for (const baseline of baselines.length === 0 ? [new Map<string, string | undefined>()] : baselines) {
       problems.push(...await this.#registry.identityProblems(candidate, baseline, this.#exceptions, this.#today));

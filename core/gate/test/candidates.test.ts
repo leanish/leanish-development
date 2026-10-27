@@ -823,8 +823,8 @@ describe("IdentityCheck", () => {
     ];
     const check = new IdentityCheck(registry, lockfiles, NO_EXCEPTIONS, "2026-10-16");
     for (const from of ["1.0.0", "0.9.0", "0.8.0"]) await check.problems({ ecosystem: "npm", name: "a", version: from }, "1.1.0");
-    // 1.0.0 once per lockfile, neither lending the other its integrity; a bundled or git copy has no baseline, but
-    // the candidate is still checked against an empty one (its own provenance).
+    // 1.0.0 once per lockfile, neither lending the other its integrity. A bundled or git copy has no baseline: the
+    // call with an empty one reports no break, but still reads and validates the candidate's own provenance.
     expect(seen.map((shipped) => [...shipped])).toEqual([[["1.0.0", "sha512-first"]], [["1.0.0", "sha512-later"]], [], []]);
     expect(await check.problems({ ecosystem: "Maven", name: "a", version: "1.0.0" }, "1.1.0")).toEqual([]);
     expect(seen).toHaveLength(4);
