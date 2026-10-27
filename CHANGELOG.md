@@ -8,12 +8,25 @@
   the candidates into the snapshot to the required-dependency proofs; compare reuses its snapshot. Verdicts are
   unchanged. Release-age arithmetic is shared across the gate and both tools (`@leanish/gate/age`): the exact
   threshold counts as aged, and an unknown date is never aged nor an exemption.
+- Whether an open PR is still the tool's, and what its effective title and body are, is decided in one module
+  (`ownership.ts`): the review tick, both tools' runs and secure-it's held claims inspect it the same read-only way,
+  and a PR's saved publication is written back only right before a unit or the tick uses that PR. Preparing a unit's
+  branch (its reused PR's, or a fresh one) is shared too (`branches.ts`). `recoverPublication` is no longer exported.
+  Each unit of a run now inspects every open PR of the tool before matching its plan, so a journal that can't be read
+  (or a saved publication that doesn't match its head) fails every unit of that run, each reported on its own, instead
+  of only the units whose plan the PR's stale body names; the run still goes on, and nothing is guessed from the body.
+  secure-it's held claims now check a saved publication too.
 
 ### Fixed
 
 - secure-it no longer plans an own package's young fix (or an own carrier's, or an own direct peer a fix moves with
   it) as held: the gate never holds an own package, so it now goes with the other fixes instead of waiting in a
   cooldown PR.
+- Both tools' runs match an open PR whose body lags behind its head (a body update failed after a push) by the plan
+  the journal saved for that head, not by the stale body: a unit no longer opens a second PR beside its own, nor
+  takes over another unit's.
+- The review tick leaves a PR whose journal records only its head (an entry from before publications were saved) alone
+  for the tool's next run to recompute and republish, instead of reporting an error.
 
 ## 0.8.2 - 2026-10-27
 

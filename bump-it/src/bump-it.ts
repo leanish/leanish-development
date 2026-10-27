@@ -7,14 +7,16 @@ import type { ToolHandlers, ToolRunContext } from "@leanish/tool-runtime/command
 import { DEFAULT_MAX_NEW_MAJORS_PER_RUN } from "@leanish/tool-runtime/config";
 import type { FileState } from "@leanish/tool-runtime/git-copies";
 import { isMechanical } from "@leanish/tool-runtime/edit-checks";
-import { branchFor, topicOf, stateOf } from "@leanish/tool-runtime/own-pr";
-import { closeAndDelete, ownOpenPullRequests, publishNew, publishUpdate, type PullRequestContent, recoverPublication } from "@leanish/tool-runtime/publication";
+import { prepareUnitBranch } from "@leanish/tool-runtime/branches";
+import { branchFor, topicOf } from "@leanish/tool-runtime/own-pr";
+import { inspectOwnership, type Ours, repairOwnership, samePlan } from "@leanish/tool-runtime/ownership";
+import { closeAndDelete, ownOpenPullRequests, publishNew, publishUpdate, type PullRequestContent } from "@leanish/tool-runtime/publication";
 import { machineRoots } from "@leanish/tool-runtime/publication-text";
 import { reviewOpenPullRequests, type ReviewSteps } from "@leanish/tool-runtime/review";
 
 import { WRAPPER_FILES, type WrapperCandidates } from "./gradle-wrapper.ts";
 import { type BumpItDeps, defaultDeps } from "./deps.ts";
-import { type Computed, compute, edit, type Execution, prepare, RULES, VerificationRejected, verify, writeNpm, writeWrapper } from "./operations.ts";
+import { type Computed, compute, edit, type Execution, RULES, VerificationRejected, verify, writeNpm, writeWrapper } from "./operations.ts";
 import { type BumpPlan, planDigest, planOf, withPlanSection } from "./plan.ts";
 import { majorUnits, routineUnit, type Unit } from "./units.ts";
 import { plannedFiles, wrapperFilesMatch } from "./verify.ts";
@@ -116,18 +118,24 @@ async function run(context: ToolRunContext, deps: BumpItDeps): Promise<Readonly<
   };
 }
 
-async function recognised(execution: Execution, unit: Unit, own: ReadonlyArray<GitHubPullRequest>): Promise<GitHubPullRequest[]> {
-  const matches: GitHubPullRequest[] = [];
+/**
+ * The unit's open PRs that are still the tool's, matched by their effective content (`inspectOwnership`): a PR whose
+ * body lags behind its head is matched by the plan the journal saved for that head, not by its stale body. Read-only:
+ * the unit repairs only the PR it uses. Every candidate is inspected, so an unreadable journal fails the unit.
+ */
+async function recognised(execution: Execution, unit: Unit, own: ReadonlyArray<GitHubPullRequest>): Promise<Ours[]> {
+  const matches: Ours[] = [];
   for (const candidate of own) {
-    const plan = planOf(candidate.body);
+    const ownership = await inspectOwnership(execution.publication, candidate);
+    // Someone else's push or rewrite is skipped. Legacy entries prove only the head: kept for reconciliation, never `samePlan`.
+    if (ownership.kind !== "ours") {
+      continue;
+    }
+    const plan = planOf(ownership.pr.body);
     if (plan === undefined || plan.kind !== unit.kind || plan.package !== unit.package || plan.topic !== unit.topic) {
       continue;
     }
-    const journaled = await execution.publication.journal.last(execution.context.repo.repo, candidate.number);
-    // Legacy entries prove only the head: keep it for reconciliation, never same-plan suppression.
-    const pr = journaled?.head === candidate.headSha && journaled.publication === undefined
-      ? candidate : await recoverPublication(execution.publication, candidate);
-    const topic = topicOf(RULES, pr.headRef);
+    const topic = topicOf(RULES, ownership.pr.headRef);
     // The block and branch must name this unit. A suffix is the tool's PR beside one a human took over.
     const branchTopic = topicOf(RULES, branchFor(RULES, execution.context.now, unit.topic))!;
     const suffix = /^(.*)-(\d+)$/.exec(topic ?? "");
@@ -135,28 +143,35 @@ async function recognised(execution: Execution, unit: Unit, own: ReadonlyArray<G
     if (topic !== branchTopic && !suffixed) {
       continue;
     }
-    if (stateOf(pr.body)?.head === pr.headSha || journaled?.head === pr.headSha) {
-      matches.push(pr);
-    }
+    matches.push(ownership);
   }
   return matches;
 }
 
+/** The digest of the plan a body records, for `samePlan`; undefined when it has none bump-it can read. */
+function digestOf(body: string): string | undefined {
+  const plan = planOf(body);
+  return plan === undefined ? undefined : planDigest(plan);
+}
+
 const empty = (computed: Computed) => computed.plan.moves.length === 0 && computed.files.size === 0;
 
-async function runUnit(execution: Execution, computed: Computed, unit: Unit, own: ReadonlyArray<GitHubPullRequest>, owned: ReadonlyArray<GitHubPullRequest>): Promise<UnitReport> {
+async function runUnit(execution: Execution, computed: Computed, unit: Unit, own: ReadonlyArray<GitHubPullRequest>, owned: ReadonlyArray<Ours>): Promise<UnitReport> {
   if (computed.blocked !== undefined) {
     return { topic: unit.topic, outcome: "blocked", detail: computed.blocked, notes: computed.plan.notes };
   }
   if (empty(computed)) {
     return { topic: unit.topic, outcome: "nothing-to-move", notes: computed.plan.notes };
   }
-  const same = owned.find((pr) => stateOf(pr.body)?.head === pr.headSha && planDigest(planOf(pr.body)!) === planDigest(computed.plan));
+  const same = owned.find((candidate) => samePlan(candidate.pr, planDigest(computed.plan), digestOf));
   if (same !== undefined) {
-    return { topic: unit.topic, outcome: "already-open", pullRequest: same.url, notes: computed.plan.notes };
+    const pr = await repairOwnership(execution.publication, same);
+    return { topic: unit.topic, outcome: "already-open", pullRequest: pr.url, notes: computed.plan.notes };
   }
-  const reusable = owned[0];
-  const prepared = await prepare(execution, unit, own, reusable, computed.base.id);
+  const reusable = owned[0] === undefined ? undefined : await repairOwnership(execution.publication, owned[0]);
+  const prepared = await prepareUnitBranch(execution.publication, {
+    topic: unit.topic, reusable, own, taken: execution.branches, baseSha: computed.base.id, now: execution.context.now, revert: execution.deps.revert,
+  });
   const { content, rejected } = await applyVerified(execution, computed);
   const retried = rejected === undefined ? {} : { rejected };
   if (reusable !== undefined) {

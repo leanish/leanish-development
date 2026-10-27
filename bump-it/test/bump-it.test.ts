@@ -580,6 +580,46 @@ describe("bump-it run", () => {
     expect(human.github.prs.get(42)?.headRef).toBe("bump-it/2026-10-07-routine-2");
     expect(human.github.prs.get(7)?.headSha).toBe(pr.headSha);
   });
+  it("matches a PR by the plan the journal saved for its head, not its stale body, and repairs it as it uses it", async () => {
+    const current = await prFor(routine());
+    // #7's body still records a major's plan at an older head; the journal saved this unit's plan for its current head.
+    const pr = { ...await prFor(major()), headRef: current.headRef, headSha: PUSHED_SHA };
+    const h = harness({ prs: [pr], bumps: [candidate({ major: undefined })] });
+    const body = withMarker(RULES, current.body, { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 });
+    await h.journal.pushed(REPO, pr.number, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: "refreshing dependencies", body, adaptations: 0 } });
+    expect(await bumpIt(h.deps).run(h.context)).toMatchObject({ units: [{ outcome: "already-open", pullRequest: pr.url }] });
+    expect(h.github.prs.get(pr.number)).toMatchObject({ title: "refreshing dependencies", body });
+    expect([h.workspace.preparations, h.agentCalls]).toEqual([[], []]);
+  });
+  it("repairs only the PR a unit reuses, never another match", async () => {
+    const stale = routine(candidate({ minor: { version: "1.0.1", line: "1" } }));
+    const prs = [await prFor(stale, { headSha: PUSHED_SHA }), await prFor(stale, { number: 8, nodeId: "PR_node8", url: "u8", headRef: "bump-it/2026-10-05-routine-2", headSha: PUSHED_SHA })];
+    const h = harness({ prs, bumps: [candidate({ major: undefined })] });
+    for (const pr of prs) {
+      await h.journal.pushed(REPO, pr.number, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: pr.title, body: withMarker(RULES, pr.body, { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 }), adaptations: 0 } });
+    }
+    expect(await bumpIt(h.deps).run(h.context)).toMatchObject({ units: [{ outcome: "updated", pullRequest: prs[0]!.url }] });
+    expect(h.github.calls.filter((call) => call.startsWith("updatePullRequest"))).toEqual(["updatePullRequest 7", "updatePullRequest 7"]);
+    expect(h.github.prs.get(8)).toEqual(prs[1]);
+  });
+  it("repairs nothing for a unit that is empty or blocked", async () => {
+    const lagging = async (unit: Unit) => {
+      const pr = await prFor(unit, { headSha: PUSHED_SHA });
+      const h = harness({ prs: [pr], bumps: [] });
+      await h.journal.pushed(REPO, pr.number, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: pr.title, body: withMarker(RULES, pr.body, { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 }), adaptations: 0 } });
+      return h;
+    };
+    const empty = await lagging(routineUnit([]));
+    expect(await bumpIt(empty.deps).run(empty.context)).toMatchObject({ units: [{ outcome: "nothing-to-move" }] });
+    expect(empty.github.calls.filter((call) => call.startsWith("updatePullRequest"))).toEqual([]);
+
+    const blocked = await lagging(majorUnits([], wrapperCandidates())[0]!);
+    const result = await bumpIt({ ...blocked.deps, wrapper: () => ({ candidates: async () => wrapperCandidates(), verify: async () => [] }),
+      generateWrapper: async () => { throw new Error("generation changed build.gradle"); },
+    }).run(blocked.context);
+    expect(result).toMatchObject({ units: [{ topic: "routine" }, { topic: "gradle/gradle-major", outcome: "blocked" }] });
+    expect(blocked.github.calls.filter((call) => call.startsWith("updatePullRequest 7"))).toEqual([]);
+  });
   it("reuses its suffixed PR, but leaves a human push to that branch alone", async () => {
     const old = routine(candidate({ minor: { version: "1.0.1", line: "1" } }));
     const pr = await prFor(old, { headRef: "bump-it/2026-10-05-routine-2" });
@@ -696,7 +736,7 @@ describe("bump-it run", () => {
     expect(h.reverted).toEqual([]); expect(h.workspace.publications).toEqual([]);
     const pushed = harness({ prs: [await prFor(routine(candidate({ minor: { version: "1.0.1", line: "1" } })))], bumps: [candidate({ major: undefined })] });
     pushed.workspace.setRemoteHead(pushed.github.prs.get(7)!.headRef, "9".repeat(40));
-    expect(await bumpIt(pushed.deps).run(pushed.context)).toMatchObject({ units: [{ outcome: "failed", detail: expect.stringContaining("someone pushed") }] });
+    expect(await bumpIt(pushed.deps).run(pushed.context)).toMatchObject({ units: [{ outcome: "failed", detail: `${pushed.github.prs.get(7)!.url} moved while bump-it prepared it` }] });
     expect(pushed.reverted).toEqual([]);
   });
 });

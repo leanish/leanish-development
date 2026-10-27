@@ -1,8 +1,6 @@
 /** Planning and editing one independent unit; no publication until verification passes. */
 import { isDeepStrictEqual } from "node:util";
 
-import type { GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
-import type { PreparedBranch } from "@leanish/agent-runtime/types/working-copy";
 import { ActionsGitHub } from "@leanish/gate/actions-github";
 import { readActionsInventory } from "@leanish/gate/actions-inventory";
 import type { GateEnvironment, GradleInputs } from "@leanish/gate/gate";
@@ -13,8 +11,8 @@ import { GATE_WORKFLOW, isPolicyFile, writtenPins } from "@leanish/tool-runtime/
 import type { FileState } from "@leanish/tool-runtime/git-copies";
 import { referenceTransform } from "@leanish/tool-runtime/gradle-reference";
 import { type GradleInventories, lockfilesOf } from "@leanish/tool-runtime/inventories";
-import { freeBranch, ownPullRequests } from "@leanish/tool-runtime/own-pr";
-import { assertPublishable, clearLeftoverBranch, type PublicationContext, type PullRequestContent } from "@leanish/tool-runtime/publication";
+import { ownPullRequests } from "@leanish/tool-runtime/own-pr";
+import { assertPublishable, type PublicationContext, type PullRequestContent } from "@leanish/tool-runtime/publication";
 
 import type { WrapperArtifact } from "./wrapper-generation.ts";
 import type { WrapperCandidates, WrapperPlanner } from "./gradle-wrapper.ts";
@@ -278,37 +276,4 @@ export function mechanicalContent(plan: BumpPlan): PullRequestContent {
   const move = plan.moves[0];
   const title = plan.kind === "routine" ? "refreshing dependencies" : move === undefined ? "upgrading a dependency" : `moving ${move.name} to ${move.to}`;
   return { title, body: `Updates selected by the supply-chain version rule and verified before publication.\n\n${planSection(plan)}`, commitMessage: title };
-}
-
-export async function prepare(execution: Execution, unit: Unit, own: ReadonlyArray<GitHubPullRequest>, reusable: GitHubPullRequest | undefined, baseSha: string): Promise<PreparedBranch> {
-  const { context, deps } = execution;
-  if (reusable !== undefined) {
-    const merged = await context.workspace.prepareBranch(context.workingCopy, { branch: reusable.headRef, start: "remote-merging" });
-    if (merged.kind === "conflict") {
-      throw new Error(`${reusable.headRef}: merge didn't leave its conflicts in progress`);
-    }
-    if (merged.prepared.remoteHeadSha !== reusable.headSha) {
-      throw new Error(`${reusable.url}: someone pushed while preparing it`);
-    }
-    assertBase(merged.prepared, baseSha);
-    await deps.revert(context.workingCopy, baseSha);
-    return merged.prepared;
-  }
-  const taken = new Set([...own.map((pr) => pr.headRef), ...execution.branches]);
-  const branch = freeBranch(RULES, context.now, unit.topic, taken);
-  // Reserved before preparing, and kept if the unit fails later: a later unit must not reuse a branch this run may have pushed.
-  execution.branches.add(branch);
-  await clearLeftoverBranch(context.github, RULES, context.repo.repo, branch);
-  const fresh = await context.workspace.prepareBranch(context.workingCopy, { branch, start: "default" });
-  if (fresh.kind !== "prepared") {
-    throw new Error(`${branch} couldn't be prepared`);
-  }
-  assertBase(fresh.prepared, baseSha);
-  return fresh.prepared;
-}
-
-export function assertBase(prepared: PreparedBranch, baseSha: string): void {
-  if (prepared.baseSha !== baseSha) {
-    throw new Error("the default branch moved while bump-it computed its plan; the next run starts over");
-  }
 }

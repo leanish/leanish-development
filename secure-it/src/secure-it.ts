@@ -33,9 +33,11 @@ import { NPM_DEPENDENCY_FIELDS } from "@leanish/tool-runtime/npm-file-checks";
 import { requireNpmExcludes } from "@leanish/tool-runtime/npm-version";
 import { runSandboxed, sandboxWritable } from "@leanish/tool-runtime/sandboxed";
 import { ensureOsvScanner, verifyingRun } from "@leanish/tool-runtime/osv-scanner";
-import { freeBranch, ownPullRequests, stateOf, topicOf } from "@leanish/tool-runtime/own-pr";
+import { prepareUnitBranch } from "@leanish/tool-runtime/branches";
+import { ownPullRequests, topicOf } from "@leanish/tool-runtime/own-pr";
+import { inspectOwnership, type Ours, type Ownership, repairOwnership, samePlan } from "@leanish/tool-runtime/ownership";
 import { publicationParent, revertToBase } from "@leanish/tool-runtime/reconcile";
-import { assertPublishable, clearLeftoverBranch, closeAndDelete, ownOpenPullRequests, type PublicationContext, publishNew, publishUpdate, recoverPublication, rewriteText } from "@leanish/tool-runtime/publication";
+import { assertPublishable, closeAndDelete, ownOpenPullRequests, type PublicationContext, publishNew, publishUpdate, rewriteText } from "@leanish/tool-runtime/publication";
 import { machineRoots } from "@leanish/tool-runtime/publication-text";
 import { type BaseMerge, type CooldownState, reviewOpenPullRequests, type ReviewSteps } from "@leanish/tool-runtime/review";
 
@@ -270,7 +272,7 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   const own = await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base);
   const results: Readonly<Record<string, unknown>>[] = [];
   const { units, error } = await holdRequiredYoung(execution, selection.units, base);
-  const claims = error ?? await heldClaimsOf(context, execution.publication, units, own);
+  const claims = error ?? await heldClaimsOf(execution.publication, units, own);
   for (const unit of units) {
     try {
       // Held units need a known preflight and every own PR's claim; other units still run when either is unavailable.
@@ -392,15 +394,16 @@ async function applyRemoval(execution: Execution, removal: ComputedRemoval): Pro
 
 async function runRemoval(execution: Execution, removal: ComputedRemoval, base: PlanBase, own: ReadonlyArray<GitHubPullRequest>): Promise<Readonly<Record<string, unknown>>> {
   const plan = removal.plan!;
-  const owned = await recognisedPlans(execution.context, execution.publication, own, plan);
-  const already = owned.find((pr) => stateOf(pr.body)?.head === pr.headSha && planDigest(planOf(pr.body)!) === planDigest(plan));
+  const owned = await recognisedPlans(execution.publication, own, plan);
+  const already = owned.find((candidate) => samePlan(candidate.pr, planDigest(plan), digestOf));
   const report = { topic: plan.topic, packages: plan.packages, notes: removal.notes };
   if (already !== undefined) {
-    await refreshText(execution, already, plan);
-    return { ...report, outcome: "already-open", pullRequest: already.url };
+    const pr = await repairOwnership(execution.publication, already);
+    await refreshText(execution, pr, plan);
+    return { ...report, outcome: "already-open", pullRequest: pr.url };
   }
-  const reusable = owned[0];
-  const prepared = await preparePlan(execution.context, execution.deps, plan, reusable, own, base.tree.id, execution.branches);
+  const reusable = owned[0] === undefined ? undefined : await repairOwnership(execution.publication, owned[0]);
+  const prepared = await preparePlan(execution, plan, reusable, own, base.tree.id);
   const content = await applyRemoval(execution, removal);
   const problems = await verifyEdit(execution.context, execution.deps, plan, execution.env, execution.inventories, base.tree, base.gradle);
   if (problems.length > 0) return { ...report, outcome: "verification-failed", problems };
@@ -557,26 +560,26 @@ const isHeldUnit = (unit: SecurityUnit) => unit.kind === "routine" && isHeldTopi
  * The held units' claims, read only when some unit is held (each other unit reads its own PRs, as before); what made
  * them unreadable (an own PR's journal, say) instead of a throw, so that fails the held units alone, not the run.
  */
-async function heldClaimsOf(context: ToolRunContext, publication: PublicationContext, units: ReadonlyArray<SecurityUnit>, own: ReadonlyArray<GitHubPullRequest>): Promise<ReadonlyMap<string, number> | Error> {
+async function heldClaimsOf(publication: PublicationContext, units: ReadonlyArray<SecurityUnit>, own: ReadonlyArray<GitHubPullRequest>): Promise<ReadonlyMap<string, number> | Error> {
   if (!units.some(isHeldUnit)) return new Map();
   try {
-    return heldClaims(units, await claimable(context, publication, own));
+    return heldClaims(units, await claimable(publication, own));
   } catch (err) {
     return err instanceof Error ? err : new Error(String(err));
   }
 }
 
 /**
- * The open PRs a held unit may claim, read-only: the head is still the tool's (the body's recorded head, or the
- * journal's, whose saved publication then stands for the body), and no person took it over (a held PR marked ready,
- * which review leaves alone). Otherwise a PR someone pushed to, or one a person took, would keep its unit from the PR
- * the tool opens or keeps instead. The chosen PR is recovered later, as any reused one is.
+ * The open PRs a held unit may claim, read-only (`inspectOwnership`): the head is still the tool's, and no person took
+ * it over (a held PR marked ready, which review leaves alone). Otherwise a PR someone pushed to, or one a person took,
+ * would keep its unit from the PR the tool opens or keeps instead. The chosen PR is repaired later, only if its unit
+ * uses it, as any reused one is.
  */
-async function claimable(context: ToolRunContext, publication: PublicationContext, own: ReadonlyArray<GitHubPullRequest>): Promise<GitHubPullRequest[]> {
+async function claimable(publication: PublicationContext, own: ReadonlyArray<GitHubPullRequest>): Promise<GitHubPullRequest[]> {
   const claimable: GitHubPullRequest[] = [];
   for (const pr of own) {
     if (topicOf(RULES, pr.headRef) === undefined) continue;
-    const effective = stateOf(pr.body)?.head === pr.headSha ? pr : await journaled(context, publication, pr);
+    const effective = claimView(await inspectOwnership(publication, pr));
     if (effective === undefined) continue;
     if ((planOf(effective.body)?.cooldown?.length ?? 0) > 0 && !effective.isDraft) continue;
     claimable.push(effective);
@@ -584,11 +587,16 @@ async function claimable(context: ToolRunContext, publication: PublicationContex
   return claimable;
 }
 
-/** `pr` as the journal last published it at its current head (legacy entries record only the head); else undefined. */
-async function journaled(context: ToolRunContext, publication: PublicationContext, pr: GitHubPullRequest): Promise<GitHubPullRequest | undefined> {
-  const pushed = await publication.journal.last(context.repo.repo, pr.number);
-  if (pushed?.head !== pr.headSha) return undefined;
-  return pushed.publication === undefined ? pr : { ...pr, title: pushed.publication.title, body: pushed.publication.body };
+/**
+ * What a claim reads of a PR: its effective content, or for one whose state someone removed, what the journal validly
+ * saved for its head when there is that (else the PR as it is, as for a legacy entry); undefined when it isn't ours.
+ */
+function claimView(ownership: Ownership): GitHubPullRequest | undefined {
+  if (ownership.kind !== "ours") return undefined;
+  if (ownership.recovery === "state-removed" && ownership.saved !== undefined) {
+    return { ...ownership.pr, title: ownership.saved.title, body: ownership.saved.body };
+  }
+  return ownership.pr;
 }
 
 /** How many of a held unit's packages a held plan shares, and the lowest shared one; undefined when none. */
@@ -610,20 +618,18 @@ async function planUnit(execution: Execution, unit: SecurityUnit, base: PlanBase
 }
 
 async function runUnit(execution: Execution, unit: SecurityUnit, base: PlanBase, own: ReadonlyArray<GitHubPullRequest>, claimed: number | undefined): Promise<Readonly<Record<string, unknown>>> {
-  const { context, deps, publication } = execution;
+  const { context, publication } = execution;
   const plan = await planUnit(execution, unit, base);
-  const owned = await recognisedPlans(context, publication, own, plan, claimed);
-  const already = owned.find((pr) => {
-    const previous = planOf(pr.body);
-    return stateOf(pr.body)?.head === pr.headSha && previous !== undefined && planDigest(previous) === planDigest(plan);
-  });
+  const owned = await recognisedPlans(publication, own, plan, claimed);
+  const already = owned.find((candidate) => samePlan(candidate.pr, planDigest(plan), digestOf));
   const details = { topic: plan.topic, packages: plan.packages, notes: plan.notes ?? [] };
   if (already !== undefined) {
-    await refreshText(execution, already, plan);
-    return { ...details, outcome: "already-open", pullRequest: already.url };
+    const pr = await repairOwnership(publication, already);
+    await refreshText(execution, pr, plan);
+    return { ...details, outcome: "already-open", pullRequest: pr.url };
   }
-  const reusable = owned[0];
-  const prepared = await preparePlan(context, deps, plan, reusable, own, base.tree.id, execution.branches);
+  const reusable = owned[0] === undefined ? undefined : await repairOwnership(publication, owned[0]);
+  const prepared = await preparePlan(execution, plan, reusable, own, base.tree.id);
   const input = await agentInput(execution, plan, base.tree, "apply");
   const answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({ entrypoint: "secure-it", input });
   if (answer.outcome !== "applied" || answer.publication == null) return { ...details, outcome: "cannot-apply", summary: answer.summary };
@@ -645,16 +651,17 @@ async function runUnit(execution: Execution, unit: SecurityUnit, base: PlanBase,
     : { ...checked, outcome: "published", pullRequest: created.url };
 }
 
-async function preparePlan(context: ToolRunContext, deps: SecureItDeps, plan: ChangePlan, reusable: GitHubPullRequest | undefined, own: ReadonlyArray<GitHubPullRequest>, baseSha: string, created: Set<string>): Promise<PreparedBranch> {
-  if (reusable !== undefined) return reconcileBranch(context, deps, reusable, baseSha);
-  const taken = new Set([...own.map((pr) => pr.headRef), ...created]);
-  const branch = freeBranch(RULES, context.now, plan.topic, taken);
-  created.add(branch);
-  await clearLeftoverBranch(context.github, RULES, context.repo.repo, branch);
-  const fresh = await context.workspace.prepareBranch(context.workingCopy, { branch, start: "default" });
-  if (fresh.kind !== "prepared") throw new Error(`${branch} couldn't be prepared`);
-  if (fresh.prepared.baseSha !== baseSha) throw new Error("the default branch moved while secure-it ran; the next run starts over");
-  return fresh.prepared;
+/** The plan's branch: the reused PR's, captured with its history and redone from a clean, detached base; or a fresh one. */
+function preparePlan(execution: Execution, plan: ChangePlan, reusable: GitHubPullRequest | undefined, own: ReadonlyArray<GitHubPullRequest>, baseSha: string): Promise<PreparedBranch> {
+  return prepareUnitBranch(execution.publication, {
+    topic: plan.topic, reusable, own, taken: execution.branches, baseSha, now: execution.context.now, revert: execution.deps.revert,
+  });
+}
+
+/** The digest of the plan a body records, for `samePlan`; undefined when it has none secure-it can read. */
+function digestOf(body: string): string | undefined {
+  const plan = planOf(body);
+  return plan === undefined ? undefined : planDigest(plan);
 }
 
 interface VerifiedBatch {
@@ -781,41 +788,33 @@ async function npmSignals(registry: NpmRegistry, entry: HeldVersion): Promise<st
   }
 }
 
+/**
+ * The plan's open PRs that are still the tool's, matched by their effective content (`inspectOwnership`): a PR whose
+ * body lags behind its head is matched by the plan the journal saved for that head, not by its stale body. Read-only:
+ * the caller repairs only the PR it uses. Every candidate is inspected, so an unreadable journal fails the unit.
+ */
 async function recognisedPlans(
-  context: ToolRunContext,
   publication: PublicationContext,
   own: ReadonlyArray<GitHubPullRequest>,
   plan: ChangePlan,
   claimed?: number,
-): Promise<GitHubPullRequest[]> {
-  const owned: GitHubPullRequest[] = [];
+): Promise<Ours[]> {
+  const owned: Ours[] = [];
   const held = plan.kind === "routine" && isHeldTopic(plan.topic);
   for (const candidate of own) {
+    if (topicOf(RULES, candidate.headRef) === undefined) continue;
+    const ownership = await inspectOwnership(publication, candidate);
+    // Someone else's push or rewrite is skipped. Legacy entries prove only the head: kept for reconciliation, never `samePlan`.
+    if (ownership.kind !== "ours") continue;
     // The recorded plan names the unit, not the branch: branch topics are cut and made branch-safe, so two packages can
     // share one (`@scope/foo` and `scope-foo`), and a numbered branch (`…-2`, next to one a human took over) is cut shorter.
-    const previous = planOf(candidate.body);
+    const previous = planOf(ownership.pr.body);
     if (previous === undefined || previous.kind !== plan.kind) continue;
     // A held unit's PR is the one `heldClaims` gave it, whatever its topic says now.
     if (held ? candidate.number !== claimed || !isHeldTopic(previous.topic) : previous.topic !== plan.topic) continue;
-    if (topicOf(RULES, candidate.headRef) === undefined) continue;
-    const journaled = await publication.journal.last(context.repo.repo, candidate.number);
-    // Legacy entries prove only the head: reconcile a freshly computed plan rather than trusting the body.
-    const pr = journaled?.head === candidate.headSha && journaled.publication === undefined
-      ? candidate : await recoverPublication(publication, candidate);
-    const recorded = stateOf(pr.body);
-    if (recorded?.head === pr.headSha || journaled?.head === pr.headSha) owned.push(pr);
+    owned.push(ownership);
   }
   return owned;
-}
-
-/** Capture the PR's publication history, then start its new plan from a clean, detached base. */
-async function reconcileBranch(context: ToolRunContext, deps: SecureItDeps, pr: GitHubPullRequest, baseSha: string): Promise<PreparedBranch> {
-  const merged = await context.workspace.prepareBranch(context.workingCopy, { branch: pr.headRef, start: "remote-merging" });
-  if (merged.kind === "conflict") throw new Error(`${pr.headRef}: remote-merging reported a conflict without leaving it in progress`);
-  if (merged.prepared.remoteHeadSha !== pr.headSha) throw new Error(`${pr.url} moved while secure-it prepared it`);
-  if (merged.prepared.baseSha !== baseSha) throw new Error(`the default branch moved while secure-it ran (${baseSha.slice(0, 12)} → ${merged.prepared.baseSha.slice(0, 12)}); the next run starts over`);
-  await deps.revert(context.workingCopy, baseSha);
-  return merged.prepared;
 }
 
 /**
@@ -921,7 +920,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       if (held.error !== undefined && isHeldPlan(previous)) throw held.error;
       const split = held.units;
       // A held PR is the unit a run would give it, so a run and a review never disagree on which PR is whose.
-      const open = isHeldPlan(previous) ? await claimable(context, publication, await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base)) : [];
+      const open = isHeldPlan(previous) ? await claimable(publication, await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base)) : [];
       const claims = heldClaims(split, open);
       const unit = unitOf(previous, split, claims, pr.number);
       if (unit === undefined) {

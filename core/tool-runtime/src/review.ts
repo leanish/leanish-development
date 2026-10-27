@@ -5,7 +5,10 @@
  *
  *   1. someone else pushed (the head is neither the one the PR's body
  *      records nor, after a failed body update, the one the tool's journal
- *      records) → leave the PR alone, report it;
+ *      records), someone removed the body's state, or an old journal entry
+ *      records the head without its publication → leave the PR alone, report
+ *      it; a publication the journal saved for the head is restored first
+ *      (`ownership.ts`);
  *   2. the base moved (any merge, conflicts or not) → `steps.rebase`, before
  *      anything else: the tool recomputes its plan on the new base, retires
  *      what the base already has, or merges the base and re-applies (the agent
@@ -35,7 +38,8 @@ import type { Workspace } from "@leanish/agent-runtime/working-copy/workspace";
 import { classifyCi, failingCheckNames, onlyCooldownHolds, unreportedRequired } from "./ci-state.ts";
 import type { PublicationJournal } from "./journal.ts";
 import { type OwnPullRequests, type PullRequestState, stateOf } from "./own-pr.ts";
-import { closeAndDelete, markReady, ownOpenPullRequests, type PublicationContext, recordState, recoverPublication } from "./publication.ts";
+import { inspectOwnership, repairOwnership } from "./ownership.ts";
+import { closeAndDelete, markReady, ownOpenPullRequests, type PublicationContext, recordState } from "./publication.ts";
 
 /** How many times the agent may adapt one PR after a failed CI before the tool gives it up. */
 export const MAX_ADAPTATIONS = 2;
@@ -133,17 +137,18 @@ export async function reviewOpenPullRequests(context: ReviewContext, steps: Revi
 async function reviewOne(context: ReviewContext, steps: ReviewSteps, pr: GitHubPullRequest): Promise<ReviewEntry> {
   const result = (outcome: ReviewOutcome, detail?: string): ReviewEntry => ({ number: pr.number, url: pr.url, outcome, detail });
   const publication: PublicationContext = { ...context };
-  pr = await recoverPublication(publication, pr);
+  const pushedBySomeoneElse = (recordedHead: string) =>
+    result("left-alone", `someone else pushed (${pr.headSha.slice(0, 12)}, the tool published ${recordedHead.slice(0, 12)})`);
+  const ownership = await inspectOwnership(publication, pr);
+  if (ownership.kind === "untracked") return result("left-alone", "its body no longer has the tool's state; someone rewrote it");
+  if (ownership.kind === "pushed-by-someone-else") return pushedBySomeoneElse(ownership.recordedHead);
+  if (ownership.recovery === "state-removed") return result("left-alone", "its body no longer has the tool's state; someone rewrote it");
+  if (ownership.recovery === "legacy") return result("left-alone", "the journal has only its head; the tool's next run recomputes and republishes it");
+  pr = await repairOwnership(publication, ownership);
   const recorded = stateOf(pr.body);
-  if (recorded === undefined) return result("left-alone", "its body no longer has the tool's state; someone rewrote it");
+  // The body records the head now; GitHub answering the repair with another head means a push landed since.
+  if (recorded?.head !== pr.headSha) return pushedBySomeoneElse(recorded?.head ?? ownership.pr.headSha);
   const state: PullRequestState = recorded;
-  if (pr.headSha !== recorded.head) {
-    const pushed = await context.journal.last(context.repo, pr.number);
-    if (pushed?.head !== pr.headSha) {
-      return result("left-alone", `someone else pushed (${pr.headSha.slice(0, 12)}, the tool published ${recorded.head.slice(0, 12)})`);
-    }
-    throw new Error(`${pr.url}: journal recovery did not restore the publication`);
-  }
 
   const cooldown = steps.cooldown?.(pr);
   if (cooldown !== undefined && !pr.isDraft) return result("left-alone", "a person marked the held PR ready");

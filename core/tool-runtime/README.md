@@ -10,7 +10,7 @@ package is the code around them. Setup and operation are in [Adopting the tools]
   optional Keychain service overrides, the commit identity, the state and cache directories, paths the agent may not
   read, an optional price table and, for bump-it, `maxNewMajorsPerRun`. What's about the repository (release age, own
   packages, registries) comes from its `.github/supply-chain.json`.
-- **The tool's PRs** (`own-pr.ts`, `publication.ts`):
+- **The tool's PRs** (`own-pr.ts`, `ownership.ts`, `publication.ts`, `branches.ts`):
   - **Recognition:** a PR is the tool's when it comes from one of its branches (`<tool>/<date>-<topic>`) of the
     repository itself and carries its body marker (`<!-- leanish:<tool> -->`) or its label (`leanish:<tool>`).
     Publications and updates add the label.
@@ -32,7 +32,14 @@ package is the code around them. Setup and operation are in [Adopting the tools]
   - **Journal** (`journal.ts`): before each update push, the tool records the head/base, title, full body (plan
     included) and adaptation count in its state directory. If the body update fails, the next run or review
     recognises the tool's exact head and restores that publication before reuse or CI handling. An old head/base-only
-    entry can't restore it: review refuses readiness or adaptation until a run recomputes and republishes.
+    entry can't restore it: review leaves the PR alone until a run recomputes and republishes.
+  - **Ownership** (`ownership.ts`): `inspectOwnership` tells, read-only, whether an open PR is still the tool's and
+    what its effective title and body are (the body's, or the journal's saved publication for the current head);
+    runs match their plans and secure-it claims held PRs by that content. `repairOwnership` writes a saved publication
+    back, with the race checks, only for the PR a unit or the tick goes on to use. `samePlan` tells an open PR already
+    carrying a plan: only one whose body records its current head.
+  - **Unit branches** (`branches.ts`): a unit reuses its open PR's branch with the base merged in, redone from a clean
+    base once its head and the base are the expected ones, or takes a fresh branch, reserved for the rest of the run.
 - **Plan redos** (`reconcile.ts`): both tools detach at the exact base with a clean index/worktree, then write the new
   plan's files. Earlier PR edits and adaptations are discarded. Only after verification does publication reattach the
   existing PR head as first parent; a moved base is a second merge parent. The runtime stages the same files, requires
@@ -47,7 +54,7 @@ package is the code around them. Setup and operation are in [Adopting the tools]
   the original index expectation. Ignored build output is not a Git change. The error names the unexplained paths and
   stops the unit before the agent starts.
 - **The review tick** (`review.ts`) goes through every open PR of the tool, in this order:
-  1. Someone else pushed: leave the PR alone.
+  1. Someone else pushed, someone removed the body's state, or the journal records only the head: leave the PR alone.
   2. The base moved: the tool recomputes on the new base, before anything else, with the base merged in or the
      conflicting merge left in progress for it to resolve.
   3. CI pending: nothing. Green: mark a draft ready. When a check the base's rulesets require from Actions hasn't
