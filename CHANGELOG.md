@@ -27,6 +27,11 @@
   takes over another unit's.
 - The review tick leaves a PR whose journal records only its head (an entry from before publications were saved) alone
   for the tool's next run to recompute and republish, instead of reporting an error.
+- secure-it judges a security fix's publisher identity as verification will: against every copy of the package its
+  unit replaces in that lockfile, not the source version alone. Two copies moving together no longer get a move
+  refused that the gate accepts; a malicious copy, leaving on its own, borrows no other copy's history. Planning
+  checks no longer borrow a copy (or its integrity) from another lockfile, and a required version is judged against
+  the copy it replaces at its own path, not retained ones. The remaining planners' limit is in coverage gaps.
 
 ## 0.8.2 - 2026-10-27
 

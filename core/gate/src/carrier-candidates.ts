@@ -101,7 +101,6 @@ export interface CarrierContext {
   readonly config: Config;
   readonly now: Date;
   readonly scan: (packages: ReadonlyArray<PackageVersion>) => Promise<Snapshot>;
-  readonly identity: (pkg: PackageVersion, to: string) => Promise<string[]>;
 }
 
 export interface CarrierDecision {
@@ -110,6 +109,7 @@ export interface CarrierDecision {
   readonly carries: ReadonlyArray<CarriedPackage>;
   /** The carrier's own advisories no listed version fixes: left, inherited, as for any fix. */
   readonly unfixable: ReadonlyArray<string>;
+  /** Its `blockers` are left empty: the caller judges identity against every copy the unit replaces with it. */
   readonly to: { readonly version: string; readonly line: string; readonly aged: boolean; readonly major: boolean; readonly blockers: ReadonlyArray<string> } | undefined;
   readonly problem: string | undefined;
   /** Carrier versions the search read and ruled out only by unreviewed advisories (`carrier-fixes.ts`), the ones nearest the choice. */
@@ -171,7 +171,7 @@ export async function decideCarrier(group: CarrierGroup, own: ReadonlyArray<stri
     carries: carries((name) => [...new Set(choice.bundle.packages.filter((entry) => entry.name === name).map((entry) => entry.version))].sort()),
     unfixable,
     // An own carrier never waits, so the gate never holds it, whatever its age (`aged` is the gate's view, as in candidates.ts).
-    to: { version: choice.version, line: choice.line, aged: choice.aged || isOwnPackage(context.config.ownPackages, pkg), major: line(choice.version) !== line(group.version), blockers: await context.identity(pkg, choice.version) },
+    to: { version: choice.version, line: choice.line, aged: choice.aged || isOwnPackage(context.config.ownPackages, pkg), major: line(choice.version) !== line(group.version), blockers: [] },
     problem: undefined,
     ...vetoFields(choice),
   };

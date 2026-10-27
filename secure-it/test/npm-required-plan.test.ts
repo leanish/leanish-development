@@ -120,6 +120,23 @@ describe("security-required npm planning and exact materialization", () => {
     await expect(requiredNpmPlan(tree(files()), plan, environment({ docs: { postcss: doc } }).env)).rejects.toThrow("hadn't published");
   });
 
+  it("judges identity against the copy the requirement replaces, never a retained one's later history", async () => {
+    // A retained nested 8.5.40 by the new publisher would put them in the history; only 8.5.28 at the target path is replaced.
+    const doc = { time: { ...postcss.time, "8.5.40": YOUNG }, versions: { ...postcss.versions,
+      "8.5.29": { ...metadata, _npmUser: { name: "new-publisher" } }, "8.5.40": { ...metadata, _npmUser: { name: "new-publisher" } } } };
+    const original = files();
+    const lock = JSON.parse(original["package-lock.json"]!);
+    lock.packages["node_modules/x/node_modules/postcss"] = locked("postcss", "8.5.40");
+    original["package-lock.json"] = json(lock);
+    await expect(requiredNpmPlan(tree(original), plan, environment({ docs: { postcss: doc } }).env)).rejects.toThrow("hadn't published");
+  });
+
+  it("still checks a required version's own provenance where it replaces no copy", async () => {
+    const doc = { ...postcss, versions: { ...postcss.versions, "8.5.29": { ...metadata,
+      dist: { attestations: { url: "https://example.com/x", provenance: { predicateType: "https://slsa.dev/provenance/v1" } } } } } };
+    await expect(requiredNpmPlan(tree(files("8.3.2", undefined)), plan, environment({ docs: { postcss: doc } }).env)).rejects.toThrow("malformed attestations");
+  });
+
   it("expands a required direct companion without crossing its compatible line", async () => {
     const original = files();
     const lock = JSON.parse(original["package-lock.json"]!);
