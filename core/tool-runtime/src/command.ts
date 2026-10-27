@@ -9,18 +9,16 @@
  * a GitHub request summary and the `run finished` line on stderr,
  * interruptions included.
  */
-import { writeFileSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Writable } from "node:stream";
 import { isDeepStrictEqual, parseArgs } from "node:util";
 
 import { createGitHubClient } from "@leanish/agent-runtime/github/github-client";
 import { guardDir } from "@leanish/agent-runtime/guard-dir";
 import { claudeCodeRunnerOptions, codexRunnerOptions, type IsolationPolicy, isolationPolicy } from "@leanish/agent-runtime/isolation";
 import { ConsoleLogger } from "@leanish/agent-runtime/logger/console-logger";
-import { reportOnTerminationSignals, RunReport, writeFinalLine } from "@leanish/agent-runtime/report/run-report";
+import { type RunEnd, startRunReport } from "@leanish/agent-runtime/report/run-report";
 import { ClaudeCodeRunner } from "@leanish/agent-runtime/skill/claude-code-runner";
 import { CodexRunner } from "@leanish/agent-runtime/skill/codex-runner";
 import { runSkill } from "@leanish/agent-runtime/skill/run-skill";
@@ -93,33 +91,38 @@ export interface Machine {
   readonly ensureDir: (path: string) => Promise<void>;
   readonly workspace: (root: string, token: string, config: ToolConfig) => Workspace;
   readonly runner: (codingAgent: CodingAgent, isolation: IsolationPolicy) => CodingAgentRunner;
-  /** run.sh's marker file (`TOOL_REPORT_MARKER`): written once the final line is out, so run.sh doesn't write one too. */
-  readonly reportMarker: string | undefined;
+  /**
+   * Where run.sh's marker variable (`TOOL_REPORT_MARKER`) is read from, and removed from as the command starts so
+   * nothing it starts inherits it. The file it names is written once the final line is out, so run.sh doesn't write
+   * one too.
+   */
+  readonly reportEnv: NodeJS.ProcessEnv;
 }
+
+/** The variable run.sh names its marker file in. */
+const REPORT_MARKER_ENV = "TOOL_REPORT_MARKER";
 
 export const USAGE = (tool: ToolName) => `usage: ${tool} run|review <owner/repo> [--config <agent.yaml>]`;
 
 /** Runs the command `argv` describes; resolves to its exit code once the final line is written. */
 export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray<string>, machine: Partial<Machine> = {}): Promise<number> {
   const m: Machine = { ...defaultMachine(), ...machine };
-  const report = new RunReport();
   const requests = new GitHubRequests();
   const fetch = requests.wrap(m.fetch);
   let command: string | undefined;
-  // The final line goes through this stream, on the normal path and on a signal's: it tells run.sh once the line is out.
-  const finalLines = acknowledging(m.stderr, m.reportMarker, requests, () => ({ tool: handlers.tool, command }));
-  let stopReporting: () => void = () => undefined;
-  const finish = async (exitCode: number, status: "ok" | "error", extra: { error?: string; result?: Readonly<Record<string, unknown>> } = {}) => {
-    stopReporting();
-    const line = report.finish({ status, exitCode, ...extra });
-    if (line !== undefined) await writeFinalLine(finalLines, line);
+  const report = startRunReport({
+    stream: m.stderr,
+    marker: { env: REPORT_MARKER_ENV, when: "after-final-line" },
+    env: m.reportEnv,
+    // Written with the final line, on a signal too.
+    beforeFinalLine: (final) => [
+      JSON.stringify({ ts: final.ts, level: "info", msg: "GitHub API requests", tool: handlers.tool, command, repo: final["repo"], ...requests.summary() }),
+    ],
+  });
+  const finish = async (exitCode: number, status: "ok" | "error", fields: Pick<RunEnd, "error" | "result"> = {}) => {
+    await report.end({ status, exitCode, ...fields });
     return exitCode;
   };
-  try {
-    stopReporting = reportOnTerminationSignals(report, finalLines);
-  } catch (err) {
-    return finish(70, "error", { error: `couldn't start reporting: ${(err as Error).message}` });
-  }
 
   let repoName: string;
   let configPath: string;
@@ -214,32 +217,6 @@ export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray
   }
 }
 
-/**
- * `out`, which writes run.sh's marker right after a `run finished` line went
- * through. Writing it is best effort: if it fails, run.sh writes its own line
- * as well, a duplicate rather than none.
- */
-function acknowledging(out: NodeJS.WritableStream, marker: string | undefined, requests: GitHubRequests, identity: () => { tool: ToolName; command: string | undefined }): Writable {
-  return new Writable({
-    write(chunk: Buffer, _encoding, callback) {
-      const final = JSON.parse(chunk.toString("utf8")) as { ts: string; repo?: string };
-      const summary = JSON.stringify({ ts: final.ts, level: "info", msg: "GitHub API requests", ...identity(), repo: final.repo, ...requests.summary() });
-      // This stream also handles signals: flush the summary and final line together, exactly once.
-      out.write(`${summary}\n${chunk.toString("utf8")}`, (err) => {
-        if ((err === undefined || err === null) && marker !== undefined && marker !== "" && chunk.toString("utf8").includes('"msg":"run finished"')) {
-          try {
-            // Synchronous: on a signal, the process dies right after this callback.
-            writeFileSync(marker, "reported\n");
-          } catch {
-            // run.sh reports instead (see above).
-          }
-        }
-        callback(err ?? null);
-      });
-    },
-  });
-}
-
 /** The repository's default branch, read with the tool's token. */
 async function defaultBranch(repo: string, token: string, fetch: typeof globalThis.fetch): Promise<string> {
   const response = await fetch(`https://api.github.com/repos/${repo}`, {
@@ -266,7 +243,7 @@ function defaultMachine(): Machine {
     now: () => new Date(),
     readText: (path) => readFile(path, "utf8"),
     ensureDir: ensurePrivateDir,
-    reportMarker: process.env["TOOL_REPORT_MARKER"],
+    reportEnv: process.env,
     workspace: (root, token, config) => new LocalGitWorkspace({ workspaceRoot: root, gitAuth: gitCloneAuth(token), commitIdentity: config.commitIdentity }),
     // Both runners get the same isolation: denied paths, the agent's env and its build cache.
     runner: (codingAgent, isolation) =>

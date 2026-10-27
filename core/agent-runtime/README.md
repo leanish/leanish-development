@@ -59,6 +59,36 @@ How each incubator host composes it when it adopts this package:
 Write access still needs the `sandbox` confinement: a `restricted` runner refuses a write run before staging
 anything, and a `sandbox` run fails when Claude Code's sandbox is unavailable (`failIfUnavailable`).
 
+## Run report
+
+Every command ends with one `run finished` JSON line (`report/run-report.ts`): its status and exit code, what it did,
+each skill run's usage and the totals, on every exit path, a SIGINT / SIGTERM / SIGHUP included (written, then the
+signal raised again).
+
+A command that owns its process starts it with `startRunReport({ stream, marker?, extra?, beforeFinalLine? })`, which
+returns `identified(fields)`, the `usageRecorder` for `SkillContext`, and `end(end)`. The signal handling is in place
+until the run completes, by `end` or by a signal, through one path: `extra()` gives the host's fields as they stand
+then; `beforeFinalLine(record)` gives lines written right before the final one, in the same write; `end` resolves
+once the line is flushed, and a second `end`, or one racing a signal, writes nothing more. When `extra` or
+`beforeFinalLine` throws, the line is still written without what it would have added, and its `error` says why.
+`marker` is for a wrapper that writes its own final line unless told otherwise: its `env` variable names the file, and
+is read and removed from the environment as reporting starts, before the command starts any child process.
+`when: "start"` writes the file as soon as reporting is in place; `when: "after-final-line"` once the final line is
+flushed (best effort: if writing it fails, the wrapper writes its own line too, a duplicate rather than none).
+secure-it and bump-it use `after-final-line` with run.sh's `TOOL_REPORT_MARKER`, and `beforeFinalLine` for their
+`GitHub API requests` line.
+
+How the incubator's hosts compose it when they adopt this package:
+
+- **Local (`run-local`):** `startRunReport({ stream: stderr, marker: { env: "AGENT_RUNTIME_REPORT_MARKER", when:
+  "start" }, extra: () => counts })`, with its dispatch, delayed-message and self-publish counts as `extra`;
+  `identified({ agent })` replaces its `agentIdentified(...)`, and `end(...)` its `finally` block. The marker file then
+  holds `reported` instead of `run-local`; a wrapper only checks that it isn't empty.
+- **Lambda:** no `startRunReport`, whose signal handlers belong to a process, not to an invocation. Each invocation
+  creates its own `RunReport`, passes its `usageRecorder` to the skills it runs, and logs the line
+  `finish({ ..., extra })` returns (`finishRecord` also gives the record). `writeFinalLine` writes it to a stream when
+  that's where it goes; `reportOnTerminationSignals` stays for a host that wires signals itself.
+
 ## Known limits
 
 secure-it and bump-it use neither of these; a host that adopts one should handle it first.

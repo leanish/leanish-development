@@ -22,6 +22,14 @@
   runner gets it through its adapter, `codexRunnerOptions` or `claudeCodeRunnerOptions`, which checks it, so a host
   such as a Lambda function can write one by hand. `codexIsolation` is gone. secure-it and bump-it run both agents
   and their sandboxed commands with the same env, denied paths, build cache and confinement as before.
+- `@leanish/agent-runtime`'s run report owns its lifecycle: `startRunReport` handles the signals, the wrapper's
+  marker (written at start or once the final line is out, its variable removed before any child process starts), the
+  lines written before the final one and the host's extras, through one path for the end and for a signal; a throwing
+  `extra` or `beforeFinalLine`, or a result that can't be serialized, is left out and noted in the line's `error`,
+  never keeping the line from being written. `RunReport`, `writeFinalLine` and `reportOnTerminationSignals` stay for
+  hosts that compose their own, such as a Lambda function. secure-it and bump-it use it; their output, exit codes,
+  run.sh's marker and signal handling are unchanged, except that a signal arriving while the final line is being
+  written now waits for it (at most 2 s) instead of ending the process before it's out.
 
 ### Fixed
 
