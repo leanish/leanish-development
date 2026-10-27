@@ -41,7 +41,7 @@ async function fixture(options: { shrinkwrap?: boolean; exclude?: string[]; vers
   await writeFile(join(dir, options.shrinkwrap ? "package-lock.json" : "npm-shrinkwrap.json"), "stale lock");
   const tree: Tree = { id: "base", read: async (path) => data[path], list: async () => [] };
   const context = { workingCopy: { projectId: "acme/widget", path: dir, gitDir: join(dir, "metadata"), headSha: "a".repeat(40), branch: "main" },
-    releaseAgeDays: 7, releaseAgeExclude: options.exclude ?? [], isolation: {}, now: new Date("2026-10-07") } as unknown as ToolRunContext;
+    releaseAgeDays: 7, releaseAgeExclude: options.exclude ?? [], isolation: { readDenied: [], env: {}, buildCacheRoot: "/tmp/secure-it-test-cache" }, now: new Date("2026-10-07") } as unknown as ToolRunContext;
   const calls: string[][] = [];
   const run: RunProcess = async (command, args, opts) => {
     expect(command).toBe("codex");

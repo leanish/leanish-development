@@ -13,7 +13,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { CodexRunnerOptions } from "@leanish/agent-runtime/skill/codex-runner";
+import type { IsolationPolicy } from "@leanish/agent-runtime/isolation";
 import { codexPermissionArgs } from "@leanish/agent-runtime/skill/codex-permissions";
 import { scrubbedProcessEnv, withoutAmbientCredentials } from "@leanish/agent-runtime/skill/spawn-capture";
 import type { WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
@@ -22,7 +22,7 @@ import type { ToolRunContext } from "./command.ts";
 
 /** Every writable root shared by the agent and repository commands; trusted tool state must stay outside these. */
 export function sandboxWritable(context: Pick<ToolRunContext, "config" | "workingCopy" | "isolation">): ReadonlyArray<string> {
-  return [context.config.dirs.cache, context.workingCopy.path, tmpdir(), "/tmp", ...(context.isolation.buildCacheRoot === undefined ? [] : [context.isolation.buildCacheRoot])];
+  return [context.config.dirs.cache, context.workingCopy.path, tmpdir(), "/tmp", context.isolation.buildCacheRoot];
 }
 
 export interface SandboxedCommand {
@@ -31,8 +31,8 @@ export interface SandboxedCommand {
   readonly command: ReadonlyArray<string>;
 }
 
-/** The isolation the agent runs with (`codexIsolation`): denied paths, build cache and command env. */
-export type Isolation = Pick<CodexRunnerOptions, "readDenied" | "buildCacheRoot" | "env">;
+/** The isolation the agent runs with (`isolationPolicy`): denied paths, build cache and command env. */
+export type Isolation = Pick<IsolationPolicy, "readDenied" | "buildCacheRoot" | "env">;
 
 export async function runSandboxed(
   isolation: Isolation,
@@ -50,13 +50,12 @@ export async function runSandboxed(
       gitDirs: [workingCopy.gitDir],
       gitEntries: [join(workingCopy.path, ".git")],
       stagedHome,
-      writableRoots: isolation.buildCacheRoot === undefined ? [] : [isolation.buildCacheRoot],
-      readDenied: isolation.readDenied ?? [],
+      writableRoots: [isolation.buildCacheRoot],
+      readDenied: isolation.readDenied,
       readAllowed: [],
     });
-    // The build tools' caches go where the agent's do (CodexRunner's buildCacheRoot), not ~/.gradle, which is denied.
-    const caches =
-      isolation.buildCacheRoot === undefined ? {} : { GRADLE_USER_HOME: join(isolation.buildCacheRoot, "gradle"), npm_config_cache: join(isolation.buildCacheRoot, "npm") };
+    // The build tools' caches go where the agent's do (the runners' buildCacheRoot), not ~/.gradle, which is denied.
+    const caches = { GRADLE_USER_HOME: join(isolation.buildCacheRoot, "gradle"), npm_config_cache: join(isolation.buildCacheRoot, "npm") };
     const env = { ...withoutAmbientCredentials(scrubbedProcessEnv()), ...isolation.env, ...caches, CODEX_HOME: stagedHome };
     return await run(codex, ["sandbox", ...args, "--", ...command], { cwd: workingCopy.path, env });
   } finally {

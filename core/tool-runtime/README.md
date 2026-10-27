@@ -86,4 +86,10 @@ package is the code around them. Setup and operation are in [Adopting the tools]
   repository (exit 75 while another run holds it), and writes the final line itself when it stops before the tool
   reports.
 
+## Known limits
+
+- **`codex` is required with either coding agent:** `runSandboxed`, and so the Gradle inventories, bump-it's npm
+  resolution and wrapper generation, runs under `codex sandbox` even when the agent is Claude Code. It takes the same
+  `IsolationPolicy` the agent gets, not a sandbox of the agent's own.
+
 Parts adapted from the incubator's bump-it are listed in [PROVENANCE.md](PROVENANCE.md).

@@ -8,6 +8,12 @@
   the candidates into the snapshot to the required-dependency proofs; compare reuses its snapshot. Verdicts are
   unchanged. Release-age arithmetic is shared across the gate and both tools (`@leanish/gate/age`): the exact
   threshold counts as aged, and an unknown date is never aged nor an exemption.
+- Breaking for `@leanish/agent-runtime`'s API, which is why 0.9.0 is a minor release: its isolation is agent-neutral.
+  `isolationPolicy` replaces `codexIsolation` (same inputs, same checks) and returns an `IsolationPolicy` (denied
+  paths, the commands' env, the build cache and an optional Codex login home) instead of Codex runner options; each
+  runner gets it through its adapter, `codexRunnerOptions` or `claudeCodeRunnerOptions`, which checks it, so a host
+  such as a Lambda function can write one by hand. `codexIsolation` is gone. secure-it and bump-it run both agents
+  and their sandboxed commands with the same env, denied paths, build cache and confinement as before.
 
 ### Fixed
 
