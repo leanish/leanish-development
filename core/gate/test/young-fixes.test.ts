@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { type Config, parseConfig } from "../src/config.ts";
 import type { PackageName, PackageVersion } from "../src/package-version.ts";
 import { type Advisory, Snapshot } from "../src/snapshot.ts";
-import { candidateVersions, compatibleLine, gatherCandidates, nearestVetoes, type VersionCatalog, VETOES_SHOWN, vetoesOf, vetoFields, youngFixProblem } from "../src/young-fixes.ts";
+import { candidateVersions, compatibleLine, gatherCandidates, nearestVetoes, type VersionCatalog, VETOES_SHOWN, vetoesOf, vetoFields, vetoNote, withoutVetoNote, youngFixProblem } from "../src/young-fixes.ts";
 
 const NOW = new Date("2026-10-06T12:00:00Z");
 const DAY = 86_400_000;
@@ -180,5 +180,15 @@ describe("nearestVetoes", () => {
     expect(vetoFields({ vetoed: [], vetoesLeftOut: 0 })).toEqual({});
     expect(vetoFields({ vetoed: [veto("1.0.1")], vetoesLeftOut: 0 })).toEqual({ vetoed: [veto("1.0.1")] });
     expect(vetoFields({ vetoed: [veto("1.0.1")], vetoesLeftOut: 3 })).toEqual({ vetoed: [veto("1.0.1")], vetoesLeftOut: 3 });
+  });
+});
+
+describe("vetoNote", () => {
+  it("shows at most three advisories per version, counting the rest, and comes off whole", () => {
+    const note = vetoNote([{ version: "1.0.1", advisories: ["GHSA-a", "GHSA-b", "GHSA-c", "GHSA-d", "GHSA-e"] }, { version: "1.0.2", advisories: ["GHSA-f"] }]);
+    expect(note).toBe("; advisories no reviewed source corroborates ruled out 1.0.1 (GHSA-a, GHSA-b, GHSA-c and 2 more), 1.0.2 (GHSA-f)");
+    expect(withoutVetoNote(`no version fixes GHSA-x${note}`)).toBe("no version fixes GHSA-x");
+    expect(withoutVetoNote("no version fixes GHSA-x")).toBe("no version fixes GHSA-x");
+    expect(vetoNote([])).toBe("");
   });
 });

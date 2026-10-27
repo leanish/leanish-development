@@ -72,6 +72,19 @@ function checkedText(title: string, body: string): string {
   return body;
 }
 
+/** A state line as long as any real one: placeholder SHAs, since publication only knows the head once it commits. */
+const PLACEHOLDER_STATE: PullRequestState = { head: "0".repeat(40), base: "0".repeat(40), adaptations: 0 };
+
+/**
+ * Throws unless `content` passes the checks publication applies to what it sends: the title and the body as cleaned
+ * and marked. For a caller to refuse before the work a refusal would waste (a push, a rebase's publication);
+ * publication checks the exact text again with the real head, and the journal records that text.
+ */
+export function assertPublishable(context: PublicationContext, content: PullRequestContent, adaptations = 0): void {
+  const cleaned = cleanContent(content, rootsOf(context));
+  checkedText(cleaned.title, withMarker(context.rules, cleaned.body, { ...PLACEHOLDER_STATE, adaptations }));
+}
+
 /** A PR's title, description and the commit message of the agent's change. */
 export interface PullRequestContent {
   readonly title: string;

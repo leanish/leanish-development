@@ -144,15 +144,35 @@ export function vetoesOf(snapshot: Snapshot, pkg: PackageName, from: string, tar
   });
 }
 
+/** How a veto note starts, so attribution can leave it out (`withoutVetoNote`). */
+const VETO_NOTE_START = "; advisories no reviewed source corroborates ruled out ";
+
+/** At most this many advisories are shown per vetoed version; the rest are counted. */
+const ADVISORIES_SHOWN = 3;
+
+/** The first `limit` items, and a count of the rest. */
+const counted = (items: ReadonlyArray<string>, limit: number) =>
+  `${items.slice(0, limit).join(", ")}${items.length > limit ? ` and ${items.length - limit} more` : ""}`;
+
 /**
  * For a refusal: the candidates advisories no reviewed source corroborates alone ruled out, lowest first and at most
- * `VETOES_SHOWN`, so the message names what a person could override; "" when there were none.
+ * `VETOES_SHOWN`, each with at most `ADVISORIES_SHOWN` of its advisories, so the message names what a person could
+ * override; "" when there were none. Only the text is bounded: the recorded vetoes stay whole.
  */
 export function vetoNote(vetoes: ReadonlyArray<Veto>): string {
   if (vetoes.length === 0) return "";
-  const shown = vetoes.slice(0, VETOES_SHOWN).map((veto) => `${veto.version} (${veto.advisories.join(", ")})`);
+  const shown = vetoes.slice(0, VETOES_SHOWN).map((veto) => `${veto.version} (${counted(veto.advisories, ADVISORIES_SHOWN)})`);
   const more = vetoes.length - shown.length;
-  return `; advisories no reviewed source corroborates ruled out ${shown.join(", ")}${more === 0 ? "" : ` and ${more} more`}`;
+  return `${VETO_NOTE_START}${shown.join(", ")}${more === 0 ? "" : ` and ${more} more`}`;
+}
+
+/**
+ * `text` without the note `vetoNote` appended: what a retry reads to tell which move a problem names. The note names
+ * versions and advisory ids, which say nothing about which move failed, yet could read like another package's name.
+ */
+export function withoutVetoNote(text: string): string {
+  const at = text.indexOf(VETO_NOTE_START);
+  return at === -1 ? text : text.slice(0, at);
 }
 
 /** At most this many vetoes are recorded with a choice, the ones nearest it; the rest are counted (`nearestVetoes`). */

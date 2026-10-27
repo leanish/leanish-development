@@ -66,10 +66,6 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 - **`gradle.ignoreConfigurations` in reference checks (secure-it)**: the Gradle reference checks in preflight and
   verification include the configurations the gate is told to ignore, so a failure there can block a fix the gate
   wouldn't. Pre-existing in 0.7.x.
-- **Unreviewed-only findings of a package blocked elsewhere (secure-it)**: since 0.8.1 the report keeps a blocked
-  fix's unreviewed-only findings with its reason, but only for the copies that are blocked themselves. When another
-  copy blocks the package, the findings noted on its unblocked copies are left out, and so are a fix's when its peers
-  block it later. The gate still fails on them. Pre-existing in 0.8.0.
 - **Optional root peers and the npm deprecation check (bump-it)**: a transitive version a major brings is exempt when the root declares the package, including as an optional peer it never installed, so a deprecated or unreadable version of it isn't refused. Pre-existing in 0.6.0; not fixed in 0.8.0.
 - **npm aliases without a version** (`"compat": "npm:lib"`): the inventory reads them, but neither tool can rewrite them, so an update fails visibly and a person makes it.
 - **Scheduled runs are best effort**: GitHub may delay or skip them, and disables them after 60 days without activity in a public repository. Nothing else watches that the scheduled scan still runs.

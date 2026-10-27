@@ -20,7 +20,6 @@ import { NpmRegistry, releaseSignals } from "@leanish/gate/npm-registry";
 import type { HeldVersion } from "@leanish/gate/release-age";
 import { runProcess } from "@leanish/gate/process";
 import { gitTree, type Tree, workingTree } from "@leanish/gate/tree";
-import { failingCheckNames } from "@leanish/tool-runtime/ci-state";
 import type { ToolHandlers, ToolRunContext } from "@leanish/tool-runtime/command";
 import { FLOORS_FILE, isMechanical } from "@leanish/tool-runtime/edit-checks";
 import { writeLocalFile } from "@leanish/tool-runtime/local-files";
@@ -36,7 +35,7 @@ import { runSandboxed, sandboxWritable } from "@leanish/tool-runtime/sandboxed";
 import { ensureOsvScanner, verifyingRun } from "@leanish/tool-runtime/osv-scanner";
 import { freeBranch, ownPullRequests, stateOf, topicOf } from "@leanish/tool-runtime/own-pr";
 import { publicationParent, revertToBase } from "@leanish/tool-runtime/reconcile";
-import { clearLeftoverBranch, closeAndDelete, ownOpenPullRequests, type PublicationContext, publishNew, publishUpdate, recoverPublication, rewriteText } from "@leanish/tool-runtime/publication";
+import { assertPublishable, clearLeftoverBranch, closeAndDelete, ownOpenPullRequests, type PublicationContext, publishNew, publishUpdate, recoverPublication, rewriteText } from "@leanish/tool-runtime/publication";
 import { machineRoots } from "@leanish/tool-runtime/publication-text";
 import { type BaseMerge, type CooldownState, reviewOpenPullRequests, type ReviewSteps } from "@leanish/tool-runtime/review";
 
@@ -49,7 +48,7 @@ import { withGradleParents } from "./gradle-parents.ts";
 import { withParents } from "./npm-parents.ts";
 import { requiredNpmPlan } from "./npm-required-plan.ts";
 import { npmWindowFor } from "./npm-window.ts";
-import { assertBodyFits, assertNoPlanMarker } from "@leanish/tool-runtime/plan-blocks";
+import { assertNoPlanMarker } from "@leanish/tool-runtime/plan-blocks";
 import { planDigest, planOf, planSection, withPlanSection } from "./plan-block.ts";
 import { type ChangePlan, coupledWork, type FixWork, heldMembers, heldUnits, isHeldTopic, packageKey, planFor, type PlannedHold, type SecurityUnit, withUnsupportedCarriers } from "./plan.ts";
 import { namedProblems, retryWithoutNamed, type ProblemMoves } from "./retry.ts";
@@ -148,7 +147,7 @@ function publicationOf(context: ToolRunContext, deps: SecureItDeps): Publication
 }
 
 interface SkillExtra {
-  readonly failingChecks?: string[];
+  readonly failingChecks?: ReadonlyArray<string>;
   readonly conflicted?: ReadonlyArray<string>;
   /** Why verification refused the previous attempt at this same plan. */
   readonly rejected?: ReadonlyArray<string>;
@@ -962,9 +961,9 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
         // A different plan is a different change: its own title and description.
         if (changed && answer.publication != null) {
           assertNoPlanMarker(answer.publication.body);
-          const body = `${answer.publication.body}\n\n${planSection(plan)}`;
-          assertBodyFits(body);
-          content = { title: answer.publication.title, body, commitMessage: answer.publication.commitMessage };
+          // Composed as publication will compose it (a held plan's evidence may give way), so the check measures that text.
+          content = { title: answer.publication.title, body: withPlanSection(answer.publication.body, plan), commitMessage: answer.publication.commitMessage };
+          assertPublishable(execution.publication, content);
         }
       } else {
         await prepareNpmFiles(execution, plan, base, true);
@@ -973,15 +972,13 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       await verifyAndPublish(pr, merge.prepared, { tree: base, gradle: baseGradle }, plan, content, "after merging the default branch");
       return "rebased";
     },
-    async adapt(pr, prepared, _context, attempt) {
+    async adapt(pr, prepared, _context, attempt, failingChecks) {
       execution.npmFiles.clear();
       const plan = planFrom(pr);
       if (plan.kind === "floor-removal") {
         context.logger.warn("secure-it: floor-removal CI failure cannot be adapted", { number: pr.number, detail: "the proved removal cannot legitimately be edited" });
         return false;
       }
-      const checks = await context.github.headChecks({ repo: context.repo.repo, sha: pr.headSha });
-      const failingChecks = failingCheckNames(checks);
       const base = await deps.trees.commit(context.workingCopy, prepared.baseSha);
       const answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({
         entrypoint: "secure-it",
