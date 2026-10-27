@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- The gate refuses to read a working-tree file that symbolic links lead outside the repository (a linked file, or a
+  file under a linked folder), as it refuses `uses: ./../x`; it used to read what was outside. Links that stay inside
+  are still followed, and broken ones still read as missing.
+
 ## 0.8.1 - 2026-10-26
 
 ### Changed
