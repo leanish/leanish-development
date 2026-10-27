@@ -94,7 +94,9 @@
   still fixed; a failed read is never taken as acceptance. A malware unit's failure still blocks all malware work and
   runs no other work in its place. bump-it's candidate discovery does the same: a dependency whose identity can't be
   decided gets no move in any line. Either way the run reports it under `errors` as well as among its waiting
-  problems, so a batch counts it as a failure, not a gap; the command's own exit code is unchanged.
+  problems, so a batch counts it as a failed repository, not a gap; the command's own exit code is unchanged. This is
+  the publisher identity check of a fix or a bump candidate; a direct peer's, and a carrier's other reads (its bundle,
+  its versions), keep their own handling.
 - secure-it's Gradle reference checks accept resolution failures in the configurations `gradle.ignoreConfigurations`
   lists, as the gate does: the held preflight leaves them out of the reference, and verification (floor removals'
   too) accepts an edit that fails to resolve there the same way as the plan's reference. A fix the gate would pass is
