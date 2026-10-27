@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Changed
+
+- bump-it's agent edits and secure-it's rebase check the agent's description with its plan section the way publication
+  will send it (paths cleaned, state and marker added), instead of its raw length: a body that only cleaning or the
+  marker pushes over GitHub's limit is refused before verification, with publication's own message, and secure-it no
+  longer refuses a held plan whose evidence publication would have trimmed to fit. Publication still checks every body
+  before any push.
+
 ### Fixed
 
 - bump-it's plan shows package names, versions, locations and notes as literal code spans, as secure-it's does, so

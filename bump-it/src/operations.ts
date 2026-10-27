@@ -14,7 +14,7 @@ import type { FileState } from "@leanish/tool-runtime/git-copies";
 import { referenceTransform } from "@leanish/tool-runtime/gradle-reference";
 import { type GradleInventories, lockfilesOf } from "@leanish/tool-runtime/inventories";
 import { freeBranch, ownPullRequests } from "@leanish/tool-runtime/own-pr";
-import { clearLeftoverBranch, type PublicationContext, type PullRequestContent } from "@leanish/tool-runtime/publication";
+import { assertPublishable, clearLeftoverBranch, type PublicationContext, type PullRequestContent } from "@leanish/tool-runtime/publication";
 
 import type { WrapperArtifact } from "./wrapper-generation.ts";
 import type { WrapperCandidates, WrapperPlanner } from "./gradle-wrapper.ts";
@@ -23,7 +23,7 @@ import type { BumpItDeps } from "./deps.ts";
 import { assertLocalFile } from "./files.ts";
 import { formatManifest } from "./manifest-format.ts";
 import { coupledUnit, constrainedPeers } from "./peers.ts";
-import { assertBodyFits, assertNoPlanMarker } from "@leanish/tool-runtime/plan-blocks";
+import { assertNoPlanMarker } from "@leanish/tool-runtime/plan-blocks";
 import { type BumpPlan, DEPENDENCY_FIELDS, planFor, planSection } from "./plan.ts";
 import type { Unit } from "./units.ts";
 import { referenceMoves } from "./verify.ts";
@@ -256,9 +256,9 @@ export async function edit(execution: Execution, computed: Computed, mode: "appl
     throw new Error(`the agent couldn't apply the plan: ${answer.summary}`);
   }
   assertNoPlanMarker(answer.publication.body);
-  const body = `${answer.publication.body}\n\n${planSection(plan)}`;
-  assertBodyFits(body);
-  return { content: { ...answer.publication, body }, toolWritten: undefined };
+  const content = { ...answer.publication, body: `${answer.publication.body}\n\n${planSection(plan)}` };
+  assertPublishable(execution.publication, content);
+  return { content, toolWritten: undefined };
 }
 
 function skillInput(context: ToolRunContext, plan: BumpPlan, mode: "apply" | "adapt" | "resolve", toolWritten: string[], extra: EditContext) {
