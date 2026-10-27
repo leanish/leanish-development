@@ -49,10 +49,6 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   to 16 id lookups per advisory group for each of GitHub's advisory database and OSV; repository-advisory pagination
   has a separate cap. No request budget spans the run, so many held versions can spend much of the shared GitHub API
   quota. New in 0.8.0.
-- **Unreviewed-only findings of a package blocked elsewhere (secure-it)**: since 0.8.1 the report keeps a blocked
-  fix's unreviewed-only findings with its reason, but only for the copies that are blocked themselves. When another
-  copy blocks the package, the findings noted on its unblocked copies are left out, and so are a fix's when its peers
-  block it later. The gate still fails on them. Pre-existing in 0.8.0.
 - **Optional root peers and the npm deprecation check (bump-it)**: a transitive version a major brings is exempt when the root declares the package, including as an optional peer it never installed, so a deprecated or unreadable version of it isn't refused. Pre-existing in 0.6.0; not fixed in 0.8.0.
 - **npm aliases without a version** (`"compat": "npm:lib"`): the inventory reads them, but neither tool can rewrite them, so an update fails visibly and a person makes it.
 - **Scheduled runs are best effort**: GitHub may delay or skip them, and disables them after 60 days without activity in a public repository. Nothing else watches that the scheduled scan still runs.

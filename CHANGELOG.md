@@ -11,6 +11,9 @@
 
 ### Fixed
 
+- secure-it's report keeps the unreviewed-only findings noted on every copy of a blocked package, not only on the
+  copies blocked themselves: also when another copy blocks it, when peers block it later (and the work tied to it), and
+  for a malware unit left out whole. A finding already reported isn't repeated.
 - The gate refuses to read a working-tree file that symbolic links lead outside the repository (a linked file, or a
   file under a linked folder), as it refuses `uses: ./../x`; it used to read what was outside. Links that stay inside
   are still followed, and broken ones still read as missing.
