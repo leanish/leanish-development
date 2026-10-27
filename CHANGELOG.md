@@ -9,9 +9,19 @@
   marker pushes over GitHub's limit is refused before verification, with publication's own message, and secure-it no
   longer refuses a held plan whose evidence publication would have trimmed to fit. Publication still checks every body
   before any push.
+- A full scan words an unpinned or unverified action's gap as compare does, with the folder it uses in the action's
+  repository (`owner/repo/path@ref`).
+- A PR's CI is read once per review tick: the adaptation gets the failed jobs and statuses of the same snapshot that
+  classified the head as failed, instead of reading the checks again.
 
 ### Fixed
 
+- secure-it's report keeps the unreviewed-only findings noted on every copy of a blocked package, not only on the
+  copies blocked themselves: also when another copy blocks it, when peers block it later (and the work tied to it), and
+  for a malware unit left out whole. A finding already reported isn't repeated.
+- The gate refuses to read a working-tree file that symbolic links lead outside the repository (a linked file, or a
+  file under a linked folder), as it refuses `uses: ./../x`; it used to read what was outside. Links that stay inside
+  are still followed, and broken ones still read as missing.
 - bump-it's plan shows package names, versions, locations and notes as literal code spans, as secure-it's does, so
   a link, mention, comment or table pipe in them stays text. `literal()` moved to `@leanish/tool-runtime/pr-text`.
 - bump-it keeps the branch names it takes during a run, even for a unit that fails later, so two units whose topics

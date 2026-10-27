@@ -148,6 +148,19 @@ describe("reviewOpenPullRequests", () => {
     expect(workspace.deletions.map((deletion) => deletion.args)).toEqual([{ branch: "secure-it/2026-10-05-snappy-java", expectedSha: HEAD_SHA }]);
   });
 
+  it("hands the adaptation the failed jobs and statuses of the one CI read that classified the head", async () => {
+    const github = new FakeGitHub(ownPr());
+    github.checks = { ...RED, statuses: [{ context: "legacy", state: "failure" }, { context: "lint", state: "success" }] };
+    const seen: Array<ReadonlyArray<string>> = [];
+    const recording: ReviewSteps = { ...steps(), async adapt(pr, prepared, publication, attempt, failingChecks) {
+      seen.push(failingChecks);
+      return steps().adapt(pr, prepared, publication, attempt, failingChecks);
+    } };
+    expect((await reviewOpenPullRequests(context(github), recording))[0]).toMatchObject({ outcome: "adapted" });
+    expect(seen).toEqual([["check", "legacy"]]);
+    expect(github.calls.filter((call) => call.startsWith("headChecks "))).toHaveLength(1);
+  });
+
   it("lets the agent adapt a failing PR at most twice, counting in the body, then closes it", async () => {
     const github = new FakeGitHub(ownPr());
     github.checks = RED;

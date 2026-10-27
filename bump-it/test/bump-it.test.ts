@@ -868,6 +868,7 @@ describe("bump-it review", () => {
     const h = harness({ prs: [await prFor(major())] }); h.github.checks = { ...RED, statuses: [{ context: "legacy", state: "failure" }] };
     expect(await bumpIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ outcome: "adapted" }] });
     expect(h.agentCalls).toMatchObject([{ input: { mode: "adapt", failingChecks: ["check", "legacy"] } }]);
+    expect(h.github.calls.filter((call) => call.startsWith("headChecks "))).toHaveLength(1);
     expect(stateOf(h.github.prs.get(7)!.body)?.adaptations).toBe(1);
   });
   it.each([

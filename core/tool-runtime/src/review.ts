@@ -32,7 +32,7 @@ import type { Logger } from "@leanish/agent-runtime/types/logger";
 import type { PreparedBranch, WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
 import type { Workspace } from "@leanish/agent-runtime/working-copy/workspace";
 
-import { classifyCi, onlyCooldownHolds, unreportedRequired } from "./ci-state.ts";
+import { classifyCi, failingCheckNames, onlyCooldownHolds, unreportedRequired } from "./ci-state.ts";
 import type { PublicationJournal } from "./journal.ts";
 import { type OwnPullRequests, type PullRequestState, stateOf } from "./own-pr.ts";
 import { closeAndDelete, markReady, ownOpenPullRequests, type PublicationContext, recordState, recoverPublication } from "./publication.ts";
@@ -75,8 +75,11 @@ export interface ReviewSteps {
    * dependency files, the agent for code). Returns which.
    */
   rebase(pr: GitHubPullRequest, merge: BaseMerge, context: PublicationContext): Promise<"retired" | "rebased">;
-  /** CI failed: the agent adapts the change once (`attempt` from 1); whether a change was published. */
-  adapt(pr: GitHubPullRequest, prepared: PreparedBranch, context: PublicationContext, attempt: number): Promise<boolean>;
+  /**
+   * CI failed: the agent adapts the change once (`attempt` from 1); whether a change was published. `failingChecks`
+   * names the failed jobs and statuses of the same snapshot that classified CI as failed.
+   */
+  adapt(pr: GitHubPullRequest, prepared: PreparedBranch, context: PublicationContext, attempt: number, failingChecks: ReadonlyArray<string>): Promise<boolean>;
   /**
    * Whether the PR's recorded plan takes versions younger than the wait, and
    * whether they've all aged by now; undefined when it holds none. Throws on
@@ -211,7 +214,7 @@ async function reviewOne(context: ReviewContext, steps: ReviewSteps, pr: GitHubP
   // Counted before the agent starts: an attempt that fails or publishes nothing still uses one up.
   const attempt = state.adaptations + 1;
   await recordState(publication, pr.number, pr.headSha, { ...state, adaptations: attempt });
-  const pushed = await steps.adapt(pr, checkedOut.prepared, publication, attempt);
+  const pushed = await steps.adapt(pr, checkedOut.prepared, publication, attempt, failingCheckNames(checks));
   return result(pushed ? "adapted" : "adaptation-unchanged", `attempt ${attempt} of ${MAX_ADAPTATIONS}`);
 }
 

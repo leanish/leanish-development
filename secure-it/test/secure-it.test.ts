@@ -1029,6 +1029,7 @@ describe("secure-it review", () => {
     h.github.checks = { ...RED, statuses: [{ context: "legacy", state: "error" }] };
     expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "adapted" }] });
     expect(h.agentCalls[0]).toMatchObject({ input: { mode: "adapt", failingChecks: ["check", "legacy"], npmAgeExclusions: ["left-pad", "vite"] } });
+    expect(h.github.calls.filter((call) => call.startsWith("headChecks "))).toHaveLength(1);
     expect(stateOf(h.github.prs.get(7)!.body)?.adaptations).toBe(1);
 
     const failing = harness({ prs: [await vitePr()], problems: ["compare: new: vite@8.3.3: GHSA-new has no exception"] });

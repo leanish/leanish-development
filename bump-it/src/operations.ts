@@ -58,7 +58,7 @@ interface SkillAnswer {
 }
 
 interface EditContext {
-  readonly failingChecks?: string[];
+  readonly failingChecks?: ReadonlyArray<string>;
   readonly conflicted?: ReadonlyArray<string>;
   /** Why verification refused the previous attempt at this same plan. */
   readonly rejected?: ReadonlyArray<string>;
