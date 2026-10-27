@@ -157,13 +157,22 @@ function assertHostFields(kind: "identity" | "extra", fields: Readonly<Record<st
 
 /** Writes `line` and resolves once it's handed to the OS, so an exit right after can't drop it. */
 export async function writeFinalLine(stream: NodeJS.WritableStream, line: string): Promise<void> {
-  await flushed(stream, line);
+  await new Promise<void>((done) => {
+    stream.write(line, () => done());
+  });
 }
 
-/** Writes `text`; resolves once it's handed to the OS, to whether that worked. */
+/**
+ * Writes `text`; resolves once it's handed to the OS, to whether that worked. A stream that throws instead of calling
+ * back with its error also resolves to false: the run's end must still settle, with its exit code.
+ */
 function flushed(stream: NodeJS.WritableStream, text: string): Promise<boolean> {
   return new Promise((done) => {
-    stream.write(text, (err) => done(err === undefined || err === null));
+    try {
+      stream.write(text, (err) => done(err === undefined || err === null));
+    } catch {
+      done(false);
+    }
   });
 }
 
@@ -317,7 +326,13 @@ function finalText(
   try {
     final = report.finishRecord({ ...end, ...(extra !== undefined ? { extra: extra() } : {}) });
   } catch (err) {
-    final = report.finishRecord({ ...end, error: noted(end.error, `the host's fields were left out: ${messageOf(err)}`) });
+    try {
+      final = report.finishRecord({ ...end, error: noted(end.error, `the host's fields were left out: ${messageOf(err)}`) });
+    } catch {
+      // The result itself can't be written (a value JSON can't serialize, say): the line goes without it too.
+      const { result: _unwritable, ...rest } = end;
+      final = report.finishRecord({ ...rest, error: noted(end.error, `the host's fields and the result were left out: ${messageOf(err)}`) });
+    }
   }
   if (final === undefined || beforeFinalLine === undefined) return final?.line;
   try {

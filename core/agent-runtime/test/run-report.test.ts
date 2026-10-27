@@ -502,9 +502,22 @@ describe("startRunReport", () => {
       await ending;
       expect(listenerCounts()).toEqual(baseline);
     }
+    // A stream that throws instead of calling back still lets the end settle, so the command returns its exit code.
     const throwing = { write: () => { throw new Error("stream destroyed"); } } as unknown as NodeJS.WritableStream;
-    await expect(startRunReport({ stream: throwing, env: {} }).end({ status: "ok", exitCode: 0 })).rejects.toThrow("stream destroyed");
+    await expect(startRunReport({ stream: throwing, env: {} }).end({ status: "ok", exitCode: 0 })).resolves.toBeUndefined();
     expect(listenerCounts()).toEqual(baseline);
+  });
+
+  it("still writes the line when the result can't be serialized, leaving it out and noting why", async () => {
+    const held = new HeldStream();
+    const report = startRunReport({ stream: held.stream, env: {}, extra: () => ({ dispatches: 1 }) });
+    const ending = report.end({ status: "ok", exitCode: 0, result: { count: 10n } });
+    held.flush();
+    await ending;
+    const [line] = lines(held.writes[0]);
+    expect(line).toMatchObject({ status: "ok", exitCode: 0, error: expect.stringContaining("the host's fields and the result were left out") });
+    expect(line).not.toHaveProperty("result");
+    expect(held.writes).toHaveLength(1);
   });
 
   // A real process and a real signal: the line, then the marker, then death by the signal.
