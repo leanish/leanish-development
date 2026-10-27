@@ -106,7 +106,13 @@
   decided gets no move in any line. Either way the run reports it under `errors` as well as among its waiting
   problems, so a batch counts it as a failed repository, not a gap; the command's own exit code is unchanged. This is
   the publisher identity check of a fix or a bump candidate; a direct peer's, and a carrier's other reads (its bundle,
-  its versions), keep their own handling.
+  its versions), keep their own handling. A move lost that way is never read as one no longer needed: while any
+  package's identity can't be decided on the new base, both tools' review recomputation keeps the PR it would
+  recompute as it is (no retirement, replacement or rewrite from recomputing it), reporting an error; and a run's unit
+  fails instead of rewriting the existing PR it would reuse (for a held unit, the one it claimed) when that PR's plan
+  moves such a package. Units without an existing PR, or whose PR moves none, still go on, and malware still comes
+  first. The review's other paths are unchanged: a held draft whose versions have all aged is still retired, and the
+  next run opens its replacement without a package it can't decide yet, reporting that package under `errors`.
 - secure-it's Gradle reference checks accept resolution failures in the configurations `gradle.ignoreConfigurations`
   lists, as the gate does: the held preflight leaves them out of the reference, and verification (floor removals'
   too) accepts an edit that fails to resolve there the same way as the plan's reference. A fix the gate would pass is
