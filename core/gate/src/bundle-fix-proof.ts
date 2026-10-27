@@ -24,7 +24,7 @@
  * A carrier proved this way doesn't seed required-dependency proofs: a young
  * non-bundled dependency it needs stays unjustified, and the comparison fails.
  */
-import { candidateVersions, groupsOf, reviewedGroups, targetsOf, type VersionCatalog } from "./young-fixes.ts";
+import { candidateVersions, groupsOf, reviewedGroups, targetsOf, type VersionCatalog, vetoNote } from "./young-fixes.ts";
 import { chooseCarrier, describe, removedTargets, registryIntegrity } from "./carrier-fixes.ts";
 import type { Config } from "./config.ts";
 import { isOwnPackage } from "./config.ts";
@@ -157,7 +157,11 @@ async function occurrenceProof(pkg: PackageVersion, occurrence: Occurrence, inpu
     config,
     now,
   });
-  if (choice.kind !== "chosen") return `${at}: the bundle-fix justification could not be established: ${choice.reason}`;
+  if (choice.kind !== "chosen") {
+    // Only a "none" knows its vetoes; an incomplete search keeps its own reason.
+    const vetoes = choice.kind === "none" ? vetoNote(choice.vetoed) : "";
+    return `${at}: the bundle-fix justification could not be established: ${choice.reason}${vetoes}`;
+  }
   if (choice.version !== pkg.version) {
     return `${at}: ${choice.version} ${choice.aged ? `ships a bundle without ${describe(carried)} too and is at least ${config.releaseAgeDays} days old` : `is the lowest version whose bundle drops ${describe(carried)}`} (line ${choice.line})`;
   }

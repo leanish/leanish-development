@@ -161,7 +161,7 @@ export async function decideCarrier(group: CarrierGroup, own: ReadonlyArray<stri
     config: context.config,
     now: context.now,
   });
-  // Only this report names the vetoes; verification's message keeps the bare reason.
+  // The vetoes go last, after the reason: a retry attributes the refusal without them (`withoutVetoNote`).
   if (choice.kind === "none") return { ...none(`${choice.reason}${vetoNote(choice.vetoed)}`), unfixable };
   if (choice.kind !== "chosen") return { ...none(choice.reason), unfixable };
   const line = (version: string) => compatibleLine(context.config, pkg, version);

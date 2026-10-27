@@ -4,6 +4,10 @@
 
 ### Changed
 
+- Verification's refusal of a young carrier whose bundled fix it can't justify names the versions advisories no reviewed
+  source corroborates ruled out, as planning's does since 0.8.1. A refusal shows at most three advisories per version
+  and counts the rest; the recorded vetoes stay whole. A retry still attributes the refusal by its own text, never by
+  the versions and advisories it names, so it leaves out the same moves.
 - bump-it's agent edits and secure-it's rebase check the agent's description with its plan section the way publication
   will send it (paths cleaned, state and marker added), instead of its raw length: a body that only cleaning or the
   marker pushes over GitHub's limit is refused before verification, with publication's own message, and secure-it no

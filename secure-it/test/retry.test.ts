@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { vetoNote } from "@leanish/gate/young-fixes";
 import { planBlock } from "@leanish/tool-runtime/plan-blocks";
 import { cooldownWarning, planOf, planSection, withPlanSection } from "../src/plan-block.ts";
 import type { ChangePlan, PlannedMove } from "../src/plan.ts";
@@ -70,6 +71,18 @@ describe("batch retry", () => {
     expect(body.length).toBeLessThan(30_000);
     for (const vetoesLeftOut of [0, -1, 1.5, "3"]) expect(planOf(withPlanSection("Description.", plan({ ...counted, vetoesLeftOut } as unknown as PlannedMove)))).toBeUndefined();
     expect(planOf(withPlanSection("Description.", plan({ ...move("lib"), vetoesLeftOut: 3 })))).toBeUndefined();
+  });
+
+  it("attributes a carrier refusal by its message, never by the vetoes it names", () => {
+    const original = plan(move("carrier"), move("other"));
+    const refusal = "carrier@1.0.1 at package-lock.json: the bundle-fix justification could not be established: no carrier version above 1.0.0 ships a bundle without brace GHSA-a";
+    // An advisory id shaped like another package's version must not drop that package's move.
+    const noted = `${refusal}${vetoNote([{ version: "1.0.2", advisories: ["GHSA-b", "other@1.0.1"] }])}`;
+    const without = retryWithoutNamed(original, [refusal]);
+    const withNote = retryWithoutNamed(original, [noted]);
+    expect(withNote.plan?.packages).toEqual(without.plan?.packages);
+    expect(withNote.plan?.packages).toEqual(["npm|other"]);
+    expect(withNote.leftOut[0]?.problems).toEqual([noted]);
   });
 
   it("attributes a failed required child to its security root and leaves unrelated npm work", () => {

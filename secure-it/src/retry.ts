@@ -1,4 +1,6 @@
 /** Attribute verification messages conservatively; a routine may drop named package groups once. */
+import { withoutVetoNote } from "@leanish/gate/young-fixes";
+
 import type { ChangePlan, OmittedMoves, PlannedMove } from "./plan.ts";
 
 export interface ProblemMoves {
@@ -70,10 +72,12 @@ const concerns = (moves: ReadonlyArray<PlannedMove>, name: string) =>
   moves.some((move) => move.name === name || (move.carries ?? []).some((carried) => carried.name === name));
 
 function namesMove(problem: string, move: PlannedMove): boolean {
+  // A refusal's veto note names versions and advisories, never the move that failed: it's left out.
+  const text = withoutVetoNote(problem);
   const name = move.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   // Version-labelled gate findings and named landing/declaration failures, not package substrings in filenames.
   const versioned = new RegExp(`(?:^|\\s)${name}@[^\\s]+`);
   const landing = new RegExp(`^${name} (?:at |changed from )`);
   const gradle = new RegExp(`(?: declares | resolves | no longer resolves )${name}(?: |$)`);
-  return versioned.test(problem) || landing.test(problem) || gradle.test(problem);
+  return versioned.test(text) || landing.test(text) || gradle.test(text);
 }

@@ -172,6 +172,18 @@ describe("a young carrier proved as a bundled fix", () => {
     expect(ageFailures(outcome.failures)).toEqual([expect.stringContaining("fixes no reviewed advisory 1.0.0's had (brace GHSA-brace-repo only in the project's repository advisories")]);
   });
 
+  it("names in its refusal the carrier versions only unreviewed advisories ruled out", async () => {
+    // brace's own repository alone says 5.0.12 has a new advisory: 1.1.0, the only carrier dropping GHSA-brace, is vetoed.
+    const routes = {
+      "https://registry.npmjs.org/brace/5.0.12": { body: { repository: "github:acme/brace" } },
+      "https://api.github.com/repos/acme/brace/security-advisories?state=published&per_page=100": { body: [
+        { ghsa_id: "GHSA-brace-new", state: "published", vulnerabilities: [{ package: { ecosystem: "npm", name: "brace" }, vulnerable_version_range: ">= 5.0.10, < 5.0.13" }] },
+      ] },
+    };
+    const outcome = await compare({ "1.0.0": { published: OLD, bundles: VULNERABLE }, "1.1.0": { published: daysAgo(1), bundles: FIXED } }, "1.0.0", "1.1.0", { routes });
+    expect(ageFailures(outcome.failures)).toEqual([expect.stringMatching(/the bundle-fix justification could not be established: .*; advisories no reviewed source corroborates ruled out 1\.1\.0 \(GHSA-brace-new\)$/)]);
+  });
+
   it("isn't when an aged version's bundle drops it too", async () => {
     const outcome = await compare({
       "1.0.0": { published: OLD, bundles: VULNERABLE }, "1.0.5": { published: daysAgo(30), bundles: FIXED }, "1.1.0": { published: daysAgo(1), bundles: FIXED },

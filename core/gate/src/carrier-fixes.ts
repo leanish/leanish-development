@@ -89,8 +89,8 @@ export type CarrierChoice =
   | {
     readonly kind: "none"; readonly reason: string;
     /**
-     * Read versions ruled out only by unreviewed advisories, for planning's report (`vetoNote`); kept out of `reason`,
-     * which verification also reports and can publish.
+     * Read versions ruled out only by unreviewed advisories, which planning's and verification's refusals name
+     * (`vetoNote`, bounded); kept out of `reason`, so each caller appends the note last and a retry can leave it out.
      */
     readonly vetoed: ReadonlyArray<Veto>;
   }
