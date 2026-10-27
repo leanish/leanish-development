@@ -40,8 +40,8 @@
   resolved together now fail apart until they age, instead of joining (v0.8's fallback could gather every held group).
   When the aged batch can't be planned it fails with its own error, without a second attempt, and if it has npm work
   the held units with npm work fail too, since which of its roots join them is unknown; held work without npm still
-  runs. A review keeps every held PR with npm moves as it is then, including one whose fix has aged since, rather
-  than retire it.
+  runs, unless it would claim a held PR with npm moves. Runs and reviews keep every held PR with npm moves as it is
+  then, including one whose fix has aged since, rather than rewrite or retire it.
 - secure-it no longer plans an own package's young fix (or an own carrier's, or an own direct peer a fix moves with
   it) as held: the gate never holds an own package, so it now goes with the other fixes instead of waiting in a
   cooldown PR.

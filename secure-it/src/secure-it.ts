@@ -281,7 +281,12 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
       const failure = failures.get(unit) ?? (isHeldUnit(unit) && hasNpmWork(unit) ? ungrouped : undefined);
       if (failure !== undefined) throw failure;
       if (claims instanceof Error && isHeldUnit(unit)) throw claims;
-      results.push(await runUnit(execution, unit, base, own, claims instanceof Error ? undefined : claims.get(unit.topic)));
+      const claimed = claims instanceof Error ? undefined : claims.byTopic.get(unit.topic);
+      const claimedPlan = claims instanceof Error || claimed === undefined ? undefined : claims.plans.get(claimed);
+      // While that grouping is unknown, a held PR with npm moves stays reserved for the npm work it could take back,
+      // as review keeps it: a held unit without npm work claiming it fails rather than rewrite it without that work.
+      if (ungrouped !== undefined && isHeldUnit(unit) && claimedPlan !== undefined && hasNpmMoves(claimedPlan)) throw ungrouped;
+      results.push(await runUnit(execution, unit, base, own, claimed));
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       context.logger.warn("secure-it: a unit failed", { topic: unit.topic, error: detail });
@@ -559,15 +564,30 @@ async function withRequiredYoung(execution: Execution, units: ReadonlyArray<Secu
  * a unit with none opens its own.
  */
 export function heldClaims(units: ReadonlyArray<SecurityUnit>, own: ReadonlyArray<GitHubPullRequest>): Map<string, number> {
+  return claimsAmong(units, heldPlansOf(own));
+}
+
+/** An open PR's held plan, as its body records it. */
+interface RecordedHeldPlan {
+  readonly number: number;
+  readonly plan: ChangePlan;
+}
+
+/** The held plans `own` record, read once for the claims and for what a claimed PR holds. */
+function heldPlansOf(own: ReadonlyArray<GitHubPullRequest>): RecordedHeldPlan[] {
+  return own.flatMap((pr) => {
+    const plan = planOf(pr.body);
+    return plan === undefined || !isHeldPlan(plan) ? [] : [{ number: pr.number, plan }];
+  });
+}
+
+/** `heldClaims` over plans already read. */
+function claimsAmong(units: ReadonlyArray<SecurityUnit>, plans: ReadonlyArray<RecordedHeldPlan>): Map<string, number> {
   const held = units.filter(isHeldUnit);
-  const pairs = own.flatMap((pr) => {
-    const previous = planOf(pr.body);
-    if (previous === undefined || !isHeldPlan(previous)) return [];
-    return held.flatMap((unit) => {
-      const match = heldOverlap(previous, unit);
-      return match === undefined ? [] : [{ topic: unit.topic, number: pr.number, ...match }];
-    });
-  }).sort((a, b) => b.shared - a.shared || (a.lowest < b.lowest ? -1 : a.lowest > b.lowest ? 1 : 0) || a.number - b.number);
+  const pairs = plans.flatMap(({ number, plan }) => held.flatMap((unit) => {
+    const match = heldOverlap(plan, unit);
+    return match === undefined ? [] : [{ topic: unit.topic, number, ...match }];
+  })).sort((a, b) => b.shared - a.shared || (a.lowest < b.lowest ? -1 : a.lowest > b.lowest ? 1 : 0) || a.number - b.number);
   const claims = new Map<string, number>();
   const taken = new Set<number>();
   for (const pair of pairs) {
@@ -580,14 +600,24 @@ export function heldClaims(units: ReadonlyArray<SecurityUnit>, own: ReadonlyArra
 
 const isHeldUnit = (unit: SecurityUnit) => unit.kind === "routine" && isHeldTopic(unit.topic);
 
+/** The held units' claims (topic → PR number), and the held plan each claimable PR records. */
+interface HeldClaims {
+  readonly byTopic: ReadonlyMap<string, number>;
+  readonly plans: ReadonlyMap<number, ChangePlan>;
+}
+
+/** Whether a recorded plan moves npm packages: the held work a failed aged npm plan could join to it. */
+const hasNpmMoves = (plan: ChangePlan) => plan.moves.some((move) => move.ecosystem === "npm");
+
 /**
  * The held units' claims, read only when some unit is held (each other unit reads its own PRs, as before); what made
  * them unreadable (an own PR's journal, say) instead of a throw, so that fails the held units alone, not the run.
  */
-async function heldClaimsOf(publication: PublicationContext, units: ReadonlyArray<SecurityUnit>, own: ReadonlyArray<GitHubPullRequest>): Promise<ReadonlyMap<string, number> | Error> {
-  if (!units.some(isHeldUnit)) return new Map();
+async function heldClaimsOf(publication: PublicationContext, units: ReadonlyArray<SecurityUnit>, own: ReadonlyArray<GitHubPullRequest>): Promise<HeldClaims | Error> {
+  if (!units.some(isHeldUnit)) return { byTopic: new Map(), plans: new Map() };
   try {
-    return heldClaims(units, await claimable(publication, own));
+    const plans = heldPlansOf(await claimable(publication, own));
+    return { byTopic: claimsAmong(units, plans), plans: new Map(plans.map(({ number, plan }) => [number, plan])) };
   } catch (err) {
     return asError(err);
   }
@@ -942,7 +972,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       const held = await holdRequiredYoung(execution, units, { tree: base, gradle: baseGradle });
       // An unknown grouping of held npm work can't tell which unit a held PR with npm moves is, nor retire it; a held PR
       // without npm moves, or a non-held PR, doesn't depend on it.
-      if (held.ungrouped !== undefined && isHeldPlan(previous) && previous.moves.some((move) => move.ecosystem === "npm")) throw held.ungrouped;
+      if (held.ungrouped !== undefined && isHeldPlan(previous) && hasNpmMoves(previous)) throw held.ungrouped;
       const split = held.units;
       // A held PR is the unit a run would give it, so a run and a review never disagree on which PR is whose.
       const open = isHeldPlan(previous) ? await claimable(publication, await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base)) : [];

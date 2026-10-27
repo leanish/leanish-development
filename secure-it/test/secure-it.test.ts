@@ -1907,6 +1907,26 @@ describe("the cooldown hold", () => {
     expect(planOf(seeded.h.github.prs.get(7)!.body)?.members).toEqual(["Maven|g:a"]);
   });
 
+  it("keeps a mixed held PR for its npm work when a held unit without npm work would claim it on a failed aged npm plan", async () => {
+    const { h, tool } = await heldGradleBesideFailedAgedNpm();
+    // As v0.8's all-held fallback or v0.7's single held PR left it: g:a and vite in one held PR, which g:a claims.
+    const topic = "security-cooldown-g:a";
+    const mixed = await planFor([h.fixes[0]!, YOUNG_VITE()], { lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: h.base, named: () => true, tagCommit: async () => undefined },
+      { kind: "routine", topic });
+    const pr = ownPr({ headRef: branchFor(RULES, new Date("2026-10-05T00:00:00Z"), topic), body: withMarker(RULES, withPlanSection("Fixes both.", mixed), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    h.github.prs.set(pr.number, pr);
+    h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
+    expect(await tool.run(h.context)).toMatchObject({ units: [
+      { topic: "security", outcome: "failed", detail: "registry 502" },
+      { topic: "security-cooldown-g:a", outcome: "failed", detail: expect.stringContaining("the aged unit's plan, which decides which of its fixes join held work, failed") },
+      { topic: "security-cooldown-vite", outcome: "failed", detail: expect.stringContaining("the aged unit's plan") },
+    ] });
+    expect([...h.github.prs.values()]).toEqual([pr]);
+    expect(h.workspace.pushes).toEqual([]);
+    expect(h.workspace.deletions).toEqual([]);
+    expect(h.agentCalls).toEqual([]);
+  });
+
   it("keeps held units running when an aged unit without npm work can't be planned", async () => {
     const h = heldGradle({ independent: true, extra: true });
     const found = await h.deps.candidates(tree(BASE_SHA), await h.deps.gate(h.context), {});
