@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 
 import { safePath } from "@leanish/tool-runtime/local-files";
 import { planPayload, planSection as sectionOf, withPlanSection as replaceSection } from "@leanish/tool-runtime/plan-blocks";
+import { literal } from "@leanish/tool-runtime/pr-text";
 
 import type { WrapperFile } from "./wrapper-generation.ts";
 import { WRAPPER_FILES, WRAPPER_PROPERTIES } from "./gradle-wrapper.ts";
@@ -225,22 +226,25 @@ function validCommitSha(value: unknown): boolean {
   return typeof value === "string" && /^[0-9a-f]{40}$/i.test(value);
 }
 
-const cell = (text: string) => text.replaceAll("|", "\\|").replaceAll("\n", " ");
+/** Text from elsewhere (names, versions, paths) in a table cell, as a literal code span. */
+const cell = (text: string) => literal(text, { table: true });
 
 export function planSection(plan: BumpPlan): string {
   // Lockfile-only copy changes (an in-range npm update) are rows too, so a PR without declared moves doesn't show an empty table.
   const rows = [
-    ...plan.moves.map((move) => row(move.name, move.from, move.to, move.locations.join(", "))),
-    ...plan.changes.slice(0, 30).map((change) => row(change.name, change.from ?? "new", change.to ?? "removed", `${change.lockfile}:${change.path}`)),
+    ...plan.moves.map((move) => row(cell(move.name), cell(move.from), cell(move.to), move.locations.map(cell).join(", "))),
+    ...plan.changes.slice(0, 30).map((change) =>
+      row(cell(change.name), change.from === undefined ? "new" : cell(change.from), change.to === undefined ? "removed" : cell(change.to), cell(`${change.lockfile}:${change.path}`))),
   ];
   const table = rows.length === 0 ? [] : ["| Package | From | To | Locations |", "|---|---|---|---|", ...rows];
   const more = plan.changeCount > 30 ? [`- and ${plan.changeCount - 30} more npm copy changes`] : [];
-  const notes = plan.notes.map((note) => `- ${cell(note)}`);
+  const notes = plan.notes.map((note) => `- ${literal(note)}`);
   const people = [table, more, notes].filter((lines) => lines.length > 0).map((lines) => lines.join("\n")).join("\n\n");
   return sectionOf({ heading: HEADING, people, payload: plan, name: "bump-it's plan" });
 }
 
-const row = (name: string, from: string, to: string, locations: string) => `| ${cell(name)} | ${cell(from)} | ${cell(to)} | ${cell(locations)} |`;
+/** A table row of cells already rendered: literal spans, or the tool's own words for a copy added or removed. */
+const row = (name: string, from: string, to: string, locations: string) => `| ${name} | ${from} | ${to} | ${locations} |`;
 
 export function withPlanSection(body: string, plan: BumpPlan): string {
   return replaceSection(body, HEADING, planSection(plan));

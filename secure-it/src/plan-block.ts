@@ -12,11 +12,11 @@ import { isAdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import { heldEntry, heldUntil } from "@leanish/gate/cooldown";
 import { MARKER_ROOM, stateOf } from "@leanish/tool-runtime/own-pr";
 import { defused, planPayload, planSection as sectionOf, TooLargeError, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
+import { literal } from "@leanish/tool-runtime/pr-text";
 
 import { advisoryNotice, EVIDENCE_LEFT_OUT, tableRowCount } from "./advisory-notice.ts";
 import { floorIdentity, validRemoval } from "./floor-removal.ts";
 import type { ChangePlan, PlannedHold, PlannedMove } from "./plan.ts";
-import { literal } from "./pr-text.ts";
 
 const HEADING = "### What secure-it moved";
 /** Fresh agent text: leave room for cleaning and the publication marker below the client's body limit. */
