@@ -82,10 +82,11 @@ export class Snapshot {
 }
 
 /**
- * Union-find over each advisory's ids. A group's canonical id is its smallest
- * GHSA id, else its smallest id, so the choice doesn't depend on order.
+ * Union-find over each advisory's ids: each id → its group's canonical id, the
+ * group's smallest GHSA id, else its smallest id, so the choice doesn't depend
+ * on order.
  */
-function aliasGroups(advisories: ReadonlyArray<Advisory>): Map<string, string> {
+export function aliasGroups(advisories: ReadonlyArray<Advisory>): Map<string, string> {
   const parent = new Map<string, string>();
   const find = (id: string): string => {
     let root = id;
