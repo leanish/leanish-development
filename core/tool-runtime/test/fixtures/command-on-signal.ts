@@ -31,6 +31,6 @@ process.exitCode = await runToolCommand(
     ensureDir: async () => {},
     workspace: () => new InMemoryWorkspace(),
     runner: () => new FakeCodingAgentRunner("codex"),
-    reportMarker: process.argv[2],
+    reportEnv: { TOOL_REPORT_MARKER: process.argv[2] },
   },
 );

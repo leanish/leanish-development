@@ -176,6 +176,8 @@ describe("runToolCommand", () => {
       })]);
       expect(lines.at(-2)?.msg).toBe("GitHub API requests");
       expect(lines.at(-1)?.msg).toBe("run finished");
+      expect(Object.keys(lines.at(-2))).toEqual(["ts", "level", "msg", "tool", "command", "repo", "total", "byKind"]);
+      expect(lines.at(-2).ts).toBe(lines.at(-1).ts);
     }
   });
 
@@ -339,13 +341,16 @@ describe("runToolCommand", () => {
 
   it("tells run.sh it reported only once the final line is out, and reports even when the marker can't be written", async () => {
     const marker = join(skillsDir, "marker");
-    const tracked = machine({ reportMarker: marker });
+    const reportEnv: NodeJS.ProcessEnv = { TOOL_REPORT_MARKER: marker };
+    const tracked = machine({ reportEnv });
     let seenDuringRun: boolean | undefined;
+    let inheritedDuringRun: string | undefined;
     const listeners = process.listenerCount("SIGTERM");
     expect(
       await runToolCommand(
         handlers(async () => {
           seenDuringRun = existsSync(marker);
+          inheritedDuringRun = reportEnv["TOOL_REPORT_MARKER"];
           return {};
         }),
         ["run", "leanish/widget", "--config", "/config/agent.yaml"],
@@ -353,10 +358,11 @@ describe("runToolCommand", () => {
       ),
     ).toBe(0);
     expect(seenDuringRun).toBe(false);
+    expect(inheritedDuringRun).toBeUndefined();
     expect(readFileSync(marker, "utf8")).toBe("reported\n");
     expect(tracked.finalLine()).toMatchObject({ status: "ok" });
 
-    const unwritable = machine({ reportMarker: join(skillsDir, "no-such-dir", "marker") });
+    const unwritable = machine({ reportEnv: { TOOL_REPORT_MARKER: join(skillsDir, "no-such-dir", "marker") } });
     expect(await runToolCommand(handlers(async () => ({})), ["run", "leanish/widget", "--config", "/config/agent.yaml"], unwritable.fake)).toBe(0);
     expect(unwritable.finalLine()).toMatchObject({ status: "ok" });
     expect(process.listenerCount("SIGTERM")).toBe(listeners);
