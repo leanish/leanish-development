@@ -11,7 +11,7 @@ import { npmChanges } from "../src/npm-changes.ts";
 import { isYoung, releaseAgeProblems } from "../src/release-age.ts";
 import { gatherCandidates } from "../src/young-fixes.ts";
 import { bundleProblems, changedPackages, lockedPackages, replacedArtifacts, sourceProblems } from "../src/npm-lock.ts";
-import { NpmRegistry } from "../src/npm-registry.ts";
+import { identityBaseline, NpmRegistry } from "../src/npm-registry.ts";
 import { type Advisory, Snapshot } from "../src/snapshot.ts";
 
 const NOW = new Date("2026-10-04T12:00:00Z");
@@ -455,6 +455,19 @@ describe("publisher identity", () => {
   const RELEASE = "https://github.com/acme/lib .github/workflows/release.yml";
   const accepted = (expires: string) => parseExceptions({ identity: [{ package: "lib", version: "1.1.0", reason: "moved CI", expires }] });
 
+  it("builds the baseline from registry copies only, with the first integrity locked per version", () => {
+    const copy = (path: string, version: string, integrity: string | undefined, resolved = `https://registry.npmjs.org/lib/-/lib-${version}.tgz`, bundled = false) =>
+      ({ name: "lib", version, path, resolved, bundled, integrity });
+    expect([...identityBaseline([
+      copy("node_modules/lib", "1.0.0", undefined),
+      copy("node_modules/a/node_modules/lib", "1.0.0", "sha512-first"),
+      copy("node_modules/b/node_modules/lib", "1.0.0", "sha512-later"),
+      copy("node_modules/c/node_modules/lib", "0.9.0", undefined),
+      copy("node_modules/d/node_modules/lib", "0.8.0", "sha512-bundled", undefined, true),
+      copy("node_modules/e/node_modules/lib", "0.7.0", "sha512-git", "git+https://github.com/acme/lib.git"),
+    ])]).toEqual([["1.0.0", "sha512-first"], ["0.9.0", undefined]]);
+  });
+
   it("fails a version without provenance that replaces one with it, unless an unexpired exception accepts it", async () => {
     const dropped = fake({ times, sources: { "lib@1.0.0": RELEASE } });
     expect(await changes(base, head, dropped)).toEqual(["lib@1.1.0 has no provenance, but the version it replaces (1.0.0) had it"]);
@@ -475,22 +488,32 @@ describe("publisher identity", () => {
     expect(await changes(base, head, moved(RELEASE))).toEqual([]);
   });
 
-  it("judges a publisher against every replaced copy, while planning checks each copy against its own version (a known limit)", async () => {
-    // Characterization: two copies (1.0.0 by alice, 2.0.0 bob's first) both move to bob's 3.0.0, without provenance.
+  it("judges a publisher against every copy the change replaces in that lockfile, in planning as in verification", async () => {
+    // Two copies (1.0.0 by alice, 2.0.0 bob's first) both move to bob's 3.0.0, without provenance.
     const nested = (version: string) => ({ "node_modules/x/node_modules/lib": { version, resolved: `https://registry.npmjs.org/lib/-/lib-${version}.tgz`, integrity: `sha512-${sha512(`lib@${version}`).toString("base64")}` } });
     const fetch = fake({
       times: { lib: { "1.0.0": "2026-01-01T00:00:00Z", "2.0.0": "2026-06-01T00:00:00Z", "3.0.0": "2026-09-01T00:00:00Z" } },
       publishers: { "lib@1.0.0": "alice", "lib@2.0.0": "bob", "lib@3.0.0": "bob" },
     });
+    const refused = ["lib@3.0.0 has no provenance and its publisher bob hadn't published any version up to the one it replaces"];
     const base = pkgs({ lib: "1.0.0" }, nested("2.0.0"));
-    // Verification's baseline is every version the change replaces, so bob's own 2.0.0 is history.
+    // Verification's baseline is every copy the change replaces, so bob's own 2.0.0 is history.
     expect(await changes(base, pkgs({ lib: "3.0.0" }, nested("3.0.0")), fetch)).toEqual([]);
-    // Planning checks 1.0.0 → 3.0.0 on its own, where bob hadn't published yet, and refuses what verification accepts.
-    const planning = new IdentityCheck(new NpmRegistry(fetch), [{ path: "package-lock.json", bundleProblems: [], packages: base }], NO_EXCEPTIONS, "2026-10-04");
-    expect(await planning.problems({ ecosystem: "npm", name: "lib", version: "1.0.0" }, "3.0.0")).toEqual([
-      "lib@3.0.0 has no provenance and its publisher bob hadn't published any version up to the one it replaces",
-    ]);
-    expect(await planning.problems({ ecosystem: "npm", name: "lib", version: "2.0.0" }, "3.0.0")).toEqual([]);
+    // The second copy retained: only alice's 1.0.0 is replaced, and bob had published nothing up to it.
+    expect(await changes(base, pkgs({ lib: "3.0.0" }, nested("2.0.0")), fetch)).toEqual(refused);
+
+    const planning = (lockfiles: ReadonlyArray<{ path: string; packages: ReturnType<typeof pkgs> }>) =>
+      new IdentityCheck(new NpmRegistry(fetch), lockfiles.map((lockfile) => ({ ...lockfile, bundleProblems: [] })), NO_EXCEPTIONS, "2026-10-04");
+    const from = { ecosystem: "npm" as const, name: "lib", version: "1.0.0" };
+    const both = ["node_modules/lib", "node_modules/x/node_modules/lib"];
+    // Told its unit replaces both copies, planning accepts what verification accepts.
+    expect(await planning([{ path: "package-lock.json", packages: base }]).problems(from, "3.0.0", both)).toEqual([]);
+    // Its own copy alone (the other retained, or moved by another unit), and by default: as verification refuses.
+    expect(await planning([{ path: "package-lock.json", packages: base }]).problems(from, "3.0.0", ["node_modules/lib"])).toEqual(refused);
+    expect(await planning([{ path: "package-lock.json", packages: base }]).problems(from, "3.0.0")).toEqual(refused);
+    // Another lockfile's copy lends no history, even one the same unit replaces.
+    const split = [{ path: "package-lock.json", packages: pkgs({ lib: "1.0.0" }) }, { path: "sub/package-lock.json", packages: pkgs({}, nested("2.0.0")) }];
+    expect(await planning(split).problems(from, "3.0.0", ["node_modules/lib", "sub/node_modules/x/node_modules/lib"])).toEqual(refused);
   });
 
   it("fails a publisher, without provenance, who hadn't published up to the replaced version", async () => {

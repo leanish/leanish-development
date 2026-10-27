@@ -14,6 +14,11 @@
 - secure-it no longer plans an own package's young fix (or an own carrier's, or an own direct peer a fix moves with
   it) as held: the gate never holds an own package, so it now goes with the other fixes instead of waiting in a
   cooldown PR.
+- secure-it judges a security fix's publisher identity as verification will: against every copy of the package its
+  unit replaces in that lockfile, not the source version alone. Two copies moving together no longer get a move
+  refused that the gate accepts; a malicious copy, leaving on its own, borrows no other copy's history. Planning
+  checks no longer borrow a copy (or its integrity) from another lockfile, and a required version is judged against
+  the copy it replaces at its own path, not retained ones. The remaining planners' limit is in coverage gaps.
 
 ## 0.8.2 - 2026-10-27
 

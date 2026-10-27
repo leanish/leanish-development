@@ -12,7 +12,7 @@
 import { type Config, isOwnPackage } from "./config.ts";
 import type { Exceptions } from "./exceptions.ts";
 import { changedPackages, fromRegistry, type LockedPackage, NPM_REGISTRY, replacedArtifacts, sourceProblems } from "./npm-lock.ts";
-import { type NpmRegistry, publishTime } from "./npm-registry.ts";
+import { identityBaseline, type NpmRegistry, publishTime } from "./npm-registry.ts";
 import { uniqueVersions } from "./package-version.ts";
 import type { ChangedVersion } from "./release-age.ts";
 
@@ -52,7 +52,7 @@ export async function npmChanges(
       problems.push(...otherRegistryProblems(pkg, context, today));
       continue;
     }
-    problems.push(...(await context.registry.identityProblems(pkg, identityBaseline(pkg.name, base, head), context.exceptions, today)));
+    problems.push(...(await context.registry.identityProblems(pkg, identityBaseline(replacedEntries(pkg.name, base, head)), context.exceptions, today)));
     // Own packages skip only the wait: their identity is checked, their publish time isn't needed.
     if (isOwnPackage(context.config.ownPackages, pkg)) {
       ownChanges.push({ pkg: { ecosystem: "npm", name: pkg.name, version: pkg.version }, published: new Date(0), replaced: replacedVersions(pkg.name, base, head) });
@@ -95,17 +95,4 @@ function replacedVersions(name: string, base: ReadonlyArray<LockedPackage>, head
 function replacedEntries(name: string, base: ReadonlyArray<LockedPackage>, head: ReadonlyArray<LockedPackage>): LockedPackage[] {
   const kept = new Set(head.map((pkg) => `${pkg.path}|${pkg.name}@${pkg.version}`));
   return base.filter((old) => old.name === name && !kept.has(`${old.path}|${old.name}@${old.version}`));
-}
-
-/**
- * The identity baseline of `name`: each replaced version that was shipped as
- * its own registry tarball (not bundled), with that tarball's locked integrity.
- */
-function identityBaseline(name: string, base: ReadonlyArray<LockedPackage>, head: ReadonlyArray<LockedPackage>): Map<string, string | undefined> {
-  const baseline = new Map<string, string | undefined>();
-  for (const old of replacedEntries(name, base, head)) {
-    if (old.bundled || !old.resolved?.startsWith(`${NPM_REGISTRY}/`)) continue;
-    if (baseline.get(old.version) === undefined) baseline.set(old.version, old.integrity);
-  }
-  return baseline;
 }

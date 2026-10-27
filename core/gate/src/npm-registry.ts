@@ -31,6 +31,20 @@ export interface Packument {
   readonly versions: Record<string, unknown>;
 }
 
+/**
+ * The baseline `identityProblems` reads, from the copies of one package a change replaces in one lockfile: each
+ * version shipped as its own registry tarball (a bundled or other-source copy has none), with the first integrity
+ * locked for it (undefined while no copy locks one). Verification and planning both build it here.
+ */
+export function identityBaseline(replaced: ReadonlyArray<LockedPackage>): ReadonlyMap<string, string | undefined> {
+  const baseline = new Map<string, string | undefined>();
+  for (const copy of replaced) {
+    if (copy.bundled || !copy.resolved?.startsWith(`${NPM_REGISTRY}/`)) continue;
+    if (baseline.get(copy.version) === undefined) baseline.set(copy.version, copy.integrity);
+  }
+  return baseline;
+}
+
 /** Fetches each packument once per run. */
 export class NpmRegistry {
   private readonly fetch: Fetch;
