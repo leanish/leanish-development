@@ -9,8 +9,8 @@ export function wrapperProperties(text: string): ReadonlyMap<string, string> {
       if (++index >= lines.length) throw new Error("unfinished wrapper property continuation");
       line = line.slice(0, -1) + lines[index]!.trimStart();
     }
-    // The key, then the separator and value: as one regex ending in `(.*)$`, a value holding U+2028 or U+2029 made it
-    // backtrack polynomially before failing.
+    // The key, then the separator and value: as one regex ending in `(.*)$`, a key, a long run of spaces, then a token
+    // and U+2028 or U+2029 (which `.` doesn't match) made it backtrack polynomially before failing.
     const rawKey = /^(?:\\.|[^\\=:\s])*/.exec(line)![0];
     const key = unescapeProperty(rawKey);
     if (properties.has(key)) throw new Error(`duplicate wrapper property ${key}`);

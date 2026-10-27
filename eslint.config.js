@@ -5,6 +5,8 @@ import regexp from "eslint-plugin-regexp";
 import * as typescriptParser from "./eslint-typescript-parser.js";
 
 export default [
+  // Flat config doesn't read .gitignore: its build and coverage outputs (node_modules is ignored by default).
+  { ignores: ["**/coverage/", "core/agent-runtime/dist/"] },
   {
     files: ["**/*.ts", "**/*.mjs", "**/*.js"],
     linterOptions: { reportUnusedDisableDirectives: "error" },

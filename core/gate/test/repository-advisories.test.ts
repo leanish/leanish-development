@@ -280,6 +280,19 @@ describe("repository advisories", () => {
     const started = performance.now();
     // The replaced regex rescanned the run from each `<`: seconds at this length.
     expect(nextLink("<".repeat(100_000))).toBeUndefined();
+    expect(() => nextLink(`${"<".repeat(100_000)}${page(2)}>; rel="next"`)).toThrow("can't be read");
     expect(performance.now() - started).toBeLessThan(2_000);
+  });
+
+  it("refuses a next page it can't read whole, instead of stopping early or following part of a URL", () => {
+    const page = (n: number) => `https://api.github.com/repositories/1/security-advisories?page=${n}`;
+    for (const header of [
+      `<${page(2)}<${page(3)}>; rel="next"`,
+      `<https://evil.example/<${page(3)}>; rel="next"`,
+      `<${page(1)}>; rel="prev" <${page(3)}>; rel="next"`,
+      'rel="next"',
+    ]) {
+      expect(() => nextLink(header), header).toThrow("GitHub's Link header names a next page that can't be read");
+    }
   });
 });

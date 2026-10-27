@@ -438,6 +438,13 @@ describe("GitHub's advisory database", () => {
     expect(performance.now() - started).toBeLessThan(2_000);
   });
 
+  it("refuses a next page it can't read whole, or one off GitHub's API host", async () => {
+    const affects = (type: string) => `${API}/advisories?ecosystem=actions&affects=${encodeURIComponent("a/b@v1.0.0")}&type=${type}&per_page=100`;
+    const paging = (link: string) => new ActionsGitHub(fakeFetch({ [affects("reviewed")]: { body: [], headers: { link } }, [affects("malware")]: { body: [] } }), undefined);
+    await expect(paging(`<${API}/advisories?page=2<${API}/x>; rel="next"`).advisories("a/b", "v1.0.0")).rejects.toThrow("GitHub's Link header names a next page that can't be read");
+    await expect(paging('<https://evil.example/page2>; rel="next"').advisories("a/b", "v1.0.0")).rejects.toThrow("a next page off GitHub's API host");
+  });
+
   it("refuses a record the reviewed query returns that isn't reviewed: only reviewed ones may trigger a fix", async () => {
     const affects = (type: string) => `${API}/advisories?ecosystem=actions&affects=${encodeURIComponent("a/b@v1.0.0")}&type=${type}&per_page=100`;
     const gh = new ActionsGitHub(fakeFetch({ [affects("reviewed")]: { body: [{ ghsa_id: "GHSA-unrv-unrv-unrv", type: "unreviewed" }] }, [affects("malware")]: { body: [] } }), undefined);

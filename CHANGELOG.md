@@ -41,7 +41,9 @@
   npm archive directories, GitHub's `Link` header, advisory ranges' dashes and hyphen ranges, bump-it's Gradle
   `to`/`through` ranges and wrapper properties, the Claude Code runner's proxy credential scrubbing and setup's GitHub
   API path check. A wrapper property whose value holds U+2028 or U+2029 is read as Java reads it instead of failing with
-  a TypeError.
+  a TypeError. A `Link` header naming a next page whose URL holds a `<` (or a `rel="next"` not in a link of its own) is
+  refused, instead of ending the paging early or following part of the URL; the gate's GitHub Actions paging shares that
+  reading, so it now also refuses a next page off GitHub's API host.
 
 ### Fixed
 
