@@ -18,12 +18,11 @@
  * All of it is read from the comparison's snapshot, which includes every
  * candidate, so the proof and the comparison see the same advisories.
  */
+import { ageDays } from "./age.ts";
 import type { Config } from "./config.ts";
 import { type PackageName, type PackageVersion, versionKey } from "./package-version.ts";
 import type { Snapshot } from "./snapshot.ts";
 import { type Ecosystem, versionScheme } from "./versions.ts";
-
-const DAY_MS = 86_400_000;
 
 /** Where a package's versions and their publish times come from. */
 export interface VersionCatalog {
@@ -324,7 +323,7 @@ async function agesOf(versions: ReadonlyArray<string>, pkg: PackageName, catalog
   const ages: Array<number | undefined> = [];
   for (const version of versions) {
     const published = await catalog.published({ ...pkg, version });
-    ages.push(published === undefined ? undefined : (now.getTime() - published.getTime()) / DAY_MS);
+    ages.push(ageDays(published, now));
   }
   return ages;
 }

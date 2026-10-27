@@ -1,12 +1,12 @@
 /** Registry-only release-age evidence for dependencies forced by a proved npm security fix. */
 import semver from "semver";
 
+import { hasAged, isUnderWait } from "./age.ts";
 import { isObject } from "./json.ts";
 import { type NpmRegistry, publishTime } from "./npm-registry.ts";
 import type { PackageVersion } from "./package-version.ts";
 
 export const REQUIRED_LIMITS = { depth: 8, nodes: 128, versions: 2048 } as const;
-const DAY_MS = 86_400_000;
 
 export interface RequiredNode {
   readonly name: string;
@@ -122,7 +122,7 @@ export function requirementSpec(key: string, spec: string): { name: string; rang
 async function verifiedFix(name: string, version: string, inputs: RequiredInputs): Promise<{ version: string; exempt: boolean }> {
   if (inputs.isOwn?.(name)) return { version, exempt: false };
   const published = publishTime(await inputs.registry.packument(name), name, version);
-  return { version, exempt: inputs.now.getTime() - published.getTime() < inputs.days * DAY_MS };
+  return { version, exempt: isUnderWait(published, inputs.days, inputs.now) };
 }
 
 async function lowestRequired(name: string, ranges: ReadonlyArray<string>, inputs: RequiredInputs, installed: string | undefined): Promise<{ version: string; exempt: boolean }> {
@@ -140,7 +140,7 @@ async function lowestRequired(name: string, ranges: ReadonlyArray<string>, input
   if (inputs.isOwn?.(name)) return { version: installed !== undefined && candidates.includes(installed) ? installed : candidates[0]!, exempt: false };
   // Check every date: an unknown one cannot establish that no aged satisfying version exists.
   const dates = candidates.map((version) => publishTime(doc, name, version));
-  const aged = candidates.filter((_, index) => inputs.now.getTime() - dates[index]!.getTime() >= inputs.days * DAY_MS);
+  const aged = candidates.filter((_, index) => hasAged(dates[index]!, inputs.days, inputs.now));
   if (aged.length > 0) return { version: installed !== undefined && aged.includes(installed) ? installed : aged[0]!, exempt: false };
   return { version: candidates[0]!, exempt: true };
 }

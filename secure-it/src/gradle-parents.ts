@@ -23,6 +23,7 @@
  * A proved parent becomes a `gradle-declared` move of D that `carries` X: X's
  * floor isn't planned, and verification checks X's targets are gone.
  */
+import { hasAged } from "@leanish/gate/age";
 import { ActionsGitHub } from "@leanish/gate/actions-github";
 import type { CarriedPackage } from "@leanish/gate/carrier-candidates";
 import type { Config } from "@leanish/gate/config";
@@ -40,7 +41,6 @@ import type { GradleInventories } from "@leanish/tool-runtime/inventories";
 
 import { type FixWork, gradleMechanism } from "./plan.ts";
 
-const DAY_MS = 86_400_000;
 /** Reference resolutions one vulnerable module may cost, across all its roots. */
 const PARENT_PROBES = 6;
 
@@ -151,7 +151,7 @@ async function tryRoot(fix: FixWork, floored: ReadonlyArray<string>, root: strin
   for (const version of movesFrom(parent, from, listed, "above")) {
     if (line(version) !== line(from) || (floor !== undefined && scheme.compare(version, floor) < 0)) continue;
     const published = await catalogs.Maven.published({ ...parent, version });
-    if (published !== undefined && (env.now().getTime() - published.getTime()) / DAY_MS >= config.releaseAgeDays) aged.push(version);
+    if (hasAged(published, config.releaseAgeDays, env.now())) aged.push(version);
   }
   if (aged.length === 0) return `no version in its line past the wait${floor === undefined ? "" : ` from ${floor}`}`;
   const options = snapshotOptions(config, env, new ActionsGitHub(env.fetch, env.githubToken));

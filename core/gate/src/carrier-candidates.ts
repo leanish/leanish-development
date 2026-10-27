@@ -170,7 +170,8 @@ export async function decideCarrier(group: CarrierGroup, own: ReadonlyArray<stri
     locations,
     carries: carries((name) => [...new Set(choice.bundle.packages.filter((entry) => entry.name === name).map((entry) => entry.version))].sort()),
     unfixable,
-    to: { version: choice.version, line: choice.line, aged: choice.aged, major: line(choice.version) !== line(group.version), blockers: await context.identity(pkg, choice.version) },
+    // An own carrier never waits, so the gate never holds it, whatever its age (`aged` is the gate's view, as in candidates.ts).
+    to: { version: choice.version, line: choice.line, aged: choice.aged || isOwnPackage(context.config.ownPackages, pkg), major: line(choice.version) !== line(group.version), blockers: await context.identity(pkg, choice.version) },
     problem: undefined,
     ...vetoFields(choice),
   };

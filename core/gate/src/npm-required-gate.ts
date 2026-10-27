@@ -79,16 +79,16 @@ async function rootProblem(change: ChangedVersion, candidates: Candidates, snaps
   return youngFixProblem(change, candidates.byChange.get(versionKey(change.pkg)) ?? new Map(), snapshot, rootCatalog, own ? { ...config, releaseAgeDays: 0 } : config, now);
 }
 
-export async function verifiedRequiredProofs(proofs: ReadonlyArray<RequiredProof>, changes: ReadonlyArray<ChangedVersion>, candidates: Candidates, snapshot: Snapshot, catalog: VersionCatalog, config: Config, now: Date) {
+/**
+ * What `proofs` exempt, for roots among `roots` (from `verifiedSecurityRoots`): a proof of any other root grants nothing.
+ */
+export function verifiedRequiredProofs(proofs: ReadonlyArray<RequiredProof>, roots: ReadonlyArray<ChangedVersion>) {
+  const verified = new Set(roots.map((root) => versionKey(root.pkg)));
   const versions = new Set<string>();
   const problems: string[] = [];
   const notes: string[] = [];
   for (const proof of proofs) {
-    const pkg = { ecosystem: "npm" as const, name: proof.root.name, version: proof.root.version };
-    const change = changes.find((change) => versionKey(change.pkg) === versionKey(pkg));
-    if (change === undefined) continue;
-    const problem = await rootProblem(change, candidates, snapshot, catalog, config, now);
-    if (problem !== undefined) continue;
+    if (!verified.has(versionKey({ ecosystem: "npm", name: proof.root.name, version: proof.root.version }))) continue;
     problems.push(...proof.problems);
     // A partial closure never grants an exemption, even when the error happened after the first child.
     if (proof.problems.length > 0) continue;

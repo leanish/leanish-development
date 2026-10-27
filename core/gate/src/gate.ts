@@ -31,15 +31,14 @@ import { versionKey } from "./package-version.ts";
 import { type CooldownEvaluation, strictestPolicy } from "./cooldown.ts";
 import { comparisonVerdict, scanVerdict } from "./policy.ts";
 import type { RunProcess } from "./process.ts";
-import { gatherRequiredProofs, verifiedRequiredProofs, verifiedSecurityRoots } from "./npm-required-gate.ts";
-import { type ChangedVersion, isYoung, reviewReleaseAge } from "./release-age.ts";
-import { type BundleFixProof, bundleFixProofs } from "./bundle-fix-proof.ts";
+import type { ChangedVersion } from "./release-age.ts";
 import { BundleReader, type FetchArchive } from "./npm-bundles.ts";
 import type { Snapshot } from "./snapshot.ts";
 import { type SnapshotOptions, takeSnapshot } from "./take-snapshot.ts";
 import type { Tree } from "./tree.ts";
 import type { Ecosystem } from "./versions.ts";
-import { gatherCandidates, type VersionCatalog } from "./young-fixes.ts";
+import type { VersionCatalog } from "./young-fixes.ts";
+import { reviewYoungVersions } from "./young-versions.ts";
 
 export const CONFIG_PATH = ".github/supply-chain.json";
 export const EXCEPTIONS_PATH = ".github/supply-chain-exceptions.json";
@@ -210,38 +209,26 @@ export async function runCompare(base: Tree, head: Tree, env: GateEnvironment, g
   const actions = await actionChanges(baseInventory.actions, headInventory.actions, resolutions, github, config);
   problems.push(...actions.problems);
   changes.push(...actions.changes);
-  const merged = mergeChanges(changes);
-  const young = merged.filter((change) => isYoung(change, config, now));
-  const rootChanges = [...merged, ...ownRoots].filter((change) => change.pkg.ecosystem === "npm" && change.replaced.length > 0);
-  const needsRequiredProof = young.some((change) => change.pkg.ecosystem === "npm");
-  const candidates = await gatherCandidates([...young, ...needsRequiredProof ? rootChanges.filter((change) => !young.includes(change)) : []], catalogs, config);
-  const snapshot = await takeSnapshot([...baseLocated, ...headLocated], snapshotOptions(config, env, github), candidates.versions);
-  // A young carrier is proved on snapshots of its own, over the bundles it reads.
-  const bundleFixes = young.some((change) => change.pkg.ecosystem === "npm")
-    ? await bundleFixProofs(young, {
-      base: baseInventory, head: headInventory, reader: bundleReader(env), registry, catalog: catalogs.npm, config, now,
-      scan: (packages) => takeSnapshot(packages, snapshotOptions(config, env, github)),
-    })
-    : new Map<string, BundleFixProof>();
-  const securityRoots = needsRequiredProof
-    ? await verifiedSecurityRoots(rootChanges, candidates, snapshot, catalogs.npm, config, now) : [];
-  const required = await gatherRequiredProofs(securityRoots, base, head, headInventory, registry, config, now);
+  // The young versions' snapshot covers every package too: the findings below are read from it.
+  const youngVersions = await reviewYoungVersions({
+    base, head, baseInventory, headInventory, packages: [...baseLocated, ...headLocated], changes: mergeChanges(changes), ownRoots,
+    config, exceptions, now, catalogs, registry, reader: bundleReader(env),
+    scan: (packages, candidates) => takeSnapshot(packages, snapshotOptions(config, env, github), candidates),
+  });
+  const snapshot = youngVersions.snapshot;
+  problems.push(...youngVersions.problems);
   const headFindings = findingsOf(headLocated, snapshot);
   const comparison = compareFindings(findingsOf(baseLocated, snapshot), headFindings);
   const verdict = comparisonVerdict(comparison, exceptions, snapshot, today);
-  const proved = await verifiedRequiredProofs(required, rootChanges, candidates, snapshot, catalogs.npm, config, now);
-  problems.push(...proved.problems);
-  const age = await reviewReleaseAge(young, { snapshot, exceptions, config, now, catalogs, candidates: candidates.byChange, required: proved.versions, bundleFixes });
-  problems.push(...age.problems);
   const floorCheck = await checkFloors(floors, headInventory, head);
   return {
     headFindings,
     cooldown: basePolicy.problem === undefined
-      ? { evaluated: true, releaseAgeDays: config.releaseAgeDays, held: age.held }
+      ? { evaluated: true, releaseAgeDays: config.releaseAgeDays, held: [...youngVersions.held] }
       : { evaluated: false, reason: basePolicy.problem },
     failures: [...verdict.failures, ...problems, ...floorCheck.failures],
     warnings: verdict.warnings,
-    notes: [...verdict.notes, ...floorCheck.notes, ...proved.notes],
+    notes: [...verdict.notes, ...floorCheck.notes, ...youngVersions.notes],
     gaps: [...snapshot.gaps, ...actions.gaps],
     osvScannerVersion: version,
     configText,

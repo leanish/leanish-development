@@ -1,4 +1,5 @@
 /** Keep npm's age filter from rejecting locked young versions; target selection still checks age. */
+import { hasAged } from "@leanish/gate/age";
 import { mapLimited } from "@leanish/gate/http";
 
 import type { TargetSources } from "./npm-targets.ts";
@@ -16,8 +17,6 @@ interface PreparedWindow {
   readonly notes: ReadonlyArray<string>;
   readonly reason: string;
 }
-
-const DAY_MS = 86_400_000;
 
 export async function npmWindowFor(baseVersions: ReadonlyMap<string, ReadonlyArray<string>>, window: NpmWindow, sources: TargetSources): Promise<PreparedWindow> {
   const cached = cachedPublishTimes(sources);
@@ -71,7 +70,7 @@ async function baseExclusionNote(name: string, version: string, days: number, so
   if (time === undefined || !Number.isFinite(time)) {
     return `${name}: publish time for its locked ${version} could not be read, so npm's own window skips it; bump-it's targets still require the age`;
   }
-  if (sources.now.getTime() - time >= days * DAY_MS) {
+  if (hasAged(time, days, sources.now)) {
     return undefined;
   }
   return `${name}: its locked ${version} is younger than the window, so npm's own window skips it; bump-it's targets still require the age`;

@@ -87,7 +87,9 @@ describe("direct npm peer sets", () => {
     h.sources.isOwn = (name) => name.startsWith("@vitest/");
     const result = await peers.resolve([move], snapshot(peers));
     expect(result.blocked).toEqual([]);
-    expect(result.additions.every((addition) => !addition.aged)).toBe(true);
+    // Young, but own: the gate never holds them, so neither does planning.
+    expect(result.additions.length).toBeGreaterThan(0);
+    expect(result.additions.every((addition) => addition.aged)).toBe(true);
   });
 
   it("blocks the whole connected set when fixed targets disagree, without blocking an unrelated move", async () => {
