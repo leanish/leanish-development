@@ -49,9 +49,10 @@ describe("selectWork", () => {
       packages: ["npm|tied", "npm|vitest"],
       reasons: ["UI has no safe compatible peer", `tied@1.0.0: ${note("tied")}`, `vitest@4.1.7: ${note("vitest")}`],
     }]);
-    const malware = await coupledWork([{ ...vitest, malicious: true }, { ...other, malicious: true }], stuck);
+    const clean = fix({ name: "vitest", from: "4.0.0", notes: ["a clean copy's note"] });
+    const malware = await coupledWork([{ ...vitest, malicious: true }, { ...other, malicious: true }, clean], stuck);
     expect(malware.units).toEqual([]);
-    expect(malware.blocked[0]?.reasons).toEqual(["UI has no safe compatible peer", `vitest@4.1.7: ${note("vitest")}`, `other@1.0.0: ${note("other")}`]);
+    expect(malware.blocked[0]?.reasons).toEqual(["UI has no safe compatible peer", `vitest@4.1.7: ${note("vitest")}`, `other@1.0.0: ${note("other")}`, "vitest@4.0.0: a clean copy's note"]);
   });
 
   it("takes malware together, otherwise batches non-majors in severity/name order", () => {

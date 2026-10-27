@@ -240,8 +240,8 @@ async function completedWork(fixes: ReadonlyArray<SecurityFix>, peers?: NpmPeerP
       if (omitted.size === size) break;
     }
     if (result.blocked.length > 0) {
-      // Malware leaves as a whole unit, so all its notes go with the reason; otherwise those of the work left out.
-      const dropped = unit.kind === "malware" ? unit.work : unit.work.filter((fix) => fix.ecosystem === "npm" && omitted.has(fix.name));
+      // Malware leaves as a whole unit, with every copy of its packages (malicious or not); otherwise the work left out.
+      const dropped = unit.kind === "malware" ? fixes.filter((fix) => unit.work.some((work) => packageKey(work) === packageKey(fix))) : unit.work.filter((fix) => fix.ecosystem === "npm" && omitted.has(fix.name));
       blocked.push({ packages: [...omitted].map((name) => `npm|${name}`).sort(), reasons: [...result.blocked.map((group) => group.reason), ...notesOf(dropped)] });
     }
     if (unit.kind === "malware" && omitted.size > 0) continue;
