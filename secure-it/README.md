@@ -143,8 +143,10 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
      config, and it changes code only for a major move. Direct dependencies outside the plan stay unchanged. In
      Gradle, the edit must resolve and declare exactly what the plan's reference does (the base with the plan applied
      by Gradle, so a planned plugin fix's own fallout is in it; [`core/gate/README.md`](../core/gate/README.md)); a
-     configuration the gate's `gradle.ignoreConfigurations` lists may fail to resolve in either, as in the gate, but
-     must still match. Every apply, resolve and adapt path verifies the tool-written files before publishing.
+     configuration the gate's `gradle.ignoreConfigurations` lists may fail to resolve, as in the gate, but the same
+     way as in the plan's reference. A parent's proof and a floor removal's probe don't accept an incomplete
+     resolution there: they keep the floor instead. Every apply, resolve and adapt path verifies the tool-written
+     files before publishing.
    - **The skill asks for** focused edits in each file's style; comments the edit made false fixed without losing
      their context; code kept only for an unsupported old major removed; the repository's checks in every mode; for
      each major, the release notes or changelog it crosses, linked in its verdict; and PR text that maps advisories

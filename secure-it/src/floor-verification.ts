@@ -13,7 +13,7 @@ import { referenceDifferences } from "@leanish/tool-runtime/gradle-reference";
 import { floorFindings, validRemoval, withoutFloorRecords, withoutOverrides } from "./floor-removal.ts";
 import type { VerifyInputs } from "./verify.ts";
 
-/** `ignored`: the gate's `gradle.ignoreConfigurations`, whose resolution failures the reference comparison leaves out. */
+/** `ignored`: the gate's `gradle.ignoreConfigurations`, which may fail to resolve the same way as in the reference. */
 export async function verifyRemovalEdit(inputs: VerifyInputs, ignored: ReadonlyArray<string>): Promise<string[]> {
   const { plan, base, head, gradle } = inputs;
   const removal = plan.floorRemoval;

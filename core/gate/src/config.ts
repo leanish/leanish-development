@@ -40,8 +40,9 @@ export interface Config {
      */
     readonly builds: ReadonlyArray<string> | undefined;
     /**
-     * Configuration locations (`:sub:someConfiguration`) whose resolution failures don't fail the run, nor secure-it's
-     * Gradle reference checks; what they resolve is still scanned (and compared with the reference).
+     * Configuration locations (`:sub:someConfiguration`) whose resolution failures don't fail the run; what they
+     * resolve is still scanned. secure-it's Gradle reference checks accept them too, when an edit fails the same way
+     * as the plan's reference.
      */
     readonly ignoreConfigurations: ReadonlyArray<string>;
   };

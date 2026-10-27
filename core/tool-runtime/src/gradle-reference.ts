@@ -83,13 +83,14 @@ export function referenceProblems(base: GradleInventory | undefined, reference: 
  * Where `head` differs from `reference`: a build or configuration only one has (or of another kind), the modules a
  * configuration resolves, its declarations and dependency constraints (every rich-version facet, versionless ones
  * included), and anything either fails to resolve. As in the gate, a configuration `ignored` lists
- * (`gradle.ignoreConfigurations`) may fail to resolve; everything else about it is still compared.
+ * (`gradle.ignoreConfigurations`) may fail to resolve, but only the same way in both: a configuration whose resolution
+ * throws resolves nothing on either side, so its failures are what's left to tell an edit there apart.
  */
 export function referenceDifferences(reference: GradleInventory | undefined, head: GradleInventory | undefined, ignored: ReadonlyArray<string> = []): string[] {
   if (reference === undefined && head === undefined) return [];
   if (reference === undefined || head === undefined) return [`the edit ${head === undefined ? "removed" : "added"} the Gradle inventory the plan's reference ${head === undefined ? "has" : "doesn't have"}`];
-  const was = locations(reference, ignored);
-  const now = locations(head, ignored);
+  const was = locations(reference);
+  const now = locations(head);
   const problems: string[] = [];
   for (const location of [...new Set([...was.keys(), ...now.keys()])].sort()) {
     const expected = was.get(location);
@@ -99,8 +100,12 @@ export function referenceDifferences(reference: GradleInventory | undefined, hea
       continue;
     }
     if (expected.kind !== actual.kind) problems.push(`${location} is a ${actual.kind} configuration in the edit, ${expected.kind} in the plan's reference`);
-    for (const failure of expected.failures) problems.push(`${location} doesn't resolve in the plan's reference: ${failure}`);
-    for (const failure of actual.failures) problems.push(`${location} doesn't resolve in the edit: ${failure}`);
+    if (ignoresResolution(ignored, location)) {
+      problems.push(...listDifference(location, "fails to resolve", expected.failures, actual.failures));
+    } else {
+      for (const failure of expected.failures) problems.push(`${location} doesn't resolve in the plan's reference: ${failure}`);
+      for (const failure of actual.failures) problems.push(`${location} doesn't resolve in the edit: ${failure}`);
+    }
     problems.push(...listDifference(location, "resolves", expected.resolved, actual.resolved));
     problems.push(...listDifference(location, "declares", expected.declared, actual.declared));
   }
@@ -123,12 +128,11 @@ interface LocationEntries {
   readonly failures: ReadonlyArray<string>;
 }
 
-function locations(inventory: GradleInventory, ignored: ReadonlyArray<string>): Map<string, LocationEntries> {
+function locations(inventory: GradleInventory): Map<string, LocationEntries> {
   const entries = new Map<string, LocationEntries>();
   for (const build of inventory.builds) {
     for (const configuration of build.configurations) {
-      const location = gradleLocation(build.build, configuration.id);
-      entries.set(location, {
+      entries.set(gradleLocation(build.build, configuration.id), {
         kind: configuration.kind,
         resolved: configuration.resolved.map((module) => `${module.group}:${module.name}:${module.version}`).sort(),
         // Compare every rich-version facet, retaining the old diagnostics for plain versions and simple strict pins.
@@ -141,9 +145,7 @@ function locations(inventory: GradleInventory, ignored: ReadonlyArray<string>): 
               return `${constraint.group}:${constraint.name} ${constraintVersion(constraint, strict)} (${strict ? "strict constraint" : "constraint"})`;
             })),
         ].sort(),
-        failures: ignoresResolution(ignored, location)
-          ? []
-          : [...(configuration.error === undefined ? [] : [configuration.error]), ...configuration.unresolved.map((entry) => `${entry.requested}: ${entry.failure}`)],
+        failures: [...(configuration.error === undefined ? [] : [configuration.error]), ...configuration.unresolved.map((entry) => `${entry.requested}: ${entry.failure}`)],
       });
     }
   }

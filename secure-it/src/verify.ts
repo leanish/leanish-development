@@ -29,8 +29,8 @@
  *      exactly what the plan's reference does (the base with the planned
  *      declaration moves and floors applied by Gradle, so a planned plugin
  *      update's own fallout is in it: `gradle-reference.ts`); a configuration
- *      the gate's `gradle.ignoreConfigurations` lists may fail to resolve there,
- *      as in the gate, but must still match;
+ *      the gate's `gradle.ignoreConfigurations` lists may fail to resolve, but
+ *      the same way as in the plan's reference;
  *   5. only dependency files changed, unless a move is a major.
  */
 import { computedNpmProblems } from "@leanish/tool-runtime/npm-file-checks";
