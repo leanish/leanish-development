@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
@@ -521,10 +522,57 @@ describe("publisher identity", () => {
       "v0.2 git+http://github.com/acme/lib@refs/heads/main .github/workflows/release.yml", // not https
       "v0.2 git+https://github.com/acme/lib@refs/heads/main", // no entryPoint
       "v0.2 git+https://github.com/acme/lib@refs/heads/main ", // an empty entryPoint
+      "v0.2 git+https://github.com/acme/lib/../other@refs/heads/main .github/workflows/release.yml", // a longer path
+      "v0.2 git+https://github.com/acme/lib?x=1@refs/heads/main .github/workflows/release.yml", // a query
+      "v0.2 git+https://github.com/acme/lib#x@refs/heads/main .github/workflows/release.yml", // a fragment
       `https://slsa.dev/provenance/v9 ${RELEASE}`, // a predicate type the gate doesn't know, with v1's fields
     ]) {
       await expect(changes(base, head, from(V02, malformed))).rejects.toThrow(/unrecognized provenance/);
     }
+  });
+
+  it("refuses more than one provenance statement, or one whose type differs from its entry's", async () => {
+    const attested = fake({ times, sources: { "lib@1.0.0": RELEASE, "lib@1.1.0": RELEASE } });
+    const rewritten = (change: (attestations: Array<Record<string, unknown>>) => unknown[]): Fetch => async (url, init) => {
+      const response = await attested(url, init);
+      if (!url.startsWith(ATTESTATIONS)) return response;
+      const { attestations } = (await response.json()) as { attestations: Array<Record<string, unknown>> };
+      return respond({ ok: true, status: 200, body: { attestations: change(attestations) } });
+    };
+    expect(await changes(base, head, attested)).toEqual([]);
+    await expect(changes(base, head, rewritten((entries) => [...entries, entries[1]]))).rejects.toThrow(/unrecognized provenance/);
+    await expect(changes(base, head, rewritten((entries) => [entries[0], { ...entries[1], predicateType: SLSA_V02 }]))).rejects.toThrow(/unrecognized provenance/);
+  });
+
+  it("compares a source's repository and workflow apart, not as the text they join into", async () => {
+    // Both join to "https://github.com/acme/lib (x (y)".
+    const statements: Record<string, object> = {
+      "lib@1.0.0": { predicateType: SLSA, predicate: { buildDefinition: { externalParameters: { workflow: { repository: "https://github.com/acme/lib (x", path: "y)" } } } } },
+      "lib@1.1.0": { predicateType: SLSA_V02, predicate: { invocation: { configSource: { uri: "git+https://github.com/acme/lib@refs/heads/main", entryPoint: "x (y)" } } } },
+    };
+    const registry = fake({ times, sources: { "lib@1.0.0": RELEASE, "lib@1.1.0": RELEASE } });
+    const fetch: Fetch = async (url, init) => {
+      if (!url.startsWith(ATTESTATIONS)) return registry(url, init);
+      const key = decodeURIComponent(url.slice(ATTESTATIONS.length));
+      const subject = [{ name: `pkg:npm/${key}`, digest: { sha512: sha512(key).toString("hex") } }];
+      const payload = Buffer.from(JSON.stringify({ subject, ...statements[key] })).toString("base64");
+      const predicateType = (statements[key] as { predicateType: string }).predicateType;
+      return respond({ ok: true, status: 200, body: { attestations: [{ predicateType, bundle: { dsseEnvelope: { payload } } }] } });
+    };
+    expect(await changes(base, head, fetch)).toEqual([
+      "lib@1.1.0 was built from https://github.com/acme/lib (x (y)), but the version it replaces (1.0.0) from https://github.com/acme/lib (x (y))",
+    ]);
+  });
+
+  it("reads a real SLSA v0.2 statement from npm, bound to its tarball", async () => {
+    const real = readFileSync(new URL("fixtures/eslint-visitor-keys-3.4.3-attestations.json", import.meta.url), "utf8");
+    const name = "eslint-visitor-keys";
+    const registry = fake({ times: { [name]: { "3.4.3": "2023-08-08T00:00:00Z" } }, sources: { [`${name}@3.4.3`]: "v0.2 x y" } });
+    const fetch: Fetch = async (url, init) => (url.startsWith(ATTESTATIONS) ? respond({ ok: true, status: 200, body: JSON.parse(real) }) : registry(url, init));
+    const digest = "c2973e2d77a2ca28acc4f944914cd4eacbf24b57eb20edcc8318f57ddcbb3e6f1883382e6b1d8ddc56bf0ff6a0d56a9b3a9add23eb98eb031497cfdad86fa26a";
+    const locked = (sha: string) => pkgs({}, { [`node_modules/${name}`]: { version: "3.4.3", resolved: `https://registry.npmjs.org/${name}/-/${name}-3.4.3.tgz`, integrity: `sha512-${Buffer.from(sha, "hex").toString("base64")}` } });
+    expect(await changes([], locked(digest), fetch)).toEqual([]);
+    await expect(changes([], locked(sha512("something else").toString("hex")), fetch)).rejects.toThrow(/doesn't describe eslint-visitor-keys@3.4.3 as locked/);
   });
 
   it("binds SLSA v0.2 provenance to the locked tarball as it does v1", async () => {
