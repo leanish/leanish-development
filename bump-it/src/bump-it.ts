@@ -18,7 +18,7 @@ import { WRAPPER_FILES, type WrapperCandidates } from "./gradle-wrapper.ts";
 import { type BumpItDeps, defaultDeps } from "./deps.ts";
 import { type Computed, compute, edit, type Execution, RULES, VerificationRejected, verify, writeNpm, writeWrapper } from "./operations.ts";
 import { type BumpPlan, planDigest, planOf, withPlanSection } from "./plan.ts";
-import { majorUnits, routineUnit, type Unit } from "./units.ts";
+import { majorUnits, packageKey, routineUnit, type Unit } from "./units.ts";
 import { plannedFiles, wrapperFilesMatch } from "./verify.ts";
 
 export { type BumpItDeps, defaultDeps } from "./deps.ts";
@@ -85,6 +85,7 @@ async function run(context: ToolRunContext, deps: BumpItDeps): Promise<Readonly<
   const order = (unit: Unit) => (unit.package === undefined ? -1 : deferredBefore.indexOf(unit.package));
   const majors = majorUnits(found.bumps, wrapper).sort((a, b) => (order(a) === -1 ? Infinity : order(a)) - (order(b) === -1 ? Infinity : order(b)));
   const units = [routineUnit(found.bumps, wrapper), ...majors];
+  const undecided = new Set(found.bumps.filter((bump) => bump.undecided !== undefined).map(packageKey));
   const results: UnitReport[] = [];
   const deferred: string[] = [];
   let openedMajors = 0;
@@ -97,7 +98,7 @@ async function run(context: ToolRunContext, deps: BumpItDeps): Promise<Readonly<
         continue;
       }
       const computed = await compute(execution, unit, base, gradle, found.npmPeers, wrapper);
-      const result = await runUnit(execution, computed, unit, own, owned);
+      const result = await runUnit(execution, computed, unit, own, owned, undecided);
       if (unit.kind === "major" && result.outcome === "published") {
         openedMajors++;
       }
@@ -111,15 +112,33 @@ async function run(context: ToolRunContext, deps: BumpItDeps): Promise<Readonly<
   await priority.write(deferred);
   // A dependency whose publisher identity couldn't be decided gets no move, as one with only refused versions, but it's a
   // check that failed: reported as an error too, so the run reads as one that broke.
-  const undecided = found.bumps.flatMap((bump) => (bump.undecided === undefined ? [] : [`${bump.name}@${bump.from}: ${bump.undecided}`]));
+  const errors = undecidedProblems(found.bumps);
   return {
     outcome: "completed",
     units: results,
     notes: [...found.notes, ...wrapper.notes ?? []],
     gaps: found.gaps,
     waiting: found.bumps.flatMap((bump) => bump.problems.map((problem) => `${bump.name}@${bump.from}: ${problem}`)),
-    ...(undecided.length > 0 ? { errors: undecided } : {}),
+    ...(errors.length > 0 ? { errors } : {}),
   };
+}
+
+/** Why each dependency whose publisher identity couldn't be decided (`BumpCandidate.undecided`) has no move. */
+function undecidedProblems(bumps: ReadonlyArray<BumpCandidate>): string[] {
+  return bumps.flatMap((bump) => (bump.undecided === undefined ? [] : [`${bump.name}@${bump.from}: ${bump.undecided}`]));
+}
+
+/**
+ * Throws, keeping the PR, when the plan an open PR records moves a dependency (by ecosystem and name) whose publisher
+ * identity can't be decided now: the recomputed plan lacks that move only because the check failed, so reusing the PR
+ * would rewrite it as if the move were no longer needed.
+ */
+function assertNoUndecidedMoves(recorded: BumpPlan | undefined, undecided: ReadonlySet<string>): void {
+  const lost = new Map((recorded?.moves ?? []).filter((move) => undecided.has(packageKey(move))).map((move) => [packageKey(move), move]));
+  if (lost.size === 0) {
+    return;
+  }
+  throw new Error([...lost.values()].map((move) => `${move.ecosystem} ${move.name}'s publisher identity can't be decided; keeping the PR`).join("; "));
 }
 
 /**
@@ -160,7 +179,14 @@ function digestOf(body: string): string | undefined {
 
 const empty = (computed: Computed) => computed.plan.moves.length === 0 && computed.files.size === 0;
 
-async function runUnit(execution: Execution, computed: Computed, unit: Unit, own: ReadonlyArray<GitHubPullRequest>, owned: ReadonlyArray<Ours>): Promise<UnitReport> {
+async function runUnit(
+  execution: Execution,
+  computed: Computed,
+  unit: Unit,
+  own: ReadonlyArray<GitHubPullRequest>,
+  owned: ReadonlyArray<Ours>,
+  undecided: ReadonlySet<string>,
+): Promise<UnitReport> {
   if (computed.blocked !== undefined) {
     return { topic: unit.topic, outcome: "blocked", detail: computed.blocked, notes: computed.plan.notes };
   }
@@ -168,6 +194,11 @@ async function runUnit(execution: Execution, computed: Computed, unit: Unit, own
     return { topic: unit.topic, outcome: "nothing-to-move", notes: computed.plan.notes };
   }
   const same = owned.find((candidate) => samePlan(candidate.pr, planDigest(computed.plan), digestOf));
+  // The PR this unit reuses, checked before anything repairs or redoes it.
+  const reused = same ?? owned[0];
+  if (reused !== undefined) {
+    assertNoUndecidedMoves(planOf(reused.pr.body), undecided);
+  }
   if (same !== undefined) {
     const pr = await repairOwnership(execution.publication, same);
     return { topic: unit.topic, outcome: "already-open", pullRequest: pr.url, notes: computed.plan.notes };
@@ -256,6 +287,12 @@ async function review(context: ToolRunContext, deps: BumpItDeps): Promise<Readon
       const found = await deps.candidates(base, execution.env, { head: gradle });
       if (found.incomplete.length > 0) {
         throw new Error(`the new base's inventory is incomplete: ${found.incomplete.join("; ")}`);
+      }
+      // A dependency without a move because its identity check failed isn't one with nothing left to move. On any
+      // dependency, not only this PR's: nothing is retired, replaced or rewritten until it can be decided.
+      const undecided = undecidedProblems(found.bumps);
+      if (undecided.length > 0) {
+        throw new Error(`publisher identity can't be decided on the new base; keeping the PR: ${undecided.join("; ")}`);
       }
       const wrapper = await execution.wrapper.candidates(base);
       if (previous.package === "Gradle Wrapper|gradle/gradle" && wrapper.unavailable === true) {

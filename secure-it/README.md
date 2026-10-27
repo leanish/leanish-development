@@ -101,6 +101,8 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
      prepared as a clean base checkout for the new plan, so nothing the old plan did lingers. After verification,
      the tool appends the verified tree to the existing PR history as a normal commit.
    - One someone else pushed to: the fix goes in a PR of its own.
+   - One whose plan moves a package (companions included) whose publisher identity can't be decided now: the unit
+     fails and the PR is kept as it is, rather than rewritten without that move. Other units still go on.
    - A held unit is recognised by its packages, not its name (a group's lowest package can change as members age or
      join): it takes the open held PR sharing most of its own packages (`members` in the plan; companions planning
      adds don't count), strongest pairs first across all units, each PR going to one unit at most; a review gives a
@@ -245,6 +247,9 @@ The tick from [`core/tool-runtime`](../core/tool-runtime), with secure-it's step
   - The routine recomputes **the entire batch** on the new base, including newly actionable packages and retiring
     fixes the base now has. A major recomputes only its package's major unit. A unit with no actionable work is
     closed; blocked groups are reported. New malware on base prevents other units from verifying until it is fixed.
+  - While any package's publisher identity can't be decided on the new base (its check failed), the PR is kept as it
+    is and the tick reports an `error`: a move lost to a failed check isn't work the base no longer needs, so nothing
+    is retired, replaced or rewritten until it can be decided.
   - Older per-package plans without a batch kind keep their original package scope and topic during review. Runs
     create the new units independently; legacy PRs retire once their fixes are on the base.
   - A different plan on the new base: the PR is reconciled as in a run (reverted to the base, conflicts included,

@@ -462,6 +462,24 @@ describe("bump-it run", () => {
     const quiet = harness({ bumps: [refused, candidate({ name: "dev", major: undefined })] });
     expect(await bumpIt(quiet.deps).run(quiet.context)).not.toHaveProperty("errors");
   });
+  it("keeps a PR that moves a dependency whose publisher identity can't be decided now, while another unit still publishes", async () => {
+    const problem = "lib@1.1.0's publisher identity can't be decided, so no move is proposed: attestation lookup failed with HTTP 503";
+    const dev = candidate({ name: "dev", declarations: [{ lockfile: "package-lock.json", workspace: ".", declaredAs: "dev", spec: "^1.0.0" }] });
+    const pr = await prFor(routineUnit([candidate(), dev]));
+    const h = harness({ prs: [pr], bumps: [candidate({ minor: undefined, major: undefined, problems: [problem], undecided: problem }), dev] });
+    // Without the check, the routine would rewrite #7 to move dev alone, as if lib had nothing left to move.
+    expect(await bumpIt(h.deps).run(h.context)).toMatchObject({
+      errors: [`lib@1.0.0: ${problem}`],
+      units: [
+        { topic: "routine", outcome: "failed", detail: "npm lib's publisher identity can't be decided; keeping the PR" },
+        { topic: "dev-major", outcome: "published" },
+      ],
+    });
+    expect(h.github.prs.get(7)).toEqual(pr);
+    expect(h.workspace.preparations.map((entry) => entry.args.branch)).toEqual(["bump-it/2026-10-07-dev-major"]);
+    expect(h.workspace.publications.map((entry) => entry.prepared.branch)).toEqual(["bump-it/2026-10-07-dev-major"]);
+    expect(h.workspace.deletions).toEqual([]);
+  });
   it("reports wrapper omissions in the run and the published plan while npm still proceeds", async () => {
     const h = harness({ bumps: [candidate({ major: undefined })] });
     const notes = ["Gradle wrapper left out: catalog unavailable"];
@@ -881,6 +899,25 @@ describe("bump-it review", () => {
       expect(await bumpIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ outcome: "retired" }] });
       expect(h.agentCalls).toEqual([]);
     }
+  });
+  const undecidedProblem = (name: string) => `${name}@2.0.0's publisher identity can't be decided, so no move is proposed: attestation lookup failed with HTTP 503`;
+  const undecided = (name: string) => candidate({ name, minor: undefined, major: undefined, problems: [undecidedProblem(name)], undecided: undecidedProblem(name) });
+  it.each([
+    // Without the guard: retired, its major read as having nothing left to move.
+    { which: "its own", bumps: () => [undecided("lib")], detail: `lib@1.0.0: ${undecidedProblem("lib")}` },
+    // Without the guard: rebased, as if nothing were in doubt.
+    { which: "another's", bumps: () => [candidate(), undecided("other")], detail: `other@1.0.0: ${undecidedProblem("other")}` },
+  ])("keeps a major's PR, untouched, while a dependency's publisher identity can't be decided on the new base: $which", async ({ bumps, detail }) => {
+    const pr = await prFor(major());
+    const h = harness({ prs: [pr], bumps: bumps(), baseSha: NEW_BASE });
+    h.github.branches.add(pr.headRef);
+    expect(await bumpIt(h.deps).review(h.context)).toMatchObject({ reviewed: [
+      { number: pr.number, outcome: "error", detail: `publisher identity can't be decided on the new base; keeping the PR: ${detail}` },
+    ] });
+    expect(h.github.prs.get(pr.number)).toEqual(pr);
+    expect(h.github.branches.has(pr.headRef)).toBe(true);
+    expect(h.github.calls.filter((call) => call.startsWith("closePullRequest") || call.startsWith("updatePullRequest"))).toEqual([]);
+    expect([h.workspace.deletions, h.workspace.publications, h.agentCalls, h.computed, h.reverted]).toEqual([[], [], [], [], []]);
   });
   it("recomputes the whole routine on a moved base and reconciles a changed plan", async () => {
     const h = harness({ prs: [await prFor(routine())], baseSha: NEW_BASE, bumps: [candidate({ minor: { version: "1.2.0", line: "1" }, major: undefined })] });
