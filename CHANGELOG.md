@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+- Documentation: four known limits are now listed with the others, a test pins the first, and 0.9.0 is to fix it:
+  planning and verification read different baselines for publisher identity, so planning can refuse a move verification
+  would accept. The other three were 0.8.0's known limits: held bodies keep raw length budgets, transient errors can
+  regroup held work, and Gradle reference checks include `gradle.ignoreConfigurations`.
+
 ### Fixed
 
 - The gate refuses to read a working-tree file that symbolic links lead outside the repository (a linked file, or a
