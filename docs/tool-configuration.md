@@ -57,7 +57,7 @@ attempts and `byKind` groups them by HTTP method and normalized path. Pagination
 retries and refused requests count separately; cache hits do not. For example:
 
 ```json
-{"ts":"2026-10-11T19:00:00.000Z","level":"info","msg":"GitHub API requests","tool":"secure-it","repo":"acme/widget","command":"run","total":3,"byKind":{"GET /repos/{owner}/{repo}/pulls":1,"GET /repos/{owner}/{repo}/security-advisories":2}}
+{"ts":"2026-10-11T19:00:00.000Z","level":"info","msg":"GitHub API requests","tool":"secure-it","command":"run","repo":"acme/widget","total":3,"byKind":{"GET /repos/{owner}/{repo}/pulls":1,"GET /repos/{owner}/{repo}/security-advisories":2}}
 ```
 
 The counter covers the tool process's own GitHub API calls (planning,

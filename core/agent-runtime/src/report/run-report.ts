@@ -1,7 +1,9 @@
 // Copied from leanish/leanish-development core/runtime/src/runtime/run-report.ts at c6282df; see PROVENANCE.md.
 // Local changes: only the fields every host shares; the host names the run with `identified` (the tools' `tool` and
 // `repo`, the incubator's `agent`) and adds its own fields with `extra` (the incubator's dispatch counts), also on a
-// signal; the command's `result` comes with its end.
+// signal; the command's `result` comes with its end; `startRunReport` owns a command's whole report (signals, the
+// wrapper's marker, lines before the final one) instead of each host wiring it.
+import { writeFileSync } from "node:fs";
 import { constants } from "node:os";
 import { performance } from "node:perf_hooks";
 
@@ -71,6 +73,12 @@ const SHARED_FIELDS: ReadonlySet<string> = new Set([
   "totals",
 ]);
 
+/** The final record and the line it is written as (its JSON and a newline). */
+export interface FinalLine {
+  readonly record: RunFinished;
+  readonly line: string;
+}
+
 /** Accumulates one command's facts; scoped to that command. */
 export class RunReport {
   readonly #startedAt = performance.now();
@@ -110,6 +118,11 @@ export class RunReport {
    * `end.extra` names a shared or identity field or can't be serialized, so a caller can still finish without it.
    */
   finish(end: RunEnd): string | undefined {
+    return this.finishRecord(end)?.line;
+  }
+
+  /** As `finish`, with the record the line serializes, for a host that writes lines derived from it. */
+  finishRecord(end: RunEnd): FinalLine | undefined {
     if (this.#finished) return undefined;
     const extra = end.extra ?? {};
     assertHostFields("extra", extra, this.#identity);
@@ -131,7 +144,7 @@ export class RunReport {
     };
     const serialized = `${JSON.stringify(line)}\n`;
     this.#finished = true;
-    return serialized;
+    return { record: line, line: serialized };
   }
 }
 
@@ -143,9 +156,23 @@ function assertHostFields(kind: "identity" | "extra", fields: Readonly<Record<st
 }
 
 /** Writes `line` and resolves once it's handed to the OS, so an exit right after can't drop it. */
-export function writeFinalLine(stream: NodeJS.WritableStream, line: string): Promise<void> {
-  return new Promise((done) => {
+export async function writeFinalLine(stream: NodeJS.WritableStream, line: string): Promise<void> {
+  await new Promise<void>((done) => {
     stream.write(line, () => done());
+  });
+}
+
+/**
+ * Writes `text`; resolves once it's handed to the OS, to whether that worked. A stream that throws instead of calling
+ * back with its error also resolves to false: the run's end must still settle, with its exit code.
+ */
+function flushed(stream: NodeJS.WritableStream, text: string): Promise<boolean> {
+  return new Promise((done) => {
+    try {
+      stream.write(text, (err) => done(err === undefined || err === null));
+    } catch {
+      done(false);
+    }
   });
 }
 
@@ -161,9 +188,183 @@ const SIGNAL_FLUSH_MS = 2_000;
  * `spawnCapture`, still kills its process group). `extra` gives the host's
  * own fields as they stand when the signal arrives (the incubator's dispatch
  * counts), as `RunEnd.extra` does on a normal end. Returns the function that
- * stops listening.
+ * stops listening. `startRunReport` does this, and the normal end, for a
+ * command that owns its process.
  */
 export function reportOnTerminationSignals(report: RunReport, stream: NodeJS.WritableStream, extra?: () => RunExtra): () => void {
+  return raisingAfter(async (signal) => {
+    const text = finalText(report, interrupted(signal), extra);
+    if (text !== undefined) await writeFinalLine(stream, text);
+  });
+}
+
+/** Where a wrapper's marker file is named, and when this process writes it to say it reports the run itself. */
+export interface RunReportMarker {
+  /** The environment variable naming the file; read and removed from the environment as reporting starts. */
+  readonly env: string;
+  /**
+   * `start`: as soon as reporting is in place (the wrapper's own line is then never needed). `after-final-line`: once
+   * the final line is flushed; best effort, so a failed write leaves the wrapper to write its own line too, a duplicate
+   * rather than none.
+   */
+  readonly when: "start" | "after-final-line";
+}
+
+export interface RunReportOptions {
+  /** Where the final line (and the lines `beforeFinalLine` gives) goes. */
+  readonly stream: NodeJS.WritableStream;
+  readonly marker?: RunReportMarker;
+  /** The environment `marker.env` is read from and removed from; `process.env` unless a test gives its own. */
+  readonly env?: NodeJS.ProcessEnv;
+  /** The host's own fields (`RunEnd.extra`), evaluated when the run completes: at its end or on a signal. */
+  readonly extra?: () => RunExtra;
+  /** Lines (without their newline) written right before the final line, in the same write, from its record. */
+  readonly beforeFinalLine?: (final: RunFinished) => ReadonlyArray<string>;
+}
+
+/** One command's report, from `startRunReport`. */
+export interface StartedRunReport {
+  /** As `RunReport.identified`. */
+  identified(fields: Readonly<Record<string, string>>): void;
+  /** For `SkillContext.usageRecorder`. */
+  readonly usageRecorder: SkillUsageRecorder;
+  /**
+   * Writes the final line and resolves once it's flushed. Idempotent: a later call, or one racing a signal, writes
+   * nothing more and resolves once the one line is flushed. Stops the signal handling.
+   */
+  end(end: Omit<RunEnd, "extra">): Promise<void>;
+}
+
+/**
+ * Starts the report of a command that owns its process: one final line on `stream`, on its end or on a SIGINT /
+ * SIGTERM / SIGHUP (then raised again once the line is out, as `reportOnTerminationSignals` does), through the same
+ * path. `extra` or `beforeFinalLine` throwing can't keep that line from being written nor the signal from being raised:
+ * what they would have added is left out, and the line's `error` says why. The marker's variable is removed from the
+ * environment before this returns, so nothing the command starts inherits it. A host that runs several reports in one
+ * process (a Lambda function's invocations) composes `RunReport` and `writeFinalLine` instead, with no signal handlers.
+ */
+export function startRunReport(options: RunReportOptions): StartedRunReport {
+  const marker = takeMarker(options.marker, options.env ?? process.env);
+  const report = new RunReport();
+  let closing: Promise<void> | undefined;
+  const close = (end: Omit<RunEnd, "extra">): Promise<void> => {
+    closing ??= new Promise<void>((done) => {
+      const text = finalText(report, end, options.extra, options.beforeFinalLine);
+      if (text === undefined) {
+        done();
+        return;
+      }
+      done(flushed(options.stream, text).then((written) => {
+        // Synchronous: on a signal, the process dies right after this.
+        if (written && marker?.when === "after-final-line") writeMarker(marker.path);
+      }));
+    });
+    return closing;
+  };
+  const stop = raisingAfter((signal) => close(interrupted(signal)));
+  if (marker?.when === "start") {
+    try {
+      writeFileSync(marker.path, "reported\n");
+    } catch (err) {
+      // The wrapper will then write a final line of its own too; say why there are two.
+      options.stream.write(`run report: can't write ${marker.env}=${marker.path} (${messageOf(err)}); the wrapper may report this run as well\n`);
+    }
+  }
+  return {
+    identified: (fields) => report.identified(fields),
+    usageRecorder: report.usageRecorder,
+    end: async (end) => {
+      try {
+        await close(end);
+      } finally {
+        stop();
+      }
+    },
+  };
+}
+
+interface TakenMarker {
+  readonly env: string;
+  readonly path: string;
+  readonly when: RunReportMarker["when"];
+}
+
+/** Reads the marker's file from `env` and removes the variable, so no child process inherits it. */
+function takeMarker(marker: RunReportMarker | undefined, env: NodeJS.ProcessEnv): TakenMarker | undefined {
+  if (marker === undefined) return undefined;
+  const path = env[marker.env];
+  delete env[marker.env];
+  if (path === undefined || path === "") return undefined;
+  return { env: marker.env, path, when: marker.when };
+}
+
+function writeMarker(path: string): void {
+  try {
+    writeFileSync(path, "reported\n");
+  } catch {
+    // The wrapper reports as well: a duplicate line rather than none.
+  }
+}
+
+/** A signal's end: `interrupted`, with 128 + its number as the exit code. */
+function interrupted(signal: NodeJS.Signals): Omit<RunEnd, "extra"> {
+  return { status: "interrupted", exitCode: 128 + (constants.signals[signal] ?? 0), signal, error: `stopped by ${signal}` };
+}
+
+/**
+ * The text that ends the run: `beforeFinalLine`'s lines, then the final line; undefined once the report finished. What
+ * throws is left out, noted in the line's `error`: a throw here would leave the run without its final line (and, on a
+ * signal, the process dying of the throw, not the signal).
+ */
+function finalText(
+  report: RunReport,
+  end: Omit<RunEnd, "extra">,
+  extra?: () => RunExtra,
+  beforeFinalLine?: (final: RunFinished) => ReadonlyArray<string>,
+): string | undefined {
+  let final: FinalLine | undefined;
+  try {
+    final = report.finishRecord({ ...end, ...(extra !== undefined ? { extra: extra() } : {}) });
+  } catch (err) {
+    try {
+      final = report.finishRecord({ ...end, error: noted(end.error, `the host's fields were left out: ${messageOf(err)}`) });
+    } catch {
+      // The result itself can't be written (a value JSON can't serialize, say): the line goes without it too.
+      const { result: _unwritable, ...rest } = end;
+      final = report.finishRecord({ ...rest, error: noted(end.error, `the host's fields and the result were left out: ${messageOf(err)}`) });
+    }
+  }
+  if (final === undefined || beforeFinalLine === undefined) return final?.line;
+  // From the serialized line, never the record itself: whatever the callback does to its copy, the line stays as it was.
+  const snapshot = (): RunFinished => JSON.parse(final.line) as RunFinished;
+  try {
+    return [...beforeFinalLine(snapshot()).map((line) => `${line}\n`), final.line].join("");
+  } catch (err) {
+    const record = snapshot();
+    return `${JSON.stringify(withError(record, noted(record.error, `the lines before this one were left out: ${messageOf(err)}`)))}\n`;
+  }
+}
+
+function noted(error: string | undefined, note: string): string {
+  return error === undefined ? note : `${error}; ${note}`;
+}
+
+/** `record` with `error` replaced, in its place right after `exitCode`. */
+function withError(record: RunFinished, error: string): RunFinished {
+  const fields = Object.entries(record).filter(([field]) => field !== "error");
+  fields.splice(fields.findIndex(([field]) => field === "exitCode") + 1, 0, ["error", error]);
+  return Object.fromEntries(fields) as unknown as RunFinished;
+}
+
+function messageOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Listens for SIGINT / SIGTERM / SIGHUP: the first runs `onSignal`, then (once it settles, or after SIGNAL_FLUSH_MS)
+ * is raised again with these listeners gone, so the process ends by it. Returns the function that stops listening.
+ */
+function raisingAfter(onSignal: (signal: NodeJS.Signals) => Promise<void>): () => void {
   let handling = false;
   const listener = (signal: NodeJS.Signals): void => {
     if (handling) return;
@@ -172,26 +373,18 @@ export function reportOnTerminationSignals(report: RunReport, stream: NodeJS.Wri
     const raise = (): void => {
       if (raised) return;
       raised = true;
+      clearTimeout(fallback);
       stop();
       process.kill(process.pid, signal);
     };
-    const end = { status: "interrupted", exitCode: 128 + (constants.signals[signal] ?? 0), signal, error: `stopped by ${signal}` } as const;
-    let line: string | undefined;
-    try {
-      line = report.finish({ ...end, ...(extra !== undefined ? { extra: extra() } : {}) });
-    } catch (err) {
-      // A throw here would leave the run without its final line and the process dying of the throw, not the signal.
-      line = report.finish({ ...end, error: `${end.error}; the host's fields were left out: ${(err as Error).message}` });
-    }
-    if (line === undefined) {
-      raise();
-      return;
-    }
     const fallback = setTimeout(raise, SIGNAL_FLUSH_MS);
-    stream.write(line, () => {
-      clearTimeout(fallback);
-      raise();
-    });
+    let settled: Promise<void>;
+    try {
+      settled = onSignal(signal);
+    } catch {
+      settled = Promise.resolve();
+    }
+    settled.then(raise, raise);
   };
   const stop = (): void => {
     for (const signal of REPORTED_SIGNALS) process.removeListener(signal, listener);
