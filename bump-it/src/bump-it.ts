@@ -109,12 +109,16 @@ async function run(context: ToolRunContext, deps: BumpItDeps): Promise<Readonly<
     }
   }
   await priority.write(deferred);
+  // A dependency whose publisher identity couldn't be decided gets no move, as one with only refused versions, but it's a
+  // check that failed: reported as an error too, so the run reads as one that broke.
+  const undecided = found.bumps.flatMap((bump) => (bump.undecided === undefined ? [] : [`${bump.name}@${bump.from}: ${bump.undecided}`]));
   return {
     outcome: "completed",
     units: results,
     notes: [...found.notes, ...wrapper.notes ?? []],
     gaps: found.gaps,
     waiting: found.bumps.flatMap((bump) => bump.problems.map((problem) => `${bump.name}@${bump.from}: ${problem}`)),
+    ...(undecided.length > 0 ? { errors: undecided } : {}),
   };
 }
 

@@ -107,6 +107,17 @@ describe("selectWork", () => {
     expect(noted.blocked[0]?.reasons).toEqual(["worse@1.0.0: no clean version", "evil@1.0.1: evil note", "worse@1.5.0: clean copy note"]);
   });
 
+  it("runs no ordinary work as a fallback when a malware unit's publisher identity can't be decided", () => {
+    // As the gate's candidates leave it: only the malicious copy loses its move; its package's ordinary copy keeps one.
+    const problem = "lib@1.0.0's publisher identity can't be decided: attestation lookup failed with HTTP 503";
+    const selection = selectWork([
+      fix({ name: "lib", from: "1.0.0", malicious: true, to: undefined, problem }),
+      fix({ name: "lib", from: "2.0.0" }),
+      fix({ name: "other", from: "1.0.0" }),
+    ]);
+    expect(selection).toEqual({ units: [], blocked: [{ packages: ["npm|lib"], reasons: [`lib@1.0.0: ${problem}`] }] });
+  });
+
   it("reports the notes of a blocked package's other copies once, beside the blocked copy's reason", () => {
     const shared = "aab@3.0.0 has GHSA-repo (unreviewed): these advisories alone don't trigger an update";
     const stuck = fix({ name: "aab", from: "2.0.0", to: undefined, problem: "no fix", notes: [shared] });
