@@ -403,6 +403,22 @@ describe("startRunReport", () => {
     expect(Object.keys(final!)).toEqual(["ts", "level", "msg", "agent", "status", "exitCode", "error", "durationMs", "dispatches", "skills", "totals"]);
   });
 
+  it("writes the line as it was even when the lines before it change their record and throw", async () => {
+    const held = new HeldStream();
+    const report = startRunReport({
+      stream: held.stream,
+      env: {},
+      beforeFinalLine: (final) => {
+        Object.assign(final, { result: { count: 1n }, status: "error" });
+        throw new Error("no summary");
+      },
+    });
+    const ending = report.end({ status: "ok", exitCode: 0, result: { prs: 1 } });
+    held.flush();
+    await ending;
+    expect(lines(held.writes[0])).toEqual([expect.objectContaining({ status: "ok", result: { prs: 1 }, error: "the lines before this one were left out: no summary" })]);
+  });
+
   it("still writes the line and raises the signal when the host's callbacks throw on a signal", async () => {
     const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
     const held = new HeldStream();

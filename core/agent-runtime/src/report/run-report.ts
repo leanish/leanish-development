@@ -335,10 +335,13 @@ function finalText(
     }
   }
   if (final === undefined || beforeFinalLine === undefined) return final?.line;
+  // From the serialized line, never the record itself: whatever the callback does to its copy, the line stays as it was.
+  const snapshot = (): RunFinished => JSON.parse(final.line) as RunFinished;
   try {
-    return [...beforeFinalLine(final.record).map((line) => `${line}\n`), final.line].join("");
+    return [...beforeFinalLine(snapshot()).map((line) => `${line}\n`), final.line].join("");
   } catch (err) {
-    return `${JSON.stringify(withError(final.record, noted(final.record.error, `the lines before this one were left out: ${messageOf(err)}`)))}\n`;
+    const record = snapshot();
+    return `${JSON.stringify(withError(record, noted(record.error, `the lines before this one were left out: ${messageOf(err)}`)))}\n`;
   }
 }
 
