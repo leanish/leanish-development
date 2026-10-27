@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 
 import semver from "semver";
 
+import { hasAged } from "./age.ts";
 import { directDependencies, lockedPackages, type DirectDependency } from "./npm-lock.ts";
 import type { PackageVersion } from "./package-version.ts";
 import type { Snapshot } from "./snapshot.ts";
@@ -261,7 +262,7 @@ async function optionsFor(node: Node, anchors: ReadonlyArray<PeerMove>, snapshot
       // Rule targets already satisfy their age rule (security fixes may be young); companions must be aged.
       if (targets.length === 0 && version !== node.from && !sources.isOwn(node.name)) {
         const published = await sources.published(node.name, version);
-        if (published === undefined || sources.now.getTime() - published.getTime() < sources.releaseAgeDays * 86_400_000) {
+        if (!hasAged(published, sources.releaseAgeDays, sources.now)) {
           if (version !== forced) continue;
         }
       }
@@ -326,5 +327,5 @@ function consistent(nodes: ReadonlyArray<Node>, chosen: ReadonlyMap<string, stri
 async function isAged(name: string, version: string, sources: PeerSources): Promise<boolean> {
   if (sources.isOwn(name)) return false;
   const published = await sources.published(name, version);
-  return published !== undefined && sources.now.getTime() - published.getTime() >= sources.releaseAgeDays * 86_400_000;
+  return hasAged(published, sources.releaseAgeDays, sources.now);
 }

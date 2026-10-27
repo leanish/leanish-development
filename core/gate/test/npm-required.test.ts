@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.ts";
 import { NpmRegistry } from "../src/npm-registry.ts";
 import { requiredClosure, type RequiredInputs, requiredPath } from "../src/npm-required.ts";
-import { verifiedRequiredProofs } from "../src/npm-required-gate.ts";
+import { verifiedRequiredProofs, verifiedSecurityRoots } from "../src/npm-required-gate.ts";
 import { releaseAgeProblems } from "../src/release-age.ts";
 import { NpmCatalog } from "../src/catalogs.ts";
 import { parseExceptions } from "../src/exceptions.ts";
@@ -171,9 +171,10 @@ describe("npm security-required release age", () => {
       // The gate's snapshot covers every change it judges, these other ecosystems' too.
       ["Maven|postcss|8.5.29", []], ["GitHub Actions|postcss|8.5.29", []],
     ]), [], NOW);
-    const good = await verifiedRequiredProofs([proof], [change], candidates, snapshot(true), cat, config, NOW);
+    const roots = async (security: boolean) => verifiedSecurityRoots([change], candidates, snapshot(security), cat, config, NOW);
+    const good = verifiedRequiredProofs([proof], await roots(true));
     expect([...good.versions]).toEqual(["npm|postcss|8.5.29"]);
-    const ordinary = await verifiedRequiredProofs([proof], [change], candidates, snapshot(false), cat, config, NOW);
+    const ordinary = verifiedRequiredProofs([proof], await roots(false));
     expect(ordinary.versions.size).toBe(0);
     const context = { snapshot: snapshot(true), catalogs, config, now: NOW, exceptions: parseExceptions({}), candidates: candidates.byChange, required: good.versions };
     const child = (version: string) => ({ pkg: { ecosystem: "npm" as const, name: "postcss", version }, published: new Date(young), replaced: [] });

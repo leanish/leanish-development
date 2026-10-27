@@ -1,6 +1,7 @@
 /** Code selects each npm copy on one advisory snapshot; repository pins and unresolved copies are reported. */
 import semver from "semver";
 
+import { hasAged } from "@leanish/gate/age";
 import { type NodeRuntime, nodeTypeVersions } from "@leanish/gate/node-runtime";
 import type { PackageVersion } from "@leanish/gate/package-version";
 import type { Snapshot } from "@leanish/gate/snapshot";
@@ -8,8 +9,6 @@ import { groupsOf } from "@leanish/gate/young-fixes";
 
 import { type Copy, type NpmGraph, rangeOf } from "./npm-graph.ts";
 import { isExactOverride, type RepositoryOverrides } from "./npm-overrides.ts";
-
-const DAY_MS = 86_400_000;
 
 /** What deciding reads from outside: the registry, the advisory snapshot and the identity check. */
 export interface TargetSources {
@@ -182,7 +181,7 @@ async function candidatesOf(
 /** Missing or invalid publish times cannot establish that a replacement has aged. */
 export function meetsReleaseAge(published: Date | undefined, sources: Pick<TargetSources, "now" | "releaseAgeDays">): boolean {
   const time = published?.getTime();
-  return time !== undefined && Number.isFinite(time) && (sources.now.getTime() - time) / DAY_MS >= sources.releaseAgeDays;
+  return hasAged(time, sources.releaseAgeDays, sources.now);
 }
 
 /**

@@ -1,4 +1,5 @@
 /** Select stable, aged Gradle releases on one repository-advisory snapshot; verify official wrapper artifacts. */
+import { hasAged } from "@leanish/gate/age";
 import type { GateEnvironment } from "@leanish/gate/gate";
 import { isObject } from "@leanish/gate/json";
 import { fetchRepositoryAdvisories, type RepositoryAdvisory } from "@leanish/gate/repository-advisories";
@@ -72,7 +73,7 @@ export function gradleWrapperPlanner(env: GateEnvironment, releaseAgeDays: numbe
     }
     return found;
   };
-  const aged = (release: Release) => now.getTime() - release.built.getTime() >= releaseAgeDays * 86_400_000;
+  const aged = (release: Release) => hasAged(release.built, releaseAgeDays, now);
 
   return {
     async candidates(tree) {

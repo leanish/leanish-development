@@ -197,6 +197,8 @@ describe("securityCandidates", () => {
     );
     const found = await securityCandidates(head, environment(affected, registry));
     expect(moves(found.fixes)).toEqual([["@acme/lib@1.0.0", "1.0.1", undefined]]);
+    // 1.0.1 is a day old, but an own package never waits: nothing holds it.
+    expect(found.fixes.find((fix) => fix.name === "@acme/lib")?.to?.aged).toBe(true);
   });
 
   it("says why when nothing fixes, or an older fix's publish time is unknown", async () => {
@@ -363,7 +365,8 @@ describe("securityCandidates, regressions", () => {
     const registry = { "@acme/lib": { "1.0.1": OLD, "1.0.2": YESTERDAY } };
     const head = await tree({ "@acme/lib": "1.0.1" }, { ".github/supply-chain.json": JSON.stringify({ ownPackages: { npm: { scopes: ["@acme"] } } }) });
     const found = await securityCandidates(head, environment(affected, registry));
-    expect(found.fixes[0]).toMatchObject({ malicious: true, to: { version: "1.0.2", aged: false } });
+    // The gate never holds an own package (it never waits), so its young fix isn't planned as held either.
+    expect(found.fixes[0]).toMatchObject({ malicious: true, to: { version: "1.0.2", aged: true } });
   });
 
   it("keeps a publisher identity break the gate would reject as a blocker on the move", async () => {

@@ -20,6 +20,7 @@
  * so they search again without it. Parents are aged, so the gate needs no new
  * justification for them.
  */
+import { hasAged } from "@leanish/gate/age";
 import { ActionsGitHub } from "@leanish/gate/actions-github";
 import { IdentityCheck } from "@leanish/gate/candidates";
 import { NpmCatalog } from "@leanish/gate/catalogs";
@@ -35,8 +36,6 @@ import { takeSnapshot } from "@leanish/gate/take-snapshot";
 import { compatibleLine, fixes, movesFrom } from "@leanish/gate/young-fixes";
 
 import { type Dependent, dependentsOf, type FixWork, lockfileOf, type ParentMove, satisfies } from "./plan.ts";
-
-const DAY_MS = 86_400_000;
 
 export interface ParentInputs {
   readonly lockfiles: ReadonlyMap<string, unknown>;
@@ -270,7 +269,7 @@ class ParentSearch {
     for (const version of versions) {
       if (!own && pinned === undefined) {
         const published = await this.#catalog.published({ ...parent, version });
-        if (published === undefined || (now.getTime() - published.getTime()) / DAY_MS < config.releaseAgeDays) continue;
+        if (!hasAged(published, config.releaseAgeDays, now)) continue;
       }
       const manifest = doc.versions[version];
       if (!isObject(manifest)) continue;

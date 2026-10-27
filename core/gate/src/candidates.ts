@@ -22,6 +22,7 @@
  * Bumps (`bumpCandidates`): see there.
  */
 import { actionGaps } from "./actions-changes.ts";
+import { hasAged } from "./age.ts";
 import { type CarriedPackage, type CarrierContext, type CarrierDecision, type CarrierGroup, decideCarrier, splitBundled } from "./carrier-candidates.ts";
 import { type Config, isOwnPackage } from "./config.ts";
 import { type Exceptions, unexcusedProblem } from "./exceptions.ts";
@@ -52,15 +53,13 @@ import type { Tree } from "./tree.ts";
 import { type Ecosystem, versionScheme } from "./versions.ts";
 import { compatibleLine, fixes, movesFrom, nearestVetoes, reviewedGroups, ruleChoice, targetsOf, type VersionCatalog, type Veto, vetoesOf, vetoFields, vetoNote } from "./young-fixes.ts";
 
-const DAY_MS = 86_400_000;
-
 export interface SecurityMove {
   readonly version: string;
   /** The compatible line it's in. */
   readonly line: string;
   /**
-   * At least `releaseAgeDays` old; false for the lowest fix when no fix in its line is that old yet, and for own
-   * packages, which skip the wait (their age isn't checked).
+   * Whether the gate leaves it unheld (not `isYoung`): at least `releaseAgeDays` old, or an own package, which never
+   * waits. False for the lowest fix when no fix in its line is that old yet.
    */
   readonly aged: boolean;
   /** Outside the current version's line: the code may need adapting. */
@@ -364,7 +363,7 @@ async function chooseMove(
     // The same order over every candidate, vetoed ones included: where each veto sits relative to the choice.
     const tried = preferred(moves);
     // Own packages skip the wait here too; the version must still be clean.
-    if (own && order.length > 0) return move(order[0]!, false, tried);
+    if (own && order.length > 0) return move(order[0]!, true, tried);
     for (const version of order) {
       if (await isAged({ ...name, version }, catalog, config, now)) return move(version, true, tried);
     }
@@ -377,7 +376,7 @@ async function chooseMove(
   if (own) {
     // Own packages skip the wait: the lowest fix in the first line that has one.
     const first = line(fixing[0]!);
-    return move(fixing.find((version) => line(version) === first)!, false);
+    return move(fixing.find((version) => line(version) === first)!, true);
   }
   const choice = await ruleChoice(name, fixing, catalog, config, now);
   if (choice.kind === "undated") {
@@ -388,7 +387,7 @@ async function chooseMove(
 
 async function isAged(pkg: PackageVersion, catalog: VersionCatalog, config: Config, now: Date): Promise<boolean> {
   const published = await catalog.published(pkg);
-  return published !== undefined && (now.getTime() - published.getTime()) / DAY_MS >= config.releaseAgeDays;
+  return hasAged(published, config.releaseAgeDays, now);
 }
 
 /**

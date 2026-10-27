@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Changed
+
+- The gate judges young versions in one module (`young-versions.ts`) that owns the order this needs, from gathering
+  the candidates into the snapshot to the required-dependency proofs; compare reuses its snapshot. Verdicts are
+  unchanged. Release-age arithmetic is shared across the gate and both tools (`@leanish/gate/age`): the exact
+  threshold counts as aged, and an unknown date is never aged nor an exemption.
+
+### Fixed
+
+- secure-it no longer plans an own package's young fix (or an own carrier's) as held: the gate never holds an own
+  package, so it now goes with the other fixes instead of waiting in a cooldown PR.
+
 ## 0.8.2 - 2026-10-27
 
 ### Changed

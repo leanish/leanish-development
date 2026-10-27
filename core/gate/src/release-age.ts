@@ -14,6 +14,7 @@
  * Passing this rule isn't trusting the version: every young version, however
  * justified, is also held by the cooldown (`cooldown.ts`) until it ages.
  */
+import { ageDays, eligibleAt, isUnderWait } from "./age.ts";
 import { type Config, isOwnPackage } from "./config.ts";
 import type { Exceptions } from "./exceptions.ts";
 import type { BundleFixProof } from "./bundle-fix-proof.ts";
@@ -21,8 +22,6 @@ import { label, type PackageVersion, versionKey } from "./package-version.ts";
 import type { Snapshot } from "./snapshot.ts";
 import type { Ecosystem } from "./versions.ts";
 import { groupsOf, reviewedGroups, targetsOf, type VersionCatalog, youngFixProblem } from "./young-fixes.ts";
-
-const DAY_MS = 86_400_000;
 
 export interface ChangedVersion {
   readonly pkg: PackageVersion;
@@ -48,7 +47,7 @@ export interface AgeContext {
 /** Under the wait and not an own package: what the proof or an exception must justify. */
 export function isYoung(change: ChangedVersion, config: Config, now: Date): boolean {
   if (isOwnPackage(config.ownPackages, change.pkg)) return false;
-  return (now.getTime() - change.published.getTime()) / DAY_MS < config.releaseAgeDays;
+  return isUnderWait(change.published, config.releaseAgeDays, now);
 }
 
 /** What let a young version through: the fix proof, the required-dependency proof, an exception; or nothing. */
@@ -109,7 +108,7 @@ export async function reviewReleaseAge(changes: ReadonlyArray<ChangedVersion>, c
       version: change.pkg.version,
       replaced: change.replaced,
       published: change.published.toISOString(),
-      eligibleAt: new Date(change.published.getTime() + context.config.releaseAgeDays * DAY_MS).toISOString(),
+      eligibleAt: eligibleAt(change.published, context.config.releaseAgeDays).toISOString(),
       justification: judged.justification,
       ...(targets.length === 0 ? {} : { targets }),
     });
@@ -148,10 +147,10 @@ async function judgeYoung(change: ChangedVersion, context: AgeContext): Promise<
     (entry) => (entry.ecosystem === undefined || entry.ecosystem === pkg.ecosystem) && entry.package === pkg.name && entry.version === pkg.version,
   );
   if (exception === undefined) {
-    const ageDays = (context.now.getTime() - change.published.getTime()) / DAY_MS;
+    const age = ageDays(change.published, context.now)!;
     return {
       justification: "unjustified",
-      problem: `${label(pkg)} was published ${change.published.toISOString()} (${ageDays.toFixed(1)} days ago, under ${
+      problem: `${label(pkg)} was published ${change.published.toISOString()} (${age.toFixed(1)} days ago, under ${
         context.config.releaseAgeDays
       }), and it isn't the security fix the version rule would take: ${proof}${bundled === undefined ? "" : `; nor a bundled fix: ${bundled}`}`,
     };

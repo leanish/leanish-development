@@ -1,6 +1,7 @@
 /** Joint direct-peer requirements forced by a security root, resolved at their actual lockfile locations. */
 import semver from "semver";
 
+import { hasAged } from "./age.ts";
 import { type Config, isOwnPackage } from "./config.ts";
 import { isObject } from "./json.ts";
 import { directDependencies, type DirectDependency } from "./npm-lock.ts";
@@ -30,7 +31,7 @@ export async function requiredPeerTargets(root: RequiredNode, basePackages: Reco
   for (const node of group) {
     const versions = [...viable.get(node.direct.path)!].sort(semver.compare);
     const own = isOwnPackage(config.ownPackages, { ecosystem: "npm", name: node.direct.name });
-    const aged = own ? versions : versions.filter((version) => now.getTime() - publishTime(node.doc, node.direct.name, version).getTime() >= config.releaseAgeDays * 86_400_000);
+    const aged = own ? versions : versions.filter((version) => hasAged(publishTime(node.doc, node.direct.name, version), config.releaseAgeDays, now));
     agedVersions.set(node.direct.path, new Set(aged));
     // Order complete assignments by package name, then aged before young and lowest first.
     // Preserve an eligible aged locked version to avoid an unnecessary change.

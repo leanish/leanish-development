@@ -32,6 +32,7 @@
  * everything read so far, and the decision is taken on the last one, so its
  * alias groups are consistent.
  */
+import { ageDays } from "./age.ts";
 import type { Config } from "./config.ts";
 import { isObject } from "./json.ts";
 import type { BundleContents } from "./npm-bundles.ts";
@@ -41,7 +42,6 @@ import type { Snapshot } from "./snapshot.ts";
 import { versionScheme } from "./versions.ts";
 import { compatibleLine, fixes, groupsOf, nearestVetoes, reviewedGroups, unreviewedGroups, type VersionCatalog, type Veto } from "./young-fixes.ts";
 
-const DAY_MS = 86_400_000;
 /** Bundles read before each new advisory snapshot. */
 const BATCH = 4;
 
@@ -322,7 +322,7 @@ function carrierName(search: Pick<CarrierSearch, "carrier">): PackageName {
 
 async function ageOf(search: CarrierSearch, services: CarrierServices, version: string): Promise<number | undefined> {
   const published = await services.catalog.published({ ecosystem: "npm", name: search.carrier, version });
-  return published === undefined ? undefined : (services.now.getTime() - published.getTime()) / DAY_MS;
+  return ageDays(published, services.now);
 }
 
 function isAbove(version: string, from: string): boolean {

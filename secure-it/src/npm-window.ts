@@ -1,4 +1,5 @@
 /** Exempt young fixes and already locked young versions from npm's window; compare still judges induced changes. */
+import { hasAged } from "@leanish/gate/age";
 import { NpmRegistry, publishTime } from "@leanish/gate/npm-registry";
 import { type Fetch, mapLimited } from "@leanish/gate/http";
 import { lockedPackages } from "@leanish/gate/npm-lock";
@@ -29,7 +30,7 @@ export async function npmWindowFor(
     if (seen.has(key)) continue;
     seen.add(key);
     const published = await publishedAt(registry, move.name, move.to);
-    if (published !== undefined && now.getTime() - published.getTime() >= days * 86_400_000) continue;
+    if (hasAged(published, days, now)) continue;
     exclude.add(move.name);
     const reason = published === undefined ? "its publish time could not be read" : "it is younger than the release window";
     notes.push(`${key}: npm's window excludes ${move.name} because ${reason}; verification still requires the planned target`);
@@ -39,7 +40,7 @@ export async function npmWindowFor(
   const copies = new Map([...affected].flatMap(lockedPackages).map((copy) => [`${copy.name}@${copy.version}`, copy]));
   const checked = await mapLimited([...copies.values()], 8, async (copy) => ({ copy, published: await publishedAt(registry, copy.name, copy.version) }));
   for (const { copy, published } of checked) {
-    if (published !== undefined && now.getTime() - published.getTime() >= days * 86_400_000) continue;
+    if (hasAged(published, days, now)) continue;
     exclude.add(copy.name);
     const reason = published === undefined ? "its publish time could not be read" : "it is younger than the release window";
     notes.push(`${copy.name}: npm's window excludes its locked ${copy.version} because ${reason}; exact targets and compare still gate publication`);
