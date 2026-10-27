@@ -527,6 +527,15 @@ describe("bump-it run", () => {
     expect(h.agentCalls[0]?.input["moves"]).toEqual(expect.arrayContaining([expect.objectContaining({ name: "companion", to: "1.0.1", major: false })]));
   });
 
+  it("refuses an agent's description that cleaning pushes over the limit before verifying or pushing it", async () => {
+    const h = harness();
+    // Under the limit as written; each `/tmp ` becomes `<local path> ` once published.
+    const body = "/tmp ".repeat(12_000);
+    const context = { ...h.context, agent: (async () => ({ outcome: "applied", summary: "updated", publication: { title: "upgrading lib", body, commitMessage: "upgrading lib" } })) as ToolRunContext["agent"] };
+    expect(await bumpIt(h.deps).run(context)).toMatchObject({ units: [{ topic: "routine", outcome: "published" }, { topic: "lib-major", outcome: "failed", detail: expect.stringContaining("over the client's 65536 limit") }] });
+    expect(h.verified.map((plan) => plan.kind)).toEqual(["routine"]);
+    expect(h.workspace.publications).toHaveLength(1);
+  });
   it("publishes npm routine without a model and each major through the agent, always from the original base", async () => {
     const h = harness();
     expect(await bumpIt(h.deps).run(h.context)).toMatchObject({ units: [{ topic: "routine", outcome: "published" }, { topic: "lib-major", outcome: "published" }] });
