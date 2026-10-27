@@ -584,6 +584,19 @@ describe("startRunReport", () => {
     expect(throwing.listenerCount("close")).toBe(0);
   });
 
+  it("writes to a stream already destroyed without listening, so repeated writes leave no listener behind", async () => {
+    const host = (): void => undefined;
+    const dead = new Writable({ write: (_chunk, _encoding, callback) => callback() });
+    dead.on("error", host);
+    const closed = new Promise<void>((done) => dead.once("close", () => done()));
+    dead.destroy();
+    await closed;
+    for (let i = 0; i < 12; i++) await writeFinalLine(dead, "{}\n");
+    await expect(startRunReport({ stream: dead, env: {} }).end({ status: "ok", exitCode: 0 })).resolves.toBeUndefined();
+    expect(dead.listeners("error")).toEqual([host]);
+    expect(dead.listenerCount("close")).toBe(0);
+  });
+
   it("still writes the line when the result can't be serialized, leaving it out and noting why", async () => {
     const held = new HeldStream();
     const report = startRunReport({ stream: held.stream, env: {}, extra: () => ({ dispatches: 1 }) });

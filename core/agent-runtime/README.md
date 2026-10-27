@@ -75,8 +75,8 @@ When the stream fails the write (a closed pipe, a full disk), `end` still resolv
 code: the `error` the stream emits afterwards is heard and dropped, only by the listener the write added, which goes
 once the stream reports `error` or `close` (after a successful write, at once). It hears that first event only: a
 second `error`, one after `close`, or one while the `start` marker's failure is written, still ends a process with no
-`error` listener of its own, as before 0.9.0. On a stream already destroyed no event follows a failed write, so its
-listener stays; a host writing many lines to such a stream should listen for `error` itself.
+`error` listener of its own, as before 0.9.0, and so does an `error` a stream emits while being destroyed by something
+else: a stream already destroyed is written without listening, since its write fails without a new `error`.
 `marker` is for a wrapper that writes its own final line unless told otherwise: its `env` variable names the file, and
 is read and removed from the environment as reporting starts, before the command starts any child process.
 `when: "start"` writes the file as soon as reporting is in place; `when: "after-final-line"` once the final line is

@@ -55,7 +55,8 @@
   is written to the failed stream, and the `after-final-line` marker stays unwritten, so the wrapper still writes its
   own line. `writeFinalLine` now resolves on a stream that throws instead of calling back, as it does on a failed
   write, saying nothing either way. Only the stream's first `error` or `close` after the write is heard: a second one
-  ends the process as before.
+  ends the process as before. A stream already destroyed, or one without events, is written without listening, so
+  writing to it again and again leaves no listener behind.
 - The gate reads npm's SLSA v0.2 provenance (`invocation.configSource`: the repository from its `git+<URL>@<ref>`
   uri, the workflow from its `entryPoint`) as well as v1. Before, a package version published with it (npm's earlier
   format) made the whole run fail to complete. Both name a source the same way, so a package moving from v0.2 to v1

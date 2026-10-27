@@ -175,11 +175,13 @@ export async function writeFinalLine(stream: NodeJS.WritableStream, line: string
  * code lost, so this listens before writing: after a success it stops at once; after a failure it stays until the
  * stream's 'error' or 'close'. Only its own listeners are removed, the host's stay. The end doesn't wait for either
  * event: a stream may never emit 'close' (`emitClose: false`). A write that throws is followed by no event, so it stops
- * listening at once, and a stream without events (a host's stub) is written without listening.
+ * listening at once. A stream already destroyed fails the write without a new 'error' (whatever its destruction emits
+ * is the destruction's), and a stream without events (a host's stub) has none to hear: both are written without
+ * listening, so writing to them again and again leaves nothing behind.
  */
 function flushed(stream: NodeJS.WritableStream, text: string): Promise<boolean> {
   return new Promise((done) => {
-    const listening = typeof stream.on === "function";
+    const listening = typeof stream.on === "function" && (stream as { readonly destroyed?: boolean }).destroyed !== true;
     // Settles a write the stream ended before calling back, if any; nothing more comes after either event.
     const streamEnded = (): void => {
       done(false);
