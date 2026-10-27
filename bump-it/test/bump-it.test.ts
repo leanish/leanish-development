@@ -450,6 +450,18 @@ describe("bump-it run", () => {
     expect(await bumpIt({ ...failed.deps, wrapper: deps.wrapper }).run(failed.context)).toMatchObject({ units: [{ outcome: "failed", detail: expect.stringContaining("wrapper jar") }] });
     expect(failed.workspace.publications).toEqual([]);
   });
+  it("reports a dependency whose publisher identity couldn't be decided as an error, while the others still move", async () => {
+    const problem = "lib@1.1.0's publisher identity can't be decided, so no move is proposed: attestation lookup failed with HTTP 503";
+    const undecided = candidate({ minor: undefined, major: undefined, problems: [problem], undecided: problem });
+    const refused = candidate({ name: "old", minor: undefined, major: undefined, problems: ["each of the 3 newest versions of line 1 old enough adds an advisory, is malicious or breaks identity"] });
+    const h = harness({ bumps: [undecided, refused, candidate({ name: "dev", major: undefined })] });
+    const result = await bumpIt(h.deps).run(h.context);
+    expect(result).toMatchObject({ outcome: "completed", errors: [`lib@1.0.0: ${problem}`], units: [{ outcome: "published" }] });
+    expect(result["waiting"]).toEqual([`lib@1.0.0: ${problem}`, `old@1.0.0: ${refused.problems[0]}`]);
+    // Refusals alone are no error.
+    const quiet = harness({ bumps: [refused, candidate({ name: "dev", major: undefined })] });
+    expect(await bumpIt(quiet.deps).run(quiet.context)).not.toHaveProperty("errors");
+  });
   it("reports wrapper omissions in the run and the published plan while npm still proceeds", async () => {
     const h = harness({ bumps: [candidate({ major: undefined })] });
     const notes = ["Gradle wrapper left out: catalog unavailable"];

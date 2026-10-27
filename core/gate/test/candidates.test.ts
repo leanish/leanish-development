@@ -121,6 +121,11 @@ function withStatements(env: GateEnvironment, statements: Record<string, string>
   };
 }
 
+/** The fixes whose move an identity check that failed took, as `name@from`, sorted. */
+function undecided(fixes: ReadonlyArray<SecurityFix>): string[] {
+  return fixes.filter((fix) => fix.undecided === true).map((fix) => `${fix.name}@${fix.from}`).sort();
+}
+
 /** `moves`, sorted by package and version. */
 function sortedMoves(fixes: ReadonlyArray<SecurityFix>): Array<[string, string | undefined, string | undefined]> {
   return moves(fixes).sort(([a], [b]) => a.localeCompare(b));
@@ -462,6 +467,8 @@ describe("securityCandidates, regressions", () => {
     // A sibling without a move lends nothing, and blocks the package anyway (secure-it's `selectWork`).
     const stuck = await securityCandidates(head, environment({ "lib@1.0.0": ["GHSA-a"], "lib@2.0.0": ["GHSA-b"], "lib@2.0.1": ["GHSA-b"] }, registry, [], manifests));
     expect(blockers(stuck)).toEqual([["lib@1.0.0", "1.0.1", refused], ["lib@2.0.0", undefined, undefined]]);
+    // A refusal is the rules' answer, not a check that failed: nothing is marked undecided.
+    for (const found of [both, alone, malware, stuck]) expect(found.fixes.filter((fix) => fix.undecided !== undefined)).toEqual([]);
   });
 
   it("blocks an ordinary copy whose baseline provenance can't be read, alone, and fixes the rest", async () => {
@@ -479,6 +486,7 @@ describe("securityCandidates, regressions", () => {
       ["other@1.0.0", "1.0.1", undefined],
     ]);
     expect(found.fixes.find((fix) => fix.name === "lib" && fix.from === "1.0.0")).toMatchObject({ targets: ["GHSA-a"], unfixable: [] });
+    expect(undecided(found.fixes)).toEqual(["lib@1.0.0"]);
   });
 
   it("takes the move of every copy in a unit whose identity can't be decided, the ones judged before the failure too", async () => {
@@ -495,6 +503,7 @@ describe("securityCandidates, regressions", () => {
         ["lib@2.0.0", undefined, `lib@2.0.0's ${why(broken)}`],
         ["other@1.0.0", "1.0.1", undefined],
       ]);
+      expect(undecided(found.fixes)).toEqual(["lib@1.0.0", "lib@2.0.0"]);
     }
   });
 
@@ -511,6 +520,7 @@ describe("securityCandidates, regressions", () => {
       ["other@1.0.0", "1.0.1", undefined],
     ]);
     expect(found.fixes.find((fix) => fix.from === "1.0.0" && fix.name === "lib")?.malicious).toBe(true);
+    expect(undecided(found.fixes)).toEqual(["lib@1.0.0"]);
   });
 
   it("says when the inventory is incomplete, so an empty list can't read as clean", async () => {
@@ -695,9 +705,10 @@ describe("bumpCandidates", () => {
     // The own line's choice fails, or the newer line's after the own line's was accepted: neither move is proposed.
     for (const broken of ["1.1.0", "2.0.0"]) {
       const found = await bumpCandidates(head, environment({}, registry, [], { [`lib@${broken}`]: MALFORMED }));
-      expect(found.bumps.map((bump) => [bump.name, bump.minor?.version, bump.major?.version, bump.problems])).toEqual([
-        ["dev", "1.0.1", undefined, []],
-        ["lib", undefined, undefined, [`lib@${broken}'s publisher identity can't be decided, so no move is proposed: registry has malformed attestations for lib@${broken}`]],
+      const problem = `lib@${broken}'s publisher identity can't be decided, so no move is proposed: registry has malformed attestations for lib@${broken}`;
+      expect(found.bumps.map((bump) => [bump.name, bump.minor?.version, bump.major?.version, bump.problems, bump.undecided])).toEqual([
+        ["dev", "1.0.1", undefined, [], undefined],
+        ["lib", undefined, undefined, [problem], problem],
       ]);
     }
   });
@@ -877,6 +888,7 @@ describe("securityCandidates, bundled copies", () => {
     ]);
     // What was decided before the identity check stays for people: what the carrier move would have carried.
     expect(found.fixes.find((fix) => fix.from === "1.0.0" && fix.name === "carrier")).toMatchObject({ carries: [expect.objectContaining({ name: "brace", to: ["5.0.12"] })] });
+    expect(undecided(found.fixes)).toEqual(["carrier@1.0.0", "carrier@1.2.0"]);
   });
 
   it("judges a carrier move's publisher with the package's other copies its unit moves", async () => {

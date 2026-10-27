@@ -88,12 +88,13 @@
   refused that the gate accepts; a malicious copy, leaving on its own, borrows no other copy's history. Planning
   checks no longer borrow a copy (or its integrity) from another lockfile, and a required version is judged against
   the copy it replaces at its own path, not retained ones. The remaining planners' limit is in coverage gaps.
-  An identity check that fails (a provenance statement the registry won't serve, say) now blocks the package instead
-  of aborting the run: every move of that unit, the ones already judged too, loses its move with the error as its
-  problem ("can't be decided"), a carrier move's as before, and the other packages are still fixed; a failed read is
-  never taken as acceptance. A malware unit's failure still blocks all malware work and runs no other work in its
-  place. bump-it's candidate discovery does the same: a dependency whose identity can't be decided gets no move in any
-  line, reported among the run's waiting problems, instead of failing the run.
+  An identity check that fails (any error while checking: a registry or network failure, a provenance it can't read)
+  now blocks the package instead of aborting the run: every move of that unit, the ones already judged too, loses its
+  move with the error as its problem ("can't be decided"), a carrier move's as before, and the other packages are
+  still fixed; a failed read is never taken as acceptance. A malware unit's failure still blocks all malware work and
+  runs no other work in its place. bump-it's candidate discovery does the same: a dependency whose identity can't be
+  decided gets no move in any line. Either way the run reports it under `errors` as well as among its waiting
+  problems, so a batch counts it as a failure, not a gap; the command's own exit code is unchanged.
 - secure-it's Gradle reference checks accept resolution failures in the configurations `gradle.ignoreConfigurations`
   lists, as the gate does: the held preflight leaves them out of the reference, and verification (floor removals'
   too) accepts an edit that fails to resolve there the same way as the plan's reference. A fix the gate would pass is

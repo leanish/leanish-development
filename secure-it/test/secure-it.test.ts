@@ -519,7 +519,15 @@ describe("secure-it run", () => {
     expect(await secureIt(refused.deps).run(refused.context)).toMatchObject({ outcome: "cannot-apply", summary: "the override would break the build" });
 
     const stuck = harness({ fixes: [vite({ to: undefined, problem: "no version above 8.3.1 fixes GHSA-x" })] });
-    expect(await secureIt(stuck.deps).run(stuck.context)).toMatchObject({ outcome: "nothing-to-fix", waiting: ["vite@8.3.1: no version above 8.3.1 fixes GHSA-x"] });
+    const quiet = await secureIt(stuck.deps).run(stuck.context);
+    expect(quiet).toMatchObject({ outcome: "nothing-to-fix", waiting: ["vite@8.3.1: no version above 8.3.1 fixes GHSA-x"] });
+    // A refusal is no error; an identity check that failed is one, reported while the other fix still goes out.
+    expect(quiet).not.toHaveProperty("errors");
+    const undecidedProblem = "vite@8.3.1's publisher identity can't be decided: attestation lookup failed with HTTP 503";
+    const broken = harness({ fixes: [vite({ to: undefined, problem: undecidedProblem, undecided: true }), leftPad()] });
+    expect(await secureIt(broken.deps).run(broken.context)).toMatchObject({
+      errors: [undecidedProblem], waiting: [`vite@8.3.1: ${undecidedProblem}`], units: [{ outcome: "published" }],
+    });
 
     const incomplete = harness();
     const deps = { ...incomplete.deps, candidates: async () => ({ fixes: [vite()], incomplete: ["Gradle :runtimeClasspath couldn't resolve x"], gaps: [], osvScannerVersion: "2.6.0" }) };

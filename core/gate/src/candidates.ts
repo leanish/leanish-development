@@ -84,6 +84,11 @@ export interface SecurityFix {
   readonly to: SecurityMove | undefined;
   /** Why there's no `to`. */
   readonly problem: string | undefined;
+  /**
+   * Set when `to` was dropped because an error kept its unit's publisher identity from being decided (`problem` says
+   * which): a check that failed, to report as a failure, not a move the rules refused.
+   */
+  readonly undecided?: true;
   /** A carrier move: the bundled packages it replaces, and their advisories (`carrier-candidates.ts`). */
   readonly carries?: ReadonlyArray<CarriedPackage>;
   /** Candidates ruled out only by advisories no reviewed source corroborates, for people: the ones nearest the choice (`nearestVetoes`). */
@@ -354,7 +359,7 @@ async function withUnitIdentity(fixes: ReadonlyArray<SecurityFix>, identity: Ide
     const problem = fix.carries === undefined
       ? `${fix.name}@${fix.from}'s publisher identity can't be decided: ${error}`
       : `${fix.name}@${fix.from}'s carrier move can't be decided: ${error}`;
-    return { ...fix, to: undefined, problem };
+    return { ...fix, to: undefined, problem, undecided: true };
   });
 }
 
@@ -515,6 +520,11 @@ export interface BumpCandidate {
    * list, a publisher identity that can't be decided (then no move at all).
    */
   readonly problems: ReadonlyArray<string>;
+  /**
+   * Set when an error kept this dependency's publisher identity from being decided: the problem saying so (also among
+   * `problems`). No move is proposed, and it's a check that failed, to report as a failure.
+   */
+  readonly undecided?: string;
 }
 
 export interface BumpCandidates {
@@ -570,8 +580,8 @@ export async function bumpCandidates(head: Tree, env: GateEnvironment, gradle: G
   // Higher lines still to try per dependency, highest first.
   const higherLines = new Map<string, string[]>();
   const newerOf = new Map<string, ReadonlyArray<string>>();
-  // Dependencies whose publisher identity couldn't be decided: no move for them.
-  const undecided = new Set<string>();
+  // Dependencies whose publisher identity couldn't be decided, with the problem saying so: no move for them.
+  const undecided = new Map<string, string>();
   let round: Pending[] = [];
   for (const pkg of direct) {
     const listed = await catalogs[pkg.ecosystem].versions(pkg);
@@ -613,8 +623,9 @@ export async function bumpCandidates(head: Tree, env: GateEnvironment, gradle: G
         } catch (error) {
           // An identity check that fails (a provenance the registry won't serve, say) is the dependency's problem, not
           // the run's: it gets no move at all, in any line, and no failed read counts as an acceptable version.
-          undecided.add(key);
-          problems.get(key)!.push(`${pkg.name}@${version}'s publisher identity can't be decided, so no move is proposed: ${error instanceof Error ? error.message : String(error)}`);
+          const problem = `${pkg.name}@${version}'s publisher identity can't be decided, so no move is proposed: ${error instanceof Error ? error.message : String(error)}`;
+          undecided.set(key, problem);
+          problems.get(key)!.push(problem);
           break;
         }
         if (breaks.length > 0) {
@@ -650,6 +661,7 @@ export async function bumpCandidates(head: Tree, env: GateEnvironment, gradle: G
     minor: minors.get(versionKey(pkg)),
     major: majors.get(versionKey(pkg)),
     problems: problems.get(versionKey(pkg))!,
+    ...(undecided.has(versionKey(pkg)) ? { undecided: undecided.get(versionKey(pkg))! } : {}),
   }));
   const selected = bumps.flatMap((bump) => [bump.minor, bump.major].flatMap((move) =>
     move === undefined ? [] : [{ ecosystem: bump.ecosystem, name: bump.name, version: move.version }]));

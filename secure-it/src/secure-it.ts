@@ -262,7 +262,10 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   const tree = await deps.trees.commit(context.workingCopy, context.workingCopy.headSha);
   const base = { tree, gradle: await inventories.ofCommit(tree) };
   const found = await deps.candidates(tree, env, { head: base.gradle });
-  const report = { gaps: found.gaps.length };
+  // A fix whose publisher identity couldn't be decided is blocked like a refused one, but it's a check that failed:
+  // reported as an error, so the run reads as one that broke, while the other units still go on.
+  const undecided = found.fixes.flatMap((fix) => (fix.undecided === true && fix.problem !== undefined ? [fix.problem] : []));
+  const report = { gaps: found.gaps.length, ...(undecided.length > 0 ? { errors: undecided } : {}) };
   if (found.incomplete.length > 0) return { ...report, outcome: "incomplete", incomplete: found.incomplete };
   const planned = await withParentsPlanned(found, base, env, inventories);
   const selection = await coupledWork(planned.fixes, planned.peers);
