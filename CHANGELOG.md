@@ -33,6 +33,12 @@
 
 ### Fixed
 
+- The gate no longer drops a project's repository advisory for every version once OSV has a record of it for the
+  package: each version is judged on its own. Where OSV-Scanner (GitHub's database, for an action) reports the
+  advisory's alias group for that version, its record stands as before; a version only the repository's wider range
+  names keeps the repository's record, as an unreviewed finding. Base, head and young candidates follow the same rule.
+  Adopters may see new findings for such versions: a PR adding one fails, and it vetoes candidates, but triggers no
+  fix on its own. The gate no longer looks single OSV records up before scanning.
 - secure-it no longer plans an own package's young fix (or an own carrier's, or an own direct peer a fix moves with
   it) as held: the gate never holds an own package, so it now goes with the other fixes instead of waiting in a
   cooldown PR.

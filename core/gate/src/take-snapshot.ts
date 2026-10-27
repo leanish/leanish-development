@@ -1,28 +1,26 @@
 /**
  * Takes the advisory snapshot for a set of package versions: OSV-Scanner
  * over all npm and Maven ones in one run, GitHub's advisory database for
- * GitHub Actions (OSV can't match their versions), plus the published advisories of each one's
- * source repository that OSV didn't cover yet. Repository advisories and
- * OSV's records for them are read first, the scanner runs after, so OSV
- * "covering" an advisory always means the scan saw it: then OSV-Scanner's
- * verdict on the version stands. A repository advisory marked as malware is
- * always kept: OSV might not classify it the same way.
+ * GitHub Actions (OSV can't match their versions), plus the published
+ * advisories of each one's source repository. Each version's findings are
+ * combined: where OSV (GitHub, for an action) reports a repository
+ * advisory's alias group for that version, its record stands and the
+ * repository's is left out; for a version only the repository's range
+ * names, the repository's record is kept. A repository advisory marked as
+ * malware is always kept: OSV might not classify it the same way.
  */
 import type { ActionsGitHub } from "./actions-github.ts";
-import { type Fetch, mapLimited } from "./http.ts";
-import { OsvRecords } from "./osv-records.ts";
+import { mapLimited } from "./http.ts";
 import { scanWithOsvScanner, type OsvRecord, type OsvScannerOptions } from "./osv-scanner.ts";
 import { packageKey, type PackageVersion, uniqueVersions, versionKey } from "./package-version.ts";
 import { matchRepositoryAdvisories, type RepositoryAdvisory, type RepositoryAdvisoryOptions } from "./repository-advisories.ts";
-import { type Advisory, isMalware, Snapshot } from "./snapshot.ts";
+import { type Advisory, aliasGroups, isMalware, Snapshot } from "./snapshot.ts";
 import { sourceRepositories, type SourceRepoOptions } from "./source-repos.ts";
 
 export interface SnapshotOptions {
   readonly osv: OsvScannerOptions;
   readonly sourceRepos: SourceRepoOptions;
   readonly repositoryAdvisories: RepositoryAdvisoryOptions;
-  /** For OSV record lookups. */
-  readonly fetch: Fetch;
   /** GitHub's advisory database, for GitHub Actions. */
   readonly actions: ActionsGitHub;
   readonly now: () => Date;
@@ -51,20 +49,6 @@ export async function takeSnapshot(
   for (const pkg of extra) repos.set(versionKey(pkg), repoOfPackage.get(packageKey(pkg)));
   const unique = [...listed, ...extra];
   const repository = await matchRepositoryAdvisories(unique, repos, options.repositoryAdvisories, new Set(extra.map(versionKey)));
-  const records = new OsvRecords(options.fetch);
-  const covers = (id: string, pkg: PackageVersion) =>
-    pkg.ecosystem === "GitHub Actions" ? options.actions.globalCovers(id, pkg.name) : records.covers(id, pkg);
-  const fromRepositories = new Map<string, Advisory[]>();
-  for (const pkg of unique) {
-    const kept: Advisory[] = [];
-    for (const advisory of repository.affecting.get(versionKey(pkg)) ?? []) {
-      const converted = fromRepository(advisory);
-      const covered = converted.malicious ? [] : await Promise.all(converted.ids.map((id) => covers(id, pkg)));
-      if (!covered.some(Boolean)) kept.push(converted);
-    }
-    fromRepositories.set(versionKey(pkg), kept);
-  }
-  // After the coverage lookups, never before: see the file header. OSV can't match Actions versions; GitHub can.
   const osv = await scanWithOsvScanner(unique.filter((pkg) => pkg.ecosystem !== "GitHub Actions"), options.osv);
   const actions = unique.filter((pkg) => pkg.ecosystem === "GitHub Actions");
   const fromGitHub = await mapLimited(actions, 8, (pkg) => options.actions.advisories(pkg.name, pkg.version));
@@ -72,9 +56,25 @@ export async function takeSnapshot(
   const affecting = new Map<string, Advisory[]>();
   for (const pkg of unique) {
     const key = versionKey(pkg);
-    affecting.set(key, [...(osv.get(key) ?? []).map(fromOsv), ...(github.get(key) ?? []), ...(fromRepositories.get(key) ?? [])]);
+    const reviewed = [...(osv.get(key) ?? []).map(fromOsv), ...(github.get(key) ?? [])];
+    affecting.set(key, combine(reviewed, (repository.affecting.get(key) ?? []).map(fromRepository)));
   }
   return new Snapshot(affecting, repository.gaps, takenAt);
+}
+
+/**
+ * One version's advisories: OSV's or GitHub's, then each repository advisory
+ * whose alias group they don't report for this version (malware always).
+ * Groups are built from this version's records alone, so the decision
+ * doesn't depend on which other versions share the snapshot. The snapshot
+ * groups across versions, so another version's record may still link a kept
+ * repository record to a reported one: it's then one finding, and reviewed.
+ */
+function combine(reviewed: ReadonlyArray<Advisory>, own: ReadonlyArray<Advisory>): Advisory[] {
+  const groups = aliasGroups([...reviewed, ...own]);
+  const groupOf = (id: string) => groups.get(id) ?? id;
+  const reported = new Set(reviewed.map((advisory) => groupOf(advisory.id)));
+  return [...reviewed, ...own.filter((advisory) => advisory.malicious || !reported.has(groupOf(advisory.id)))];
 }
 
 export function fromOsv(record: OsvRecord): Advisory {
