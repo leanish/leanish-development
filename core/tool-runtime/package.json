@@ -46,6 +46,7 @@
     "./osv-scanner": "./src/osv-scanner.ts",
     "./own-pr": "./src/own-pr.ts",
     "./plan-blocks": "./src/plan-blocks.ts",
+    "./pr-text": "./src/pr-text.ts",
     "./publication": "./src/publication.ts",
     "./publication-text": "./src/publication-text.ts",
     "./reconcile": "./src/reconcile.ts",

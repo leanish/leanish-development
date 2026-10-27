@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed
+
+- bump-it's plan shows package names, versions, locations and notes as literal code spans, as secure-it's does, so
+  a link, mention, comment or table pipe in them stays text. `literal()` moved to `@leanish/tool-runtime/pr-text`.
+- bump-it keeps the branch names it takes during a run, even for a unit that fails later, so two units whose topics
+  cut to the same branch name get one each (the second with a `-2` suffix) instead of the second failing.
+
 ## 0.8.1 - 2026-10-26
 
 ### Changed

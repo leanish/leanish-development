@@ -55,6 +55,7 @@ async function createExecution(context: ToolRunContext, deps: BumpItDeps): Promi
       verifiedTree: () => deps.candidateTree(context.workingCopy),
       publicationParent: (prepared) => deps.publicationParent(context.workingCopy, prepared),
     },
+    branches: new Set(),
   };
 }
 
