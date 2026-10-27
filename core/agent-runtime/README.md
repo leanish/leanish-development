@@ -71,6 +71,9 @@ until the run completes, by `end` or by a signal, through one path: `extra()` gi
 then; `beforeFinalLine(record)` gives lines written right before the final one, in the same write; `end` resolves
 once the line is flushed, and a second `end`, or one racing a signal, writes nothing more. When `extra` or
 `beforeFinalLine` throws, the line is still written without what it would have added, and its `error` says why.
+When the stream fails the write (a closed pipe, a full disk), `end` still resolves and the command keeps its exit
+code: the `error` the stream emits afterwards is heard and dropped, only by the listener the write added, which goes
+once the stream reports `error` or `close` (after a successful write, at once).
 `marker` is for a wrapper that writes its own final line unless told otherwise: its `env` variable names the file, and
 is read and removed from the environment as reporting starts, before the command starts any child process.
 `when: "start"` writes the file as soon as reporting is in place; `when: "after-final-line"` once the final line is
@@ -87,7 +90,7 @@ How the incubator's hosts compose it when they adopt this package:
 - **Lambda:** no `startRunReport`, whose signal handlers belong to a process, not to an invocation. Each invocation
   creates its own `RunReport`, passes its `usageRecorder` to the skills it runs, and logs the line
   `finish({ ..., extra })` returns (`finishRecord` also gives the record). `writeFinalLine` writes it to a stream when
-  that's where it goes; `reportOnTerminationSignals` stays for a host that wires signals itself.
+  that's where it goes, with the same handling of a failed write; `reportOnTerminationSignals` stays for a host that wires signals itself.
 
 ## Known limits
 

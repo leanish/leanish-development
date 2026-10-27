@@ -2,7 +2,8 @@
 // Local changes: only the fields every host shares; the host names the run with `identified` (the tools' `tool` and
 // `repo`, the incubator's `agent`) and adds its own fields with `extra` (the incubator's dispatch counts), also on a
 // signal; the command's `result` comes with its end; `startRunReport` owns a command's whole report (signals, the
-// wrapper's marker, lines before the final one) instead of each host wiring it.
+// wrapper's marker, lines before the final one) instead of each host wiring it; a failed write's later 'error' is heard
+// and dropped, so the process keeps its exit code.
 import { writeFileSync } from "node:fs";
 import { constants } from "node:os";
 import { performance } from "node:perf_hooks";
@@ -155,21 +156,44 @@ function assertHostFields(kind: "identity" | "extra", fields: Readonly<Record<st
   if (clashing.length > 0) throw new Error(`run report ${kind} fields may not replace '${clashing.join("', '")}'`);
 }
 
-/** Writes `line` and resolves once it's handed to the OS, so an exit right after can't drop it. */
+/**
+ * Writes `line` and resolves once it's handed to the OS, so an exit right after can't drop it. A failed write resolves
+ * too, with nothing more written: the stream's 'error' that follows is swallowed rather than ending the process, so the
+ * host's exit code stands.
+ */
 export async function writeFinalLine(stream: NodeJS.WritableStream, line: string): Promise<void> {
-  await new Promise<void>((done) => {
-    stream.write(line, () => done());
-  });
+  await flushed(stream, line);
 }
 
 /**
  * Writes `text`; resolves once it's handed to the OS, to whether that worked. A stream that throws instead of calling
  * back with its error also resolves to false: the run's end must still settle, with its exit code.
+ *
+ * A Node stream whose write fails calls back with the error, then emits 'error' once it's destroyed, which can take
+ * longer than a turn of the event loop (an asynchronous `_destroy`). With no listener that kills the process, its exit
+ * code lost, so this listens before writing: after a success it stops at once; after a failure it stays until the
+ * stream's 'error' or 'close'. Only its own listeners are removed, the host's stay. The end doesn't wait for either
+ * event: a stream may never emit 'close' (`emitClose: false`).
  */
 function flushed(stream: NodeJS.WritableStream, text: string): Promise<boolean> {
   return new Promise((done) => {
+    // Settles a write the stream ended before calling back, if any; nothing more comes after either event.
+    const streamEnded = (): void => {
+      done(false);
+      stopListening();
+    };
+    const stopListening = (): void => {
+      stream.removeListener("error", streamEnded);
+      stream.removeListener("close", streamEnded);
+    };
+    stream.on("error", streamEnded);
+    stream.on("close", streamEnded);
     try {
-      stream.write(text, (err) => done(err === undefined || err === null));
+      stream.write(text, (err) => {
+        const written = err === undefined || err === null;
+        done(written);
+        if (written) stopListening();
+      });
     } catch {
       done(false);
     }

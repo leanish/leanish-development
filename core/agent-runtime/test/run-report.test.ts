@@ -1,15 +1,17 @@
 // New in this repository; the signal cases are adapted from leanish/leanish-development
 // core/runtime/test/unit/run-local-cli.test.ts at c6282df (see PROVENANCE.md).
 import { spawn, spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
+import { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { RunReport, type RunFinished, startRunReport } from "../src/report/run-report.ts";
+import { RunReport, type RunFinished, startRunReport, writeFinalLine } from "../src/report/run-report.ts";
 import { unreportedSkillUsage, toSkillUsageRecord } from "../src/usage/skill-usage-record.ts";
 
 const SIGNALLED = fileURLToPath(new URL("./fixtures/report-on-signal.ts", import.meta.url));
@@ -52,13 +54,54 @@ async function killedStarted(mode: "plain" | "throwing-extra" | "throwing-before
   return { signal: died, lines: log.split("\n").filter((line) => line.startsWith("{")).map((line) => JSON.parse(line) as Record<string, unknown>) };
 }
 
+const FAILING = fileURLToPath(new URL("./fixtures/final-line-on-failing-stream.ts", import.meta.url));
+
+/** Runs the failing stream's fixture to its exit (`signal`: sends it a SIGTERM once it's ready), with what it printed. */
+async function onFailingStream(
+  mode: "end" | "no-close" | "write-final-line" | "signal",
+  marker: string,
+): Promise<{ code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string }> {
+  const child = spawn(process.execPath, [FAILING, mode], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, TEST_REPORT_MARKER: marker } });
+  let stdout = "";
+  let stderr = "";
+  let killed = false;
+  child.stdout.on("data", (chunk: Buffer) => {
+    stdout += chunk.toString("utf8");
+    if (mode === "signal" && !killed && stdout.includes("ready\n")) {
+      killed = true;
+      child.kill("SIGTERM");
+    }
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderr += chunk.toString("utf8");
+  });
+  // 'close', not 'exit': once both pipes are read to their end.
+  const [code, signal] = await new Promise<[number | null, NodeJS.Signals | null]>((done) => child.on("close", (exitCode, died) => done([exitCode, died])));
+  return { code, signal, stdout, stderr };
+}
+
+/** A real stream whose writes fail with EPIPE and whose destroy takes 20 ms, so its 'error' comes after setImmediate. */
+function failingWritable(emitClose = true): Writable {
+  return new Writable({
+    emitClose,
+    write: (_chunk, _encoding, callback) => callback(Object.assign(new Error("write EPIPE"), { code: "EPIPE" })),
+    destroy: (err, callback) => {
+      setTimeout(() => callback(err), 20);
+    },
+  });
+}
+
+/** Resolves once `stream` emitted 'error' and every listener of that turn ran. */
+const errorEmitted = (stream: Writable) => new Promise<void>((done) => stream.once("error", () => setImmediate(done)));
+
 /** A stream that keeps each write's callback until `flush`, as a slow pipe would; `failing` flushes with an error. */
-class HeldStream {
+class HeldStream extends EventEmitter {
   readonly writes: string[] = [];
   readonly #pending: Array<() => void> = [];
   readonly #failing: boolean;
 
   constructor(failing = false) {
+    super();
     this.#failing = failing;
   }
 
@@ -519,7 +562,7 @@ describe("startRunReport", () => {
       expect(listenerCounts()).toEqual(baseline);
     }
     // A stream that throws instead of calling back still lets the end settle, so the command returns its exit code.
-    const throwing = { write: () => { throw new Error("stream destroyed"); } } as unknown as NodeJS.WritableStream;
+    const throwing = Object.assign(new EventEmitter(), { write: () => { throw new Error("stream destroyed"); } }) as unknown as NodeJS.WritableStream;
     await expect(startRunReport({ stream: throwing, env: {} }).end({ status: "ok", exitCode: 0 })).resolves.toBeUndefined();
     expect(listenerCounts()).toEqual(baseline);
   });
@@ -560,4 +603,71 @@ describe("startRunReport", () => {
     ]);
     expect(readFileSync(marker, "utf8")).toBe("reported\n");
   }, 20_000);
+
+  // A real stream calls a failed write back, then emits 'error' once destroyed; unheard, that 'error' would end the
+  // process with exit code 1, whatever the run's own.
+  it.each(["end", "no-close", "write-final-line"] as const)(
+    "on a stream whose write fails, settles and the process exits with its own code, its later 'error' heard (%s)",
+    async (mode) => {
+      const marker = join(mkdtempSync(join(tmpdir(), "run-report-marker-")), "marker");
+      const { code, signal, stdout, stderr } = await onFailingStream(mode, marker);
+      expect({ code, signal }, stderr).toEqual({ code: 0, signal: null });
+      // Settled before the stream finished destroying itself, so before its 'error'.
+      expect(stdout).toBe("settled\ndestroyed\n");
+      expect(existsSync(marker)).toBe(false);
+    },
+    20_000,
+  );
+
+  it("on a real SIGTERM with a failing stream, still dies of the signal, without the marker", async () => {
+    const marker = join(mkdtempSync(join(tmpdir(), "run-report-marker-")), "marker");
+    const { code, signal, stderr } = await onFailingStream("signal", marker);
+    expect({ code, signal }, stderr).toEqual({ code: null, signal: "SIGTERM" });
+    expect(existsSync(marker)).toBe(false);
+  }, 20_000);
+
+  it.each([
+    ["startRunReport's end", (stream: Writable) => startRunReport({ stream, env: {} }).end({ status: "ok", exitCode: 0 })],
+    ["writeFinalLine", (stream: Writable) => writeFinalLine(stream, "{}\n")],
+  ] as const)("listens to the stream only while a write needs it, keeping the host's listener (%s)", async (_path, write) => {
+    const host = (): void => undefined;
+    const written = new Writable({ write: (_chunk, _encoding, callback) => callback() });
+    written.on("error", host);
+    await write(written);
+    expect(written.listeners("error")).toEqual([host]);
+    expect(written.listenerCount("close")).toBe(0);
+
+    for (const emitClose of [true, false]) {
+      const heard: Error[] = [];
+      const hostHearing = (err: Error): void => {
+        heard.push(err);
+      };
+      const failing = failingWritable(emitClose);
+      failing.on("error", hostHearing);
+      const emitted = errorEmitted(failing);
+      await write(failing);
+      // Settled on the write's callback; still listening for the 'error' to come.
+      expect(failing.listenerCount("error")).toBe(3);
+      await emitted;
+      expect(failing.listeners("error")).toEqual([hostHearing]);
+      expect(failing.listenerCount("close")).toBe(0);
+      expect(heard.map((err) => err.message)).toEqual(["write EPIPE"]);
+    }
+  });
+
+  it("on a signal, listens to a failing stream until its 'error', after raising the signal", async () => {
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+    const baseline = listenerCounts();
+    const failing = failingWritable();
+    const emitted = errorEmitted(failing);
+    const { fakeSignal } = withFakeSignals(() => startRunReport({ stream: failing, env: {} }));
+    fakeSignal("SIGTERM");
+    await settle();
+    expect(kill.mock.calls).toEqual([[process.pid, "SIGTERM"]]);
+    expect(failing.listenerCount("error")).toBe(2);
+    await emitted;
+    expect(failing.listenerCount("error")).toBe(0);
+    expect(failing.listenerCount("close")).toBe(0);
+    expect(listenerCounts()).toEqual(baseline);
+  });
 });
