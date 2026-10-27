@@ -75,9 +75,10 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
        other groups keep their grouping, topics and PRs, and still run. Groups that can only be planned or resolved
        together (two young Gradle fixes that conflict until both declarations move) therefore fail apart until they
        age. If the aged batch can't be planned, it fails with its error; when it has npm work, which of its roots
-       would join held work is unknown, so every held routine unit fails that run too. A base-movement review reports
-       an error for each PR whose unit failed, or for every held PR when the aged plan failed, without closing it,
-       while other PRs still rebase. The actual agent edit is still verified before publication. Each failure is
+       would join held work is unknown, so the held units with npm work (in their fixes or coupled sets) fail that run
+       too, while held work without npm still runs: those roots can't join it. A base-movement review reports an error
+       for each PR whose unit failed, or for every held PR with npm moves when the aged plan failed (even one whose fix
+       has aged since, which that plan could hold again), without closing it, while other PRs still rebase. The actual agent edit is still verified before publication. Each failure is
        logged with its unit and reason.
        One held unit skips this preflight; npm-only groups cost no extra Gradle resolution. Preflight results, including
        execution errors, are shared by base commit and plan identity for one run or review tick; the next invocation

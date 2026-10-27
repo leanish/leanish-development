@@ -273,12 +273,12 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   const results: Readonly<Record<string, unknown>>[] = [];
   const { units, failures, ungrouped } = await holdRequiredYoung(execution, selection.units, base);
   // Claims over every unit, failed ones included: a failure never moves another unit's claim.
-  const claims = ungrouped ?? await heldClaimsOf(execution.publication, units, own);
+  const claims = await heldClaimsOf(execution.publication, units, own);
   for (const unit of units) {
     try {
       // A unit whose own planning or preflight failed fails alone; held units also need every own PR's claim and, when
-      // the aged plan failed, the grouping it decides. Other units still run.
-      const failure = failures.get(unit) ?? (isHeldUnit(unit) ? ungrouped : undefined);
+      // the aged plan failed, held units with npm work need the grouping it decides. Other units still run.
+      const failure = failures.get(unit) ?? (isHeldUnit(unit) && hasNpmWork(unit) ? ungrouped : undefined);
       if (failure !== undefined) throw failure;
       if (claims instanceof Error && isHeldUnit(unit)) throw claims;
       results.push(await runUnit(execution, unit, base, own, claims instanceof Error ? undefined : claims.get(unit.topic)));
@@ -425,11 +425,19 @@ interface HeldSplit {
   /** Units that fail with their own error instead of running: their planning or their preflight failed. */
   readonly failures: ReadonlyMap<SecurityUnit, Error>;
   /**
-   * Why the held units' grouping is unknown, when it is: the aged plan, which decides which of its roots join held
-   * work, failed. No held unit runs, and no held PR is matched or retired, against the grouping without it.
+   * Why the grouping of held work with npm is unknown, when it is: the aged plan, which decides which of its npm roots
+   * join held work, failed. No held unit with npm work runs, and no held PR with npm moves is matched or retired,
+   * against the grouping without it. Held work without npm can't be joined by those roots, so it goes on.
    */
   readonly ungrouped?: Error;
 }
+
+/**
+ * Whether the aged plan's npm roots could join this held unit: its work or its coupled sets have an npm package. The
+ * required-young moves, their bridges and the parent and carried sets they bring are npm-only.
+ */
+const hasNpmWork = (unit: SecurityUnit) => unit.work.some((fix) => fix.ecosystem === "npm")
+  || (unit.coupled ?? []).some((set) => set.some((key) => key.startsWith("npm|")));
 
 /**
  * A routine fix whose required npm dependency is younger than the wait can't
@@ -444,9 +452,9 @@ interface HeldSplit {
  */
 async function holdRequiredYoung(execution: Execution, units: ReadonlyArray<SecurityUnit>, base: PlanBase): Promise<HeldSplit> {
   const prepared = await withRequiredYoung(execution, units, base);
-  if (prepared.ungrouped !== undefined) return prepared;
   const pending = prepared.units.filter((unit) => !prepared.failures.has(unit));
-  return { units: prepared.units, failures: new Map([...prepared.failures, ...await heldPreflight(execution, pending, base)]) };
+  // Held units are preflighted alike when the grouping of npm work is unknown: their count decides whether it runs.
+  return { ...prepared, failures: new Map([...prepared.failures, ...await heldPreflight(execution, pending, base)]) };
 }
 
 /**
@@ -503,7 +511,8 @@ async function heldGradleProblems(plan: ChangePlan, base: PlanBase, inventories:
 /**
  * The aged unit's fixes that need a young required npm companion, held with it (the first step of `holdRequiredYoung`).
  * When the aged unit can't be planned, it fails with that error rather than being planned again; with npm work, which
- * of its roots the young requirements would hold is unknown, so the held grouping is too.
+ * of its roots the young requirements would hold is unknown, so the grouping of held npm work is too, whether or not
+ * held units remain (a held PR whose fix has aged since could be held again by it).
  */
 async function withRequiredYoung(execution: Execution, units: ReadonlyArray<SecurityUnit>, base: PlanBase): Promise<HeldSplit> {
   const unchanged = { units: [...units], failures: new Map<SecurityUnit, Error>() };
@@ -515,7 +524,7 @@ async function withRequiredYoung(execution: Execution, units: ReadonlyArray<Secu
   } catch (error) {
     const failure = asError(error);
     // Only npm roots can require a young companion; without them the held grouping doesn't depend on this plan.
-    const ungrouped = aged.work.some((fix) => fix.ecosystem === "npm") && units.some(isHeldUnit)
+    const ungrouped = aged.work.some((fix) => fix.ecosystem === "npm")
       ? new Error(`the aged unit's plan, which decides which of its fixes join held work, failed: ${failure.message}`)
       : undefined;
     return { ...unchanged, failures: new Map([[aged, failure]]), ...(ungrouped === undefined ? {} : { ungrouped }) };
@@ -931,8 +940,9 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       if (blocked.length > 0) notes.push({ number: pr.number, blocked });
       // Split exactly as a run would, required-dependency moves included, before telling which unit is this PR's.
       const held = await holdRequiredYoung(execution, units, { tree: base, gradle: baseGradle });
-      // An unknown held grouping can't tell which unit a held PR is, nor retire it; a non-held PR doesn't depend on it.
-      if (held.ungrouped !== undefined && isHeldPlan(previous)) throw held.ungrouped;
+      // An unknown grouping of held npm work can't tell which unit a held PR with npm moves is, nor retire it; a held PR
+      // without npm moves, or a non-held PR, doesn't depend on it.
+      if (held.ungrouped !== undefined && isHeldPlan(previous) && previous.moves.some((move) => move.ecosystem === "npm")) throw held.ungrouped;
       const split = held.units;
       // A held PR is the unit a run would give it, so a run and a review never disagree on which PR is whose.
       const open = isHeldPlan(previous) ? await claimable(publication, await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base)) : [];

@@ -62,8 +62,10 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 - **Held work that only plans together fails until it ages (secure-it)**: errors no longer regroup held work, so held
   groups that can't be planned apart (npm roots keeping each other's old requirements) or whose Gradle references only
   resolve together each fail visibly, run after run, until their versions age into the aged batch or a person moves
-  them. When the aged batch can't be planned and has npm work, which of its roots join held work is unknown, so every
-  held routine unit fails that run with it rather than be grouped without it. Each failure is logged and reported.
+  them. When the aged batch can't be planned and has npm work, which of its roots join held work is unknown, so the
+  held units with npm work fail that run with it rather than be grouped without it (held work without npm still
+  runs), and a review keeps every held PR with npm moves, even one whose fix has aged since. Each failure is logged
+  and reported.
   Narrowed in 0.9.0.
 - **`gradle.ignoreConfigurations` in reference checks (secure-it)**: the Gradle reference checks in preflight and
   verification include the configurations the gate is told to ignore, so a failure there can block a fix the gate

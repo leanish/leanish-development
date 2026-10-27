@@ -1854,6 +1854,59 @@ describe("the cooldown hold", () => {
     expect(h.github.prs.get(7)).toEqual(pr);
   });
 
+  it("keeps a held PR whose fix has aged since when the aged plan fails, rather than retiring it", async () => {
+    // No held unit remains, but had the aged plan succeeded, a young requirement could have held vite again.
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite",
+      body: withMarker(RULES, withPlanSection("Fixes vite.", { ...await heldPlan(YOUNG_VITE()), cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pr], baseSha: "f".repeat(40), fixes: [vite(), leftPad()] });
+    h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
+    const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => {
+      if (plan.topic === "security") throw new Error("registry 502");
+      return plan;
+    };
+    expect(await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).review(h.context)).toMatchObject({ reviewed: [
+      { number: 7, outcome: "error", detail: expect.stringContaining("registry 502") },
+    ] });
+    expect(h.github.prs.get(7)).toEqual(pr);
+    expect(h.workspace.deletions).toEqual([]);
+  });
+
+  /** A held Gradle unit, a young npm one and an aged npm batch whose plan fails, on a base with an npm lockfile. */
+  async function heldGradleBesideFailedAgedNpm(options: { seeded?: boolean } = {}) {
+    const h = heldGradle({ single: true, independent: true });
+    if (options.seeded) await seedSplitGradlePrs(h);
+    const found = await h.deps.candidates(tree(BASE_SHA), await h.deps.gate(h.context), {});
+    const withLockfile = (base: Tree): Tree => ({ ...base,
+      read: async (path) => path === "package-lock.json" ? LOCK : base.read(path),
+      list: async (dir) => [...await base.list(dir), "package-lock.json"],
+    });
+    const trees: SecureItDeps["trees"] = {
+      commit: async (wc, sha) => withLockfile(await h.deps.trees.commit(wc, sha)),
+      working: (wc) => withLockfile(h.deps.trees.working(wc)),
+    };
+    const requiredNpm: SecureItDeps["requiredNpm"] = async (base, plan, env) => {
+      if (plan.topic === "security") throw new Error("registry 502");
+      return h.deps.requiredNpm(base, plan, env);
+    };
+    const tool = secureIt({ ...h.deps, trees, requiredNpm, candidates: async () => ({ ...found, fixes: [...h.fixes, YOUNG_VITE(), leftPad()] }) });
+    return { h, tool };
+  }
+
+  it("keeps a held unit without npm work running, and its PR reviewed, when the aged npm plan fails", async () => {
+    const { h, tool } = await heldGradleBesideFailedAgedNpm();
+    expect(await tool.run(h.context)).toMatchObject({ units: [
+      { topic: "security", outcome: "failed", detail: "registry 502" },
+      { topic: "security-cooldown-g:a", outcome: "published" },
+      { topic: "security-cooldown-vite", outcome: "failed", detail: expect.stringContaining("the aged unit's plan") },
+    ] });
+    expect([...h.github.prs.values()].map((pr) => planOf(pr.body)?.packages)).toEqual([["Maven|g:a"]]);
+    const seeded = await heldGradleBesideFailedAgedNpm({ seeded: true });
+    expect(await seeded.tool.review({ ...seeded.h.context, workingCopy: { ...seeded.h.context.workingCopy, headSha: "f".repeat(40) } })).toMatchObject({ reviewed: [
+      { number: 7, outcome: "rebased" },
+    ] });
+    expect(planOf(seeded.h.github.prs.get(7)!.body)?.members).toEqual(["Maven|g:a"]);
+  });
+
   it("keeps held units running when an aged unit without npm work can't be planned", async () => {
     const h = heldGradle({ independent: true, extra: true });
     const found = await h.deps.candidates(tree(BASE_SHA), await h.deps.gate(h.context), {});
