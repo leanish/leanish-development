@@ -56,10 +56,14 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 - **Held bodies keep raw length budgets (secure-it)**: a held PR's body is composed within raw UTF-16 budgets (61,440
   for fresh text, 65,280 with its marker), which can cut table rows, drop evidence or refuse a body publication
   would accept. Publication checks every body as it sends it. Kept since 0.8.0.
-- **Transient errors can regroup held work (secure-it)**: a transient npm planning error or a recorded Gradle reference
-  failure can split or merge held units differently from one run to the next (PR churn, and waiting for the youngest
-  version). An error running Gradle itself fails every held routine unit of that run instead, while other units
-  continue. Each failure is logged. New in 0.8.0.
+- **Held work that only plans together fails until it ages (secure-it)**: errors no longer regroup held work, so held
+  groups that can't be planned apart (npm roots keeping each other's old requirements) or whose Gradle references only
+  resolve together each fail visibly, run after run, until their versions age into the aged batch or a person moves
+  them. When the aged batch can't be planned and has npm work, which of its roots join held work is unknown, so the
+  held units with npm work fail that run with it rather than be grouped without it. Held work without npm still runs,
+  unless it would claim a held PR with npm moves: such PRs are kept for their npm work, in runs and in reviews (even
+  one whose fix has aged since). Each failure is logged and reported.
+  Narrowed in 0.9.0.
 - **`gradle.ignoreConfigurations` in reference checks (bump-it)**: bump-it's Gradle reference comparison in
   verification includes the resolution failures of the configurations the gate is told to ignore, so a failure there
   can block an update the gate wouldn't. secure-it's preflight and verification leave them out since 0.9.0; bump-it's
