@@ -35,7 +35,7 @@ import { runSandboxed, sandboxWritable } from "@leanish/tool-runtime/sandboxed";
 import { ensureOsvScanner, verifyingRun } from "@leanish/tool-runtime/osv-scanner";
 import { freeBranch, ownPullRequests, stateOf, topicOf } from "@leanish/tool-runtime/own-pr";
 import { publicationParent, revertToBase } from "@leanish/tool-runtime/reconcile";
-import { clearLeftoverBranch, closeAndDelete, ownOpenPullRequests, type PublicationContext, publishNew, publishUpdate, recoverPublication, rewriteText } from "@leanish/tool-runtime/publication";
+import { assertPublishable, clearLeftoverBranch, closeAndDelete, ownOpenPullRequests, type PublicationContext, publishNew, publishUpdate, recoverPublication, rewriteText } from "@leanish/tool-runtime/publication";
 import { machineRoots } from "@leanish/tool-runtime/publication-text";
 import { type BaseMerge, type CooldownState, reviewOpenPullRequests, type ReviewSteps } from "@leanish/tool-runtime/review";
 
@@ -48,7 +48,7 @@ import { withGradleParents } from "./gradle-parents.ts";
 import { withParents } from "./npm-parents.ts";
 import { requiredNpmPlan } from "./npm-required-plan.ts";
 import { npmWindowFor } from "./npm-window.ts";
-import { assertBodyFits, assertNoPlanMarker } from "@leanish/tool-runtime/plan-blocks";
+import { assertNoPlanMarker } from "@leanish/tool-runtime/plan-blocks";
 import { planDigest, planOf, planSection, withPlanSection } from "./plan-block.ts";
 import { type ChangePlan, coupledWork, type FixWork, heldMembers, heldUnits, isHeldTopic, packageKey, planFor, type PlannedHold, type SecurityUnit, withUnsupportedCarriers } from "./plan.ts";
 import { namedProblems, retryWithoutNamed, type ProblemMoves } from "./retry.ts";
@@ -961,9 +961,9 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
         // A different plan is a different change: its own title and description.
         if (changed && answer.publication != null) {
           assertNoPlanMarker(answer.publication.body);
-          const body = `${answer.publication.body}\n\n${planSection(plan)}`;
-          assertBodyFits(body);
-          content = { title: answer.publication.title, body, commitMessage: answer.publication.commitMessage };
+          // Composed as publication will compose it (a held plan's evidence may give way), so the check measures that text.
+          content = { title: answer.publication.title, body: withPlanSection(answer.publication.body, plan), commitMessage: answer.publication.commitMessage };
+          assertPublishable(execution.publication, content);
         }
       } else {
         await prepareNpmFiles(execution, plan, base, true);
