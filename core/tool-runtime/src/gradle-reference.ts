@@ -9,7 +9,7 @@
  */
 import { fileURLToPath } from "node:url";
 
-import { gradleLocation, type DeclaredConstraint, type GradleInventory } from "@leanish/gate/gradle";
+import { gradleLocation, type DeclaredConstraint, type GradleInventory, ignoresResolution } from "@leanish/gate/gradle";
 
 import { declaredAt, UNVERSIONED } from "./edit-checks.ts";
 import type { GradleTransform } from "./inventories.ts";
@@ -82,9 +82,11 @@ export function referenceProblems(base: GradleInventory | undefined, reference: 
 /**
  * Where `head` differs from `reference`: a build or configuration only one has (or of another kind), the modules a
  * configuration resolves, its declarations and dependency constraints (every rich-version facet, versionless ones
- * included), and anything either fails to resolve.
+ * included), and anything either fails to resolve. As in the gate, a configuration `ignored` lists
+ * (`gradle.ignoreConfigurations`) may fail to resolve, but only the same way in both: a configuration whose resolution
+ * throws resolves nothing on either side, so its failures are what's left to tell an edit there apart.
  */
-export function referenceDifferences(reference: GradleInventory | undefined, head: GradleInventory | undefined): string[] {
+export function referenceDifferences(reference: GradleInventory | undefined, head: GradleInventory | undefined, ignored: ReadonlyArray<string> = []): string[] {
   if (reference === undefined && head === undefined) return [];
   if (reference === undefined || head === undefined) return [`the edit ${head === undefined ? "removed" : "added"} the Gradle inventory the plan's reference ${head === undefined ? "has" : "doesn't have"}`];
   const was = locations(reference);
@@ -98,8 +100,12 @@ export function referenceDifferences(reference: GradleInventory | undefined, hea
       continue;
     }
     if (expected.kind !== actual.kind) problems.push(`${location} is a ${actual.kind} configuration in the edit, ${expected.kind} in the plan's reference`);
-    for (const failure of expected.failures) problems.push(`${location} doesn't resolve in the plan's reference: ${failure}`);
-    for (const failure of actual.failures) problems.push(`${location} doesn't resolve in the edit: ${failure}`);
+    if (ignoresResolution(ignored, location)) {
+      problems.push(...listDifference(location, "fails to resolve", expected.failures, actual.failures));
+    } else {
+      for (const failure of expected.failures) problems.push(`${location} doesn't resolve in the plan's reference: ${failure}`);
+      for (const failure of actual.failures) problems.push(`${location} doesn't resolve in the edit: ${failure}`);
+    }
     problems.push(...listDifference(location, "resolves", expected.resolved, actual.resolved));
     problems.push(...listDifference(location, "declares", expected.declared, actual.declared));
   }

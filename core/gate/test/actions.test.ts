@@ -409,21 +409,16 @@ describe("GitHub's advisory database", () => {
     ]);
   });
 
-  it("counts global coverage only for reviewed or malware records, and follows every page", async () => {
+  it("follows every page of an action version's advisories", async () => {
     const affects = (type: string) => `${API}/advisories?ecosystem=actions&affects=${encodeURIComponent("a/b@v1.0.0")}&type=${type}&per_page=100`;
-    const vulnerable = { vulnerabilities: [{ package: { ecosystem: "actions", name: "a/b" } }] };
     const gh = new ActionsGitHub(
       fakeFetch({
-        [`${API}/advisories/GHSA-unrv-unrv-unrv`]: { body: { ghsa_id: "GHSA-unrv-unrv-unrv", type: "unreviewed", ...vulnerable } },
-        [`${API}/advisories/GHSA-revd-revd-revd`]: { body: { ghsa_id: "GHSA-revd-revd-revd", type: "reviewed", ...vulnerable } },
         [affects("reviewed")]: { body: [{ ghsa_id: "GHSA-page-one1-aaaa", type: "reviewed" }], headers: { link: `<${API}/advisories?page=2>; rel="next"` } },
         [`${API}/advisories?page=2`]: { body: [{ ghsa_id: "GHSA-page-two2-bbbb", type: "reviewed" }] },
         [affects("malware")]: { body: [] },
       }),
       undefined,
     );
-    expect(await gh.globalCovers("GHSA-unrv-unrv-unrv", "a/b")).toBe(false);
-    expect(await gh.globalCovers("GHSA-revd-revd-revd", "a/b")).toBe(true);
     expect((await gh.advisories("a/b", "v1.0.0")).map((advisory) => advisory.id)).toEqual(["GHSA-page-one1-aaaa", "GHSA-page-two2-bbbb"]);
   });
 

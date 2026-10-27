@@ -45,6 +45,21 @@
 
 ### Fixed
 
+- The gate no longer drops a project's repository advisory for every version once OSV has a record of it for the
+  package: each version is judged on its own. Where OSV-Scanner (GitHub's database, for an action) reports the
+  advisory's alias group for that version, its record stands as before; a version only the repository's wider range
+  names keeps the repository's record, as an unreviewed finding. Base, head and young candidates follow the same rule.
+  Adopters may see new findings for such versions: a PR adding one fails, and it vetoes candidates, but triggers no
+  fix on its own. The gate no longer looks single OSV records up before scanning.
+- Errors no longer regroup secure-it's held work: held units are grouped only by couplings and required-young
+  relationships, so a transient npm planning error or a recorded Gradle reference failure fails its own unit, reported
+  with its error, while the other held units keep their topics, members and PRs. A Gradle execution error in a held
+  unit's preflight fails that unit alone, not every held unit of the run. Held groups that can only be planned or
+  resolved together now fail apart until they age, instead of joining (v0.8's fallback could gather every held group).
+  When the aged batch can't be planned it fails with its own error, without a second attempt, and if it has npm work
+  the held units with npm work fail too, since which of its roots join them is unknown; held work without npm still
+  runs, unless it would claim a held PR with npm moves. Runs and reviews keep every held PR with npm moves as it is
+  then, including one whose fix has aged since, rather than rewrite or retire it.
 - secure-it no longer plans an own package's young fix (or an own carrier's, or an own direct peer a fix moves with
   it) as held: the gate never holds an own package, so it now goes with the other fixes instead of waiting in a
   cooldown PR.
@@ -58,6 +73,12 @@
   refused that the gate accepts; a malicious copy, leaving on its own, borrows no other copy's history. Planning
   checks no longer borrow a copy (or its integrity) from another lockfile, and a required version is judged against
   the copy it replaces at its own path, not retained ones. The remaining planners' limit is in coverage gaps.
+- secure-it's Gradle reference checks accept resolution failures in the configurations `gradle.ignoreConfigurations`
+  lists, as the gate does: the held preflight leaves them out of the reference, and verification (floor removals'
+  too) accepts an edit that fails to resolve there the same way as the plan's reference. A fix the gate would pass is
+  no longer blocked by one. A failure the edit adds, removes or changes there is still reported, those configurations
+  are still compared with the reference, and every planned move must still land; a parent move and a floor removal
+  are still proved only where everything resolved. bump-it's reference comparison is unchanged (in coverage gaps).
 
 ## 0.8.2 - 2026-10-27
 

@@ -28,9 +28,6 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 - **Gradle metadata outside the reference comparison**: declaration `because(...)` reasons and resolved graph edges are exported but not compared with the planned reference; secure-it checks floor reasons separately. Local files, artifacts, attributes and capabilities are outside the exported module/version comparison.
 - **Links in workflow and action metadata (gate)**: the gate reads a symbolic link in a commit as the path it points to, so the actions behind a linked workflow, action metadata file or folder aren't read. This is pre-existing in 0.5.1. The tools refuse edits that add links or change what's behind one.
 - **An unpinned action moved into a step (gate)**: the comparison counts each action's occurrences in a file, so moving `uses: acme/action@main` from an `env` map (or another non-step key read as an action) into a step of the same workflow leaves the count unchanged and isn't required to be pinned: it's only reported as an unpinned-action gap, not failed. Pre-existing in 0.5.2.
-- **Repository advisories OSV also lists (gate)**: a project's repository advisory that isn't malware is
-  dropped for a version when OSV has a record with the same id for the package, whatever its ranges. So a repository
-  range wider than OSV's is ignored for the versions only the repository names. Pre-existing in 0.7.5; not fixed in 0.8.0.
 - **Gradle floor removal and parent configurations (secure-it)**: the reference build that checks a floor removal
   snapshots what the configuration inherits, after the projects are evaluated. A dependency the build adds to a
   parent configuration later is missing from it, so a correct removal fails verification and needs a person. An
@@ -59,13 +56,18 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 - **Held bodies keep raw length budgets (secure-it)**: a held PR's body is composed within raw UTF-16 budgets (61,440
   for fresh text, 65,280 with its marker), which can cut table rows, drop evidence or refuse a body publication
   would accept. Publication checks every body as it sends it. Kept since 0.8.0.
-- **Transient errors can regroup held work (secure-it)**: a transient npm planning error or a recorded Gradle reference
-  failure can split or merge held units differently from one run to the next (PR churn, and waiting for the youngest
-  version). An error running Gradle itself fails every held routine unit of that run instead, while other units
-  continue. Each failure is logged. New in 0.8.0.
-- **`gradle.ignoreConfigurations` in reference checks (secure-it)**: the Gradle reference checks in preflight and
-  verification include the configurations the gate is told to ignore, so a failure there can block a fix the gate
-  wouldn't. Pre-existing in 0.7.x.
+- **Held work that only plans together fails until it ages (secure-it)**: errors no longer regroup held work, so held
+  groups that can't be planned apart (npm roots keeping each other's old requirements) or whose Gradle references only
+  resolve together each fail visibly, run after run, until their versions age into the aged batch or a person moves
+  them. When the aged batch can't be planned and has npm work, which of its roots join held work is unknown, so the
+  held units with npm work fail that run with it rather than be grouped without it. Held work without npm still runs,
+  unless it would claim a held PR with npm moves: such PRs are kept for their npm work, in runs and in reviews (even
+  one whose fix has aged since). Each failure is logged and reported.
+  Narrowed in 0.9.0.
+- **`gradle.ignoreConfigurations` in reference checks (bump-it)**: bump-it's Gradle reference comparison in
+  verification includes the resolution failures of the configurations the gate is told to ignore, so a failure there
+  can block an update the gate wouldn't. secure-it's preflight and verification leave them out since 0.9.0; bump-it's
+  wasn't part of that change. Pre-existing in 0.7.x.
 - **Optional root peers and the npm deprecation check (bump-it)**: a transitive version a major brings is exempt when the root declares the package, including as an optional peer it never installed, so a deprecated or unreadable version of it isn't refused. Pre-existing in 0.6.0; not fixed in 0.8.0.
 - **npm aliases without a version** (`"compat": "npm:lib"`): the inventory reads them, but neither tool can rewrite them, so an update fails visibly and a person makes it.
 - **Scheduled runs are best effort**: GitHub may delay or skip them, and disables them after 60 days without activity in a public repository. Nothing else watches that the scheduled scan still runs.

@@ -115,23 +115,6 @@ export class ActionsGitHub {
     return found;
   }
 
-  /**
-   * Whether GitHub's global database has advisory `id` naming `repo` as an
-   * affected action, as a type the version queries return (reviewed or
-   * malware): an unreviewed record would hide a finding nothing else reports.
-   */
-  async globalCovers(id: string, repo: string): Promise<boolean> {
-    if (!id.startsWith("GHSA-")) return false;
-    const body = await this.get(`/advisories/${id}`);
-    if (!isObject(body) || !Array.isArray(body["vulnerabilities"])) return false;
-    if (body["type"] !== "reviewed" && body["type"] !== "malware") return false;
-    if (typeof body["withdrawn_at"] === "string") return false;
-    return body["vulnerabilities"].some((vulnerability: unknown) => {
-      const pkg = isObject(vulnerability) ? vulnerability["package"] : undefined;
-      return isObject(pkg) && pkg["ecosystem"] === "actions" && typeof pkg["name"] === "string" && pkg["name"].toLowerCase() === repo;
-    });
-  }
-
   private async get(path: string): Promise<unknown> {
     return (await this.getPage(path)).body;
   }

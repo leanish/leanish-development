@@ -13,7 +13,8 @@ import { referenceDifferences } from "@leanish/tool-runtime/gradle-reference";
 import { floorFindings, validRemoval, withoutFloorRecords, withoutOverrides } from "./floor-removal.ts";
 import type { VerifyInputs } from "./verify.ts";
 
-export async function verifyRemovalEdit(inputs: VerifyInputs): Promise<string[]> {
+/** `ignored`: the gate's `gradle.ignoreConfigurations`, which may fail to resolve the same way as in the reference. */
+export async function verifyRemovalEdit(inputs: VerifyInputs, ignored: ReadonlyArray<string>): Promise<string[]> {
   const { plan, base, head, gradle } = inputs;
   const removal = plan.floorRemoval;
   if (!validRemoval(removal) || plan.moves.length > 0 || plan.malware) return ["invalid floor-removal plan"];
@@ -56,7 +57,7 @@ export async function verifyRemovalEdit(inputs: VerifyInputs): Promise<string[]>
       if (copies(inputs.reference) >= copies(gradle.base)) problems.push(`the plan's reference still declares ${floor.package} ${floor.version} at ${location}`);
     }
   }
-  problems.push(...referenceDifferences(inputs.reference, gradle.head));
+  problems.push(...referenceDifferences(inputs.reference, gradle.head, ignored));
   if (problems.length > 0) return problems;
   const compared = await runCompare(base, head, inputs.env, gradle);
   return [...compared.failures.map((failure) => `compare: ${failure}`), ...removalCooldownProblems(compared.cooldown), ...removal.floors.flatMap((floor) =>

@@ -343,6 +343,42 @@ describe("verifyPlan", () => {
     expect(await verifyWith(["1.0", "1.0"], ["1.0", "1.0"])).toContain("the plan's reference declares g:lib 1.0 at :runtimeClasspath, not 1.1");
   });
 
+  it("lets a configuration the gate ignores fail to resolve the same way as in the plan's reference, while every move still has to land", async () => {
+    const FAILED = "Could not resolve all dependencies for configuration ':tool'.";
+    // :tool's resolution throws, as the exporter writes it: the error, and nothing resolved.
+    const inventory = (lib: string, tool = FAILED) => ({ tree: "worktree", builds: [{ build: ".", configurations: [
+      { id: ":runtimeClasspath", kind: "project", resolved: [{ group: "g", name: "lib", version: lib }], unresolved: [], declared: [{ group: "g", name: "lib", version: lib, reason: undefined }], error: undefined },
+      { id: ":tool", kind: "project", resolved: [], unresolved: [], declared: [{ group: "g", name: "tool", version: "9.9", reason: undefined }], error: tool },
+    ] }] });
+    const plan: ChangePlan = {
+      topic: "g:lib", malware: false, packages: ["Maven|g:lib"], severity: "HIGH",
+      moves: [{ ecosystem: "Maven", name: "g:lib", from: "1.0", to: "1.1", mechanism: "gradle-declared", locations: [":runtimeClasspath"], advisories: [], major: false, commitSha: undefined, declaredAs: undefined }],
+    };
+    const verifyWith = (ignored: string[] | undefined, landed: string, tool = FAILED) => {
+      const files = { "settings.gradle": "", ...ignored === undefined ? {} : { ".github/supply-chain.json": JSON.stringify({ gradle: { ignoreConfigurations: ignored } }) } };
+      return verifyPlan({
+        plan, base: tree("b".repeat(40), files), head: tree("worktree", files), env: environment({}),
+        gradle: { base: inventory("1.0") as never, head: inventory(landed, tool) as never }, reference: markMoved(inventory(landed), "g:lib", "1.1", [":runtimeClasspath"]), changedFiles: ["build.gradle.kts"],
+      }).then((problems) => problems.filter((problem) => !problem.startsWith("compare:")));
+    };
+    expect(await verifyWith([":tool"], "1.1")).toEqual([]);
+    for (const ignored of [undefined, [":runtimeClasspath"]]) {
+      expect(await verifyWith(ignored, "1.1")).toEqual([
+        `:tool doesn't resolve in the plan's reference: ${FAILED}`,
+        `:tool doesn't resolve in the edit: ${FAILED}`,
+      ]);
+    }
+    // The edit changed how it fails (a forced version there, say): what it resolves can't tell, its failure does.
+    expect(await verifyWith([":tool"], "1.1", "Cannot find a version of 'g:tool' that satisfies the version constraints")).toEqual([
+      `:tool, unlike the plan's reference, also fails to resolve Cannot find a version of 'g:tool' that satisfies the version constraints and no longer fails to resolve ${FAILED}`,
+    ]);
+    // A move into an ignored configuration that didn't land in the reference or the edit is still caught.
+    expect(await verifyWith([":runtimeClasspath", ":tool"], "1.0")).toEqual(expect.arrayContaining([
+      ":runtimeClasspath resolves g:lib 1.0, below 1.1",
+      "the plan's reference declares g:lib 1.0 at :runtimeClasspath, not 1.1",
+    ]));
+  });
+
   it("lets a planned plugin fix's own fallout through when the plan's reference shows it", async () => {
     const marker = { group: "fixture.plugin", name: "fixture.plugin.gradle.plugin" };
     const inventory = (plugin: string, added: string[]) => ({ tree: "worktree", builds: [{ build: ".", configurations: [
