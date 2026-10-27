@@ -15,6 +15,6 @@ permissions:
 
 jobs:
   supply-chain:
-    uses: leanish/leanish-development/.github/workflows/supply-chain.yml@fab31b9593bc1af1b1844f5da40c1d1e4cc3e547 # v0.8.1
+    uses: leanish/leanish-development/.github/workflows/supply-chain.yml@fe93583df60d62bb79fd1874685398c06bd7b344 # v0.8.2
     permissions:
       contents: read
