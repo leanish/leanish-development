@@ -137,17 +137,17 @@ export async function reviewOpenPullRequests(context: ReviewContext, steps: Revi
 async function reviewOne(context: ReviewContext, steps: ReviewSteps, pr: GitHubPullRequest): Promise<ReviewEntry> {
   const result = (outcome: ReviewOutcome, detail?: string): ReviewEntry => ({ number: pr.number, url: pr.url, outcome, detail });
   const publication: PublicationContext = { ...context };
-  const pushedBySomeoneElse = (recordedHead: string) =>
-    result("left-alone", `someone else pushed (${pr.headSha.slice(0, 12)}, the tool published ${recordedHead.slice(0, 12)})`);
   const ownership = await inspectOwnership(publication, pr);
   if (ownership.kind === "untracked") return result("left-alone", "its body no longer has the tool's state; someone rewrote it");
-  if (ownership.kind === "pushed-by-someone-else") return pushedBySomeoneElse(ownership.recordedHead);
+  if (ownership.kind === "pushed-by-someone-else") {
+    return result("left-alone", `someone else pushed (${pr.headSha.slice(0, 12)}, the tool published ${ownership.recordedHead.slice(0, 12)})`);
+  }
   if (ownership.recovery === "state-removed") return result("left-alone", "its body no longer has the tool's state; someone rewrote it");
   if (ownership.recovery === "legacy") return result("left-alone", "the journal has only its head; the tool's next run recomputes and republishes it");
+  // A push landing during the repair fails it (`repairOwnership`): the PR is reported, and left as it is.
   pr = await repairOwnership(publication, ownership);
   const recorded = stateOf(pr.body);
-  // The body records the head now; GitHub answering the repair with another head means a push landed since.
-  if (recorded?.head !== pr.headSha) return pushedBySomeoneElse(recorded?.head ?? ownership.pr.headSha);
+  if (recorded?.head !== pr.headSha) throw new Error(`${pr.url}: its body doesn't record its head after recovery`);
   const state: PullRequestState = recorded;
 
   const cooldown = steps.cooldown?.(pr);

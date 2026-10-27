@@ -1843,6 +1843,21 @@ describe("the cooldown hold", () => {
     expect(h.github.prs.get(7)).toEqual(taken);
   });
 
+  it("refuses to claim a held PR whose state someone removed when its saved publication doesn't match, never reading its raw body", async () => {
+    // As above, but the saved state's base isn't the journal's: the raw body (no hold shown) must not stand in for it.
+    const plan = await heldPlan(YOUNG_VITE());
+    const saved = withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: PUSHED_SHA, base: "8".repeat(40), adaptations: 0 });
+    const taken = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite", headSha: PUSHED_SHA, isDraft: false, body: `${withPlanSection("Fixes vite.", plan)}\n\n${RULES.marker}\n` });
+    const h = harness({ prs: [taken], fixes: [YOUNG_VITE()] });
+    h.workspace.setRemoteHead(taken.headRef, PUSHED_SHA);
+    await h.journal.pushed(REPO, 7, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: "moving vite", body: saved, adaptations: 0 } });
+    expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({
+      topic: "security-cooldown-vite", outcome: "failed", detail: expect.stringContaining("the journal has no matching publication content"),
+    });
+    expect(h.github.prs.get(7)).toEqual(taken);
+    expect(h.workspace.preparations).toEqual([]);
+  });
+
   it("fails each unit, never the run, when an own PR's journal can't be read, publishing nothing on a guess", async () => {
     // #7's head moved past its recorded state, so its journal is read, and that read fails. Every unit inspects every
     // own PR before matching its plan, so even units #7 has nothing to do with fail visibly instead of guessing from

@@ -74,17 +74,17 @@ describe("inspectOwnership", () => {
     }
   });
 
-  it("keeps a PR whose state someone removed as the tool's, with a read-only view of only a valid saved publication", async () => {
+  it("keeps a PR whose state someone removed as the tool's, with a read-only view of a valid saved publication", async () => {
     const pr = rewritten();
     const valid = saved();
     const exposed = await inspectOwnership(context(new FakeGitHub(pr), await journalWith({ head: PUSHED_SHA, base: BASE_SHA, publication: valid })), pr);
     expect(exposed).toEqual({ kind: "ours", pr, recovery: "state-removed", saved: valid });
-    for (const entry of [
-      { head: PUSHED_SHA, base: BASE_SHA },
-      { head: PUSHED_SHA, base: BASE_SHA, publication: saved({ head: OTHER_SHA, base: BASE_SHA, adaptations: 1 }) },
-      { head: PUSHED_SHA, base: BASE_SHA, publication: { ...valid, body: "No state at all." } },
-    ]) {
-      expect(await inspectOwnership(context(new FakeGitHub(pr), await journalWith(entry)), pr)).toEqual({ kind: "ours", pr, recovery: "state-removed" });
+    // An old entry saved none: no view.
+    expect(await inspectOwnership(context(new FakeGitHub(pr), await journalWith({ head: PUSHED_SHA, base: BASE_SHA })), pr)).toEqual({ kind: "ours", pr, recovery: "state-removed" });
+    // A mismatched one is refused, as for a body with a state: the raw body never stands in for it.
+    for (const publication of [saved({ head: PUSHED_SHA, base: OTHER_SHA, adaptations: 1 }), { ...valid, body: "No state at all." }]) {
+      await expect(inspectOwnership(context(new FakeGitHub(pr), await journalWith({ head: PUSHED_SHA, base: BASE_SHA, publication })), pr))
+        .rejects.toThrow("the journal has no matching publication content");
     }
   });
 
@@ -158,6 +158,14 @@ describe("repairOwnership", () => {
     const taken = new FakeGitHub(lagging({ labels: [], body: "someone's now" }));
     await expect(repairOwnership(context(taken), recovered(lagging()))).rejects.toThrow("no longer an open secure-it PR");
     for (const github of [moved, taken]) expect(github.calls.filter((call) => !call.startsWith("getPullRequest"))).toEqual([]);
+  });
+
+  it("refuses a PR someone pushed to while its publication was restored, before restoring its label", async () => {
+    const github = new FakeGitHub(lagging({ labels: [] }));
+    const update = github.updatePullRequest.bind(github);
+    github.updatePullRequest = async (args) => ({ ...await update(args), headSha: OTHER_SHA });
+    await expect(repairOwnership(context(github), recovered(lagging()))).rejects.toThrow(`${URL} moved to ${OTHER_SHA} while secure-it restored its publication`);
+    expect(github.calls).not.toContain("addLabels 7 leanish:secure-it");
   });
 
   it("refuses a saved title or body over the client's limits before writing", async () => {
