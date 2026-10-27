@@ -34,7 +34,12 @@ export interface PeerSources {
   versions(name: string): Promise<ReadonlyArray<string> | undefined>;
   manifest(name: string, version: string): Promise<unknown>;
   published(name: string, version: string): Promise<Date | undefined>;
-  identity(name: string, from: string, to: string): Promise<ReadonlyArray<string>>;
+  /**
+   * Publisher identity breaks of moving `name` from `from` to `to`. For a planned move's own target, `replaced` holds
+   * the locations of every copy of the package the planned moves replace together (`IdentityCheck`); a caller that
+   * plans them as one unit judges against all of them. Undefined for a companion, which moves only its own copy.
+   */
+  identity(name: string, from: string, to: string, replaced?: ReadonlyArray<string>): Promise<ReadonlyArray<string>>;
   line(name: string, version: string): string;
   isOwn(name: string): boolean;
   readonly now: Date;
@@ -222,7 +227,7 @@ async function resolve(nodes: ReadonlyArray<Node>, moves: ReadonlyArray<PeerMove
     const options = new Map<string, string[]>();
     const reasons: string[] = [];
     for (const node of group) {
-      const found = await optionsFor(node, anchors, snapshot, sources);
+      const found = await optionsFor(node, anchors, moves, snapshot, sources);
       options.set(node.key, found.versions);
       reasons.push(...found.problems);
     }
@@ -244,7 +249,7 @@ async function resolve(nodes: ReadonlyArray<Node>, moves: ReadonlyArray<PeerMove
   return { additions, blocked, sets };
 }
 
-async function optionsFor(node: Node, anchors: ReadonlyArray<PeerMove>, snapshot: Snapshot, sources: PeerSources) {
+async function optionsFor(node: Node, anchors: ReadonlyArray<PeerMove>, moves: ReadonlyArray<PeerMove>, snapshot: Snapshot, sources: PeerSources) {
   const targets = [...new Set(anchors.filter((move) => matches(node, move)).map((move) => move.to))];
   const problems = node.problem === undefined ? [] : [node.problem];
   if (targets.length > 1) problems.push(`${node.name} has conflicting planned targets ${targets.join(", ")}`);
@@ -254,6 +259,8 @@ async function optionsFor(node: Node, anchors: ReadonlyArray<PeerMove>, snapshot
   } catch (error) {
     return { versions: [], problems: [...problems, `${node.name}: ${error instanceof Error ? error.message : String(error)}`] };
   }
+  // Every copy the planned moves replace with this one, nested ones outside the peer group included.
+  const replaced = targets.length > 0 ? moves.filter((move) => move.name === node.name).flatMap((move) => move.locations) : undefined;
   const versions: string[] = [];
   for (const version of targets.length > 0 ? targets : [node.from, ...node.candidates]) {
     if (!node.manifests.has(version)) continue;
@@ -266,7 +273,7 @@ async function optionsFor(node: Node, anchors: ReadonlyArray<PeerMove>, snapshot
           if (version !== forced) continue;
         }
       }
-      if (version !== node.from && (await sources.identity(node.name, node.from, version)).length > 0) continue;
+      if (version !== node.from && (await sources.identity(node.name, node.from, version, replaced)).length > 0) continue;
       versions.push(version);
     } catch (err) {
       problems.push(`${node.name}@${version}: ${err instanceof Error ? err.message : String(err)}`);

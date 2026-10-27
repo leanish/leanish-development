@@ -8,7 +8,7 @@ import { type GateEnvironment, readSettings, snapshotOptions } from "@leanish/ga
 import { npmLocation } from "@leanish/gate/inventory";
 import { isObject } from "@leanish/gate/json";
 import { lockedPackages, type LockedPackage } from "@leanish/gate/npm-lock";
-import { NpmRegistry } from "@leanish/gate/npm-registry";
+import { identityBaseline, NpmRegistry } from "@leanish/gate/npm-registry";
 import { baseOverrides, directLineConstraints } from "@leanish/gate/npm-required-overrides";
 import { requiredPeerTargets } from "@leanish/gate/npm-required-peers";
 import { registryConstraints } from "@leanish/gate/npm-required-gate";
@@ -131,8 +131,13 @@ async function assertSafeTarget(target: PlannedRequirement, baseline: ReadonlyAr
   if (problem !== undefined) throw new Error(`${target.reason}; ${problem}`);
   const doc = await registry.packument(target.name);
   const manifest = doc.versions[target.version] as { dist?: { integrity?: string; tarball?: string } };
+  // Identity is judged against the copy the requirement demonstrably replaces, at its own path, as verification
+  // reads replaced copies: not another lockfile's, nor a retained one (a later retained release would widen the
+  // publisher history). A copy npm drops elsewhere is judged once the change is materialized.
+  const replaced = lockedPackages(locks.get(target.lockfile))
+    .filter((copy) => copy.path === target.path && copy.name === target.name && copy.version !== target.version);
   const identity = await registry.identityProblems({ name: target.name, version: target.version, path: target.path, bundled: false,
-    integrity: manifest.dist?.integrity, resolved: manifest.dist?.tarball }, new Map(previous.map((copy) => [copy.version, copy.integrity])), exceptions, now.toISOString().slice(0, 10));
+    integrity: manifest.dist?.integrity, resolved: manifest.dist?.tarball }, identityBaseline(replaced), exceptions, now.toISOString().slice(0, 10));
   if (identity.length > 0) throw new Error(`${target.reason}; ${identity.join("; ")}`);
   assertDirectLine(target, locks.get(target.lockfile), config);
 }

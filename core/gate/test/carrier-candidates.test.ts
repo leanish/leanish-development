@@ -82,14 +82,13 @@ describe("deciding a carrier move", () => {
     } },
   }));
   /** `repoOnly` adds, per `name@version`, advisories only the project's repository publishes. */
-  const context = (identity: string[] = [], repoOnly: Record<string, string[]> = {}) => ({
+  const context = (repoOnly: Record<string, string[]> = {}) => ({
     reader: new BundleReader(serving(Object.fromEntries(Object.entries(archives).map(([version, { bytes }]) => [tarball("carrier", version), bytes])))),
     registry, catalog: new NpmCatalog(registry), config: parseConfig({}), now: NOW,
     scan: async (packages: ReadonlyArray<PackageVersion>) => new Snapshot(new Map(packages.map((pkg) => [versionKey(pkg), [
       ...(pkg.name === "brace" && pkg.version === "5.0.9" ? ["GHSA-brace"] : []).map((id): Advisory => ({ id, ids: [id], source: "osv", malicious: false, summary: undefined, severity: undefined })),
       ...(repoOnly[`${pkg.name}@${pkg.version}`] ?? []).map((id): Advisory => ({ id, ids: [id], source: "repository", malicious: false, summary: undefined, severity: undefined })),
     ]])), [], NOW),
-    identity: async () => identity,
   });
   const group = (lockedBundle: string): CarrierGroup => {
     const { carriers } = splitBundled([finding("brace", "5.0.9", "GHSA-brace", ["node_modules/carrier/node_modules/brace"])], [lockfile("package-lock.json", {
@@ -100,18 +99,19 @@ describe("deciding a carrier move", () => {
   };
 
   it("picks the carrier version whose bundle drops the target, and says what it ships", async () => {
-    expect(await decideCarrier(group("5.0.9"), [], false, context(["an identity break"]))).toEqual({
+    // Identity is judged by the caller, against every copy the unit replaces (`withUnitIdentity` in candidates.ts).
+    expect(await decideCarrier(group("5.0.9"), [], false, context())).toEqual({
       from: "1.0.0",
       locations: ["node_modules/carrier"],
       carries: [{ name: "brace", from: ["5.0.9"], locations: ["node_modules/carrier/node_modules/brace"], advisories: ["GHSA-brace"], to: ["5.0.12"] }],
       unfixable: [],
-      to: { version: "1.1.0", line: "1", aged: true, major: false, blockers: ["an identity break"] },
+      to: { version: "1.1.0", line: "1", aged: true, major: false, blockers: [] },
       problem: undefined,
     });
   });
 
   it("names in its refusal the versions only unreviewed advisories ruled out", async () => {
-    const decision = await decideCarrier(group("5.0.9"), [], false, context([], { "brace@5.0.12": ["GHSA-brace-repo"] }));
+    const decision = await decideCarrier(group("5.0.9"), [], false, context({ "brace@5.0.12": ["GHSA-brace-repo"] }));
     expect(decision).toMatchObject({
       to: undefined,
       problem: "no carrier version above 1.0.0 ships a bundle without brace GHSA-brace; advisories no reviewed source corroborates ruled out 1.1.0 (GHSA-brace-repo)",
@@ -143,7 +143,6 @@ describe("deciding an own carrier's move", () => {
     registry, catalog: new NpmCatalog(registry), config, now: NOW,
     scan: async (packages: ReadonlyArray<PackageVersion>) => new Snapshot(new Map(packages.map((pkg) => [versionKey(pkg), (pkg.name === "brace" && pkg.version === "5.0.9" ? ["GHSA-brace"] : [])
       .map((id): Advisory => ({ id, ids: [id], source: "osv", malicious: false, summary: undefined, severity: undefined }))])), [], NOW),
-    identity: async () => [],
   });
   const { carriers } = splitBundled([finding("brace", "5.0.9", "GHSA-brace", [`node_modules/${OWN}/node_modules/brace`])], [lockfile("package-lock.json", {
     [`node_modules/${OWN}`]: { version: "1.0.0", resolved: tarballUrl(OWN, "1.0.0"), integrity: archives["1.0.0"]!.integrity },

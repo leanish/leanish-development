@@ -49,13 +49,13 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   to 16 id lookups per advisory group for each of GitHub's advisory database and OSV; repository-advisory pagination
   has a separate cap. No request budget spans the run, so many held versions can spend much of the shared GitHub API
   quota. New in 0.8.0.
-- **Publisher identity: planning and verification read different baselines (gate, secure-it)**: when neither the
-  candidate nor the replaced registry versions has provenance, verification checks the publisher against the registry's
-  publication history up to the latest publication time among the versions replaced in that lockfile; planning checks
-  each source version separately. When two copies (`lib@1.0.0` by one publisher, `lib@2.0.0` the first by another)
-  both move to a version the second publisher released, planning refuses the move for the first copy while
-  verification would accept it, so secure-it doesn't propose it. The gate's verdict on a PR is unaffected.
-  Pre-existing. In 0.9.0, planning is to use verification's replacement baseline, preserving its provenance checks.
+- **Publisher identity before the change exists (secure-it, bump-it)**: verification judges a version's publisher
+  against every copy of the package the change replaces in that lockfile. secure-it's security fixes are planned the
+  same way, since a package's copies move in one unit. Other planners don't know yet which copies npm will replace
+  together: secure-it's parent and direct-peer moves and bump-it's npm moves check each source version on its own,
+  and a required version is checked against the copy at its own path. They can refuse a move verification would
+  accept (when another copy replaced with it widens the publisher's history), and leave the rest to verification on
+  the materialized change. The gate's verdict on a PR is unaffected. Narrowed in 0.9.0.
 - **Held bodies keep raw length budgets (secure-it)**: a held PR's body is composed within raw UTF-16 budgets (61,440
   for fresh text, 65,280 with its marker), which can cut table rows, drop evidence or refuse a body publication
   would accept. Publication checks every body as it sends it. Kept since 0.8.0.

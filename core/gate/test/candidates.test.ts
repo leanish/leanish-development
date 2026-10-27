@@ -386,6 +386,47 @@ describe("securityCandidates, regressions", () => {
     expect(found.fixes[0]?.to?.blockers).toEqual([expect.stringContaining("stranger")]);
   });
 
+  it("keeps judging a move with its package's other copies when the direct-peer closure rechecks it", async () => {
+    // As below: alice's lib 1.0.0 and bob's nested 2.0.0 both move; lib also has a satisfied peer, so it's a peer anchor.
+    const registry = { lib: { "1.0.0": OLD, "2.0.0": "2026-06-01T00:00:00Z", "1.0.1": "2026-07-01T00:00:00Z", "2.0.1": "2026-07-01T00:00:00Z" }, host: { "1.0.0": OLD } };
+    const publishers = { "lib@1.0.0": "alice", "lib@2.0.0": "bob", "lib@1.0.1": "bob", "lib@2.0.1": "bob" };
+    const manifests = Object.fromEntries(Object.entries(publishers).map(([key, name]) => [key, { _npmUser: { name }, peerDependencies: { host: "^1.0.0" } }]));
+    const head = await tree({ host: "1.0.0" }, {}, { name: "app", devDependencies: { lib: "^1.0.0", host: "^1.0.0" } }, {
+      "node_modules/lib": { version: "1.0.0", resolved: "https://registry.npmjs.org/lib/-/lib-1.0.0.tgz", integrity: "sha512-AAAA", peerDependencies: { host: "^1.0.0" } },
+      "node_modules/x/node_modules/lib": { version: "2.0.0", resolved: "https://registry.npmjs.org/lib/-/lib-2.0.0.tgz", integrity: "sha512-AAAA" },
+    });
+    const found = await securityCandidates(head, environment({ "lib@1.0.0": ["GHSA-a"], "lib@2.0.0": ["GHSA-a"] }, registry, [], manifests));
+    expect(found.fixes.map((fix) => fix.to?.blockers)).toEqual([[], []]);
+    const resolved = await found.npmPeers!.resolve(found.fixes.map((fix) => ({ name: fix.name, from: fix.from, to: fix.to!.version, locations: fix.locations })));
+    expect(resolved.blocked).toEqual([]);
+    expect(resolved.sets).toEqual([["host", "lib"]]);
+  });
+
+  it("judges each move's publisher against every copy of the package moving with it, as verification will", async () => {
+    // alice published 1.0.0; bob 2.0.0 and both fixes. Alone, 1.0.0's fix has a publisher with no history up to it.
+    const registry = { lib: { "1.0.0": OLD, "2.0.0": "2026-06-01T00:00:00Z", "1.0.1": "2026-07-01T00:00:00Z", "2.0.1": "2026-07-01T00:00:00Z" } };
+    const publishers = { "lib@1.0.0": "alice", "lib@2.0.0": "bob", "lib@1.0.1": "bob", "lib@2.0.1": "bob" };
+    const manifests = Object.fromEntries(Object.entries(publishers).map(([key, name]) => [key, { _npmUser: { name } }]));
+    const nested = { "node_modules/x/node_modules/lib": { version: "2.0.0", resolved: "https://registry.npmjs.org/lib/-/lib-2.0.0.tgz", integrity: "sha512-AAAA" } };
+    const head = await tree({ lib: "1.0.0" }, {}, { name: "app" }, nested);
+    const blockers = (found: { fixes: ReadonlyArray<SecurityFix> }) => found.fixes.map((fix) => [`${fix.name}@${fix.from}`, fix.to?.version, fix.to?.blockers])
+      .sort(([a], [b]) => String(a).localeCompare(String(b)));
+    const refused = [expect.stringContaining("its publisher bob hadn't published any version up to the one it replaces")];
+
+    // Both copies fail and move in one unit: bob's own 2.0.0 is history for both moves.
+    const both = await securityCandidates(head, environment({ "lib@1.0.0": ["GHSA-a"], "lib@2.0.0": ["GHSA-a"] }, registry, [], manifests));
+    expect(blockers(both)).toEqual([["lib@1.0.0", "1.0.1", []], ["lib@2.0.0", "2.0.1", []]]);
+    // Only 1.0.0 fails: 2.0.0 is retained, so it lends no history.
+    const alone = await securityCandidates(head, environment({ "lib@1.0.0": ["GHSA-a"] }, registry, [], manifests));
+    expect(blockers(alone)).toEqual([["lib@1.0.0", "1.0.1", refused]]);
+    // A malicious 1.0.0 leaves in the malware unit, without 2.0.0's ordinary fix: it borrows none of its history.
+    const malware = await securityCandidates(head, environment({ "lib@1.0.0": ["MAL-2026-1"], "lib@2.0.0": ["GHSA-a"] }, registry, [], manifests));
+    expect(blockers(malware)).toEqual([["lib@1.0.0", "1.0.1", refused], ["lib@2.0.0", "2.0.1", []]]);
+    // A sibling without a move lends nothing, and blocks the package anyway (secure-it's `selectWork`).
+    const stuck = await securityCandidates(head, environment({ "lib@1.0.0": ["GHSA-a"], "lib@2.0.0": ["GHSA-b"], "lib@2.0.1": ["GHSA-b"] }, registry, [], manifests));
+    expect(blockers(stuck)).toEqual([["lib@1.0.0", "1.0.1", refused], ["lib@2.0.0", undefined, undefined]]);
+  });
+
   it("says when the inventory is incomplete, so an empty list can't read as clean", async () => {
     const head = await tree({}, { "settings.gradle": "" });
     const gradle = {
@@ -698,6 +739,36 @@ describe("securityCandidates, bundled copies", () => {
     const found = await securityCandidates(await head(true), failing);
     expect(moves(found.fixes)).toEqual([["brace@5.0.9", "5.0.12", undefined], ["carrier@1.0.0", undefined, expect.stringContaining("carrier move can't be decided")]]);
   });
+
+  it("makes a carrier move whose identity can't be read that fix's problem, not the run's", async () => {
+    const malformed = { ...carrierManifests, "carrier@1.1.0": { dist: { integrity: archives["1.1.0"].integrity,
+      attestations: { url: "https://example.com/x", provenance: { predicateType: "https://slsa.dev/provenance/v1" } } } } };
+    const found = await securityCandidates(await head(true), withArchives(environment({ "brace@5.0.9": ["GHSA-brace"] }, registry, [], malformed)));
+    expect(moves(found.fixes)).toEqual([
+      ["brace@5.0.9", "5.0.12", undefined],
+      ["carrier@1.0.0", undefined, expect.stringContaining("carrier move can't be decided: registry has malformed attestations")],
+    ]);
+  });
+
+  it("judges a carrier move's publisher with the package's other copies its unit moves", async () => {
+    // alice published carrier 1.0.0; bob 1.2.0, then the carrier fix 1.1.0 and 1.2.0's own fix 1.2.1.
+    const times = { "1.0.0": OLD, "1.2.0": "2026-06-01T00:00:00Z", "1.1.0": "2026-07-01T00:00:00Z", "1.2.1": "2026-07-01T00:00:00Z" };
+    const publishers = Object.fromEntries(Object.keys(times).map((version) => [`carrier@${version}`, { _npmUser: { name: version === "1.0.0" ? "alice" : "bob" } }]));
+    const manifests = Object.fromEntries(Object.entries(publishers).map(([key, value]) => [key, { ...carrierManifests[key], ...value }]));
+    const carrierTree = await tree({}, {}, { name: "app", dependencies: { carrier: "^1.0.0" } }, {
+      "node_modules/carrier": { version: "1.0.0", resolved: carrierTarball("1.0.0"), integrity: archives["1.0.0"].integrity },
+      "node_modules/carrier/node_modules/brace": { version: "5.0.9", inBundle: true },
+      "node_modules/x/node_modules/carrier": { version: "1.2.0", resolved: carrierTarball("1.2.0"), integrity: "sha512-AAAA" },
+    });
+    const env = (affected: Record<string, string[]>) => withArchives(environment(affected, { ...registry, carrier: times }, [], manifests));
+    const carrierMove = (found: { fixes: ReadonlyArray<SecurityFix> }) => found.fixes.find((fix) => fix.name === "carrier" && fix.from === "1.0.0")?.to;
+    // 1.2.0 fails too and moves in the same unit: bob's 1.2.0 is history for the carrier move.
+    const joint = await securityCandidates(carrierTree, env({ "brace@5.0.9": ["GHSA-brace"], "carrier@1.2.0": ["GHSA-c"] }));
+    expect(carrierMove(joint)).toMatchObject({ version: "1.1.0", blockers: [] });
+    // 1.2.0 retained: alice's 1.0.0 alone is the baseline, and bob hadn't published up to it.
+    const alone = await securityCandidates(carrierTree, env({ "brace@5.0.9": ["GHSA-brace"] }));
+    expect(carrierMove(alone)).toMatchObject({ version: "1.1.0", blockers: [expect.stringContaining("its publisher bob hadn't published")] });
+  });
 });
 
 describe("actions without a trusted age", () => {
@@ -757,7 +828,7 @@ describe("action compatible lines", () => {
 });
 
 describe("IdentityCheck", () => {
-  it("checks a replacement against the first integrity among the registry copies the lockfiles ship of the replaced version", async () => {
+  it("checks a replacement in each lockfile shipping it against that lockfile's own registry copies, with their first integrity", async () => {
     const seen: Array<ReadonlyMap<string, string | undefined>> = [];
     const registry = {
       packument: async () => ({ versions: { "1.1.0": { dist: { tarball: `${NPM_REGISTRY}/a/-/a-1.1.0.tgz`, integrity: "sha512-new" } } } }),
@@ -778,8 +849,34 @@ describe("IdentityCheck", () => {
     ];
     const check = new IdentityCheck(registry, lockfiles, NO_EXCEPTIONS, "2026-10-16");
     for (const from of ["1.0.0", "0.9.0", "0.8.0"]) await check.problems({ ecosystem: "npm", name: "a", version: from }, "1.1.0");
-    expect(seen.map((shipped) => [...shipped])).toEqual([[["1.0.0", "sha512-first"]], [], []]);
+    // 1.0.0 once per lockfile, neither lending the other its integrity. A bundled or git copy has no baseline: the
+    // call with an empty one reports no break, but still reads and validates the candidate's own provenance.
+    expect(seen.map((shipped) => [...shipped])).toEqual([[["1.0.0", "sha512-first"]], [["1.0.0", "sha512-later"]], [], []]);
     expect(await check.problems({ ecosystem: "Maven", name: "a", version: "1.0.0" }, "1.1.0")).toEqual([]);
-    expect(seen).toHaveLength(3);
+    expect(seen).toHaveLength(4);
+  });
+
+  it("takes the copies a unit replaces together by location, only where the replaced version is", async () => {
+    const seen: Array<ReadonlyMap<string, string | undefined>> = [];
+    const registry = {
+      packument: async () => ({ versions: { "3.0.0": { dist: { tarball: `${NPM_REGISTRY}/a/-/a-3.0.0.tgz`, integrity: "sha512-new" } } } }),
+      identityProblems: async (_pkg: unknown, shipped: ReadonlyMap<string, string | undefined>) => {
+        seen.push(shipped);
+        return shipped.size === 1 ? ["no history"] : [];
+      },
+    } as unknown as NpmRegistry;
+    const copy = (path: string, version: string) => ({ name: "a", version, path, resolved: `${NPM_REGISTRY}/a/-/a-${version}.tgz`, bundled: false, integrity: `sha512-${version}` });
+    const lockfiles = [
+      { path: "package-lock.json", bundleProblems: [], packages: [copy("node_modules/a", "1.0.0"), copy("node_modules/x/node_modules/a", "2.0.0"), copy("node_modules/y/node_modules/a", "2.5.0")] },
+      { path: "sub/package-lock.json", bundleProblems: [], packages: [copy("node_modules/a", "2.0.0")] },
+    ];
+    const check = new IdentityCheck(registry, lockfiles, NO_EXCEPTIONS, "2026-10-16");
+    const from = { ecosystem: "npm" as const, name: "a", version: "1.0.0" };
+    // The unit's copies in the root lockfile join; 2.5.0 is retained there, and sub's copy has no 1.0.0 to judge.
+    expect(await check.problems(from, "3.0.0", ["node_modules/a", "node_modules/x/node_modules/a", "sub/node_modules/a"])).toEqual([]);
+    expect(seen.map((shipped) => [...shipped])).toEqual([[["1.0.0", "sha512-1.0.0"], ["2.0.0", "sha512-2.0.0"]]]);
+    // Problems from several lockfiles are reported once each.
+    lockfiles[1]!.packages.push(copy("node_modules/z/node_modules/a", "1.0.0"));
+    expect(await check.problems(from, "3.0.0", ["node_modules/a", "sub/node_modules/z/node_modules/a"])).toEqual(["no history"]);
   });
 });

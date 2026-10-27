@@ -40,9 +40,9 @@ import {
 } from "./gate.ts";
 import { gradleLocation, pinnedAmong, strictPinNote, strictPins } from "./gradle.ts";
 import { gradleSourceIndex } from "./gradle-sources.ts";
-import type { NpmLockfile } from "./inventory.ts";
-import { directDependencies, type LockedPackage, NPM_REGISTRY } from "./npm-lock.ts";
-import { NpmRegistry } from "./npm-registry.ts";
+import { type NpmLockfile, npmLocation } from "./inventory.ts";
+import { directDependencies, type LockedPackage } from "./npm-lock.ts";
+import { identityBaseline, NpmRegistry } from "./npm-registry.ts";
 import { nodeRuntime, nodeTypeProblem, nodeTypeVersions } from "./node-runtime.ts";
 import { requiredPeerTargets } from "./npm-required-peers.ts";
 import { type PeerMove, type NpmPeerPlanner, prepareNpmPeers } from "./npm-peers.ts";
@@ -159,7 +159,6 @@ export async function securityCandidates(head: Tree, env: GateEnvironment, gradl
   const carrierContext: CarrierContext = {
     reader: bundleReader(env), registry, catalog: catalogs.npm, config, now,
     scan: (packages) => takeSnapshot(packages, snapshotOptions(config, env, state.github)),
-    identity: (pkg, to) => identity.problems(pkg, to),
   };
   const carried: SecurityFix[] = [];
   for (const group of carriers) {
@@ -181,7 +180,7 @@ export async function securityCandidates(head: Tree, env: GateEnvironment, gradl
   const bases: Located[] = [...[...failing.values()].map(({ pkg }) => pkg), ...carried.map((fix): Located => ({ ecosystem: "npm", name: fix.name, version: fix.from, locations: fix.locations }))];
   const snapshot = await takeSnapshot([...bases, ...peers.bases], snapshotOptions(config, env, state.github), [...candidates, ...peers.candidates]);
 
-  const found: SecurityFix[] = [];
+  const chosen: SecurityFix[] = [];
   for (const { pkg } of failing.values()) {
     // Regrouped on the second snapshot: a candidate can link aliases into another canonical id.
     const current = unexcused([pkg], snapshot, exceptions, today);
@@ -193,14 +192,14 @@ export async function securityCandidates(head: Tree, env: GateEnvironment, gradl
     const moves = listings.get(versionKey(pkg));
     const problem = (why: string): SecurityFix => ({ ...base, unfixable: [], to: undefined, problem: why });
     if (moves === undefined) {
-      found.push(problem(`the registry doesn't list ${pkg.name}'s versions completely, so the rule can't be applied`));
+      chosen.push(problem(`the registry doesn't list ${pkg.name}'s versions completely, so the rule can't be applied`));
     } else if (!malicious && targets.length === 0) {
-      found.push(problem(`no failing advisory affects ${pkg.name}@${pkg.version} in the second snapshot (withdrawn or reclassified since the scan)`));
+      chosen.push(problem(`no failing advisory affects ${pkg.name}@${pkg.version} in the second snapshot (withdrawn or reclassified since the scan)`));
     } else {
-      found.push(await chooseMove(pkg, targets, malicious, moves, { snapshot, catalog: catalogs[pkg.ecosystem], config, now, identity }, base));
+      chosen.push(await chooseMove(pkg, targets, malicious, moves, { snapshot, catalog: catalogs[pkg.ecosystem], config, now }, base));
     }
   }
-  found.push(...carried, ...unreviewed.reports);
+  const found: SecurityFix[] = [...await withUnitIdentity([...chosen, ...carried], identity), ...unreviewed.reports];
   // A package a reviewed fix moves (its own, or a carrier's for a bundled copy) gets its unreviewed findings as notes
   // on that fix, not as blocking reports; one whose reviewed fix is blocked anyway reports them like the rest.
   for (const [pkg, notes] of unreviewed.notes) {
@@ -318,7 +317,39 @@ interface ChoiceContext {
   readonly catalog: VersionCatalog;
   readonly config: Config;
   readonly now: Date;
-  readonly identity: IdentityCheck;
+}
+
+/**
+ * Each npm move's identity blockers, judged against every copy its unit replaces along with it (`IdentityCheck`):
+ * the copies of every move of the same package and kind. secure-it keeps a package's fixes in one unit or blocks
+ * them together, so these are the copies verification will see replaced. Malware leaves on its own, so a malicious
+ * copy never borrows the history of a sibling that isn't, and a fix without a move lends none: it blocks the package.
+ */
+async function withUnitIdentity(fixes: ReadonlyArray<SecurityFix>, identity: IdentityCheck): Promise<SecurityFix[]> {
+  const unitOf = (fix: SecurityFix) => `${fix.name}|${fix.malicious}`;
+  const replaced = new Map<string, string[]>();
+  for (const fix of fixes) {
+    if (fix.ecosystem === "npm" && fix.to !== undefined) replaced.set(unitOf(fix), [...replaced.get(unitOf(fix)) ?? [], ...fix.locations]);
+  }
+  const judged: SecurityFix[] = [];
+  for (const fix of fixes) {
+    if (fix.ecosystem !== "npm" || fix.to === undefined) {
+      judged.push(fix);
+      continue;
+    }
+    let blockers: string[];
+    try {
+      blockers = await identity.problems({ ecosystem: "npm", name: fix.name, version: fix.from }, fix.to.version, replaced.get(unitOf(fix)));
+    } catch (error) {
+      if (fix.carries === undefined) throw error;
+      // As in `carrierFix`: a carrier move that can't be decided (its provenance unreadable, say) is that fix's
+      // problem, not the run's. It now has no move, so its package is blocked with it.
+      judged.push({ ...fix, to: undefined, problem: `${fix.name}@${fix.from}'s carrier move can't be decided: ${error instanceof Error ? error.message : String(error)}` });
+      continue;
+    }
+    judged.push({ ...fix, to: { ...fix.to, blockers } });
+  }
+  return judged;
 }
 
 async function chooseMove(
@@ -338,10 +369,11 @@ async function chooseMove(
   // Every choice below skips what unreviewed advisories alone rule out: recorded on whichever move it makes, the ones
   // nearest it in `order`, the order the choice ranks the candidates in.
   const vetoes = vetoesOf(snapshot, name, pkg.version, fixable, moves);
-  const move = async (version: string, aged: boolean, order: ReadonlyArray<string> = moves): Promise<SecurityFix> => ({
+  // Its identity blockers wait for the package's other moves (`withUnitIdentity`).
+  const move = (version: string, aged: boolean, order: ReadonlyArray<string> = moves): SecurityFix => ({
     ...base,
     unfixable,
-    to: { version, line: line(version), aged, major: line(version) !== line(pkg.version), blockers: await context.identity.problems(pkg, version) },
+    to: { version, line: line(version), aged, major: line(version) !== line(pkg.version), blockers: [] },
     problem: undefined,
     ...vetoFields(nearestVetoes(vetoes, order, version)),
   });
@@ -392,31 +424,34 @@ async function isAged(pkg: PackageVersion, catalog: VersionCatalog, config: Conf
 
 /**
  * The npm publisher identity check `compare` runs on a version that replaces
- * another: against every copy of the replaced version the lockfiles ship from
- * the registry, with the same exceptions. Other ecosystems have none.
+ * others, made before the change exists: in each lockfile that ships `from`
+ * from the registry, against the copies there the change replaces with it, as
+ * verification reads them (`identityBaseline`), with the same exceptions. No
+ * lockfile lends another its copies. By default the change replaces the copies
+ * of `from` alone; a planner that knows which copies its unit replaces together
+ * names them. Other ecosystems have none.
  */
 export class IdentityCheck {
   readonly #registry: NpmRegistry;
-  /** Per `name@version`, the first integrity among the registry copies the lockfiles ship (undefined while none has one). */
-  readonly #shipped = new Map<string, string | undefined>();
+  readonly #lockfiles: ReadonlyArray<NpmLockfile>;
   readonly #exceptions: Exceptions;
   readonly #today: string;
 
   constructor(registry: NpmRegistry, lockfiles: ReadonlyArray<NpmLockfile>, exceptions: Exceptions, today: string) {
     this.#registry = registry;
+    this.#lockfiles = lockfiles;
     this.#exceptions = exceptions;
     this.#today = today;
-    for (const copy of lockfiles.flatMap((lockfile) => lockfile.packages)) {
-      if (copy.bundled || !copy.resolved?.startsWith(`${NPM_REGISTRY}/`)) continue;
-      const key = `${copy.name}@${copy.version}`;
-      if (this.#shipped.get(key) === undefined) this.#shipped.set(key, copy.integrity);
-    }
   }
 
-  async problems(from: PackageVersion, to: string): Promise<string[]> {
+  /** `replaced`: the locations (`npmLocation`) of every copy of the package the unit replaces along with `from`. */
+  async problems(from: PackageVersion, to: string, replaced?: ReadonlyArray<string>): Promise<string[]> {
     if (from.ecosystem !== "npm") return [];
-    const key = `${from.name}@${from.version}`;
-    const shipped = new Map<string, string | undefined>(this.#shipped.has(key) ? [[from.version, this.#shipped.get(key)]] : []);
+    const taken = replaced === undefined ? undefined : new Set(replaced);
+    const baselines = this.#lockfiles
+      .map((lockfile) => identityBaseline(lockfile.packages.filter((copy) => copy.name === from.name
+        && (taken === undefined ? copy.version === from.version : taken.has(npmLocation(lockfile.path, copy.path))))))
+      .filter((baseline) => baseline.has(from.version));
     const doc = await this.#registry.packument(from.name);
     const manifest = doc.versions[to] as { dist?: { integrity?: unknown; tarball?: unknown } } | undefined;
     const candidate: LockedPackage = {
@@ -427,7 +462,13 @@ export class IdentityCheck {
       bundled: false,
       integrity: typeof manifest?.dist?.integrity === "string" ? manifest.dist.integrity : undefined,
     };
-    return this.#registry.identityProblems(candidate, shipped, this.#exceptions, this.#today);
+    // With no registry copy of `from` there's no baseline to compare, so no break is reported, but the candidate's
+    // own provenance is still read and validated: a malformed or mismatched statement fails.
+    const problems: string[] = [];
+    for (const baseline of baselines.length === 0 ? [new Map<string, string | undefined>()] : baselines) {
+      problems.push(...await this.#registry.identityProblems(candidate, baseline, this.#exceptions, this.#today));
+    }
+    return [...new Set(problems)];
   }
 }
 
@@ -632,7 +673,9 @@ async function preparePeers(head: Tree, state: ScanState, registry: NpmRegistry,
     versions: (name) => catalog.versions({ ecosystem: "npm", name }),
     manifest: async (name, version) => (await registry.packument(name)).versions[version],
     published: (name, version) => catalog.published({ ecosystem: "npm", name, version }),
-    identity: (name, from, to) => identity.problems({ ecosystem: "npm", name, version: from }, to),
+    // A security unit's moves are judged against every copy they replace together, as `withUnitIdentity` judged them;
+    // bump planning keeps checking each source version on its own.
+    identity: (name, from, to, replaced) => identity.problems({ ecosystem: "npm", name, version: from }, to, security ? replaced : undefined),
     line: (name, version) => compatibleLine(config, { ecosystem: "npm", name }, version),
     isOwn: (name) => isOwnPackage(config.ownPackages, { ecosystem: "npm", name }),
     now,
