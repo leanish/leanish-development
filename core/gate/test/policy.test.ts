@@ -137,6 +137,67 @@ describe("comparison policy", () => {
   });
 });
 
+describe("inheritance by review status", () => {
+  const sourced = (id: string, source: Advisory["source"], aliases: string[] = [], malicious = false) => advisory(id, aliases, { source, malicious });
+  const action = (name: string, version: string): Located => ({ ecosystem: "GitHub Actions", name, version, locations: [".github/workflows/ci.yml"] });
+
+  it.each([
+    { base: "osv", head: "osv", inherited: true },
+    { base: "osv", head: "repository", inherited: true },
+    { base: "repository", head: "repository", inherited: true },
+    { base: "repository", head: "osv", inherited: false },
+  ] as const)("a $head finding over a $base one on base is inherited: $inherited", ({ base, head, inherited }) => {
+    const snap = snapshot({ "lib@1.0.0": [sourced("GHSA-x", base)], "lib@2.0.0": [sourced("GHSA-x", head)] });
+    const comparison = compareFindings(findingsOf([npm("lib", "1.0.0")], snap), findingsOf([npm("lib", "2.0.0")], snap));
+    expect(comparison.inherited.map((finding) => finding.version)).toEqual(inherited ? ["2.0.0"] : []);
+    expect(comparison.added.map((finding) => finding.version)).toEqual(inherited ? [] : ["2.0.0"]);
+    // The key stays the same: base's finding isn't fixed either way.
+    expect(comparison.fixed).toEqual([]);
+    const result = verdict([npm("lib", "1.0.0")], [npm("lib", "2.0.0")], snap);
+    expect(result.failures).toEqual(inherited ? [] : ["new: lib@2.0.0: GHSA-x has no exception"]);
+    expect(result.warnings).toEqual(inherited ? ["inherited: lib@2.0.0: GHSA-x"] : []);
+  });
+
+  it.each([["1.0.0", "1.5.0"], ["1.5.0", "1.0.0"]])("counts every base finding with the key together, in any order (%s first)", (first, second) => {
+    const snap = snapshot({ "lib@1.0.0": [sourced("GHSA-x", "repository")], "lib@1.5.0": [sourced("GHSA-x", "osv")], "lib@2.0.0": [sourced("GHSA-x", "osv")] });
+    const base = [npm("lib", first, [`node_modules/${first}/lib`]), npm("lib", second, [`node_modules/${second}/lib`])];
+    expect(verdict(base, [npm("lib", "2.0.0")], snap)).toMatchObject({ failures: [], warnings: ["inherited: lib@2.0.0: GHSA-x"] });
+    const repositoryOnly = snapshot({ "lib@1.0.0": [sourced("GHSA-x", "repository")], "lib@1.5.0": [sourced("GHSA-x", "repository")], "lib@2.0.0": [sourced("GHSA-x", "osv")] });
+    expect(verdict(base, [npm("lib", "2.0.0")], repositoryOnly).failures).toEqual(["new: lib@2.0.0: GHSA-x has no exception"]);
+  });
+
+  it("judges an alias group whatever ids its records carry", () => {
+    // Base's repository record and head's OSV record name the group by different ids; a reviewed base record does too.
+    const repositoryBase = snapshot({ "lib@1.0.0": [sourced("GHSA-x", "repository", ["CVE-2026-1"])], "lib@2.0.0": [sourced("CVE-2026-1", "osv", ["GHSA-x"])] });
+    expect(verdict([npm("lib", "1.0.0")], [npm("lib", "2.0.0")], repositoryBase).failures).toEqual(["new: lib@2.0.0: GHSA-x has no exception"]);
+    const reviewedBase = snapshot({
+      "lib@1.0.0": [sourced("GHSA-x", "repository", ["CVE-2026-1"]), sourced("PYSEC-2026-1", "osv", ["CVE-2026-1"])],
+      "lib@2.0.0": [sourced("CVE-2026-1", "osv", ["GHSA-x"])],
+    });
+    expect(findingsOf([npm("lib", "1.0.0")], reviewedBase).map((finding) => [finding.advisory, finding.reviewed])).toEqual([["GHSA-x", true]]);
+    expect(verdict([npm("lib", "1.0.0")], [npm("lib", "2.0.0")], reviewedBase)).toMatchObject({ failures: [], warnings: ["inherited: lib@2.0.0: GHSA-x (CVE-2026-1)"] });
+  });
+
+  it("fails malware either way: reported new over a repository-only base record, inherited over a reviewed one", () => {
+    const mal = (source: Advisory["source"]) => sourced("MAL-2026-1", source, [], true);
+    const problem = "lib@2.0.0: MAL-2026-1 is a known-malicious package (no exception can cover it)";
+    const overRepository = snapshot({ "lib@1.0.0": [mal("repository")], "lib@2.0.0": [mal("osv")] });
+    expect(verdict([npm("lib", "1.0.0")], [npm("lib", "2.0.0")], overRepository).failures).toEqual([`new: ${problem}`]);
+    const overReviewed = snapshot({ "lib@1.0.0": [mal("osv")], "lib@2.0.0": [mal("repository")] });
+    expect(verdict([npm("lib", "1.0.0")], [npm("lib", "2.0.0")], overReviewed).failures).toEqual([`inherited: ${problem}`]);
+  });
+
+  it("treats GitHub's advisory database as reviewed for GitHub Actions", () => {
+    const actions = (base: Advisory["source"], head: Advisory["source"]) => new Snapshot(new Map([
+      ["GitHub Actions|acme/tool|v1.0.0", [sourced("GHSA-act", base)]],
+      ["GitHub Actions|acme/tool|v2.0.0", [sourced("GHSA-act", head)]],
+    ]), [], new Date(`${TODAY}T12:00:00Z`));
+    const judged = (snap: Snapshot) => verdict([action("acme/tool", "v1.0.0")], [action("acme/tool", "v2.0.0")], snap);
+    expect(judged(actions("repository", "github")).failures).toEqual(["new: acme/tool@v2.0.0: GHSA-act has no exception"]);
+    expect(judged(actions("github", "repository"))).toMatchObject({ failures: [], warnings: ["inherited: acme/tool@v2.0.0: GHSA-act"] });
+  });
+});
+
 describe("full scan policy", () => {
   it("fails every finding without a valid exception and notes the excepted ones", () => {
     const snap = snapshot({ "a@1.0.0": [advisory("GHSA-a")], "b@1.0.0": [advisory("GHSA-b")] });

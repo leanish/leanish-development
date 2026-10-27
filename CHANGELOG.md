@@ -59,7 +59,13 @@
   advisory's alias group for that version, its record stands as before; a version only the repository's wider range
   names keeps the repository's record, as an unreviewed finding. Base, head and young candidates follow the same rule.
   Adopters may see new findings for such versions: a PR adding one fails, and it vetoes candidates, but triggers no
-  fix on its own. The gate no longer looks single OSV records up before scanning.
+  fix on its own. The gate no longer looks single OSV records up before scanning. Review status now qualifies
+  inheritance: a reviewed finding is inherited only when base has it from a reviewed source too, so a repository-only
+  base finding no longer makes a reviewed one inherited (moving from a version only the repository's wider range names
+  to one OSV lists fails, as in v0.8.2, instead of passing with a warning); an unreviewed finding is inherited from
+  either. The same rule applies wherever a candidate's advisory counts as already there: the fix rules of secure-it and
+  the gate's young-fix and bundle proofs (bundle copies of a name counting together), secure-it's required npm versions
+  and bump-it's transitive npm targets (all base copies counting together).
 - Errors no longer regroup secure-it's held work: held units are grouped only by couplings and required-young
   relationships, so a transient npm planning error or a recorded Gradle reference failure fails its own unit, reported
   with its error, while the other held units keep their topics, members and PRs. A Gradle execution error in a held

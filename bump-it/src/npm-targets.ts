@@ -2,10 +2,11 @@
 import semver from "semver";
 
 import { hasAged } from "@leanish/gate/age";
+import { type Evidence, inherits } from "@leanish/gate/findings";
 import { type NodeRuntime, nodeTypeVersions } from "@leanish/gate/node-runtime";
 import type { PackageVersion } from "@leanish/gate/package-version";
 import type { Snapshot } from "@leanish/gate/snapshot";
-import { groupsOf } from "@leanish/gate/young-fixes";
+import { baselineEvidence, groupsOf, reviewedGroups } from "@leanish/gate/young-fixes";
 
 import { type Copy, type NpmGraph, rangeOf } from "./npm-graph.ts";
 import { isExactOverride, type RepositoryOverrides } from "./npm-overrides.ts";
@@ -99,7 +100,7 @@ export async function decideTargets(inputs: TargetInputs, sources: TargetSources
       if ([...(inputs.baseVersions.get(copy.name) ?? []), ...candidates].some((version) => !snapshot.covers({ ecosystem: "npm", name: copy.name, version }))) {
         throw new Error("the snapshot does not cover every candidate and base version");
       }
-      const inherited = new Set((inputs.baseVersions.get(copy.name) ?? []).flatMap((version) => [...groupsOf(snapshot, { ecosystem: "npm", name: copy.name, version })]));
+      const inherited = baselineEvidence(snapshot, (inputs.baseVersions.get(copy.name) ?? []).map((version) => ({ ecosystem: "npm" as const, name: copy.name, version })));
       for (const version of candidates) {
         if (await eligible(copy.name, version, baseVersion, inherited, snapshot, sources)) {
           target = version;
@@ -201,12 +202,14 @@ function baseVersionOf(copy: Copy, inputs: TargetInputs, within: (version: strin
     .sort(semver.rcompare)[0];
 }
 
-async function eligible(name: string, version: string, baseVersion: string | undefined, inherited: ReadonlySet<string>, snapshot: Snapshot, sources: TargetSources): Promise<boolean> {
+/** Whether `version` may be the copy's target: no malware, every group inherited from the base's copies, identity kept. */
+async function eligible(name: string, version: string, baseVersion: string | undefined, inherited: Evidence, snapshot: Snapshot, sources: TargetSources): Promise<boolean> {
   const pkg = { ecosystem: "npm" as const, name, version };
   if (snapshot.advisories(pkg).some((advisory) => advisory.malicious)) {
     return false;
   }
-  if ([...groupsOf(snapshot, pkg)].some((group) => !inherited.has(group))) {
+  const reviewed = reviewedGroups(snapshot, pkg);
+  if ([...groupsOf(snapshot, pkg)].some((group) => !inherits(inherited, group, reviewed.has(group)))) {
     return false;
   }
   if (baseVersion === undefined || version === baseVersion) {

@@ -22,7 +22,7 @@ describe("verifying what a parent move carries", () => {
       failures: [], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, cooldown: { evaluated: true, releaseAgeDays: 7, held: [] },
       // okio-jvm reports the CVE that groups with okio's GHSA.
       group: (id) => (id === "GHSA-okio" || id === "CVE-2023-3635" ? "GHSA-okio" : id),
-      headFindings: [{ ecosystem: "Maven", name: "com.squareup.okio:okio-jvm", version: "3.2.0", advisory: "GHSA-okio", ids: ["CVE-2023-3635"], malicious: false, summary: undefined, severity: undefined, locations: [":runtimeClasspath"] }],
+      headFindings: [{ ecosystem: "Maven", name: "com.squareup.okio:okio-jvm", version: "3.2.0", advisory: "GHSA-okio", ids: ["CVE-2023-3635"], malicious: false, reviewed: true, summary: undefined, severity: undefined, locations: [":runtimeClasspath"] }],
     });
     const plan: ChangePlan = { topic: "security", malware: false, packages: ["Maven|com.squareup.okhttp3:okhttp"], severity: "MODERATE", moves: [{
       ecosystem: "Maven", name: "com.squareup.okhttp3:okhttp", from: "4.9.3", to: "4.11.0", mechanism: "gradle-declared", locations: [":runtimeClasspath"], advisories: [],
@@ -37,7 +37,7 @@ describe("verifying what a parent move carries", () => {
     vi.mocked(runCompare).mockResolvedValue({
       failures: [], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, cooldown: { evaluated: true, releaseAgeDays: 7, held: [] },
       group: (id) => id,
-      headFindings: [{ ecosystem: "npm", name: "carrier", version: "1.1.0", advisory: "GHSA-shared", ids: ["GHSA-shared"], malicious: false, summary: undefined, severity: undefined, locations: ["node_modules/carrier"] }],
+      headFindings: [{ ecosystem: "npm", name: "carrier", version: "1.1.0", advisory: "GHSA-shared", ids: ["GHSA-shared"], malicious: false, reviewed: true, summary: undefined, severity: undefined, locations: ["node_modules/carrier"] }],
     });
     const plan: ChangePlan = { topic: "security", malware: false, packages: ["npm|carrier"], severity: "HIGH", moves: [{
       ecosystem: "npm", name: "carrier", from: "1.0.0", to: "1.1.0", mechanism: "npm-direct", locations: ["node_modules/carrier"], advisories: [],

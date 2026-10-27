@@ -8,8 +8,10 @@
  * A carrier version *fixes* when
  *   - every carried target (a bundled package's advisory group) is gone: no
  *     package of that name anywhere in its bundle has it, wherever it sits;
- *   - its bundle adds no package + advisory group pair the old bundle lacked,
- *     and holds no malware;
+ *   - its bundle adds no package + advisory group pair the old bundle lacked
+ *     (a pair some copy in it has from a reviewed source counts as added when
+ *     the old bundle's copies have it only from the project's repository
+ *     advisories: `inherits`), and holds no malware;
  *   - the carrier itself still fixes its own targets, if it has any, and adds
  *     no advisory group of its own (`fixes` in young-fixes.ts).
  * The rule is the security rule: ascending from the current version, the
@@ -34,13 +36,14 @@
  */
 import { ageDays } from "./age.ts";
 import type { Config } from "./config.ts";
+import { type Evidence, evidenceOf, inherits } from "./findings.ts";
 import { isObject } from "./json.ts";
 import type { BundleContents } from "./npm-bundles.ts";
 import type { NpmRegistry } from "./npm-registry.ts";
 import type { PackageName, PackageVersion } from "./package-version.ts";
 import type { Snapshot } from "./snapshot.ts";
 import { versionScheme } from "./versions.ts";
-import { compatibleLine, fixes, groupsOf, nearestVetoes, reviewedGroups, unreviewedGroups, type VersionCatalog, type Veto } from "./young-fixes.ts";
+import { baselineEvidence, compatibleLine, fixes, nearestVetoes, unreviewedGroups, type VersionCatalog, type Veto } from "./young-fixes.ts";
 
 /** Bundles read before each new advisory snapshot. */
 const BATCH = 4;
@@ -233,7 +236,8 @@ export function carrierFixes(search: Pick<CarrierSearch, "carrier" | "from" | "f
   const after = bundlePairs(bundle, snapshot);
   if (after.malicious) return false;
   const counted = (pair: string) => after.pairs.has(pair) && !ignore.pairs.has(pair);
-  if ([...after.pairs].some((pair) => counted(pair) && !before.pairs.has(pair))) return false;
+  // Each side's copies of a name count together: any reviewed copy makes the pair reviewed in that bundle.
+  if ([...after.pairs].some(([pair, reviewed]) => counted(pair) && !inherits(before.pairs, pair, reviewed))) return false;
   return search.carried.every((target) => !counted(`${target.name}|${snapshot.group(target.advisory)}`));
 }
 
@@ -248,17 +252,17 @@ function carrierVeto(search: CarrierSearch, version: string, bundle: CompleteBun
   if (carrierFixes(search, version, bundle, snapshot) || !carrierFixes(search, version, bundle, snapshot, unreviewed)) return undefined;
   const carrier = { ...carrierName(search), version };
   const ownTargets = new Set(search.own.map((id) => snapshot.group(id)));
-  const ownBefore = groupsOf(snapshot, { ...carrier, version: search.from });
+  const ownBefore = baselineEvidence(snapshot, [{ ...carrier, version: search.from }]);
   const carried = new Set(search.carried.map((target) => `${target.name}|${snapshot.group(target.advisory)}`));
   const pairsBefore = bundlePairs(search.fromBundle, snapshot).pairs;
   const ids = [
     ...snapshot.advisories(carrier).filter((advisory) => {
       const group = snapshot.group(advisory.id);
-      return unreviewed.own.has(group) && (ownTargets.has(group) || !ownBefore.has(group));
+      return unreviewed.own.has(group) && (ownTargets.has(group) || !inherits(ownBefore, group, false));
     }),
     ...bundle.packages.flatMap((pkg) => snapshot.advisories({ ecosystem: "npm", name: pkg.name, version: pkg.version }).filter((advisory) => {
       const pair = `${pkg.name}|${snapshot.group(advisory.id)}`;
-      return unreviewed.pairs.has(pair) && (carried.has(pair) || !pairsBefore.has(pair));
+      return unreviewed.pairs.has(pair) && (carried.has(pair) || !inherits(pairsBefore, pair, false));
     })),
   ].flatMap((advisory) => advisory.ids);
   return { version, advisories: [...new Set(ids)].sort() };
@@ -267,21 +271,23 @@ function carrierVeto(search: CarrierSearch, version: string, bundle: CompleteBun
 /** A bundled pair is unreviewed only when no copy of that name in the bundle has the group from a reviewed source. */
 function unreviewedOf(search: CarrierSearch, version: string, bundle: CompleteBundle, snapshot: Snapshot): Unreviewed {
   const own = unreviewedGroups(snapshot, { ...carrierName(search), version });
-  const corroborated = new Set(bundle.packages.flatMap((pkg) => [...reviewedGroups(snapshot, { ecosystem: "npm", name: pkg.name, version: pkg.version })].map((group) => `${pkg.name}|${group}`)));
-  const pairs = new Set([...bundlePairs(bundle, snapshot).pairs].filter((pair) => !corroborated.has(pair)));
+  const pairs = new Set([...bundlePairs(bundle, snapshot).pairs].filter(([, reviewed]) => !reviewed).map(([pair]) => pair));
   return { own, pairs };
 }
 
-/** Each bundled package's advisory groups as `name|group`, and whether any is malware. */
-export function bundlePairs(bundle: CompleteBundle, snapshot: Snapshot): { readonly pairs: ReadonlySet<string>; readonly malicious: boolean } {
-  const pairs = new Set<string>();
+/**
+ * Each bundled package's advisory groups as `name|group`, as inheritance evidence (reviewed when some copy of that name
+ * in the bundle has the group from a reviewed source), and whether any is malware.
+ */
+export function bundlePairs(bundle: CompleteBundle, snapshot: Snapshot): { readonly pairs: Evidence; readonly malicious: boolean } {
+  const entries: Array<readonly [string, boolean]> = [];
   let malicious = false;
   for (const pkg of bundle.packages) {
     const version: PackageVersion = { ecosystem: "npm", name: pkg.name, version: pkg.version };
     for (const advisory of snapshot.advisories(version)) malicious ||= advisory.malicious;
-    for (const group of groupsOf(snapshot, version)) pairs.add(`${pkg.name}|${group}`);
+    for (const [group, reviewed] of baselineEvidence(snapshot, [version])) entries.push([`${pkg.name}|${group}`, reviewed]);
   }
-  return { pairs, malicious };
+  return { pairs: evidenceOf(entries), malicious };
 }
 
 /**

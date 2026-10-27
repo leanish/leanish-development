@@ -7,7 +7,8 @@
  * B fixes A). Candidates are the registry's versions above R, up to the end
  * of V's line (prereleases only if R is one; Maven keeps R's flavor, `-jre`).
  * A candidate fixes when no target affects it and it adds no advisory R
- * doesn't have, malware included. The rule:
+ * doesn't have (a reviewed one R has only from the project's repository
+ * advisories counts as added: `inherits`), malware included. The rule:
  *   1. the first line, from R's own compatible line upward, with a fixing
  *      candidate (so a backport beats a newer major);
  *   2. in it, the lowest fixing candidate at least `releaseAgeDays` old;
@@ -20,6 +21,7 @@
  */
 import { ageDays } from "./age.ts";
 import type { Config } from "./config.ts";
+import { evidenceOf, inherits } from "./findings.ts";
 import { type PackageName, type PackageVersion, versionKey } from "./package-version.ts";
 import type { Snapshot } from "./snapshot.ts";
 import { type Ecosystem, versionScheme } from "./versions.ts";
@@ -97,14 +99,28 @@ export function targetsOf(snapshot: Snapshot, pkg: PackageVersion, only?: Readon
 }
 
 /**
- * Whether `version` fixes `targets` of `from`: none of them affects it, it adds no group `from` doesn't have, no
- * malware. Groups in `ignore` don't count against it (malware always does): what a veto by them alone looks like.
+ * Whether `version` fixes `targets` of `from`: none of them affects it, every group on it is inherited from `from`
+ * (`inherits`: a reviewed one only from reviewed evidence there), no malware. Groups in `ignore` don't count against it
+ * (malware always does): what a veto by them alone looks like.
  */
 export function fixes(snapshot: Snapshot, pkg: PackageName, from: string, targets: ReadonlyArray<string>, version: string, ignore: ReadonlySet<string> = new Set()): boolean {
-  const before = groupsOf(snapshot, { ...pkg, version: from });
-  const advisories = snapshot.advisories({ ...pkg, version });
+  const before = baselineEvidence(snapshot, [{ ...pkg, version: from }]);
+  const candidate = { ...pkg, version };
+  const advisories = snapshot.advisories(candidate);
+  const reviewed = reviewedGroups(snapshot, candidate);
   const found = new Set(advisories.map((advisory) => snapshot.group(advisory.id)).filter((group) => !ignore.has(group)));
-  return !advisories.some((advisory) => advisory.malicious) && targets.every((group) => !found.has(group)) && [...found].every((group) => before.has(group));
+  return !advisories.some((advisory) => advisory.malicious) && targets.every((group) => !found.has(group)) && [...found].every((group) => inherits(before, group, reviewed.has(group)));
+}
+
+/**
+ * The advisory groups on `versions` (copies of one package) as inheritance evidence (`inherits`): a group is reviewed
+ * when a reviewed source reports it on any of them.
+ */
+export function baselineEvidence(snapshot: Snapshot, versions: ReadonlyArray<PackageVersion>): Map<string, boolean> {
+  return evidenceOf(versions.flatMap((pkg) => {
+    const reviewed = reviewedGroups(snapshot, pkg);
+    return [...groupsOf(snapshot, pkg)].map((group) => [group, reviewed.has(group)] as const);
+  }));
 }
 
 /**
@@ -129,15 +145,20 @@ export interface Veto {
   readonly advisories: ReadonlyArray<string>;
 }
 
-/** The candidates in `versions` that fail `fixes` only because of unreviewed groups on them. */
+/**
+ * The candidates in `versions` that fail `fixes` only because of unreviewed groups on them. A group reviewed on the
+ * candidate that `from` has only from the project's repository advisories is never ignored here, so a candidate it
+ * rules out stays ruled out without becoming a veto: no unreviewed advisory is what blocks it.
+ */
 export function vetoesOf(snapshot: Snapshot, pkg: PackageName, from: string, targets: ReadonlyArray<string>, versions: ReadonlyArray<string>): Veto[] {
   return versions.flatMap((version) => {
     const candidate = { ...pkg, version };
     const unreviewed = unreviewedGroups(snapshot, candidate);
     if (unreviewed.size === 0 || fixes(snapshot, pkg, from, targets, version) || !fixes(snapshot, pkg, from, targets, version, unreviewed)) return [];
-    // Only the groups that block it: a target it still has, or one `from` didn't have (inherited debt doesn't).
-    const before = groupsOf(snapshot, { ...pkg, version: from });
-    const blocking = (group: string) => unreviewed.has(group) && (targets.includes(group) || !before.has(group));
+    // Only the unreviewed groups that block it: a target it still has, or one not inherited from `from` (inherited debt
+    // doesn't); an unreviewed group inherits from any evidence there.
+    const before = baselineEvidence(snapshot, [{ ...pkg, version: from }]);
+    const blocking = (group: string) => unreviewed.has(group) && (targets.includes(group) || !inherits(before, group, false));
     const ids = snapshot.advisories(candidate).filter((advisory) => blocking(snapshot.group(advisory.id))).flatMap((advisory) => advisory.ids);
     return [{ version, advisories: [...new Set(ids)].sort() }];
   });
