@@ -87,7 +87,7 @@ async function writeInventory(out: string, build: string, configs: ReadonlyArray
 describe("unlockedGradle", () => {
   let root: string;
   let workingCopy: WorkingCopy;
-  const context = { isolation: { readDenied: [], env: {} } } as unknown as ToolRunContext;
+  const context = { isolation: { readDenied: [], env: {}, buildCacheRoot: "/tmp/secure-it-test-cache" } } as unknown as ToolRunContext;
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), "secure-it-floor-gradle-"));

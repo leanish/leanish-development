@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { IsolationPolicy } from "@leanish/agent-runtime/isolation";
 import type { WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
 import type { Tree } from "@leanish/gate/tree";
 
@@ -22,6 +23,7 @@ const workingCopy: WorkingCopy = {
   headSha: "a".repeat(40),
   branch: "main",
 };
+const POLICY: IsolationPolicy = { readDenied: [], env: {}, buildCacheRoot: "/synthetic/cache" };
 const tree: Tree = {
   id: "worktree",
   read: async (path) => path === "build.gradle.kts" ? "plugins { java }" : undefined,
@@ -44,7 +46,7 @@ describe("sandboxed Gradle inventory errors", () => {
       "  supply-chain gradle-inventory ...",
     ].join("\n");
     vi.mocked(runSandboxed).mockResolvedValue({ code: 2, stdout: "", stderr });
-    await expect(sandboxedGradleInventories({}, workingCopy).ofWorkingTree(tree)).rejects.toThrow(
+    await expect(sandboxedGradleInventories(POLICY, workingCopy).ofWorkingTree(tree)).rejects.toThrow(
       `the sandboxed Gradle inventory of the working tree failed (exit 2): ✗ ${reported}`,
     );
   });
@@ -67,7 +69,7 @@ describe("a commit's Gradle inventory with a transform", () => {
       await writeFile(flag(args, "--out"), JSON.stringify({ schemaVersion: 3, tree: "worktree", builds: [{ build: ".", configurations: [] }] }));
       return { code: 0, stdout: "", stderr: "" };
     });
-    const inventory = await sandboxedGradleInventories({}, workingCopy).ofCommit({ ...tree, id: "b".repeat(40) }, { transform, overlay: [{ path: "gradlew", bytes: Buffer.from("#!/bin/sh\n"), executable: true }] });
+    const inventory = await sandboxedGradleInventories(POLICY, workingCopy).ofCommit({ ...tree, id: "b".repeat(40) }, { transform, overlay: [{ path: "gradlew", bytes: Buffer.from("#!/bin/sh\n"), executable: true }] });
     expect(inventory?.tree).toBe("b".repeat(40));
     expect(command()).toEqual(expect.arrayContaining(["--init-script", "/scripts/reference.init.gradle", "--define"]));
     expect(flag(command(), "--define")).toMatch(/^supplyChain\.reference\.file=.+transform\.json$/);
@@ -84,6 +86,6 @@ describe("a commit's Gradle inventory with a transform", () => {
       await writeFile(flag(args, "--out"), JSON.stringify({ schemaVersion: 3, tree: "worktree", builds: [{ build: ".", configurations: [] }] }));
       return { code: 0, stdout: "", stderr: "" };
     });
-    await expect(sandboxedGradleInventories({}, workingCopy).ofCommit({ ...tree, id: "b".repeat(40) }, { transform })).rejects.toThrow("the Gradle transform's input changed");
+    await expect(sandboxedGradleInventories(POLICY, workingCopy).ofCommit({ ...tree, id: "b".repeat(40) }, { transform })).rejects.toThrow("the Gradle transform's input changed");
   });
 });

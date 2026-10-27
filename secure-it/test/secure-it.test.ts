@@ -115,7 +115,7 @@ function harness(options: { prs?: GitHubPullRequest[]; fixes?: SecurityFix[]; an
     releaseAgeExclude: [],
     readToken: "read-token",
     fetch: globalThis.fetch,
-    isolation: {},
+    isolation: { readDenied: [], env: {}, buildCacheRoot: "/tmp/secure-it-cache" },
     agent: (async (call: { entrypoint: string; input: Record<string, unknown> }) => {
       agentCalls.push(call);
       return options.answer ?? APPLIED;

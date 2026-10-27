@@ -22,6 +22,7 @@ What secure-it and bump-it need to run a coding agent, without leanish-developme
   repository's release age, and the `gh`/`git` guards first on their PATH. The guards are guard rails, not a boundary;
   the boundaries are the read-only token, the read-only git metadata and the credential scrub. See the
   [security model](https://github.com/leanish/leanish-development/blob/main/docs/security-model.md#secure-it-and-bump-it).
+  The isolation is an agent-neutral `IsolationPolicy` (see below), which either runner gets through its adapter.
 - **Secrets:** `SecretStore`, with macOS Keychain as its one implementation for now (`secret-store.ts`).
 
 Most of it is copied from the runtime of leanish-development-incubator (private), which is to consume this package
@@ -32,6 +33,31 @@ Skill schemas also accept the `[object, null]` type union and a restricted const
 `if`/`then` that requires one non-null object. Both tools' answers use them so that only cannot-apply may leave
 `publication` null; applied still needs the complete publication text. Other unions, general conditionals, unknown
 keywords and malformed objects are still rejected.
+
+## Isolation policy
+
+An `IsolationPolicy` says what the agent's commands may not read (`readDenied`), the env they get (`env`) and where
+the build tools' caches go (`buildCacheRoot`); `loginHome`, the Codex home whose `codex login` a run reuses, is
+optional and only the Codex adapter uses it. `isolationPolicy(settings)` builds one on a developer's machine (the
+sensitive home paths, the Codex login, the guards, the commit identity and the release age), as secure-it and bump-it
+do. Runners get it through their adapters, which check it (absolute paths, string env values) and take the runner's
+other options (binary, timeouts, staging…) separately: `codexRunnerOptions(policy, tuning?)` and
+`claudeCodeRunnerOptions(policy, confinement, tuning?)`. A policy can also be written out by hand: nothing in it
+needs settings, a home or a login.
+
+How each incubator host composes it when it adopts this package:
+
+- **Local Codex:** `isolationPolicy(...)` from what its `localCodexOptions` reads today: `AGENT_RUNTIME_READ_DENY`
+  as `readDeny`, `AGENT_RUNTIME_COMMAND_PATH` as `commandPath`, the developer's git identity as `commitIdentity`, its
+  release age (7 days), and its `XDG_CACHE_HOME`-based cache as `buildCacheRoot`; then
+  `new CodexRunner(codexRunnerOptions(policy))`.
+- **Local Claude Code:** the same policy with `claudeCodeRunnerOptions(policy, "restricted")`, so adoption doesn't
+  suddenly require a working sandbox.
+- **Lambda:** `{ buildCacheRoot: LAMBDA_BUILD_CACHE_ROOT, readDenied: [], env: {} }`, with no login: Codex gets its
+  cache under `/tmp` as today, and Claude Code runs `restricted` (it gets the cache's env too, but runs no commands).
+
+Write access still needs the `sandbox` confinement: a `restricted` runner refuses a write run before staging
+anything, and a `sandbox` run fails when Claude Code's sandbox is unavailable (`failIfUnavailable`).
 
 ## Known limits
 

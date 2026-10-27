@@ -3,11 +3,13 @@
 // Local changes: every input is explicit (the host's config) instead of `AGENT_RUNTIME_*` variables; the agent's
 // commands get the given commit identity, if any, instead of reading the developer's global git identity; the release
 // age is the repository's, not a fixed 7, with its own npm scopes excluded from it; the resolved login source and its
-// canonical path (when present) stay unreadable.
+// canonical path (when present) stay unreadable; the result is an agent-neutral policy that each runner gets through
+// its own adapter (`codexRunnerOptions`, `claudeCodeRunnerOptions`), and the login home is absolute.
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 
+import type { ClaudeCodeRunnerOptions, ClaudeConfinement } from "./skill/claude-code-runner.ts";
 import type { CodexRunnerOptions } from "./skill/codex-runner.ts";
 
 /**
@@ -66,7 +68,33 @@ export interface IsolationSettings {
   readonly buildCacheRoot: string;
 }
 
-/** What `codexIsolation` reads from the machine; each defaults to the real one. */
+/**
+ * How a coding agent's commands are isolated, whichever agent runs them: what they may not read, the env they get on
+ * top of the scrubbed one, and where the build tools' caches go. Each runner gets it through its adapter
+ * (`codexRunnerOptions`, `claudeCodeRunnerOptions`), which checks it, so a host may also build one by hand: a Lambda
+ * function's is `{ buildCacheRoot, readDenied: [], env: {} }`, with no settings, home or login behind it.
+ */
+export interface IsolationPolicy {
+  /** Absolute paths the agent's commands (and Claude Code's file tools) may not read. */
+  readonly readDenied: ReadonlyArray<string>;
+  /** Env given to the agent's commands, over the scrubbed process env. */
+  readonly env: Readonly<Record<string, string>>;
+  /** Absolute directory the build tools' caches go to (`GRADLE_USER_HOME`, `npm_config_cache`); a write run may write it. */
+  readonly buildCacheRoot: string;
+  /**
+   * Absolute Codex home whose file-backed login the run reuses. Only the Codex adapter uses it; absent, no login is
+   * linked (an API key, or a host with none).
+   */
+  readonly loginHome?: string;
+}
+
+/** `CodexRunner`'s options other than the policy's: its binary, timeouts, staging and the like. */
+export type CodexRunnerTuning = Omit<CodexRunnerOptions, keyof IsolationPolicy>;
+
+/** `ClaudeCodeRunner`'s options other than the policy's and the confinement: its binary, timeouts, staging and the like. */
+export type ClaudeCodeRunnerTuning = Omit<ClaudeCodeRunnerOptions, "confinement" | keyof IsolationPolicy>;
+
+/** What `isolationPolicy` reads from the machine; each defaults to the real one. */
 export interface Machine {
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly home: string;
@@ -75,9 +103,10 @@ export interface Machine {
 }
 
 /**
- * Codex runs for a tool:
- *   - reuse the developer's file-backed `codex login` (`$CODEX_HOME`, else
- *     `~/.codex`) — the CLI reads it, sandboxed commands can't;
+ * The policy a tool's agent runs with, on the developer's machine:
+ *   - Codex reuses the developer's file-backed `codex login` (`$CODEX_HOME`,
+ *     else `~/.codex`, made absolute) — the CLI reads it, sandboxed commands
+ *     can't;
  *   - deny sandboxed commands the resolved login `auth.json` path (and its
  *     canonical path when present), the sensitive home paths above that exist,
  *     and `readDeny`: anything they read reaches the model provider, and a write
@@ -97,7 +126,7 @@ export interface Machine {
  *   - give the agent a dedicated build-tool cache instead of `~/.gradle`,
  *     whose init scripts every later build would run.
  */
-export function codexIsolation(settings: IsolationSettings, machine: Partial<Machine> = {}): CodexRunnerOptions {
+export function isolationPolicy(settings: IsolationSettings, machine: Partial<Machine> = {}): IsolationPolicy {
   const { env = process.env, home = homedir(), exists = existsSync, realpath = realpathSync } = machine;
   const relative = [...settings.commandPath, ...settings.readDeny, settings.buildCacheRoot].filter((path) => !isAbsolute(path));
   if (relative.length > 0) throw new Error(`isolation paths must be absolute; got '${relative.join("', '")}'`);
@@ -107,13 +136,12 @@ export function codexIsolation(settings: IsolationSettings, machine: Partial<Mac
   // npm splits the variable on commas.
   const exclude = settings.releaseAgeExclude.find((pattern) => pattern.trim() === "" || pattern.includes(","));
   if (exclude !== undefined) throw new Error(`releaseAgeExclude patterns must be non-empty and have no comma; got '${exclude}'`);
-  const loginHome = nonEmpty(env["CODEX_HOME"]) ?? join(home, ".codex");
-  const loginPath = resolve(loginHome, "auth.json");
+  // Absolute, as the adapters require; CodexRunner resolved it the same way.
+  const loginHome = resolve(nonEmpty(env["CODEX_HOME"]) ?? join(home, ".codex"));
   const readDenied = [
     ...SENSITIVE_HOME_PATHS.map((path) => join(home, path)).filter(exists),
     ...settings.readDeny,
-    loginPath,
-    ...(exists(loginPath) ? [realpath(loginPath)] : []),
+    ...loginDenials(loginHome, exists, realpath),
   ];
   const path = nonEmpty(env["PATH"]);
   const commandPath = settings.commandPath.join(":");
@@ -139,6 +167,65 @@ export function codexIsolation(settings: IsolationSettings, machine: Partial<Mac
         : {}),
     },
   };
+}
+
+/** The login file of `loginHome`, and its canonical path when it exists: never readable by the agent's commands. */
+function loginDenials(loginHome: string, exists: (path: string) => boolean, realpath: (path: string) => string): string[] {
+  const loginPath = join(loginHome, "auth.json");
+  return [loginPath, ...(exists(loginPath) ? [realpath(loginPath)] : [])];
+}
+
+/**
+ * `CodexRunner`'s options for `policy`, with the `tuning` that isn't isolation. A login the policy links stays
+ * unreadable to the agent's commands even when a hand-made policy doesn't deny it (`isolationPolicy`'s already does).
+ */
+export function codexRunnerOptions(policy: IsolationPolicy, tuning: CodexRunnerTuning = {}): CodexRunnerOptions {
+  assertValidPolicy(policy, "codexRunnerOptions");
+  // The policy alone decides the login, even against a plain-JavaScript `tuning` that names one.
+  const { loginHome: _ignored, ...rest } = tuning as CodexRunnerTuning & { readonly loginHome?: unknown };
+  const login = policy.loginHome === undefined ? [] : loginDenials(policy.loginHome, existsSync, realpathSync);
+  return {
+    ...rest,
+    ...(policy.loginHome !== undefined ? { loginHome: policy.loginHome } : {}),
+    buildCacheRoot: policy.buildCacheRoot,
+    readDenied: [...new Set([...policy.readDenied, ...login])],
+    env: { ...policy.env },
+  };
+}
+
+/**
+ * `ClaudeCodeRunner`'s options for `policy` under `confinement`, with the `tuning` that isn't isolation. The login
+ * home isn't used: Claude Code reads its own login. A `restricted` run gets the build cache's env too, but runs no
+ * commands; write runs still need `sandbox`, which the runner checks.
+ */
+export function claudeCodeRunnerOptions(policy: IsolationPolicy, confinement: ClaudeConfinement, tuning: ClaudeCodeRunnerTuning = {}): ClaudeCodeRunnerOptions {
+  assertValidPolicy(policy, "claudeCodeRunnerOptions");
+  return {
+    ...tuning,
+    confinement,
+    env: { ...policy.env },
+    readDenied: [...policy.readDenied],
+    buildCacheRoot: policy.buildCacheRoot,
+  };
+}
+
+/** A host may build a policy by hand (or in plain JavaScript), so each adapter checks it before a runner gets it. */
+function assertValidPolicy(policy: IsolationPolicy, adapter: string): void {
+  if (typeof policy !== "object" || policy === null) throw new Error(`${adapter}: the isolation policy must be an object`);
+  const { readDenied, env, buildCacheRoot, loginHome } = policy;
+  if (!Array.isArray(readDenied)) throw new Error(`${adapter}: readDenied must be an array of absolute paths`);
+  // By index, so an `undefined` entry (or a hole) is caught too.
+  const relative = readDenied.findIndex((path: unknown) => typeof path !== "string" || !isAbsolute(path));
+  if (relative !== -1) throw new Error(`${adapter}: readDenied entries must be absolute paths; got '${String(readDenied[relative])}'`);
+  if (typeof buildCacheRoot !== "string" || !isAbsolute(buildCacheRoot)) {
+    throw new Error(`${adapter}: buildCacheRoot must be an absolute path; got '${String(buildCacheRoot)}'`);
+  }
+  if (loginHome !== undefined && (typeof loginHome !== "string" || !isAbsolute(loginHome))) {
+    throw new Error(`${adapter}: loginHome must be an absolute path when given; got '${String(loginHome)}'`);
+  }
+  if (typeof env !== "object" || env === null || Array.isArray(env)) throw new Error(`${adapter}: env must be an object of strings`);
+  const nonString = Object.entries(env).find(([, value]: [string, unknown]) => typeof value !== "string");
+  if (nonString !== undefined) throw new Error(`${adapter}: env values must be strings; ${nonString[0]} isn't`);
 }
 
 function nonEmpty(value: string | undefined): string | undefined {

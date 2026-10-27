@@ -70,17 +70,17 @@ describe("runSandboxed arguments", () => {
     expect(calls[0]?.args.join(" ")).toContain('"/Users/dev/.ssh"="deny"');
     expect(calls[0]?.args.join(" ")).toContain("network.enabled=true");
     expect(calls[0]?.cwd).toBe(workingCopy.path);
-    await expect(runSandboxed({}, { workingCopy: { ...workingCopy, gitDir: undefined }, command: ["true"] })).rejects.toThrow("separate directory");
+    await expect(runSandboxed({ readDenied: [], buildCacheRoot: "/cache", env: {} }, { workingCopy: { ...workingCopy, gitDir: undefined }, command: ["true"] })).rejects.toThrow("separate directory");
   });
 });
 
 describe("sandboxWritable", () => {
-  it.each([undefined, "/build-cache"])("includes the same roots with buildCacheRoot=%s for gates and parsers", (buildCacheRoot) => {
+  it("includes the same roots, the build cache too, for gates and parsers", () => {
     const config = parseToolConfig("bump-it", `repos: [{ repo: leanish/widget }]
 agent: { codingAgent: codex, model: sol, effort: medium }
 commitIdentity: { name: tool, email: tool@example.com }
 dirs: { state: /state, cache: /cache }`, "test.yaml");
-    expect(sandboxWritable({ config, workingCopy, isolation: { buildCacheRoot } }))
-      .toEqual(["/cache", workingCopy.path, tmpdir(), "/tmp", ...(buildCacheRoot === undefined ? [] : [buildCacheRoot])]);
+    expect(sandboxWritable({ config, workingCopy, isolation: { readDenied: [], env: {}, buildCacheRoot: "/build-cache" } }))
+      .toEqual(["/cache", workingCopy.path, tmpdir(), "/tmp", "/build-cache"]);
   });
 });
