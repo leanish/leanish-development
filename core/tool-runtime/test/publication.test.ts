@@ -6,7 +6,7 @@ import type { PreparedBranch, WorkingCopy } from "@leanish/agent-runtime/types/w
 import { InMemoryWorkspace } from "@leanish/agent-runtime/working-copy/in-memory-workspace";
 import { MemoryJournal } from "./memory-journal.ts";
 import { ownPullRequests, stateOf, withMarker } from "../src/own-pr.ts";
-import { clearLeftoverBranch, closeAndDelete, markReady, ownOpenPullRequests, publishNew, publishUpdate, recordState, recoverPublication, rewriteText, type PublicationContext } from "../src/publication.ts";
+import { assertPublishable, clearLeftoverBranch, closeAndDelete, markReady, ownOpenPullRequests, publishNew, publishUpdate, recordState, recoverPublication, rewriteText, type PublicationContext } from "../src/publication.ts";
 import { BASE_SHA, FakeGitHub, HEAD_SHA, OWN_BRANCH, ownPr, PUSHED_SHA, RULES } from "./fake-github.ts";
 
 const WC: WorkingCopy = { projectId: "leanish/widget", path: "/synthetic/leanish/widget", branch: "main", headSha: BASE_SHA, gitDir: "/x/.git" };
@@ -86,6 +86,20 @@ describe("publication", () => {
       expect(pr.pr.body).toHaveLength(limit);
       await expect(publishUpdate(context(new FakeGitHub(ownPr())), existing, 7, { ...CONTENT, body: body + "x" })).rejects.toThrow(`${limit + 1} UTF-16 units`);
     }
+  });
+
+  it("lets callers check the text publication would send, cleaned and marked, without touching GitHub", () => {
+    const github = new FakeGitHub();
+    const tail = withMarker(RULES, "x", { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 }).length - 1;
+    const body = "x".repeat(MAX_BODY_CHARS - tail);
+    expect(() => assertPublishable(context(github), { ...CONTENT, body })).not.toThrow();
+    expect(() => assertPublishable(context(github), { ...CONTENT, body: `${body}x` })).toThrow(`${MAX_BODY_CHARS + 1} UTF-16 units`);
+    // Raw text that fits, but cleaning expands its paths past the limit.
+    const paths = "/t ".repeat(6_000);
+    expect(paths.length).toBeLessThan(MAX_BODY_CHARS);
+    expect(() => assertPublishable({ ...context(github), localRoots: ["/t"] }, { ...CONTENT, body: paths })).toThrow(`over the client's ${MAX_BODY_CHARS} limit`);
+    expect(() => assertPublishable(context(github), { ...CONTENT, title: " " })).toThrow("the PR title is empty");
+    expect(github.calls).toEqual([]);
   });
 
   it("makes the fake enforce the same UTF-16 body cap on create and update as the real client", async () => {

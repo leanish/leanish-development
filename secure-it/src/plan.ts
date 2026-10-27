@@ -239,7 +239,11 @@ async function completedWork(fixes: ReadonlyArray<SecurityFix>, peers?: NpmPeerP
       }
       if (omitted.size === size) break;
     }
-    if (result.blocked.length > 0) blocked.push({ packages: [...omitted].map((name) => `npm|${name}`).sort(), reasons: result.blocked.map((group) => group.reason) });
+    if (result.blocked.length > 0) {
+      // Malware leaves as a whole unit, with every copy of its packages (malicious or not); otherwise the work left out.
+      const dropped = unit.kind === "malware" ? fixes.filter((fix) => unit.work.some((work) => packageKey(work) === packageKey(fix))) : unit.work.filter((fix) => fix.ecosystem === "npm" && omitted.has(fix.name));
+      blocked.push({ packages: [...omitted].map((name) => `npm|${name}`).sort(), reasons: [...result.blocked.map((group) => group.reason), ...notesOf(dropped)] });
+    }
     if (unit.kind === "malware" && omitted.size > 0) continue;
     const work = unit.work.filter((fix) => fix.ecosystem !== "npm" || !omitted.has(fix.name));
     if (work.length === 0) continue;
@@ -265,21 +269,38 @@ const isActionable = (fix: SecurityFix) => fix.to !== undefined && fix.to.blocke
 // A blocked fix's notes (the package's unreviewed-only findings) go with its reason: nothing else reports them.
 const reasonOf = (fix: SecurityFix) => [`${fix.name}@${fix.from}: ${fix.problem ?? fix.to?.blockers.join("; ") ?? "no move"}`, ...fix.notes ?? []].join("; ");
 
+/**
+ * The notes of copies left out with a blocked package but not blocked themselves, one line per copy that has any:
+ * nothing else reports them. A note already in `stuck`'s reasons, or on an earlier copy, isn't repeated.
+ */
+function notesOf(fixes: ReadonlyArray<SecurityFix>, stuck: ReadonlyArray<SecurityFix> = []): string[] {
+  const seen = new Set(stuck.flatMap((fix) => fix.notes ?? []));
+  const lines: string[] = [];
+  for (const fix of fixes) {
+    const fresh = (fix.notes ?? []).filter((note) => !seen.has(note));
+    for (const note of fresh) seen.add(note);
+    if (fresh.length > 0) lines.push(`${fix.name}@${fix.from}: ${fresh.join("; ")}`);
+  }
+  return lines;
+}
+
 /** Malware first and indivisible; otherwise a routine batch and one unit per major package. */
 export function selectWork(fixes: ReadonlyArray<SecurityFix>): Selection {
   const malicious = fixes.filter((fix) => fix.malicious);
   if (malicious.length > 0) {
     const stuck = malicious.filter((fix) => !isActionable(fix));
-    return stuck.length === 0
-      ? { units: [{ kind: "malware", topic: "malware", work: malicious }], blocked: [] }
-      : { units: [], blocked: [{ packages: [...new Set(malicious.map(packageKey))].sort(), reasons: stuck.map(reasonOf) }] };
+    if (stuck.length === 0) return { units: [{ kind: "malware", topic: "malware", work: malicious }], blocked: [] };
+    const packages = new Set(malicious.map(packageKey));
+    // Every other copy of these packages, malicious or not, waits with them: its notes go with their reasons.
+    const others = fixes.filter((fix) => packages.has(packageKey(fix)) && !stuck.includes(fix));
+    return { units: [], blocked: [{ packages: [...packages].sort(), reasons: [...stuck.map(reasonOf), ...notesOf(others, stuck)] }] };
   }
   const groups = rankedGroups(fixes);
   const blocked: Array<{ packages: string[]; reasons: string[] }> = [];
   const actionable = new Map<string, SecurityFix[]>();
   for (const [key, group] of groups) {
     const stuck = group.filter((fix) => !isActionable(fix));
-    if (stuck.length > 0) blocked.push({ packages: [key], reasons: stuck.map(reasonOf) });
+    if (stuck.length > 0) blocked.push({ packages: [key], reasons: [...stuck.map(reasonOf), ...notesOf(group.filter(isActionable), stuck)] });
     else actionable.set(key, group);
   }
   // Packages tied by a carried target land together or not at all: verification checks every copy of it.

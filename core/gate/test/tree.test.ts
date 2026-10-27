@@ -43,6 +43,50 @@ describe("the working tree", () => {
   });
 });
 
+describe("symbolic links leading outside", () => {
+  let fixture: string;
+  let repo: string;
+
+  beforeAll(async () => {
+    // `repo-other` shares the repository's name as a prefix: it's still outside.
+    fixture = await mkdtemp(join(tmpdir(), "supply-chain-links-"));
+    repo = join(fixture, "repo");
+    await mkdir(join(repo, "actions/inside"), { recursive: true });
+    await mkdir(join(fixture, "repo-other/action"), { recursive: true });
+    await writeFile(join(repo, "actions/inside/action.yml"), "runs: inside\n");
+    await writeFile(join(fixture, "repo-other/action/action.yml"), "runs: outside\n");
+    await symlink("../../repo-other/action/action.yml", join(repo, "actions/file-out.yml"));
+    await symlink("../../repo-other/action", join(repo, "actions/dir-out"));
+    await symlink("inside", join(repo, "actions/dir-in"));
+    await symlink("../missing/action.yml", join(repo, "actions/broken.yml"));
+    await symlink("repo", join(fixture, "linked-repo"));
+  });
+
+  afterAll(async () => {
+    if (fixture !== undefined) await rm(fixture, { recursive: true, force: true });
+  });
+
+  it("refuses them in the working tree, and still follows links that stay inside", async () => {
+    const tree = workingTree(repo);
+    await expect(tree.read("actions/file-out.yml")).rejects.toThrow("actions/file-out.yml leads outside the repository");
+    await expect(tree.read("actions/dir-out/action.yml")).rejects.toThrow("actions/dir-out/action.yml leads outside the repository");
+    expect(await tree.read("actions/dir-in/action.yml")).toBe("runs: inside\n");
+    expect(await tree.read("actions/broken.yml")).toBeUndefined();
+    expect(await workingTree(join(fixture, "linked-repo")).read("actions/dir-in/action.yml")).toBe("runs: inside\n");
+  });
+
+  it("reads a commit's links as the paths they point to, and has nothing under a linked folder", async () => {
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+    git("init", "--quiet");
+    git("add", ".");
+    git("-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "fixture");
+    const tree = await gitTree(repo, "HEAD", runProcess, join(repo, ".git"));
+    expect(await tree.read("actions/file-out.yml")).toBe("../../repo-other/action/action.yml");
+    expect(await tree.read("actions/broken.yml")).toBe("../missing/action.yml");
+    expect(await tree.read("actions/dir-out/action.yml")).toBeUndefined();
+  });
+});
+
 describe("commit trees", () => {
   it("keeps the recorded baseline despite a redirected .git and replace refs in either metadata directory", async () => {
     const fixture = await mkdtemp(join(tmpdir(), "supply-chain-baseline-"));
