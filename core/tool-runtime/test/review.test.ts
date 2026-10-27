@@ -250,7 +250,7 @@ describe("reviewOpenPullRequests", () => {
     expect(stateOf(github.prs.get(7)!.body)?.adaptations).toBe(1);
   });
 
-  it("does not mark a legacy journal head ready or adapt it without its matching publication", async () => {
+  it("leaves a legacy journal head alone for the next run, never marking it ready or adapting it", async () => {
     const journal = new MemoryJournal();
     await journal.pushed(REPO, 7, { head: PUSHED_SHA, base: BASE_SHA });
     for (const checks of [RED, new FakeGitHub().checks]) {
@@ -258,10 +258,32 @@ describe("reviewOpenPullRequests", () => {
       github.checks = checks;
       const calls: string[] = [];
       const entries = await reviewOpenPullRequests(context(github, new InMemoryWorkspace(), workingCopy(), journal), steps(calls));
-      expect(entries[0]).toMatchObject({ outcome: "error", detail: expect.stringContaining("no matching publication content") });
+      expect(entries[0]).toMatchObject({ outcome: "left-alone", detail: "the journal has only its head; the tool's next run recomputes and republishes it" });
       expect(calls).toEqual([]);
-      expect(github.calls.some((call) => call.startsWith("markReadyForReview"))).toBe(false);
+      expect(github.calls.filter((call) => !call.startsWith("listOpenPullRequests"))).toEqual([]);
     }
+  });
+
+  it("reports a saved publication that doesn't match its head as that PR's error, touching nothing", async () => {
+    const journal = new MemoryJournal();
+    const body = withMarker(RULES, "New plan.", { head: PUSHED_SHA, base: NEW_BASE, adaptations: 0 });
+    await journal.pushed(REPO, 7, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: "new plan title", body, adaptations: 0 } });
+    const github = new FakeGitHub(ownPr({ headSha: PUSHED_SHA }));
+    const calls: string[] = [];
+    const entries = await reviewOpenPullRequests(context(github, new InMemoryWorkspace(), workingCopy(), journal), steps(calls));
+    expect(entries[0]).toMatchObject({ outcome: "error", detail: expect.stringContaining("no matching publication content") });
+    expect(calls).toEqual([]);
+    expect(github.calls.filter((call) => !call.startsWith("listOpenPullRequests"))).toEqual([]);
+  });
+
+  it("leaves a PR whose state someone removed alone even when the journal records its head", async () => {
+    const journal = new MemoryJournal();
+    const body = withMarker(RULES, "New plan.", { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 });
+    await journal.pushed(REPO, 7, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: "new plan title", body, adaptations: 0 } });
+    const github = new FakeGitHub(ownPr({ headSha: PUSHED_SHA, body: `Rewritten.\n\n${RULES.marker}\n` }));
+    const entries = await reviewOpenPullRequests(context(github, new InMemoryWorkspace(), workingCopy(), journal), steps());
+    expect(entries[0]).toMatchObject({ outcome: "left-alone", detail: "its body no longer has the tool's state; someone rewrote it" });
+    expect(github.calls.filter((call) => !call.startsWith("listOpenPullRequests"))).toEqual([]);
   });
 
   it("counts an adaptation before the agent starts, so failing attempts still run out", async () => {

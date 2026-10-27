@@ -63,9 +63,9 @@ function rootsOf(context: PublicationContext): LocalRoots {
  * Apply the client's title/body checks to the actual cleaned, marked output before any push/API write. Raw composition
  * budgets leave ordinary publications room; extreme path expansion can still exceed them. Refuse here rather than
  * letting the client reject the text after a push. This final guard only refuses: it does not recompose the plan or
- * drop informational evidence.
+ * drop informational evidence. Also for a publication the journal saved (`ownership.ts`).
  */
-function checkedText(title: string, body: string): string {
+export function checkedText(title: string, body: string): string {
   if (title.trim() === "") throw new Error("the PR title is empty");
   if (title.length > MAX_TITLE_CHARS) throw new Error(`the PR title would be ${title.length} UTF-16 units, over the client's ${MAX_TITLE_CHARS} limit`);
   if (body.length > MAX_BODY_CHARS) throw new Error(`the PR body would be ${body.length} UTF-16 units, over the client's ${MAX_BODY_CHARS} limit`);
@@ -186,23 +186,6 @@ export async function publishUpdate(
   return { pr: updated, pushed: pushed.kind === "pushed" };
 }
 
-/** Restore the entire publication for this exact pushed head, never an old plan with a new state marker. */
-export async function recoverPublication(context: PublicationContext, pr: GitHubPullRequest): Promise<GitHubPullRequest> {
-  const recorded = stateOf(pr.body);
-  if (recorded === undefined || recorded.head === pr.headSha) return pr;
-  const pushed = await context.journal.last(context.repo, pr.number);
-  if (pushed?.head !== pr.headSha) return pr;
-  const saved = pushed.publication;
-  const state = saved === undefined ? undefined : stateOf(saved.body);
-  if (saved === undefined || state?.head !== pushed.head || state.base !== pushed.base || state.adaptations !== saved.adaptations) {
-    throw new Error(`${pr.url}: the journal has no matching publication content; rerun the tool to recompute before reviewing`);
-  }
-  await reReadOwn(context, pr.number, pr.headSha);
-  const updated = await context.github.updatePullRequest({ repo: context.repo, number: pr.number, title: saved.title, body: checkedText(saved.title, saved.body) });
-  await ensureLabel(context, updated);
-  return updated;
-}
-
 /**
  * Rewrite the state in the PR's body (its text kept), once it's still the
  * tool's at `expectedHead`: to count an adaptation before the agent starts, or
@@ -285,7 +268,7 @@ async function createDraftPullRequest(
 }
 
 /** A missing label is logged, not fatal: the marker still identifies the PR. */
-async function ensureLabel(context: PublicationContext, pr: GitHubPullRequest): Promise<void> {
+export async function ensureLabel(context: PublicationContext, pr: GitHubPullRequest): Promise<void> {
   if (pr.labels.includes(context.rules.label)) return;
   try {
     await context.github.addLabels({ repo: context.repo, number: pr.number, labels: [context.rules.label] });

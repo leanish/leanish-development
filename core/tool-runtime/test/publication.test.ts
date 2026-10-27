@@ -6,7 +6,7 @@ import type { PreparedBranch, WorkingCopy } from "@leanish/agent-runtime/types/w
 import { InMemoryWorkspace } from "@leanish/agent-runtime/working-copy/in-memory-workspace";
 import { MemoryJournal } from "./memory-journal.ts";
 import { ownPullRequests, stateOf, withMarker } from "../src/own-pr.ts";
-import { assertPublishable, clearLeftoverBranch, closeAndDelete, markReady, ownOpenPullRequests, publishNew, publishUpdate, recordState, recoverPublication, rewriteText, type PublicationContext } from "../src/publication.ts";
+import { assertPublishable, clearLeftoverBranch, closeAndDelete, markReady, ownOpenPullRequests, publishNew, publishUpdate, recordState, rewriteText, type PublicationContext } from "../src/publication.ts";
 import { BASE_SHA, FakeGitHub, HEAD_SHA, OWN_BRANCH, ownPr, PUSHED_SHA, RULES } from "./fake-github.ts";
 
 const WC: WorkingCopy = { projectId: "leanish/widget", path: "/synthetic/leanish/widget", branch: "main", headSha: BASE_SHA, gitDir: "/x/.git" };
@@ -148,17 +148,11 @@ describe("publication", () => {
     }
   });
 
-  it("adds the label when recording state, recovering a publication or marking a PR ready", async () => {
+  // Restoring a saved publication adds it too: ownership.test.ts.
+  it("adds the label when recording state or marking a PR ready", async () => {
     const updated = new FakeGitHub(ownPr({ labels: [] }));
     await recordState(context(updated), 7, HEAD_SHA, { head: HEAD_SHA, base: BASE_SHA, adaptations: 1 });
     expect(updated.prs.get(7)?.labels).toEqual(["leanish:secure-it"]);
-
-    const recovering = new FakeGitHub(ownPr({ labels: [], headSha: PUSHED_SHA }));
-    const journal = new MemoryJournal();
-    const body = withMarker(RULES, CONTENT.body, { head: PUSHED_SHA, base: BASE_SHA, adaptations: 1 });
-    await journal.pushed(WC.projectId, 7, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: CONTENT.title, body, adaptations: 1 } });
-    await recoverPublication(context(recovering, new InMemoryWorkspace(), journal), recovering.prs.get(7)!);
-    expect(recovering.prs.get(7)?.labels).toEqual(["leanish:secure-it"]);
 
     const ready = new FakeGitHub(ownPr({ labels: [] }));
     await markReady(context(ready), 7, HEAD_SHA);

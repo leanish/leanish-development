@@ -8,6 +8,14 @@
   the candidates into the snapshot to the required-dependency proofs; compare reuses its snapshot. Verdicts are
   unchanged. Release-age arithmetic is shared across the gate and both tools (`@leanish/gate/age`): the exact
   threshold counts as aged, and an unknown date is never aged nor an exemption.
+- Whether an open PR is still the tool's, and what its effective title and body are, is decided in one module
+  (`ownership.ts`): the review tick, both tools' runs and secure-it's held claims inspect it the same read-only way,
+  and a PR's saved publication is written back only right before a unit or the tick uses that PR. Preparing a unit's
+  branch (its reused PR's, or a fresh one) is shared too (`branches.ts`). `recoverPublication` is no longer exported.
+  Each unit of a run now inspects every open PR of the tool before matching its plan, so a journal that can't be read
+  (or a saved publication that doesn't match its head) fails every unit of that run, each reported on its own, instead
+  of only the units whose plan the PR's stale body names; the run still goes on, and nothing is guessed from the body.
+  secure-it's held claims now check a saved publication too.
 - Breaking for `@leanish/agent-runtime`'s API, which is why 0.9.0 is a minor release: its isolation is agent-neutral.
   `isolationPolicy` replaces `codexIsolation` (same inputs, same checks) and returns an `IsolationPolicy` (denied
   paths, the commands' env, the build cache and an optional Codex login home) instead of Codex runner options; each
@@ -17,15 +25,22 @@
 - `@leanish/agent-runtime`'s run report owns its lifecycle: `startRunReport` handles the signals, the wrapper's
   marker (written at start or once the final line is out, its variable removed before any child process starts), the
   lines written before the final one and the host's extras, through one path for the end and for a signal; a throwing
-  `extra` or `beforeFinalLine` is left out and noted in the line's `error`, never keeping the line from being written. `RunReport`, `writeFinalLine` and
-  `reportOnTerminationSignals` stay for hosts that compose their own, such as a Lambda function. secure-it and bump-it
-  use it; their output, exit codes, run.sh's marker and signal handling are unchanged.
+  `extra` or `beforeFinalLine`, or a result that can't be serialized, is left out and noted in the line's `error`,
+  never keeping the line from being written. `RunReport`, `writeFinalLine` and `reportOnTerminationSignals` stay for
+  hosts that compose their own, such as a Lambda function. secure-it and bump-it use it; their output, exit codes,
+  run.sh's marker and signal handling are unchanged, except that a signal arriving while the final line is being
+  written now waits for it (at most 2 s) instead of ending the process before it's out.
 
 ### Fixed
 
 - secure-it no longer plans an own package's young fix (or an own carrier's, or an own direct peer a fix moves with
   it) as held: the gate never holds an own package, so it now goes with the other fixes instead of waiting in a
   cooldown PR.
+- Both tools' runs match an open PR whose body lags behind its head (a body update failed after a push) by the plan
+  the journal saved for that head, not by the stale body: a unit no longer opens a second PR beside its own, nor
+  takes over another unit's.
+- The review tick leaves a PR whose journal records only its head (an entry from before publications were saved) alone
+  for the tool's next run to recompute and republish, instead of reporting an error.
 - secure-it judges a security fix's publisher identity as verification will: against every copy of the package its
   unit replaces in that lockfile, not the source version alone. Two copies moving together no longer get a move
   refused that the gate accepts; a malicious copy, leaving on its own, borrows no other copy's history. Planning
