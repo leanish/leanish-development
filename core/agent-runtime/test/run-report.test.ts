@@ -597,6 +597,26 @@ describe("startRunReport", () => {
     expect(dead.listenerCount("close")).toBe(0);
   });
 
+  it("hears the first write after a stream ended that isn't destroyed, then writes to it, errored, without listening", async () => {
+    const heard: string[] = [];
+    const host = (err: Error): void => {
+      heard.push(err.message);
+    };
+    const ended = new Writable({ autoDestroy: false, write: (_chunk, _encoding, callback) => callback() });
+    ended.on("error", host);
+    const finished = new Promise<void>((done) => ended.once("finish", () => done()));
+    ended.end();
+    await finished;
+    // The first write after the end emits ERR_STREAM_WRITE_AFTER_END; later ones fail without another 'error'.
+    const emitted = new Promise<void>((done) => ended.once("error", () => setImmediate(done)));
+    await writeFinalLine(ended, "{}\n");
+    await emitted;
+    for (let i = 0; i < 12; i++) await writeFinalLine(ended, "{}\n");
+    expect(heard).toHaveLength(1);
+    expect(ended.listeners("error")).toEqual([host]);
+    expect(ended.listenerCount("close")).toBe(0);
+  });
+
   it("still writes the line when the result can't be serialized, leaving it out and noting why", async () => {
     const held = new HeldStream();
     const report = startRunReport({ stream: held.stream, env: {}, extra: () => ({ dispatches: 1 }) });
