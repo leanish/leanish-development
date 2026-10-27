@@ -814,3 +814,53 @@ What each step added, with rough API-equivalent cost:
   reviewers found came from its PRs; none reached rc.1 except #262's accepted `clean` behavior.
 
 v0.8.1 (`fab31b9`) is rc.1 plus its release metadata (#274).
+
+## Release reviews and candidate of 0.8.2 — 2026-10-27
+
+0.8.2 fixes four of 0.8.1's known limits: bump-it's literal plan cells and branch names kept per run (#278), a
+working-tree read that symbolic links lead outside the repository refused (#279), and secure-it's report keeping the
+notes of every copy of a blocked package (#280). It also consolidates small pieces: Actions-gap wording and one CI
+read per review (#281), the final description checked before any remote effect (#282), and the vetoed versions named
+in verification's carrier refusal (#283). Four more limits are documented, with a characterization test for the identity baselines (#284).
+
+Each PR had a Haiku pair, then Sol; Astra reviewed only rc.1. Sol raised one finding (#280: a peer veto after
+`selectWork` still lost the notes of the package's other copies, fixed in 651354b) and one documentation correction
+(#284: the baselines carry no provenance either). On #282 it called a wiring test for the early refusal optional;
+it was added. Haiku's points on #278, #279 and #284 were dismissed with Sol's agreement.
+
+- **rc.1 (`b87bdbc`)**: `batch` for both tools on all fixtures: secure-it 12 of 12 (8 PRs), bump-it 12 of 12 (15
+  PRs), every PR green. secure-it opened one PR fewer than on 0.8.1 because fast-uri aged into the routine PR. Haiku
+  ×2 reviewed `git diff v0.8.1 v0.8.2-rc.1` and raised three points, settled with Sol. The gap-hunter found a new
+  abort: with `--head worktree`, a repository whose `gradle/libs.versions.toml` links outside it now fails the run,
+  where v0.8.1 read the outside file. Sol and Astra kept it as a deliberate exception to the release rule: what lies
+  outside isn't the repository's, normal CI compares commits, and the CHANGELOG and README say so. The other two
+  points (uncapped notes in the run report, the workflow pin) were dismissed. Sol, unprimed on a fresh clone and
+  label, found nothing; Astra, on its thread, found nothing.
+- **Passes on v0.8.2**: the six fixture repins (`fixture-repin`) merged green.
+  - Pass 1 (2026-10-27 01:55Z): 28 commands, no errors. Its seven PRs only repin the released workflow:
+    leanish-development#287, java-conventions#102, sqs-codec#180 and leanish-skills#42 merged once green;
+    leanish-development-incubator#39, dtv#58 and kryptovero#21, whose CI is off, merged as they were.
+  - Pass 2 (02:56Z): 28 commands, one failed: secure-it on kryptovero hit a DNS error (`ENOTFOUND
+    plugins.gradle.org`). That command alone was rerun at 03:23Z: nothing to fix. The pass opened
+    leanish-development-incubator#40 (aws-cdk 2.1145.0 to 2.1146.0, a devDependency), merged.
+
+Known limitations, for 0.9.0 (listed in [coverage gaps](coverage-gaps.md)):
+- Planning and verification read different publisher-identity baselines (0.9.0 aligns planning with verification).
+- Held PR bodies keep raw length budgets.
+- Transient errors can regroup held secure-it work.
+- secure-it's Gradle reference checks include `gradle.ignoreConfigurations`.
+
+The runtime's two adoption limits from 0.8.1 remain unchanged; see its README.
+
+What each step added, with rough API-equivalent cost:
+- Haiku, 16 runs (about $0.50, at most 67,254 prompt tokens each): no blocker; the rc.1 pair found the new abort that
+  was kept on purpose.
+- Sol, 13 completed calls of 14 attempts (about $2.30; the failed attempt's cost is unknown): one finding (#280) and
+  one documentation correction (#284); nothing on rc.1 unprimed. Its plan thread set the scope and the details of
+  each PR.
+- Astra, 1 review (about $2.70): approved rc.1 and agreed to keep the symlink refusal.
+- Claude implemented the release (about $25 for the PRs, fixtures and the release; about $36 for the measured window
+  with the work around it, leaving out about $8 for the earlier plan draft). Two of the issues reviewers found came
+  from its PRs; none reached rc.1.
+
+v0.8.2 (`fe93583`) is rc.1 plus its release metadata (#285).
