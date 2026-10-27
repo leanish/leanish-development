@@ -61,34 +61,33 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
      can be taken when it ages or by a person's call:
      - **Always together, the couplings known when splitting:** coupled npm peers, a carrier and its carried package,
        and what planning the aged batch finds (a root that needs another root's fix). Planning a held group can find
-       more; those don't rejoin groups already split unless a preflight fails (below), and each PR
-       proves what it moves alone.
+       more; those don't rejoin groups already split, and each PR proves what it moves alone.
      - **Together, roots that only wait for the same young npm companion:** fixes that are aged themselves but require
        one young dependency wait for it alike, so one PR moves it for all.
      - **Apart on purpose, young fixes that share a young companion:** joined, each would wait for the other's
        version too. Each PR chooses and verifies the companion version its own requirements prove; when one merges,
        the other's review rebases it.
-     - **Rejoined when planning or Gradle resolution needs it:** with two or more held groups, each is planned alone.
+     - **Never regrouped by a failure:** with two or more held groups, each is planned alone before any agent work.
        For a plan with Maven moves, Gradle also applies its declaration moves and floors to an exported base and
-       resolves the reference: two young Gradle fixes can plan separately yet conflict until both declarations move.
-       A returned inventory must have the planned declarations and no resolution failures. When some preflights fail
-       (npm requirements or Gradle references), the failing groups are tried together when there are several, then
-       every held group together (v0.7's single held batch). The first group whose preflight passes replaces its groups;
-       otherwise each stays apart and reports its own failure. The actual agent edit is still verified before publication.
-       The fallback can gather groups that would have passed alone, even those apart on purpose above, and their PR
-       waits for its youngest version. Planning errors retain the existing fallback, so a transient npm registry
-       failure can still regroup groups. A thrown Gradle execution error (sandbox failure, timeout or OOM), or a missing
-       reference inventory, instead makes grouping unknown for every held routine unit, including npm-only units:
-       the run fails all of them while other units continue. A base-movement review reports an error for every held
-       routine PR without closing it, while other PRs still rebase. Any held group could have joined the failing group
-       in the all-held fallback. Returned reference problems still allow regrouping. Each failure is logged with its
-       unit and reason.
+       resolves the reference: a returned inventory must have the planned declarations and no resolution failures.
+       A group whose planning fails, whose reference has problems, or whose Gradle run itself fails (sandbox failure,
+       timeout or OOM, or a missing reference inventory) fails on its own, with its error in the run's report; the
+       other groups keep their grouping, topics and PRs, and still run. Groups that can only be planned or resolved
+       together (two young Gradle fixes that conflict until both declarations move) therefore fail apart until they
+       age. If the aged batch can't be planned, it fails with its error; when it has npm work, which of its roots
+       would join held work is unknown, so the held units with npm work (in their fixes or coupled sets) fail that run
+       too. Held work without npm still runs, since those roots can't join it, unless its claim is a held PR with npm
+       moves (a mixed one from v0.8's fallback or v0.7's single held PR): that PR is kept for its npm work and the unit
+       fails instead. A base-movement review reports an error for each PR whose unit failed, or for every held PR with
+       npm moves when the aged plan failed (even one whose fix has aged since, which that plan could hold again),
+       without closing it, while other PRs still rebase. The actual agent edit is still verified before publication.
+       Each failure is logged with its unit and reason.
        One held unit skips this preflight; npm-only groups cost no extra Gradle resolution. Preflight results, including
        execution errors, are shared by base commit and plan identity for one run or review tick; the next invocation
-       retries. K PRs reviewing identical K groups on the same base use K preflight resolutions, plus up to two distinct
-       joint trials, rather than K²; final verification always runs separately. Planning itself is still repeated.
-       Runs and base-movement reviews regroup the same way, before PR claims. A tick on an unchanged base keeps the
-       recorded plan; the next regular run recomputes grouping.
+       retries. K PRs reviewing identical K groups on the same base use K preflight resolutions rather than K²; final
+       verification always runs separately. Planning itself is still repeated. Runs and base-movement reviews split the
+       same way, before PR claims. A tick on an unchanged base keeps the recorded plan; the next regular run recomputes
+       grouping.
 
      A major or malware unit with a young version stays whole and is held. What the PR finally holds is the
      verifying comparison's call, not this prediction.
