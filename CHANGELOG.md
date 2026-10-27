@@ -30,6 +30,18 @@
   hosts that compose their own, such as a Lambda function. secure-it and bump-it use it; their output, exit codes,
   run.sh's marker and signal handling are unchanged, except that a signal arriving while the final line is being
   written now waits for it (at most 2 s) instead of ending the process before it's out.
+- `npm run check` now lints regular expressions (`npm run lint`): ESLint with an explicit list of
+  `eslint-plugin-regexp`'s safety and correctness rules (super-linear backtracking and moves, misleading or useless
+  groups, backreferences and assertions, invalid or empty patterns, control and misleading Unicode characters, strict
+  syntax), no style rules; CI's check job runs it. TypeScript reaches it through a local parser
+  (`eslint-typescript-parser.js`): Node's `stripTypeScriptTypes` blanks the types out, keeping every line and column,
+  and espree parses the rest, so it relies on the erasable syntax every tsconfig already requires; typescript-eslint's
+  parser doesn't run on TypeScript 7. The regexes it found running in quadratic or polynomial time on long input now run
+  in linear time, with the same results on well-formed input: trailing slashes in the gate's config, local actions and
+  npm archive directories, GitHub's `Link` header, advisory ranges' dashes and hyphen ranges, bump-it's Gradle
+  `to`/`through` ranges and wrapper properties, the Claude Code runner's proxy credential scrubbing and setup's GitHub
+  API path check. A wrapper property whose value holds U+2028 or U+2029 is read as Java reads it instead of failing with
+  a TypeError.
 
 ### Fixed
 

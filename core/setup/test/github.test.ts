@@ -51,4 +51,20 @@ describe("operator GitHub adapter", () => {
     expect(run.mock.calls[0]![1]).toContain("graphql");
     await expect(api.request("POST", "graphql/extra")).rejects.toThrow("Invalid GitHub API path");
   });
+
+  it("allows the same repos/ paths as before, and refuses a long one ending in a newline in linear time", async () => {
+    const run = vi.fn<RunProcess>(async () => ({ code: 0, stdout: "HTTP/2.0 204 No Content\n\n", stderr: "" }));
+    const api = githubApi(new Commands(run, {}));
+    for (const path of ["repos/acme/widget", "repos/acme/w", "repos/acme/widget/", "repos/acme/widget/pulls?state=open", "repos/acme/widget?x=1", "repos/a.b/c-d_e/x/y"]) {
+      expect(await api.request("GET", path), path).toEqual({ status: 204, body: undefined, headers: {} });
+    }
+    for (const path of ["repos/acme", "repos/acme/", "repos/acme//widget", "repos/acme/!widget", "repos/ac me/widget", "repos/acme/widget\nx", "users/acme"]) {
+      await expect(api.request("GET", path), path).rejects.toThrow("Invalid GitHub API path");
+    }
+    const started = performance.now();
+    // The replaced regex let the name and the rest trade characters: polynomial backtracking, seconds at this length.
+    await expect(api.request("GET", `repos/acme/${"w".repeat(100_000)}\n`)).rejects.toThrow("Invalid GitHub API path");
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(run).toHaveBeenCalledTimes(6);
+  });
 });

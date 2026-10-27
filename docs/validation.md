@@ -300,7 +300,8 @@ What the fixture repositories exercise, by evidence state. Case numbers refer to
 
 ## Automated checks and skips
 
-`npm run check` runs all workspace typechecks and tests. Some suites skip unless their environment allows them;
+`npm run check` runs the root tests, the regex lint and all workspace typechecks and tests. Some suites skip unless
+their environment allows them;
 report these skips separately from passed tests:
 
 - **Real Gradle** (the gate's inventory coverage and reference tests, secure-it's floor-removal and parent-search

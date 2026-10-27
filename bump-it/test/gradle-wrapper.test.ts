@@ -199,4 +199,18 @@ describe("wrapper properties", () => {
     expect(() => wrapperProperties("distributionUrl=x\ndistributionUrl=y")).toThrow("duplicate");
     expect(() => wrapperProperties("key=value\\")).toThrow("continuation");
   });
+  it("splits each key, separator and value as one regex did", () => {
+    const text = "a=1\nb = 2\nc:3\nd 4\ne\nf\\=g=5\nh  =  :6\ni\\ j=7\n\\u0041=8\nk=\nl\t=\t9 \nm==10\nn: =11\np\\\\=12\nq=13\\\\\nr=14";
+    expect(Object.fromEntries(wrapperProperties(text))).toEqual({
+      a: "1", b: "2", c: "3", d: "4", e: "", "f=g": "5", h: ":6", "i j": "7", A: "8", k: "", l: "9 ", m: "=10", n: "=11", "p\\": "12", q: "13\\", r: "14",
+    });
+  });
+  it("reads long runs of spaces and backslashes in linear time, and a value holding U+2028 as Java does", () => {
+    const started = performance.now();
+    // The replaced regexes rescanned each run from every character: seconds each. The first also failed on U+2028 in a
+    // value, which then threw a TypeError.
+    expect(wrapperProperties(`a ${" ".repeat(100_000)}b\u2028c`).get("a")).toBe("b\u2028c");
+    expect(wrapperProperties(`k=${"\\\\".repeat(50_000)}a`).get("k")).toBe(`${"\\".repeat(50_000)}a`);
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
 });

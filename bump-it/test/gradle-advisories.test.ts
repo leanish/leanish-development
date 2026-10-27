@@ -46,6 +46,15 @@ describe("Gradle advisory ranges", () => {
     expect(gradleAdvisoryAffects(advisory("8.12", "8.12.1"), "8.12.1")).toBe(false);
     expect(gradleAdvisoryAffects(advisory(">=8.0", "8.1"), "9.0")).toBe(false);
   });
+  it("starts a `to` range at its version's first digit, and reads a long digit run in linear time", () => {
+    expect(gradleAdvisoryAffects(advisory("10.0 to 12.3"), "11.5")).toBe(true);
+    expect(gradleAdvisoryAffects(advisory("10.0 to 12.3"), "12.4")).toBe(false);
+    expect(gradleAdvisoryAffects(advisory("<9.0, 10.0.1 through 10.2.x"), "10.2.7")).toBe(true);
+    const started = performance.now();
+    // The replaced regex rescanned the run from each digit: seconds at this length.
+    expect(gradleAdvisoryAffects(advisory(`${"1".repeat(100_000)} to 2`), "9.0")).toBe(false);
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
   it.each([undefined, "unknown", "8.0 to someday", "[8.0,unknown]", ">=8.bogus", "4.5 through 6.4.x.x"])("rejects genuinely unreadable ranges %s", (range) => {
     expect(() => gradleAdvisoryAffects(advisory(range), "9.0")).toThrow("unreadable Gradle advisory range");
   });

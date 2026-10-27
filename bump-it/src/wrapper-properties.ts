@@ -9,16 +9,19 @@ export function wrapperProperties(text: string): ReadonlyMap<string, string> {
       if (++index >= lines.length) throw new Error("unfinished wrapper property continuation");
       line = line.slice(0, -1) + lines[index]!.trimStart();
     }
-    const match = /^((?:\\.|[^\\=:\s])*)(?:\s*[=:]\s*|\s+)?(.*)$/.exec(line)!;
-    const key = unescapeProperty(match[1]!);
+    // The key, then the separator and value: as one regex ending in `(.*)$`, a value holding U+2028 or U+2029 made it
+    // backtrack polynomially before failing.
+    const rawKey = /^(?:\\.|[^\\=:\s])*/.exec(line)![0];
+    const key = unescapeProperty(rawKey);
     if (properties.has(key)) throw new Error(`duplicate wrapper property ${key}`);
-    properties.set(key, unescapeProperty(match[2]!));
+    properties.set(key, unescapeProperty(line.slice(rawKey.length).replace(/^\s*(?:[=:]\s*)?/, "")));
   }
   return properties;
 }
 
 function continued(line: string): boolean {
-  return (/(\\+)$/.exec(line)?.[1]?.length ?? 0) % 2 === 1;
+  // Starting only at the run's first backslash, a long run is scanned once instead of again from each backslash.
+  return (/(?<!\\)(\\+)$/.exec(line)?.[1]?.length ?? 0) % 2 === 1;
 }
 
 function unescapeProperty(value: string): string {

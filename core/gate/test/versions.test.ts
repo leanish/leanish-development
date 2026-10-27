@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { inAdvisoryRange, versionScheme } from "../src/versions.ts";
+import { inAdvisoryRange, parseAdvisoryRange, versionScheme } from "../src/versions.ts";
 
 const npm = versionScheme("npm");
 const maven = versionScheme("Maven");
@@ -221,5 +221,26 @@ describe("advisory ranges", () => {
     expect(inAdvisoryRange(npm, "< 2.245.0 (on Windows, < 2.246.0)", "1.0.0")).toBeUndefined();
     expect(inAdvisoryRange(npm, "< 1.2", "1.0.0")).toBeUndefined();
     expect(inAdvisoryRange(npm, "all versions", "1.0.0")).toBeUndefined();
+  });
+
+  it("reads dashes with their spaces and hyphen ranges as before, and long space runs and tokens in linear time", () => {
+    for (const [range, same] of [
+      ["1.0 – 2.0", ">=1.0 <=2.0"],
+      ["1.0–2.0", ">=1.0 <=2.0"],
+      ["  1.0  —  2.0  ", ">=1.0 <=2.0"],
+      ["1.0 - 2.0, 3.0 – 4.0", ">=1.0 <=2.0 >=3.0 <=4.0"],
+      [">= 1.0 – 2.0", ">=1.0 - 2.0"],
+      ["1.0 – – 2.0", "1.0 -  - 2.0"],
+      ["1.0 -– 2.0", "1.0 - - 2.0"],
+      ["1.0 - 2.0 - 3.0", ">=1.0 <=2.0 - 3.0"],
+    ]) {
+      expect(parseAdvisoryRange(range!), range).toEqual(parseAdvisoryRange(same!));
+    }
+    expect(parseAdvisoryRange("1.0 – 2.0")).toBeDefined();
+    const started = performance.now();
+    // The replaced regexes rescanned a space run from each space and a token from each character: seconds each.
+    expect(parseAdvisoryRange(`1.0${" ".repeat(100_000)}x – 2.0`)).toBeUndefined();
+    expect(parseAdvisoryRange("1".repeat(100_000))).toEqual(parseAdvisoryRange("=" + "1".repeat(100_000)));
+    expect(performance.now() - started).toBeLessThan(2_000);
   });
 });

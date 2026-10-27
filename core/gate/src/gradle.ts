@@ -248,6 +248,7 @@ function isStrings(value: unknown): value is string[] {
 }
 
 function normalize(path: string): string {
+  // eslint-disable-next-line regexp/no-super-linear-move -- join() collapses slash runs, so at most one slash is left to strip
   const cleaned = join(path).replace(/\/+$/, "");
   return cleaned === "" ? "." : cleaned;
 }

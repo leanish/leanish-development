@@ -346,6 +346,7 @@ class TarReader {
     const body = Buffer.concat(pending.chunks);
     if (pending.kind === "manifest") this.#manifests.set(pending.path, body);
     else if (pending.kind === "pax") this.#pax = { ...this.#pax, ...parsePax(body) };
+    // eslint-disable-next-line regexp/no-super-linear-move -- a long name is at most 4096 bytes, so rescanning is bounded
     else if (pending.kind === "longname") this.#longName = body.toString("utf8").replace(/\0+$/, "");
     return true;
   }
@@ -390,7 +391,8 @@ class TarReader {
 
   /** The path below the archive's top directory, which every entry must share. */
   #relative(raw: string, directory: boolean): string {
-    const trimmed = directory ? raw.replace(/\/+$/, "") : raw;
+    // `(?<!\/)`: starting only at the run's first slash, a long run isn't rescanned from each slash.
+    const trimmed = directory ? raw.replace(/(?<!\/)\/+$/, "") : raw;
     const segments = trimmed.split("/");
     if (trimmed.includes("\\") || trimmed.includes("\0") || segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
       throw new Error(`unsafe tar path ${JSON.stringify(raw)}`);
@@ -438,6 +440,7 @@ function octal(header: Buffer, offset: number, length: number): number {
   const field = header.subarray(offset, offset + length);
   // A high bit set is base-256 (sizes over 8 GB): far over any budget here.
   if ((field[0]! & 0x80) !== 0) throw new Error("a tar number in base-256");
+  // eslint-disable-next-line regexp/no-super-linear-move -- the field is at most 12 bytes, so rescanning is bounded
   const text = field.toString("latin1").replace(/[\0 ]+$/, "").trim();
   if (!/^[0-7]*$/.test(text)) throw new Error("an unreadable tar number");
   return text === "" ? 0 : Number.parseInt(text, 8);

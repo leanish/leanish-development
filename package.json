@@ -14,11 +14,15 @@
     "secure-it"
   ],
   "scripts": {
-    "check": "node --test test/workspace-layout.test.mjs && npm run check --workspaces",
+    "check": "node --test test/workspace-layout.test.mjs test/eslint-typescript-parser.test.mjs && npm run lint && npm run check --workspaces",
+    "lint": "eslint",
     "clean": "npm exec --workspaces --include-workspace-root -c 'rm -rf coverage node_modules/.vite node_modules/.vite-temp'",
     "clean:deps": "npm exec --workspaces --include-workspace-root -c 'rm -rf coverage node_modules'"
   },
   "devDependencies": {
+    "eslint": "^10.13.0",
+    "eslint-plugin-regexp": "^3.3.1",
+    "espree": "^11.2.0",
     "rolldown": "^1.2.14"
   }
 }

@@ -146,7 +146,8 @@ export class ActionsGitHub {
       const hint = githubRefusal(response, this.token !== undefined);
       throw new Error(`GitHub API ${path} failed with HTTP ${response.status}${hint}`);
     }
-    const link = /<([^>]+)>;\s*rel="next"/.exec(response.headers.get("link") ?? "")?.[1];
+    // `[^<>]`: a `<` starts a new candidate, so a run of them isn't rescanned from each one.
+    const link = /<([^<>]+)>;\s*rel="next"/.exec(response.headers.get("link") ?? "")?.[1];
     return { body: await response.json(), next: link === undefined ? undefined : link.replace(GITHUB_API, "") };
   }
 }

@@ -323,6 +323,19 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     expect(scrubProxyCredentials("proxyUser=srt.x proxyPassword=y")).toBe("proxyUser=<redacted> proxyPassword=<redacted>");
   });
 
+  it("redacts the same URL credentials as before, and reads a long run of colons in linear time", () => {
+    const cases = ["http://u:p@h", "//a:b:c@h", "//:a:b@h", "//a::@h", "//:p@h", "//u:@h", "//u@h", "//a:b @h", "x //a:b@h and //c:d@h", "///a:b@h", "//a:b//c:d@h"];
+    expect(cases.map(scrubProxyCredentials)).toEqual([
+      "http://<redacted>@h", "//<redacted>@h", "//<redacted>@h", "//<redacted>@h", "//:p@h", "//u:@h", "//u@h", "//a:b @h",
+      "x //<redacted>@h and //<redacted>@h", "///<redacted>@h", "//a:b//<redacted>@h",
+    ]);
+    const colons = `//${":".repeat(100_000)}`;
+    const started = performance.now();
+    // The replaced regex let both parts trade colons: polynomial backtracking, seconds at this length.
+    expect(scrubProxyCredentials(colons)).toBe(colons);
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+
   it("refuses a denied path with a glob character, which a permission rule would read as a pattern", () => {
     expect(() => new ClaudeCodeRunner({ confinement: "sandbox", readDenied: ["/work/repo/secrets[prod].json"] })).toThrowError(/'\/work\/repo\/secrets\[prod\]\.json' has a glob character/);
     expect(() => new ClaudeCodeRunner({ confinement: "sandbox", readDenied: ["/work/private"] })).not.toThrow();
