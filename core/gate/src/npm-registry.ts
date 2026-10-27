@@ -260,9 +260,7 @@ async function fetchStatement(url: string, fetch: Fetch): Promise<Statement> {
   const subjects = dig(statement, ["subject"]);
   const subject = Array.isArray(subjects) && subjects.length === 1 ? dig(subjects[0], ["name"]) : undefined;
   const sha512 = Array.isArray(subjects) && subjects.length === 1 ? dig(subjects[0], ["digest", "sha512"]) : undefined;
-  const workflow = dig(statement, ["predicate", "buildDefinition", "externalParameters", "workflow"]);
-  const repository = dig(workflow, ["repository"]);
-  const path = dig(workflow, ["path"]);
+  const { repository, path } = buildSource(dig(entry, ["predicateType"]), statement);
   if (
     typeof subject !== "string" ||
     typeof sha512 !== "string" ||
@@ -278,6 +276,26 @@ async function fetchStatement(url: string, fetch: Fetch): Promise<Statement> {
     sha512: sha512.toLowerCase(),
     source: { source: `${repository} (${path})`, repository: githubRepository(repository) },
   };
+}
+
+/**
+ * The repository and workflow path a provenance statement names, read by its SLSA version: v1's
+ * `buildDefinition.externalParameters.workflow`, or v0.2's `invocation.configSource` (npm's earlier format: `uri` is
+ * `git+<repository URL>@<ref>`, `entryPoint` the workflow), so the two compare equal for the same source. Anything
+ * else is left undefined, which the caller refuses.
+ */
+function buildSource(predicateType: unknown, statement: unknown): { readonly repository: unknown; readonly path: unknown } {
+  if (predicateType === `${SLSA_PROVENANCE}v1`) {
+    const workflow = dig(statement, ["predicate", "buildDefinition", "externalParameters", "workflow"]);
+    return { repository: dig(workflow, ["repository"]), path: dig(workflow, ["path"]) };
+  }
+  if (predicateType === `${SLSA_PROVENANCE}v0.2`) {
+    const configSource = dig(statement, ["predicate", "invocation", "configSource"]);
+    const uri = dig(configSource, ["uri"]);
+    const repository = typeof uri === "string" ? /^git\+(https:\/\/[^@\s]+)@\S+$/.exec(uri)?.[1] : undefined;
+    return { repository, path: dig(configSource, ["entryPoint"]) };
+  }
+  return { repository: undefined, path: undefined };
 }
 
 /** The hex sha512 in a subresource-integrity string, if it has one. */

@@ -36,6 +36,7 @@ const pkgs = (entries: Record<string, string>, extra?: Record<string, object>) =
 
 const ATTESTATIONS = "https://registry.npmjs.org/-/npm/v1/attestations/";
 const SLSA = "https://slsa.dev/provenance/v1";
+const SLSA_V02 = "https://slsa.dev/provenance/v0.2";
 
 type Body = { ok: boolean; status: number; body: unknown };
 
@@ -46,7 +47,8 @@ function respond({ ok, status, body }: Body): Awaited<ReturnType<Fetch>> {
 /**
  * Fake registry. `times` gives registry publish times (one manifest per listed
  * version, declaring github.com/acme/<name>); `sources` gives the
- * `name@version`s with SLSA provenance, as "repository workflow-path";
+ * `name@version`s with SLSA v1 provenance, as "repository workflow-path", or
+ * v0.2 provenance, as "v0.2 configSource-uri entryPoint";
  * `publishers` overrides the default publisher ("maintainer").
  */
 function fake(options: { times?: Record<string, Record<string, string>>; sources?: Record<string, string>; publishers?: Record<string, string> }): Fetch {
@@ -55,13 +57,18 @@ function fake(options: { times?: Record<string, Record<string, string>>; sources
       const key = decodeURIComponent(url.slice(ATTESTATIONS.length));
       const source = options.sources?.[key];
       if (source === undefined) return respond({ ok: false, status: 404, body: {} });
-      const [repository, path] = source.split(" ");
       const subject = [{ name: `pkg:npm/${key.replace(/^@/, "%40")}`, digest: { sha512: sha512(key).toString("hex") } }];
-      const statement = { subject, predicate: { buildDefinition: { externalParameters: { workflow: { repository, path } } } } };
-      const payload = Buffer.from(JSON.stringify(statement)).toString("base64");
+      const [first, second, third] = source.split(" ");
+      // A leading SLSA predicate type other than v1 or v0.2 is kept, with v1's predicate shape.
+      const [predicateType, predicate] = first === "v0.2"
+        ? [SLSA_V02, { builder: { id: "https://github.com/actions/runner" }, invocation: { configSource: { uri: second, entryPoint: third } } }]
+        : first?.startsWith("https://slsa.dev/")
+          ? [first, { buildDefinition: { externalParameters: { workflow: { repository: second, path: third } } } }]
+          : [SLSA, { buildDefinition: { externalParameters: { workflow: { repository: first, path: second } } } }];
+      const payload = Buffer.from(JSON.stringify({ subject, predicateType, predicate })).toString("base64");
       const attestations = [
         { predicateType: "https://github.com/npm/attestation/tree/main/specs/publish/v0.1", bundle: {} },
-        { predicateType: SLSA, bundle: { dsseEnvelope: { payload } } },
+        { predicateType, bundle: { dsseEnvelope: { payload } } },
       ];
       return respond({ ok: true, status: 200, body: { attestations } });
     }
@@ -70,8 +77,9 @@ function fake(options: { times?: Record<string, Record<string, string>>; sources
     if (time === undefined) return respond({ ok: false, status: 404, body: {} });
     const manifest = (version: string) => {
       const key = `${name}@${version}`;
-      const provenance =
-        options.sources?.[key] === undefined ? {} : { attestations: { url: `${ATTESTATIONS}${key}`, provenance: { predicateType: SLSA } } };
+      const source = options.sources?.[key];
+      const predicateType = source?.startsWith("v0.2 ") ? SLSA_V02 : SLSA;
+      const provenance = source === undefined ? {} : { attestations: { url: `${ATTESTATIONS}${key}`, provenance: { predicateType } } };
       return {
         repository: { type: "git", url: `git+https://github.com/acme/${name}.git` },
         _npmUser: { name: options.publishers?.[key] ?? "maintainer" },
@@ -486,6 +494,45 @@ describe("publisher identity", () => {
       "lib@1.1.0 was built from https://github.com/acme/lib (.github/workflows/other.yml), but the version it replaces (1.0.0) from https://github.com/acme/lib (.github/workflows/release.yml)",
     ]);
     expect(await changes(base, head, moved(RELEASE))).toEqual([]);
+  });
+
+  it("reads npm's SLSA v0.2 provenance as the same source v1 names, and refuses a malformed one", async () => {
+    const V02 = "v0.2 git+https://github.com/acme/lib@refs/heads/main .github/workflows/release.yml";
+    const from = (old: string, now: string) => fake({ times, sources: { "lib@1.0.0": old, "lib@1.1.0": now } });
+    expect(await changes(base, head, from(V02, RELEASE))).toEqual([]);
+    expect(await changes(base, head, from(V02, V02))).toEqual([]);
+    expect(await changes(base, head, from(V02, "v0.2 git+https://github.com/acme/lib@refs/tags/v1.1.0 .github/workflows/other.yml"))).toEqual([
+      "lib@1.1.0 was built from https://github.com/acme/lib (.github/workflows/other.yml), but the version it replaces (1.0.0) from https://github.com/acme/lib (.github/workflows/release.yml)",
+    ]);
+    expect(await changes(base, head, from(RELEASE, "v0.2 git+https://github.com/evil/lib@refs/heads/main .github/workflows/release.yml"))).toEqual([
+      "lib@1.1.0 was built from https://github.com/evil/lib (.github/workflows/release.yml), but the version it replaces (1.0.0) from https://github.com/acme/lib (.github/workflows/release.yml)",
+    ]);
+    expect(await changes(base, head, from(V02, "v0.2 git+https://github.com/evil/lib@refs/heads/main .github/workflows/other.yml"))).toEqual([
+      "lib@1.1.0 was built from https://github.com/evil/lib (.github/workflows/other.yml), but the version it replaces (1.0.0) from https://github.com/acme/lib (.github/workflows/release.yml)",
+    ]);
+    // A newly added package's v0.2 provenance is read (and bound to its tarball), with no baseline to compare.
+    const fresh = fake({ times: { fresh: { "1.0.0": "2026-01-01T00:00:00Z" } }, sources: { "fresh@1.0.0": "v0.2 git+https://github.com/acme/fresh@refs/heads/main .github/workflows/release.yml" } });
+    expect(await changes([], pkgs({ fresh: "1.0.0" }), fresh)).toEqual([]);
+    for (const malformed of [
+      "v0.2 https://github.com/acme/lib@refs/heads/main .github/workflows/release.yml", // no git+
+      "v0.2 git+https://github.com/acme/lib .github/workflows/release.yml", // no @ref
+      "v0.2 git+https://github.com/acme/lib@ .github/workflows/release.yml", // an empty ref
+      "v0.2 git+https://@refs/heads/main .github/workflows/release.yml", // no host
+      "v0.2 git+http://github.com/acme/lib@refs/heads/main .github/workflows/release.yml", // not https
+      "v0.2 git+https://github.com/acme/lib@refs/heads/main", // no entryPoint
+      "v0.2 git+https://github.com/acme/lib@refs/heads/main ", // an empty entryPoint
+      `https://slsa.dev/provenance/v9 ${RELEASE}`, // a predicate type the gate doesn't know, with v1's fields
+    ]) {
+      await expect(changes(base, head, from(V02, malformed))).rejects.toThrow(/unrecognized provenance/);
+    }
+  });
+
+  it("binds SLSA v0.2 provenance to the locked tarball as it does v1", async () => {
+    const attested = fake({ times, sources: { "lib@1.0.0": RELEASE, "lib@1.1.0": "v0.2 git+https://github.com/acme/lib@refs/heads/main .github/workflows/release.yml" } });
+    const forged = pkgs({}, { "node_modules/lib": { version: "1.1.0", resolved: "https://registry.npmjs.org/lib/-/lib-1.1.0.tgz", integrity: `sha512-${sha512("something else").toString("base64")}` } });
+    await expect(changes(base, forged, attested)).rejects.toThrow(/doesn't describe lib@1.1.0 as locked/);
+    const swapped: Fetch = async (url, init) => attested(url.startsWith(ATTESTATIONS) ? url.replace("lib@1.1.0", "lib@1.0.0") : url, init);
+    await expect(changes(base, head, swapped)).rejects.toThrow(/doesn't describe lib@1.1.0 as locked/);
   });
 
   it("judges a publisher against every copy the change replaces in that lockfile, in planning as in verification", async () => {
