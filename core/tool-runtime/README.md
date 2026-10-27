@@ -26,6 +26,8 @@ package is the code around them. Setup and operation are in [Adopting the tools]
     text around them, so a body's first plan block is always the tool's own. Agent descriptions must not include the
     reserved plan or state markers. On create and update, publication checks the cleaned title (nonblank, at most 256
     UTF-16 units) and the marked body (at most 65,536) against the client's limits.
+  - **External text** (`pr-text.ts`): `literal()` shows what registries, lockfiles and advisory sources supply (names,
+    versions, paths, notes) as a code span, so a link, mention, comment or table pipe in it stays text.
   - **Journal** (`journal.ts`): before each update push, the tool records the head/base, title, full body (plan
     included) and adaptation count in its state directory. If the body update fails, the next run or review
     recognises the tool's exact head and restores that publication before reuse or CI handling. An old head/base-only

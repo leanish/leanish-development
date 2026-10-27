@@ -13,9 +13,9 @@
  * affected among the affected ones and none of the proposed versions.
  */
 import { backsFix, type EvidenceRecord, type GroupEvidence, type SourceEvidence, type TargetEvidence } from "@leanish/gate/advisory-evidence";
+import { literal } from "@leanish/tool-runtime/pr-text";
 
 import type { PlannedHold } from "./plan.ts";
-import { literal } from "./pr-text.ts";
 
 export const EVIDENCE_DIFFERS =
   "**Some advisories recorded for these held fixes are not backed by reviewed records as read now.** For the advisories marked ⚠ in the table below (the plan's block keeps every row, should the table be cut), no reviewed record (OSV, or GitHub's reviewed advisory database) lists the replaced versions as affected and the proposed one as not, or one was withdrawn or couldn't be read. The comparison's verdict stands; check them before taking this early.";

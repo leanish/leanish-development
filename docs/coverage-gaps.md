@@ -53,13 +53,6 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   fix's unreviewed-only findings with its reason, but only for the copies that are blocked themselves. When another
   copy blocks the package, the findings noted on its unblocked copies are left out, and so are a fix's when its peers
   block it later. The gate still fails on them. Pre-existing in 0.8.0.
-- **bump-it's displayed values aren't literal (bump-it)**: plan table cells (package names, versions, lockfile paths)
-  only escape `|` and line breaks, so an unusual name or path renders as Markdown; plan markers are still defused.
-  secure-it shows external text as literal code spans since 0.8.1. Pre-existing in 0.8.0.
-- **Two topics with the same branch name in one run (bump-it)**: bump-it reads its open PRs once per run, so when two
-  units' topics cut to the same branch name (`@scope/foo` and `scope-foo`, or two long names alike in their first 60
-  characters), the second fails visibly with "already has an open PR"; the next run takes the following free name.
-  secure-it tracks the branches it creates. Pre-existing in 0.8.0.
 - **Optional root peers and the npm deprecation check (bump-it)**: a transitive version a major brings is exempt when the root declares the package, including as an optional peer it never installed, so a deprecated or unreadable version of it isn't refused. Pre-existing in 0.6.0; not fixed in 0.8.0.
 - **npm aliases without a version** (`"compat": "npm:lib"`): the inventory reads them, but neither tool can rewrite them, so an update fails visibly and a person makes it.
 - **Scheduled runs are best effort**: GitHub may delay or skip them, and disables them after 60 days without activity in a public repository. Nothing else watches that the scheduled scan still runs.
