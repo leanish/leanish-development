@@ -6,6 +6,7 @@ import type { PackageVersion } from "../src/package-version.ts";
 import type { RunProcess } from "../src/process.ts";
 import { MAVEN_CENTRAL } from "../src/source-repos.ts";
 import { type SnapshotOptions, takeSnapshot } from "../src/take-snapshot.ts";
+import { reviewedGroups } from "../src/young-fixes.ts";
 import { fakeFetch } from "./fake-fetch.ts";
 
 const VITE: PackageVersion = { ecosystem: "npm", name: "vite", version: "8.3.1" };
@@ -69,18 +70,35 @@ describe("advisory snapshot", () => {
     expect(snapshot.takenAt).toEqual(TAKEN);
   });
 
-  it("counts OSV's record under another id of the alias group as reporting it", async () => {
-    // OSV knows the advisory by its CVE at 8.3.1; a record on 8.2.0 links GHSA-other-id to the CVE too.
-    const snapshot = await takeSnapshot([OLD_VITE, VITE], options(
-      [repositoryAdvisory("GHSA-repo-ghsa", ">=8.0.0,<8.3.3", [], "CVE-2026-7"), repositoryAdvisory("GHSA-linked-by-other", ">=8.3.0,<8.3.3")],
-      {
-        "vite@8.3.1": [{ id: "CVE-2026-7" }, { id: "PYSEC-2026-1", aliases: ["CVE-2026-9"] }],
-        "vite@8.2.0": [{ id: "GHSA-linked-by-other", aliases: ["CVE-2026-9"] }],
-      },
-    ));
-    expect(sources(snapshot.advisories(VITE))).toEqual([["CVE-2026-7", "osv"], ["PYSEC-2026-1", "osv"]]);
-    expect(sources(snapshot.advisories(OLD_VITE))).toEqual([["GHSA-linked-by-other", "osv"], ["GHSA-repo-ghsa", "repository"]]);
+  it("counts OSV's record under another id of the alias group as reporting it, as that version's records link them", async () => {
+    // At 8.3.1, OSV knows GHSA-repo-ghsa by its CVE. GHSA-linked-elsewhere shares no id with 8.3.1's records: only
+    // 8.2.0's record links it to PYSEC-2026-1's CVE, so 8.3.1 keeps it, and the snapshot's groups make it one finding.
+    const published = [repositoryAdvisory("GHSA-repo-ghsa", ">=8.0.0,<8.3.3", [], "CVE-2026-7"), repositoryAdvisory("GHSA-linked-elsewhere", ">=8.3.0,<8.3.3")];
+    const scanned = {
+      "vite@8.3.1": [{ id: "CVE-2026-7" }, { id: "PYSEC-2026-1", aliases: ["CVE-2026-9"] }],
+      "vite@8.2.0": [{ id: "GHSA-linked-elsewhere", aliases: ["CVE-2026-9"] }],
+    };
+    const snapshot = await takeSnapshot([OLD_VITE, VITE], options(published, scanned));
+    expect(sources(snapshot.advisories(VITE))).toEqual([["CVE-2026-7", "osv"], ["PYSEC-2026-1", "osv"], ["GHSA-linked-elsewhere", "repository"]]);
+    expect(sources(snapshot.advisories(OLD_VITE))).toEqual([["GHSA-linked-elsewhere", "osv"], ["GHSA-repo-ghsa", "repository"]]);
     expect(snapshot.group("CVE-2026-7")).toBe("GHSA-repo-ghsa");
+    expect(findingsOf([{ ...VITE, locations: ["package-lock.json"] }], snapshot).map((finding) => [finding.advisory, finding.ids])).toEqual([
+      ["GHSA-repo-ghsa", ["CVE-2026-7"]],
+      ["GHSA-linked-elsewhere", ["CVE-2026-9", "GHSA-linked-elsewhere", "PYSEC-2026-1"]],
+    ]);
+    expect(reviewedGroups(snapshot, VITE)).toEqual(new Set(["GHSA-repo-ghsa", "GHSA-linked-elsewhere"]));
+  });
+
+  it("decides a version's repository records from its own records, whatever versions share the snapshot", async () => {
+    const published = [repositoryAdvisory("GHSA-linked-elsewhere", ">=8.3.0,<8.3.3")];
+    const scanned = {
+      "vite@8.3.1": [{ id: "PYSEC-2026-1", aliases: ["CVE-2026-9"] }],
+      "vite@8.2.0": [{ id: "GHSA-linked-elsewhere", aliases: ["CVE-2026-9"] }],
+    };
+    const alone = await takeSnapshot([VITE], options(published, scanned));
+    const together = await takeSnapshot([OLD_VITE, VITE], options(published, scanned));
+    expect(together.advisories(VITE)).toEqual(alone.advisories(VITE));
+    expect(sources(alone.advisories(VITE))).toEqual([["PYSEC-2026-1", "osv"], ["GHSA-linked-elsewhere", "repository"]]);
   });
 
   it("always keeps a repository advisory marked as malware, even where OSV reports the group without calling it malware", async () => {

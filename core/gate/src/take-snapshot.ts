@@ -53,32 +53,26 @@ export async function takeSnapshot(
   const actions = unique.filter((pkg) => pkg.ecosystem === "GitHub Actions");
   const fromGitHub = await mapLimited(actions, 8, (pkg) => options.actions.advisories(pkg.name, pkg.version));
   const github = new Map(actions.map((pkg, i) => [versionKey(pkg), fromGitHub[i]!]));
-  const reviewed = new Map<string, Advisory[]>();
-  const own = new Map<string, Advisory[]>();
-  for (const pkg of unique) {
-    const key = versionKey(pkg);
-    reviewed.set(key, [...(osv.get(key) ?? []).map(fromOsv), ...(github.get(key) ?? [])]);
-    own.set(key, (repository.affecting.get(key) ?? []).map(fromRepository));
-  }
-  // Grouped over every version's records: another version's record may be what links two ids. The snapshot groups
-  // only what's kept, never more coarsely, so a repository record kept here never merges into a reported group.
-  const groups = aliasGroups([...reviewed.values(), ...own.values()].flat());
-  const groupOf = (id: string) => groups.get(id) ?? id;
   const affecting = new Map<string, Advisory[]>();
   for (const pkg of unique) {
     const key = versionKey(pkg);
-    affecting.set(key, combine(reviewed.get(key)!, own.get(key)!, groupOf));
+    const reviewed = [...(osv.get(key) ?? []).map(fromOsv), ...(github.get(key) ?? [])];
+    affecting.set(key, combine(reviewed, (repository.affecting.get(key) ?? []).map(fromRepository)));
   }
   return new Snapshot(affecting, repository.gaps, takenAt);
 }
 
 /**
  * One version's advisories: OSV's or GitHub's, then each repository advisory
- * whose alias group they don't report for this version (malware always). A
- * group both report is one finding either way; leaving the repository's
- * record out keeps the group's source the reviewed one.
+ * whose alias group they don't report for this version (malware always).
+ * Groups are built from this version's records alone, so the decision
+ * doesn't depend on which other versions share the snapshot. The snapshot
+ * groups across versions, so another version's record may still link a kept
+ * repository record to a reported one: it's then one finding, and reviewed.
  */
-function combine(reviewed: ReadonlyArray<Advisory>, own: ReadonlyArray<Advisory>, groupOf: (id: string) => string): Advisory[] {
+function combine(reviewed: ReadonlyArray<Advisory>, own: ReadonlyArray<Advisory>): Advisory[] {
+  const groups = aliasGroups([...reviewed, ...own]);
+  const groupOf = (id: string) => groups.get(id) ?? id;
   const reported = new Set(reviewed.map((advisory) => groupOf(advisory.id)));
   return [...reviewed, ...own.filter((advisory) => advisory.malicious || !reported.has(groupOf(advisory.id)))];
 }
