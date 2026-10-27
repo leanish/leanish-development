@@ -35,13 +35,22 @@ export function ownPullRequests(tool: ToolName): OwnPullRequests {
 
 /** The branch a run opens a PR from: `<tool>/<UTC date>-<topic>`, the topic made branch-safe. */
 export function branchFor(rules: OwnPullRequests, now: Date, topic: string): string {
-  const slug = topic
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/^[-.]+|[-.]+$/g, "")
-    .slice(0, 60);
+  const slug = trimSeparators(topic.toLowerCase().replace(/[^a-z0-9._-]+/g, "-")).slice(0, 60);
   if (slug === "") throw new Error(`a ${rules.tool} branch needs a topic with letters or digits; got '${topic}'`);
   return `${rules.tool}/${now.toISOString().slice(0, 10)}-${slug}`;
+}
+
+/**
+ * `text` without leading or trailing `-` and `.`, in linear time: a trailing-anchored regex (`[-.]+$`) retries from
+ * every dash of a long run that doesn't end the text, which is quadratic on a topic a repository controls.
+ */
+function trimSeparators(text: string): string {
+  const separator = (char: string | undefined) => char === "-" || char === ".";
+  let start = 0;
+  let end = text.length;
+  while (start < end && separator(text[start])) start += 1;
+  while (end > start && separator(text[end - 1])) end -= 1;
+  return text.slice(start, end);
 }
 
 /**

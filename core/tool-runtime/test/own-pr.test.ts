@@ -24,6 +24,11 @@ describe("own PRs", () => {
     expect(branchFor(RULES, now, "org.xerial.snappy:snappy-java")).toBe("secure-it/2026-10-07-org.xerial.snappy-snappy-java");
     expect(branchFor(ownPullRequests("bump-it"), now, "@types/node 26")).toBe("bump-it/2026-10-07-types-node-26");
     expect(() => branchFor(RULES, now, "@@@")).toThrow("needs a topic");
+    expect(branchFor(RULES, now, ".-.vite-.-")).toBe("secure-it/2026-10-07-vite");
+    // A long run of dashes that doesn't end the topic: trimmed in linear time, not retried from every dash.
+    const started = performance.now();
+    expect(branchFor(RULES, now, `${"-".repeat(200_000)}x${"-".repeat(200_000)}y`)).toBe(`secure-it/2026-10-07-x${"-".repeat(59)}`);
+    expect(performance.now() - started).toBeLessThan(1_000);
     expect(topicOf(RULES, branchFor(RULES, now, "vite"))).toBe("vite");
     expect(topicOf(RULES, "secure-it/2026-01-02-vite")).toBe("vite");
     expect(topicOf(RULES, "bump-it/2026-01-02-vite")).toBeUndefined();

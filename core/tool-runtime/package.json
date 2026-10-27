@@ -26,6 +26,7 @@
     "yaml": "^2.9.1"
   },
   "exports": {
+    "./branches": "./src/branches.ts",
     "./command": "./src/command.ts",
     "./config": "./src/config.ts",
     "./edit-checks": "./src/edit-checks.ts",
@@ -44,6 +45,7 @@
     "./npm-version": "./src/npm-version.ts",
     "./osv-scanner": "./src/osv-scanner.ts",
     "./own-pr": "./src/own-pr.ts",
+    "./ownership": "./src/ownership.ts",
     "./plan-blocks": "./src/plan-blocks.ts",
     "./pr-text": "./src/pr-text.ts",
     "./publication": "./src/publication.ts",
