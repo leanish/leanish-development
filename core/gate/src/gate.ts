@@ -158,7 +158,6 @@ export function snapshotOptions(config: Config, env: GateEnvironment, actions: A
     osv: { binary: env.osvScanner, run: env.run },
     sourceRepos: { fetch: env.fetch, overrides: config.repositories, mavenRepositories: config.maven.repositories },
     repositoryAdvisories: { fetch: env.fetch, token: env.githubToken, cache: env.repositoryAdvisoryCache },
-    fetch: env.fetch,
     actions,
     now: env.now,
   };
