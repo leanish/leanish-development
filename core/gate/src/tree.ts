@@ -2,8 +2,8 @@
  * Where a side of the comparison reads its files from: a git commit (read
  * with `git show`, so nothing in it runs) or the working tree.
  */
-import { readdir, readFile, stat } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
+import { isAbsolute, join, relative, sep } from "node:path";
 
 import type { RunProcess } from "./process.ts";
 import { gitArgs, gitEnvironment } from "./git.ts";
@@ -11,12 +11,15 @@ import { gitArgs, gitEnvironment } from "./git.ts";
 export interface Tree {
   /** `worktree` or the full commit SHA. */
   readonly id: string;
-  /** The file's content, or undefined when the tree has no such file. */
+  /**
+   * The file's content, or undefined when the tree has no such file. A working tree refuses a path that leads outside
+   * the root, through `..` or symbolic links: the repository may be untrusted, and what's outside isn't its content.
+   */
   read(path: string): Promise<string | undefined>;
   /**
    * Every file under `dir`, recursively, as paths from the root; empty when there's no such directory. A commit's
    * tree always lists symlinks (reading one gives its target path); a working tree lists those leading to a file
-   * (reading one follows it) only with `symlinks`.
+   * (reading one follows it, and refuses it when it leads outside the root) only with `symlinks`.
    */
   list(dir: string, options?: { readonly symlinks?: boolean }): Promise<string[]>;
 }
@@ -26,9 +29,12 @@ export function workingTree(root: string): Tree {
     id: "worktree",
     async read(path) {
       try {
-        return await readFile(join(root, path), "utf8");
+        // Resolved first, through every link on the way (a linked file or folder); read from the resolved path only when inside.
+        const resolved = await realpath(join(root, path));
+        if (!within(await realpath(root), resolved)) throw new Error(`${path} leads outside the repository`);
+        return await readFile(resolved, "utf8");
       } catch (err) {
-        // ENOTDIR: a parent is a file (`ci.yml/action.yml`), so there's no such file either.
+        // ENOTDIR: a parent is a file (`ci.yml/action.yml`), so there's no such file either. A broken link is missing too.
         if (isMissing(err)) return undefined;
         throw err;
       }
@@ -49,6 +55,12 @@ export function workingTree(root: string): Tree {
       }
     },
   };
+}
+
+/** Whether canonical `path` is `root` or under it, by whole components (`/repo-other` isn't under `/repo`). */
+function within(root: string, path: string): boolean {
+  const rel = relative(root, path);
+  return rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 
 function isMissing(err: unknown): boolean {

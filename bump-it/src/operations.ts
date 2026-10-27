@@ -37,6 +37,8 @@ export interface Execution {
   readonly inventories: GradleInventories;
   readonly wrapper: WrapperPlanner;
   readonly publication: PublicationContext;
+  /** Branches this run created, on top of the open PRs' ones: two units' topics can cut to the same branch name. */
+  readonly branches: Set<string>;
 }
 
 export interface Computed {
@@ -292,8 +294,10 @@ export async function prepare(execution: Execution, unit: Unit, own: ReadonlyArr
     await deps.revert(context.workingCopy, baseSha);
     return merged.prepared;
   }
-  const taken = new Set(own.map((pr) => pr.headRef));
+  const taken = new Set([...own.map((pr) => pr.headRef), ...execution.branches]);
   const branch = freeBranch(RULES, context.now, unit.topic, taken);
+  // Reserved before preparing, and kept if the unit fails later: a later unit must not reuse a branch this run may have pushed.
+  execution.branches.add(branch);
   await clearLeftoverBranch(context.github, RULES, context.repo.repo, branch);
   const fresh = await context.workspace.prepareBranch(context.workingCopy, { branch, start: "default" });
   if (fresh.kind !== "prepared") {

@@ -9,6 +9,16 @@
 - A PR's CI is read once per review tick: the adaptation gets the failed jobs and statuses of the same snapshot that
   classified the head as failed, instead of reading the checks again.
 
+### Fixed
+
+- The gate refuses to read a working-tree file that symbolic links lead outside the repository (a linked file, or a
+  file under a linked folder), as it refuses `uses: ./../x`; it used to read what was outside. Links that stay inside
+  are still followed, and broken ones still read as missing.
+- bump-it's plan shows package names, versions, locations and notes as literal code spans, as secure-it's does, so
+  a link, mention, comment or table pipe in them stays text. `literal()` moved to `@leanish/tool-runtime/pr-text`.
+- bump-it keeps the branch names it takes during a run, even for a unit that fails later, so two units whose topics
+  cut to the same branch name get one each (the second with a `-2` suffix) instead of the second failing.
+
 ## 0.8.1 - 2026-10-26
 
 ### Changed

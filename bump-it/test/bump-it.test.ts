@@ -594,6 +594,22 @@ describe("bump-it run", () => {
     await bumpIt(h.deps).run(h.context);
     expect(h.github.prs.get(43)?.headRef).toBe(`${branch.slice(0, -2)}-2`);
   });
+  it("gives two majors whose topics cut to one branch name in one run a branch each", async () => {
+    // Synthetic names: `@a/b` and `a-b` both cut to `a-b-major`; the long pair cuts to the same first 60 characters.
+    const short = branchFor(RULES, NOW, "a-b-major");
+    const long = branchFor(RULES, NOW, `${"x".repeat(80)}a-major`);
+    for (const [names, second] of [[["@a/b", "a-b"], `${short}-2`], [[`${"x".repeat(80)}a`, `${"x".repeat(80)}b`], `${long.slice(0, -2)}-2`]] as const) {
+      const h = harness({ bumps: names.map((name) => candidate({ name })) });
+      expect(await bumpIt(h.deps).run({ ...h.context, config: { ...h.context.config, maxNewMajorsPerRun: 2 } })).toMatchObject({ units: [{ outcome: "published" }, { outcome: "published" }, { outcome: "published" }] });
+      expect([...h.github.prs.values()].map((pr) => pr.headRef).filter((ref) => ref !== branchFor(RULES, NOW, "routine"))).toEqual([names[0] === "@a/b" ? short : long, second]);
+    }
+  });
+  it("keeps a failed unit's branch name taken for the rest of the run", async () => {
+    const h = harness({ bumps: ["@a/b", "a-b"].map((name) => candidate({ name })), refuse: true });
+    expect(await bumpIt(h.deps).run({ ...h.context, config: { ...h.context.config, maxNewMajorsPerRun: 2 } })).toMatchObject({ units: [{ outcome: "published" }, { outcome: "failed" }, { outcome: "failed" }] });
+    const short = branchFor(RULES, NOW, "a-b-major");
+    expect(h.workspace.preparations.map((entry) => entry.args.branch).filter((branch) => branch !== branchFor(RULES, NOW, "routine"))).toEqual([short, `${short}-2`]);
+  });
   it("continues other units after a computation, verification or agent failure", async () => {
     const h = harness({ npm: async (unit) => { if (unit.kind === "routine") throw new Error("npm failed"); return npmOf(unit); } });
     expect(await bumpIt(h.deps).run(h.context)).toMatchObject({ units: [{ outcome: "failed", detail: "npm failed" }, { outcome: "published" }] });
