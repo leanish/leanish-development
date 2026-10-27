@@ -768,28 +768,33 @@ npm (#268 to #272). It hardens the Claude Code runner and adds a required `confi
 small fixes from 0.8.0's known limits: draft advisories and `..` local paths in the gate (#263), secure-it's report
 (#264), literal code spans (#267), `npm run clean` (#262), and docs consolidation (#265, #266, #273).
 
-Each PR was reviewed before it merged: Haiku ×2, then Sol on its own thread, and Astra on #263 to #265 and #268 to
-#271. Astra blocked #264 once. The carrier refusal's veto note sat in the reason verification reports, which a
-retry can publish in a PR body; 2daf8bb keeps it in planning's report only. Astra also asked #265 to restore a
-dropped fact (Gradle's native constraints). Sol found 8 points on 5 PRs, all fixed before merge.
+Most implementation PRs had a Haiku pair, then Sol; #264 had three Haiku runs, #266 and #273 none, some PRs shared a
+Sol thread, and Astra reviewed #263 to #265 and #268 to #271. Astra blocked #264 once: the carrier refusal's veto
+note sat in the reason verification reports, which a retry can publish in a PR body; 2daf8bb keeps it in planning's
+report only. Astra also asked #265 to restore a dropped fact (Gradle's native constraints). Sol raised 8 findings on
+5 PRs. All were fixed before merge except one on #262: its guard against a symlinked `node_modules` was replaced by
+plain `rm -rf` commands, and Sol's final review accepted that `clean` can follow such a link to delete `.vite`.
 
 - **rc.1 (`7b80fb7`)**: `batch` for both tools on all fixtures: secure-it 12 of 12 (9 PRs), bump-it 12 of 12 (15
-  PRs), no failed command. Every PR was green except fast-uri, held by the cooldown until 2026-10-26T23:05Z as
-  planned. Haiku ×2 reviewed `git diff v0.8.0` (code only, at `f22696b`; the later changes were #264's fix, reviewed by
-  Astra, Haiku and Sol, and the docs in #273, checked by Sol). They found no regression. Their seven points were
-  dismissed and agreed by Sol. The checklist's one "blocker" (an outside `uses: ./..` aborting the run) was
-  disproved: `git ls-tree` refuses paths outside the repository, so v0.8.0 aborted the same way. Sol, unprimed on a
-  fresh clone and label, found nothing; Astra, on its thread, found nothing and confirmed #264's leak was closed.
+  PRs), no failed command. Every PR was green except fast-uri, held by the cooldown (the review prompt gave its
+  deadline as 2026-10-26T23:05Z). Haiku ×2 reviewed `git diff v0.8.0` (code only, at `f22696b`; the later changes
+  were #264's fix, reviewed by Astra, Haiku and Sol, and the docs in #273, checked by Sol). They found no regression.
+  Their seven points were dismissed and agreed by Sol. The checklist's one "blocker" (an outside `uses: ./..`
+  aborting the run) was disproved: `git ls-tree` refuses paths outside the repository, so v0.8.0 aborted the same
+  way. Sol, unprimed on a fresh clone and label, found nothing; Astra, on its thread, found nothing and confirmed
+  #264's leak was closed.
 - **Passes on v0.8.1**: the six fixture repins (`fixture-repin`) merged green.
   - Pass 1 (2026-10-26 19:52Z): 28 commands, no errors. bump-it now carries the repin inside each repository's
-    routine PR. The repin-only ones merged: leanish-development#276, leanish-skills#41 and dtv#57 (dtv's CI is off on
-    purpose). The ones that also move other dependencies merged on the owner's OK once green:
-    sqs-codec#178; java-conventions#101 (its gate first failed on a Maven Central HTTP 429 and passed on a rerun);
-    leanish-development-incubator#37 and kryptovero#20, whose CI is off, after their CI's commands passed locally
-    (the incubator's LocalStack integration job wasn't run).
+    routine PR. The repin-only ones merged: leanish-development#276, leanish-skills#41 and dtv#57 (dtv's CI is off at
+    the owner's request). The ones that also move other dependencies merged on the owner's OK: sqs-codec#178 and
+    java-conventions#101 once green (the latter's supply-chain check first failed on a POM lookup with HTTP 429 and
+    passed on a rerun); leanish-development-incubator#37 and kryptovero#20, whose CI is off, after local checks
+    passed (the incubator's workspace checks and CDK synthesis, kryptovero's Gradle build; the incubator's LocalStack
+    integration job wasn't run).
   - Pass 2 (20:55Z): 28 commands, one failed: bump-it's routine run on sqs-codec stopped when the Claude CLI hit
-    its session limit. Its bump-it half rerun after the reset (22:24Z): 14 commands, no errors. It opened two
-    updates the earlier merges left room for, leanish-development-incubator#38 and sqs-codec#179, merged once green.
+    its session limit. Its bump-it half rerun after the reset (22:24Z): 14 commands, no errors. It opened
+    leanish-development-incubator#38 and sqs-codec#179, merged once green (sqs-codec's 12 checks; the incubator
+    checked locally).
 
 Known limitations, for 0.8.2 (listed in [coverage gaps](coverage-gaps.md) and the runtime's README):
 - secure-it's report keeps a blocked package's unreviewed-only findings only for the copies blocked themselves.
@@ -800,12 +805,12 @@ Known limitations, for 0.8.2 (listed in [coverage gaps](coverage-gaps.md) and th
 - Its `check-runs-then-jobs` mode reads a 403 without rate-limit headers as missing permission.
 
 What each step added, with rough API-equivalent cost:
-- Haiku, 26 runs (about $1.00, under 67K tokens of context): its points led to changes on #263, #264, #265 and #267.
-  It found no blocker first, and its release pair's only claimed blocker was disproved.
-- Sol, 33 calls (about $5.70): 8 findings on 5 PRs; nothing on rc.1 unprimed. Its plan thread triaged the release's
-  scope.
-- Astra, 6 reviews (about $20.50): the only blocker (#264) and one change request (#265). It approved rc.1.
+- Haiku, 26 runs (about $1.00, at most 67,053 prompt tokens each): its points led to changes on #263, #264, #265
+  and #267. It found no blocker first, and its release pair's only claimed blocker was disproved.
+- Sol, 33 completed calls of 34 attempts (about $5.70): 8 findings on 5 PRs, including #267's two change requests;
+  nothing on rc.1 unprimed. Its plan thread triaged the release's scope.
+- Astra, 6 reviews (about $20.50): one blocker (#264) and one documentation correction (#265). It approved rc.1.
 - Claude implemented the release (main session about $87, an upper bound; sub-agents about $14.50). Ten of the issues
-  reviewers found came from its PRs; none reached rc.1.
+  reviewers found came from its PRs; none reached rc.1 except #262's accepted `clean` behavior.
 
 v0.8.1 (`fab31b9`) is rc.1 plus its release metadata (#274).
