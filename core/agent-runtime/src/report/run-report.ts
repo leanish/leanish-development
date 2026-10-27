@@ -158,8 +158,9 @@ function assertHostFields(kind: "identity" | "extra", fields: Readonly<Record<st
 
 /**
  * Writes `line` and resolves once it's handed to the OS, so an exit right after can't drop it. A failed write resolves
- * too, with nothing more written: the stream's 'error' that follows is swallowed rather than ending the process, so the
- * host's exit code stands.
+ * too, with nothing more written and nothing reported: the stream's 'error' that follows is swallowed rather than ending
+ * the process, so the host's exit code stands, and a stream that throws instead of calling back doesn't reject. A host
+ * that must know the line went out writes it itself.
  */
 export async function writeFinalLine(stream: NodeJS.WritableStream, line: string): Promise<void> {
   await flushed(stream, line);
@@ -173,21 +174,26 @@ export async function writeFinalLine(stream: NodeJS.WritableStream, line: string
  * longer than a turn of the event loop (an asynchronous `_destroy`). With no listener that kills the process, its exit
  * code lost, so this listens before writing: after a success it stops at once; after a failure it stays until the
  * stream's 'error' or 'close'. Only its own listeners are removed, the host's stay. The end doesn't wait for either
- * event: a stream may never emit 'close' (`emitClose: false`).
+ * event: a stream may never emit 'close' (`emitClose: false`). A write that throws is followed by no event, so it stops
+ * listening at once, and a stream without events (a host's stub) is written without listening.
  */
 function flushed(stream: NodeJS.WritableStream, text: string): Promise<boolean> {
   return new Promise((done) => {
+    const listening = typeof stream.on === "function";
     // Settles a write the stream ended before calling back, if any; nothing more comes after either event.
     const streamEnded = (): void => {
       done(false);
       stopListening();
     };
     const stopListening = (): void => {
+      if (!listening) return;
       stream.removeListener("error", streamEnded);
       stream.removeListener("close", streamEnded);
     };
-    stream.on("error", streamEnded);
-    stream.on("close", streamEnded);
+    if (listening) {
+      stream.on("error", streamEnded);
+      stream.on("close", streamEnded);
+    }
     try {
       stream.write(text, (err) => {
         const written = err === undefined || err === null;
@@ -196,6 +202,7 @@ function flushed(stream: NodeJS.WritableStream, text: string): Promise<boolean> 
       });
     } catch {
       done(false);
+      stopListening();
     }
   });
 }

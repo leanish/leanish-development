@@ -562,9 +562,26 @@ describe("startRunReport", () => {
       expect(listenerCounts()).toEqual(baseline);
     }
     // A stream that throws instead of calling back still lets the end settle, so the command returns its exit code.
-    const throwing = Object.assign(new EventEmitter(), { write: () => { throw new Error("stream destroyed"); } }) as unknown as NodeJS.WritableStream;
-    await expect(startRunReport({ stream: throwing, env: {} }).end({ status: "ok", exitCode: 0 })).resolves.toBeUndefined();
+    const throwing = Object.assign(new EventEmitter(), { write: () => { throw new Error("stream destroyed"); } });
+    await expect(startRunReport({ stream: throwing as unknown as NodeJS.WritableStream, env: {} }).end({ status: "ok", exitCode: 0 })).resolves.toBeUndefined();
     expect(listenerCounts()).toEqual(baseline);
+    // Nothing follows a throw, so the write stops listening at once.
+    expect(throwing.listenerCount("error")).toBe(0);
+    expect(throwing.listenerCount("close")).toBe(0);
+    // A host's stub without events is written to without listening, and settles the same way.
+    const writes: string[] = [];
+    const stub = { write: (text: string, callback: () => void) => { writes.push(text); callback(); } } as unknown as NodeJS.WritableStream;
+    await expect(startRunReport({ stream: stub, env: {} }).end({ status: "ok", exitCode: 0 })).resolves.toBeUndefined();
+    expect(writes).toHaveLength(1);
+    const bare = { write: () => { throw new Error("stream destroyed"); } } as unknown as NodeJS.WritableStream;
+    await expect(startRunReport({ stream: bare, env: {} }).end({ status: "ok", exitCode: 0 })).resolves.toBeUndefined();
+  });
+
+  it("resolves writeFinalLine on a stream that throws, as it does on a failed write, and stops listening", async () => {
+    const throwing = Object.assign(new EventEmitter(), { write: () => { throw new Error("stream destroyed"); } });
+    await expect(writeFinalLine(throwing as unknown as NodeJS.WritableStream, "{}\n")).resolves.toBeUndefined();
+    expect(throwing.listenerCount("error")).toBe(0);
+    expect(throwing.listenerCount("close")).toBe(0);
   });
 
   it("still writes the line when the result can't be serialized, leaving it out and noting why", async () => {
