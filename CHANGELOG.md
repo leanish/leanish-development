@@ -11,8 +11,9 @@
 
 ### Fixed
 
-- secure-it no longer plans an own package's young fix (or an own carrier's) as held: the gate never holds an own
-  package, so it now goes with the other fixes instead of waiting in a cooldown PR.
+- secure-it no longer plans an own package's young fix (or an own carrier's, or an own direct peer a fix moves with
+  it) as held: the gate never holds an own package, so it now goes with the other fixes instead of waiting in a
+  cooldown PR.
 
 ## 0.8.2 - 2026-10-27
 

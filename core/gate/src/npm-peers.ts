@@ -324,8 +324,9 @@ function consistent(nodes: ReadonlyArray<Node>, chosen: ReadonlyMap<string, stri
   return true;
 }
 
+/** The gate's view: an own package never waits, so the gate never holds it, whatever its age. */
 async function isAged(name: string, version: string, sources: PeerSources): Promise<boolean> {
-  if (sources.isOwn(name)) return false;
+  if (sources.isOwn(name)) return true;
   const published = await sources.published(name, version);
   return hasAged(published, sources.releaseAgeDays, sources.now);
 }

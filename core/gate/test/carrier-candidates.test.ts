@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import { type CarrierGroup, decideCarrier, splitBundled } from "../src/carrier-candidates.ts";
 import { NpmCatalog } from "../src/catalogs.ts";
-import { parseConfig } from "../src/config.ts";
+import { type Config, parseConfig } from "../src/config.ts";
 import type { Finding } from "../src/findings.ts";
 import type { NpmLockfile } from "../src/inventory.ts";
-import { BundleReader } from "../src/npm-bundles.ts";
+import { BundleReader, tarballUrl } from "../src/npm-bundles.ts";
 import { lockedPackages } from "../src/npm-lock.ts";
 import { NpmRegistry } from "../src/npm-registry.ts";
+import { npmPackageUrl } from "../src/npm-url.ts";
 import { type PackageVersion, versionKey } from "../src/package-version.ts";
 import { type Advisory, Snapshot } from "../src/snapshot.ts";
 import { fakeFetch } from "./fake-fetch.ts";
@@ -120,5 +121,39 @@ describe("deciding a carrier move", () => {
   it("refuses a lockfile whose bundle isn't what the archive ships", async () => {
     const decision = await decideCarrier(group("5.0.8"), [], false, context());
     expect(decision).toMatchObject({ to: undefined, problem: expect.stringContaining("the lockfile records brace@5.0.8") });
+  });
+});
+
+describe("deciding an own carrier's move", () => {
+  // The carrier's fix is two days old: young under the default seven-day wait.
+  const OWN = "@own/carrier";
+  const releases: Record<string, { published: string; bundles: string[] }> = {
+    "1.0.0": { published: OLD, bundles: ["brace@5.0.9"] },
+    "1.1.0": { published: "2026-10-08T12:00:00Z", bundles: ["brace@5.0.12"] },
+  };
+  const archives = Object.fromEntries(Object.entries(releases).map(([version, release]) => [version, carrierArchive(OWN, version, release.bundles)]));
+  const registry = new NpmRegistry(fakeFetch({
+    [npmPackageUrl(OWN)]: { body: {
+      time: Object.fromEntries(Object.entries(releases).map(([version, release]) => [version, release.published])),
+      versions: Object.fromEntries(Object.keys(releases).map((version) => [version, { dist: { integrity: archives[version]!.integrity } }])),
+    } },
+  }));
+  const context = (config: Config) => ({
+    reader: new BundleReader(serving(Object.fromEntries(Object.entries(archives).map(([version, { bytes }]) => [tarballUrl(OWN, version), bytes])))),
+    registry, catalog: new NpmCatalog(registry), config, now: NOW,
+    scan: async (packages: ReadonlyArray<PackageVersion>) => new Snapshot(new Map(packages.map((pkg) => [versionKey(pkg), (pkg.name === "brace" && pkg.version === "5.0.9" ? ["GHSA-brace"] : [])
+      .map((id): Advisory => ({ id, ids: [id], source: "osv", malicious: false, summary: undefined, severity: undefined }))])), [], NOW),
+    identity: async () => [],
+  });
+  const { carriers } = splitBundled([finding("brace", "5.0.9", "GHSA-brace", [`node_modules/${OWN}/node_modules/brace`])], [lockfile("package-lock.json", {
+    [`node_modules/${OWN}`]: { version: "1.0.0", resolved: tarballUrl(OWN, "1.0.0"), integrity: archives["1.0.0"]!.integrity },
+    [`node_modules/${OWN}/node_modules/brace`]: { version: "5.0.9", inBundle: true },
+  })]);
+
+  it("plans a young own carrier as aged, since the gate never holds an own package", async () => {
+    const others = await decideCarrier(carriers[0]!, [], false, context(parseConfig({})));
+    expect(others.to).toMatchObject({ version: "1.1.0", aged: false });
+    const own = await decideCarrier(carriers[0]!, [], false, context(parseConfig({ ownPackages: { npm: { scopes: ["@own"] } } })));
+    expect(own.to).toMatchObject({ version: "1.1.0", aged: true });
   });
 });
