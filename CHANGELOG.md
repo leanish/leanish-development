@@ -47,6 +47,16 @@
 
 ### Fixed
 
+- `@leanish/agent-runtime`'s final line no longer costs a command its exit code when the stream fails the write
+  (EPIPE, ENOSPC): `startRunReport`'s end and signal path and `writeFinalLine` listen for the `error` a Node stream
+  emits after calling the failed write back, which can come well after it, and drop it instead of the process dying
+  with exit code 1. They listen only from the write until the stream's `error` or `close` (after a successful write,
+  not past it), leave the host's own listeners alone, and don't wait for either: `end` resolves as before. Nothing more
+  is written to the failed stream, and the `after-final-line` marker stays unwritten, so the wrapper still writes its
+  own line. `writeFinalLine` now resolves on a stream that throws instead of calling back, as it does on a failed
+  write, saying nothing either way. Only the stream's first `error` or `close` after the write is heard: a second one
+  ends the process as before. A stream already destroyed or errored, or one without events, is written without listening, so
+  writing to it again and again leaves no listener behind.
 - The gate reads npm's SLSA v0.2 provenance (`invocation.configSource`: the repository from its `git+<URL>@<ref>`
   uri, the workflow from its `entryPoint`) as well as v1. Before, a package version published with it (npm's earlier
   format) made the whole run fail to complete. Both name a source the same way, so a package moving from v0.2 to v1
@@ -59,7 +69,13 @@
   advisory's alias group for that version, its record stands as before; a version only the repository's wider range
   names keeps the repository's record, as an unreviewed finding. Base, head and young candidates follow the same rule.
   Adopters may see new findings for such versions: a PR adding one fails, and it vetoes candidates, but triggers no
-  fix on its own. The gate no longer looks single OSV records up before scanning.
+  fix on its own. The gate no longer looks single OSV records up before scanning. Review status now qualifies
+  inheritance: a reviewed finding is inherited only when base has it from a reviewed source too, so a repository-only
+  base finding no longer makes a reviewed one inherited (moving from a version only the repository's wider range names
+  to one OSV lists fails, as in v0.8.2, instead of passing with a warning); an unreviewed finding is inherited from
+  either. The same rule applies wherever a candidate's advisory counts as already there: the fix rules of secure-it and
+  the gate's young-fix and bundle proofs (bundle copies of a name counting together), secure-it's required npm versions
+  and bump-it's transitive npm targets (all base copies counting together).
 - Errors no longer regroup secure-it's held work: held units are grouped only by couplings and required-young
   relationships, so a transient npm planning error or a recorded Gradle reference failure fails its own unit, reported
   with its error, while the other held units keep their topics, members and PRs. A Gradle execution error in a held
@@ -82,6 +98,21 @@
   refused that the gate accepts; a malicious copy, leaving on its own, borrows no other copy's history. Planning
   checks no longer borrow a copy (or its integrity) from another lockfile, and a required version is judged against
   the copy it replaces at its own path, not retained ones. The remaining planners' limit is in coverage gaps.
+  An identity check that fails (any error while checking: a registry or network failure, a provenance it can't read)
+  now blocks the package instead of aborting the run: every move of that unit, the ones already judged too, loses its
+  move with the error as its problem ("can't be decided"), a carrier move's as before, and the other packages are
+  still fixed; a failed read is never taken as acceptance. A malware unit's failure still blocks all malware work and
+  runs no other work in its place. bump-it's candidate discovery does the same: a dependency whose identity can't be
+  decided gets no move in any line. Either way the run reports it under `errors` as well as among its waiting
+  problems, so a batch counts it as a failed repository, not a gap; the command's own exit code is unchanged. This is
+  the publisher identity check of a fix or a bump candidate; a direct peer's, and a carrier's other reads (its bundle,
+  its versions), keep their own handling. A move lost that way is never read as one no longer needed: while any
+  package's identity can't be decided on the new base, both tools' review recomputation keeps the PR it would
+  recompute as it is (no retirement, replacement or rewrite from recomputing it), reporting an error; and a run's unit
+  fails instead of rewriting the existing PR it would reuse (for a held unit, the one it claimed) when that PR's plan
+  moves such a package. Units without an existing PR, or whose PR moves none, still go on, and malware still comes
+  first. The review's other paths are unchanged: a held draft whose versions have all aged is still retired, and the
+  next run opens its replacement without a package it can't decide yet, reporting that package under `errors`.
 - secure-it's Gradle reference checks accept resolution failures in the configurations `gradle.ignoreConfigurations`
   lists, as the gate does: the held preflight leaves them out of the reference, and verification (floor removals'
   too) accepts an edit that fails to resolve there the same way as the plan's reference. A fix the gate would pass is

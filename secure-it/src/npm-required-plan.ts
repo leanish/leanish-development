@@ -1,6 +1,7 @@
 /** Prove forced young npm requirements before install; every required target remains exact and independently gated. */
 import { type Config, isOwnPackage } from "@leanish/gate/config";
 import type { Exceptions } from "@leanish/gate/exceptions";
+import { type Evidence, inherits } from "@leanish/gate/findings";
 import type { Snapshot } from "@leanish/gate/snapshot";
 import type { PackageVersion } from "@leanish/gate/package-version";
 import { ActionsGitHub } from "@leanish/gate/actions-github";
@@ -15,7 +16,7 @@ import { registryConstraints } from "@leanish/gate/npm-required-gate";
 import { requiredClosure, requiredPath, requiredVersions, type RequiredTarget, type RequiredNode, type RequiredProof } from "@leanish/gate/npm-required";
 import { takeSnapshot } from "@leanish/gate/take-snapshot";
 import type { Tree } from "@leanish/gate/tree";
-import { compatibleLine, groupsOf, reviewedGroups } from "@leanish/gate/young-fixes";
+import { baselineEvidence, compatibleLine, reviewedGroups } from "@leanish/gate/young-fixes";
 import { lockfilesOf } from "@leanish/tool-runtime/inventories";
 import { NpmGraph } from "@leanish/tool-runtime/npm-graph";
 
@@ -126,8 +127,7 @@ function assertConsistentTargets(targets: ReadonlyArray<PlannedRequirement>): vo
 async function assertSafeTarget(target: PlannedRequirement, baseline: ReadonlyArray<LockedPackage>, snapshot: Snapshot, registry: NpmRegistry, exceptions: Exceptions, now: Date, locks: ReadonlyMap<string, unknown>, config: Config): Promise<void> {
   const pkg = { ecosystem: "npm" as const, name: target.name, version: target.version };
   const previous = baseline.filter((copy) => copy.name === target.name);
-  const inherited = new Set(previous.flatMap((copy) => [...groupsOf(snapshot, { ...pkg, version: copy.version })]));
-  const problem = addedAdvisories(snapshot, pkg, inherited);
+  const problem = addedAdvisories(snapshot, pkg, baselineEvidence(snapshot, previous.map((copy) => ({ ...pkg, version: copy.version }))));
   if (problem !== undefined) throw new Error(`${target.reason}; ${problem}`);
   const doc = await registry.packument(target.name);
   const manifest = doc.versions[target.version] as { dist?: { integrity?: string; tarball?: string } };
@@ -143,17 +143,20 @@ async function assertSafeTarget(target: PlannedRequirement, baseline: ReadonlyAr
 }
 
 /**
- * What a required version brings that its base copies don't: malware (even inherited), and each new advisory group,
- * marked when only the project's repository advisories publish it. No other version is tried: the requirement names it.
+ * What a required version brings that its base copies (`baseline`, their groups as inheritance evidence) don't:
+ * malware (even inherited), and each advisory group not inherited from them (`inherits`), marked when only the
+ * project's repository advisories publish it, or when they're all the base copies have of a reviewed one. No other
+ * version is tried: the requirement names it.
  */
-export function addedAdvisories(snapshot: Snapshot, pkg: PackageVersion, inherited: ReadonlySet<string>): string | undefined {
+export function addedAdvisories(snapshot: Snapshot, pkg: PackageVersion, baseline: Evidence): string | undefined {
   const advisories = snapshot.advisories(pkg);
   const malware = [...new Set(advisories.filter((advisory) => advisory.malicious).flatMap((advisory) => advisory.ids))].sort();
   const reviewed = reviewedGroups(snapshot, pkg);
-  const added = [...new Set(advisories.filter((advisory) => !advisory.malicious).map((advisory) => snapshot.group(advisory.id)))].filter((group) => !inherited.has(group)).sort();
+  const added = [...new Set(advisories.filter((advisory) => !advisory.malicious).map((advisory) => snapshot.group(advisory.id)))].filter((group) => !inherits(baseline, group, reviewed.has(group))).sort();
   const groups = added.map((group) => {
     const ids = [...new Set(advisories.filter((advisory) => snapshot.group(advisory.id) === group).flatMap((advisory) => advisory.ids))].sort().join(", ");
-    return reviewed.has(group) ? ids : `${ids} (only in the project's repository advisories, not corroborated by the sources this decision used)`;
+    if (!reviewed.has(group)) return `${ids} (only in the project's repository advisories, not corroborated by the sources this decision used)`;
+    return baseline.has(group) ? `${ids} (the base copies have it only from the project's repository advisories)` : ids;
   });
   const parts = [...(malware.length === 0 ? [] : [`malware (${malware.join(", ")})`]), ...groups];
   return parts.length === 0 ? undefined : `required version ${pkg.name}@${pkg.version} adds ${parts.join("; ")}`;

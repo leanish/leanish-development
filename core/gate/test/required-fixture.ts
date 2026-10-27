@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 
 import type { GateEnvironment } from "../src/gate.ts";
 import type { Tree } from "../src/tree.ts";
-import { fakeFetch } from "./fake-fetch.ts";
+import { type FakeResponse, fakeFetch } from "./fake-fetch.ts";
 
 export const NOW = new Date("2026-10-09T05:05:00Z");
 export const OLD = "2026-09-01T00:00:00Z";
@@ -31,12 +31,13 @@ export function files(version = "8.3.2", child: string | undefined = "8.5.28"): 
 export function tree(files: Record<string, string>, id = "base"): Tree {
   return { id, read: async (path) => files[path], list: async (dir) => Object.keys(files).filter((path) => path.startsWith(`${dir}/`)) };
 }
-export function environment(options: { docs?: Record<string, { time: Record<string, unknown>; versions: Record<string, unknown> }>; affected?: Record<string, string[]> } = {}) {
+/** `routes` answer before the registry's (a version manifest naming its repository, that repository's advisories). */
+export function environment(options: { docs?: Record<string, { time: Record<string, unknown>; versions: Record<string, unknown> }>; affected?: Record<string, string[]>; routes?: Record<string, FakeResponse> } = {}) {
   const docs = { vite, postcss, ...options.docs };
-  const routes = Object.fromEntries(Object.entries(docs).flatMap(([name, doc]) => [
+  const routes = { ...Object.fromEntries(Object.entries(docs).flatMap(([name, doc]) => [
     [`https://registry.npmjs.org/${encodeURIComponent(name)}`, { body: doc }],
     ...Object.keys(doc.versions).map((version) => [`https://registry.npmjs.org/${encodeURIComponent(name)}/${version}`, { body: {} }]),
-  ]));
+  ])), ...options.routes };
   const scans: string[][] = [];
   const env: GateEnvironment = { fetch: fakeFetch(routes), now: () => NOW, osvScanner: "fake-scanner", githubToken: undefined,
     run: async (command, args) => {

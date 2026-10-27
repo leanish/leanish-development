@@ -115,6 +115,40 @@ describe("security-required npm planning and exact materialization", () => {
     await expect(requiredNpmPlan(tree(files()), plan, env)).rejects.toThrow("required version postcss@8.5.29 adds GHSA-new");
   });
 
+  it("blocks a required version whose reviewed advisory the base copy has only from the project's repository advisories", async () => {
+    // The repository's range covers both postcss versions; OSV reports the group only on the required 8.5.29.
+    const manifest = { body: { repository: "github:postcss/postcss" } };
+    const routes = {
+      "https://registry.npmjs.org/postcss/8.5.28": manifest,
+      "https://registry.npmjs.org/postcss/8.5.29": manifest,
+      "https://registry.npmjs.org/postcss/8.5.30": manifest,
+      "https://api.github.com/repos/postcss/postcss/security-advisories?state=published&per_page=100": { body: [{
+        ghsa_id: "GHSA-wide", cve_id: null, state: "published", withdrawn_at: null, severity: "medium", cwe_ids: [],
+        vulnerabilities: [{ package: { ecosystem: "npm", name: "postcss" }, vulnerable_version_range: ">=8.5.0,<8.6.0", patched_versions: "8.6.0" }],
+      }] },
+    };
+    const refused = environment({ affected: { "vite@8.3.2": [FIXED], "postcss@8.5.29": ["GHSA-wide"] }, routes }).env;
+    await expect(requiredNpmPlan(tree(files()), plan, refused)).rejects.toThrow(
+      "required version postcss@8.5.29 adds GHSA-wide (the base copies have it only from the project's repository advisories)");
+    // Once OSV reports it on the base copy too, it's inherited.
+    const inherited = environment({ affected: { "vite@8.3.2": [FIXED], "postcss@8.5.28": ["GHSA-wide"], "postcss@8.5.29": ["GHSA-wide"] }, routes }).env;
+    expect((await requiredNpmPlan(tree(files()), plan, inherited)).requiredNpm).toMatchObject([{ name: "postcss", version: "8.5.29" }]);
+    // Or on another base copy of postcss, whichever the lockfile lists first: the base copies count together.
+    const another = { ...routes, "https://registry.npmjs.org/postcss/8.5.27": manifest };
+    const tool = { time: { "1.0.0": OLD }, versions: { "1.0.0": metadata } };
+    const withOlder = { time: { ...postcss.time, "8.5.27": OLD }, versions: { ...postcss.versions, "8.5.27": metadata } };
+    const reviewedElsewhere = environment({ docs: { tool, postcss: withOlder }, affected: { "vite@8.3.2": [FIXED], "postcss@8.5.27": ["GHSA-wide"], "postcss@8.5.29": ["GHSA-wide"] }, routes: another }).env;
+    const repositoryOnly = environment({ docs: { tool, postcss: withOlder }, affected: { "vite@8.3.2": [FIXED], "postcss@8.5.29": ["GHSA-wide"] }, routes: another }).env;
+    for (const first of [true, false]) {
+      const lock = JSON.parse(files()["package-lock.json"]!);
+      const nested = { "node_modules/tool": locked("tool", "1.0.0"), "node_modules/tool/node_modules/postcss": locked("postcss", "8.5.27") };
+      lock.packages = first ? { "": lock.packages[""], ...nested, ...lock.packages } : { ...lock.packages, ...nested };
+      const twoCopies = { ...files(), "package-lock.json": json(lock) };
+      expect((await requiredNpmPlan(tree(twoCopies), plan, reviewedElsewhere)).requiredNpm).toMatchObject([{ name: "postcss", version: "8.5.29" }]);
+      await expect(requiredNpmPlan(tree(twoCopies), plan, repositoryOnly)).rejects.toThrow("required version postcss@8.5.29 adds GHSA-wide");
+    }
+  });
+
   it("blocks identity changes on the lowest required version", async () => {
     const doc = { ...postcss, versions: { ...postcss.versions, "8.5.29": { ...metadata, _npmUser: { name: "new-publisher" } } } };
     await expect(requiredNpmPlan(tree(files()), plan, environment({ docs: { postcss: doc } }).env)).rejects.toThrow("hadn't published");
@@ -211,11 +245,23 @@ describe("why a required version is refused", () => {
 
   it("names each new group, marks the unreviewed ones, and lists malware even inherited", () => {
     const found = snapshot([advisory("GHSA-new"), advisory("GHSA-repo", "repository"), advisory("GHSA-old"), advisory("MAL-c")]);
-    expect(addedAdvisories(found, pkg, new Set(["GHSA-old", "MAL-c"]))).toBe(
+    expect(addedAdvisories(found, pkg, new Map([["GHSA-old", true], ["MAL-c", true]]))).toBe(
       "required version c@1.0.1 adds malware (MAL-c); GHSA-new; GHSA-repo (only in the project's repository advisories, not corroborated by the sources this decision used)");
   });
 
   it("finds nothing when every group is inherited", () => {
-    expect(addedAdvisories(snapshot([advisory("GHSA-old", "repository")]), pkg, new Set(["GHSA-old"]))).toBeUndefined();
+    expect(addedAdvisories(snapshot([advisory("GHSA-old", "repository")]), pkg, new Map([["GHSA-old", false]]))).toBeUndefined();
+  });
+
+  it.each([
+    { base: "osv", required: "osv", added: false },
+    { base: "osv", required: "repository", added: false },
+    { base: "repository", required: "repository", added: false },
+    { base: "repository", required: "osv", added: true },
+  ] as const)("inherits a $required group from a $base one on the base copies only when review allows it (added: $added)", ({ base, required, added }) => {
+    const baseline = new Map([["GHSA-x", base !== "repository"]]);
+    expect(addedAdvisories(snapshot([advisory("GHSA-x", required)]), pkg, baseline)).toBe(added
+      ? "required version c@1.0.1 adds GHSA-x (the base copies have it only from the project's repository advisories)"
+      : undefined);
   });
 });

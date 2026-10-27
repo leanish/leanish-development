@@ -33,7 +33,7 @@ function lockfile(path: string, entries: Record<string, object>): NpmLockfile {
 }
 
 function finding(name: string, version: string, advisory: string, locations: string[], extra: Partial<Finding> = {}): Finding {
-  return { ecosystem: "npm", name, version, advisory, ids: [advisory], malicious: false, summary: undefined, severity: "HIGH", locations, ...extra };
+  return { ecosystem: "npm", name, version, advisory, ids: [advisory], malicious: false, reviewed: true, summary: undefined, severity: "HIGH", locations, ...extra };
 }
 
 describe("splitting bundled findings off to their carriers", () => {

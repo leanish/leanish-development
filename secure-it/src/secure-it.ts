@@ -262,8 +262,14 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   const tree = await deps.trees.commit(context.workingCopy, context.workingCopy.headSha);
   const base = { tree, gradle: await inventories.ofCommit(tree) };
   const found = await deps.candidates(tree, env, { head: base.gradle });
+  // A fix whose publisher identity couldn't be decided is blocked like a refused one, but it's a check that failed:
+  // reported as an error, so the run reads as one that broke, while the other units still go on. Spread last in every
+  // result, so no unit's own keys can replace it.
+  const undecided = undecidedProblems(found.fixes);
+  const errors = undecided.length > 0 ? { errors: undecided } : {};
+  const undecidedPackages = new Set(found.fixes.filter((fix) => fix.undecided === true).map(packageKey));
   const report = { gaps: found.gaps.length };
-  if (found.incomplete.length > 0) return { ...report, outcome: "incomplete", incomplete: found.incomplete };
+  if (found.incomplete.length > 0) return { ...report, outcome: "incomplete", incomplete: found.incomplete, ...errors };
   const planned = await withParentsPlanned(found, base, env, inventories);
   const selection = await coupledWork(planned.fixes, planned.peers);
   const waiting = selection.blocked.flatMap((group) => group.reasons);
@@ -286,7 +292,7 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
       // While that grouping is unknown, a held PR with npm moves stays reserved for the npm work it could take back,
       // as review keeps it: a held unit without npm work claiming it fails rather than rewrite it without that work.
       if (ungrouped !== undefined && isHeldUnit(unit) && claimedPlan !== undefined && hasNpmMoves(claimedPlan)) throw ungrouped;
-      results.push(await runUnit(execution, unit, base, own, claimed));
+      results.push(await runUnit(execution, unit, base, own, claimed, undecidedPackages));
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       context.logger.warn("secure-it: a unit failed", { topic: unit.topic, error: detail });
@@ -303,8 +309,24 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
       results.push({ topic: "floor-removal", outcome: "failed", detail: err instanceof Error ? err.message : String(err) });
     }
   }
-  if (results.length === 0) return { ...report, outcome: "nothing-to-fix", waiting, blocked: selection.blocked, units: [] };
-  return { ...report, ...(results.length === 1 ? results[0]! : { outcome: "completed" }), waiting, blocked: selection.blocked, units: results };
+  if (results.length === 0) return { ...report, outcome: "nothing-to-fix", waiting, blocked: selection.blocked, units: [], ...errors };
+  return { ...report, ...(results.length === 1 ? results[0]! : { outcome: "completed" }), waiting, blocked: selection.blocked, units: results, ...errors };
+}
+
+/** Why each fix whose publisher identity couldn't be decided (`SecurityFix.undecided`) has no move. */
+function undecidedProblems(fixes: ReadonlyArray<SecurityFix>): string[] {
+  return fixes.flatMap((fix) => (fix.undecided === true && fix.problem !== undefined ? [fix.problem] : []));
+}
+
+/**
+ * Throws, keeping the PR, when the plan an open PR records moves a package (by ecosystem and name, companions included)
+ * whose publisher identity can't be decided now: the recomputed plan lacks that move only because the check failed, so
+ * reusing the PR would rewrite it as if the move were no longer needed.
+ */
+function assertNoUndecidedMoves(recorded: ChangePlan | undefined, undecided: ReadonlySet<string>): void {
+  const lost = new Map((recorded?.moves ?? []).filter((move) => undecided.has(packageKey(move))).map((move) => [packageKey(move), move]));
+  if (lost.size === 0) return;
+  throw new Error([...lost.values()].map((move) => `${move.ecosystem} ${move.name}'s publisher identity can't be decided; keeping the PR`).join("; "));
 }
 
 /**
@@ -674,11 +696,21 @@ async function planUnit(execution: Execution, unit: SecurityUnit, base: PlanBase
   return execution.deps.requiredNpm(base.tree, plan, execution.env);
 }
 
-async function runUnit(execution: Execution, unit: SecurityUnit, base: PlanBase, own: ReadonlyArray<GitHubPullRequest>, claimed: number | undefined): Promise<Readonly<Record<string, unknown>>> {
+async function runUnit(
+  execution: Execution,
+  unit: SecurityUnit,
+  base: PlanBase,
+  own: ReadonlyArray<GitHubPullRequest>,
+  claimed: number | undefined,
+  undecided: ReadonlySet<string>,
+): Promise<Readonly<Record<string, unknown>>> {
   const { context, publication } = execution;
   const plan = await planUnit(execution, unit, base);
   const owned = await recognisedPlans(publication, own, plan, claimed);
   const already = owned.find((candidate) => samePlan(candidate.pr, planDigest(plan), digestOf));
+  // The PR this unit reuses (for a held unit, the one it claimed), checked before anything repairs, refreshes or redoes it.
+  const reused = already ?? owned[0];
+  if (reused !== undefined) assertNoUndecidedMoves(planOf(reused.pr.body), undecided);
   const details = { topic: plan.topic, packages: plan.packages, notes: plan.notes ?? [] };
   if (already !== undefined) {
     const pr = await repairOwnership(publication, already);
@@ -951,6 +983,11 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       const baseGradle = await inventories.ofCommit(base);
       const found = await deps.candidates(base, env, { head: baseGradle });
       if (found.incomplete.length > 0) throw new Error(`the new base's inventory is incomplete: ${found.incomplete.join("; ")}`);
+      // A fix without a move because its identity check failed isn't one the base no longer needs. On any package, not
+      // only this PR's, since how fixes split into units (malware first) depends on all of them: nothing is retired,
+      // replaced or rewritten until it can be decided.
+      const undecided = undecidedProblems(found.fixes);
+      if (undecided.length > 0) throw new Error(`publisher identity can't be decided on the new base; keeping the PR: ${undecided.join("; ")}`);
       if (previous.kind === "floor-removal") {
         if (found.fixes.some((fix) => fix.malicious)) throw new Error("malware on base must be fixed before removing floors");
         const removal = await computeRemoval(execution, { tree: base, gradle: baseGradle });

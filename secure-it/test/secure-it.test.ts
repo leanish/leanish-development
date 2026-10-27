@@ -519,7 +519,15 @@ describe("secure-it run", () => {
     expect(await secureIt(refused.deps).run(refused.context)).toMatchObject({ outcome: "cannot-apply", summary: "the override would break the build" });
 
     const stuck = harness({ fixes: [vite({ to: undefined, problem: "no version above 8.3.1 fixes GHSA-x" })] });
-    expect(await secureIt(stuck.deps).run(stuck.context)).toMatchObject({ outcome: "nothing-to-fix", waiting: ["vite@8.3.1: no version above 8.3.1 fixes GHSA-x"] });
+    const quiet = await secureIt(stuck.deps).run(stuck.context);
+    expect(quiet).toMatchObject({ outcome: "nothing-to-fix", waiting: ["vite@8.3.1: no version above 8.3.1 fixes GHSA-x"] });
+    // A refusal is no error; an identity check that failed is one, reported while the other fix still goes out.
+    expect(quiet).not.toHaveProperty("errors");
+    const undecidedProblem = "vite@8.3.1's publisher identity can't be decided: attestation lookup failed with HTTP 503";
+    const broken = harness({ fixes: [vite({ to: undefined, problem: undecidedProblem, undecided: true }), leftPad()] });
+    expect(await secureIt(broken.deps).run(broken.context)).toMatchObject({
+      errors: [undecidedProblem], waiting: [`vite@8.3.1: ${undecidedProblem}`], units: [{ outcome: "published" }],
+    });
 
     const incomplete = harness();
     const deps = { ...incomplete.deps, candidates: async () => ({ fixes: [vite()], incomplete: ["Gradle :runtimeClasspath couldn't resolve x"], gaps: [], osvScannerVersion: "2.6.0" }) };
@@ -535,6 +543,15 @@ describe("secure-it run", () => {
     expect(h.agentCalls[0]?.input).toMatchObject({ moves: [{ name: "vite" }, { name: "left-pad" }] });
     expect(h.workspace.publications).toHaveLength(1);
     expect(h.reverted).toEqual([BASE_SHA]);
+    expect(planOf(h.github.prs.get(7)!.body)?.packages).toEqual(["npm|left-pad", "npm|vite"]);
+  });
+
+  it("still updates a PR that moves no undecided package while another's publisher identity can't be decided", async () => {
+    const problem = "rollup@3.0.0's publisher identity can't be decided: attestation lookup failed with HTTP 503";
+    const rollup = vite({ name: "rollup", from: "3.0.0", locations: ["node_modules/rollup"], to: undefined, problem, undecided: true });
+    const h = harness({ prs: [await vitePr()], fixes: [vite(), leftPad(), rollup] });
+    h.workspace.setRemoteHead("secure-it/2026-10-05-security", HEAD_SHA);
+    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "updated", errors: [problem] });
     expect(planOf(h.github.prs.get(7)!.body)?.packages).toEqual(["npm|left-pad", "npm|vite"]);
   });
 
@@ -659,6 +676,27 @@ describe("secure-it run", () => {
     expect(h.agentCalls).toHaveLength(1);
     expect(h.workspace.publications).toHaveLength(1);
     expect(h.github.prs.get(7)?.headSha).toBe(HEAD_SHA);
+  });
+
+  it("keeps a PR that moves a package whose publisher identity can't be decided now, while another unit still publishes", async () => {
+    const problem = "left-pad@1.0.0's publisher identity can't be decided: attestation lookup failed with HTTP 503";
+    const rollup = vite({ name: "rollup", from: "3.0.0", locations: ["node_modules/rollup"], to: { version: "4.0.1", line: "4", aged: true, major: true, blockers: [] } });
+    const pr = await batchPr([vite(), leftPad()]);
+    const h = harness({ prs: [pr], fixes: [vite(), leftPad({ to: undefined, problem, undecided: true }), rollup] });
+    h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
+    // Without the check, the routine would rewrite #7 to move vite alone, as if left-pad needed no fix any more.
+    expect(await secureIt(h.deps).run(h.context)).toMatchObject({
+      errors: [problem],
+      units: [
+        { topic: "security", outcome: "failed", detail: "npm left-pad's publisher identity can't be decided; keeping the PR" },
+        { topic: "rollup-major", outcome: "published" },
+      ],
+    });
+    expect(h.github.prs.get(7)).toEqual(pr);
+    expect(h.workspace.preparations.map((entry) => entry.args.branch)).toEqual(["secure-it/2026-10-07-rollup-major"]);
+    expect(h.workspace.publications.map((entry) => entry.prepared.branch)).toEqual(["secure-it/2026-10-07-rollup-major"]);
+    expect(h.workspace.deletions).toEqual([]);
+    expect(h.agentCalls.map((call) => (call.input["moves"] as Array<{ name: string }>).map((move) => move.name))).toEqual([["rollup"]]);
   });
 
   it("continues to a major when the routine fails, and leaves legacy package PRs to review", async () => {
@@ -1003,6 +1041,29 @@ describe("secure-it review", () => {
     expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ outcome: "retired" }] });
     expect(h.agentCalls).toEqual([]);
     expect(h.workspace.publications).toEqual([]);
+  });
+
+  const undecidedProblem = (name: string, from: string) => `${name}@${from}'s publisher identity can't be decided: attestation lookup failed with HTTP 503`;
+  const undecided = (fix: SecurityFix): SecurityFix => ({ ...fix, to: undefined, problem: undecidedProblem(fix.name, fix.from), undecided: true });
+  it.each([
+    // Without the guard: retired, its fix read as one the base no longer needs.
+    { which: "its own", malware: false, fixes: () => [undecided(vite())], detail: undecidedProblem("vite", "8.3.1") },
+    // Without the guard: rebased, as if nothing were in doubt.
+    { which: "another's", malware: false, fixes: () => [vite(), undecided(leftPad())], detail: undecidedProblem("left-pad", "1.0.0") },
+    // Without the guard: the malware PR retired, its malware read as gone.
+    { which: "its malware", malware: true, fixes: () => [undecided(vite({ malicious: true })), leftPad()], detail: undecidedProblem("vite", "8.3.1") },
+  ])("keeps a PR, untouched, while a fix's publisher identity can't be decided on the new base: $which", async ({ malware, fixes, detail }) => {
+    const pr = malware ? await vitePr({ headRef: "secure-it/2026-10-05-malware" }, vite({ malicious: true })) : await vitePr();
+    const h = harness({ prs: [pr], baseSha: NEW_BASE, fixes: fixes() });
+    h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
+    h.github.branches.add(pr.headRef);
+    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [
+      { number: 7, outcome: "error", detail: `publisher identity can't be decided on the new base; keeping the PR: ${detail}` },
+    ] });
+    expect(h.github.prs.get(7)).toEqual(pr);
+    expect(h.github.branches.has(pr.headRef)).toBe(true);
+    expect(h.github.calls.filter((call) => call.startsWith("closePullRequest") || call.startsWith("updatePullRequest"))).toEqual([]);
+    expect([h.workspace.deletions, h.workspace.publications, h.agentCalls, h.reverted]).toEqual([[], [], [], []]);
   });
 
   it("retains package scope when reviewing a legacy plan", async () => {
@@ -2001,6 +2062,22 @@ describe("the cooldown hold", () => {
       { topic: "security-cooldown-vite", outcome: "published" },
     ] });
     expect(planOf(h.github.prs.get(7)!.body)).toMatchObject({ topic: "security-cooldown-left-pad", members: ["npm|left-pad"] });
+  });
+
+  it("keeps the held PR a unit claimed when it moves a package whose publisher identity can't be decided now", async () => {
+    const problem = "left-pad@1.0.0's publisher identity can't be decided: attestation lookup failed with HTTP 503";
+    // Recorded under left-pad's topic: only the claim (vite overlaps) makes it the vite unit's PR, not a topic lookup.
+    const plan = await planFor([YOUNG_PAD(), YOUNG_VITE()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined },
+      { kind: "routine", topic: "security-cooldown-left-pad" });
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-left-pad", body: withMarker(RULES, withPlanSection("Fixes both.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pr], fixes: [YOUNG_VITE(), { ...YOUNG_PAD(), to: undefined, problem, undecided: true }] });
+    h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
+    // Without the check, the held unit would rewrite #7 to move vite alone.
+    expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({
+      topic: "security-cooldown-vite", outcome: "failed", detail: "npm left-pad's publisher identity can't be decided; keeping the PR", errors: [problem],
+    });
+    expect(h.github.prs.get(7)).toEqual(pr);
+    expect([h.workspace.preparations, h.workspace.publications, h.workspace.deletions, h.agentCalls]).toEqual([[], [], [], []]);
   });
 
   it("doesn't claim a held PR someone pushed to, so the PR it opens instead is reused on the next run", async () => {
