@@ -418,13 +418,18 @@ export function gradleLocated(inventory: GradleInventory): Located[] {
   return [...byVersion.values()].map((entry) => ({ ecosystem: "Maven", ...entry }));
 }
 
+/** Whether `gradle.ignoreConfigurations` (`ignored`) names the configuration at `location`, a `gradleLocation`. */
+export function ignoresResolution(ignored: ReadonlyArray<string>, location: string): boolean {
+  return ignored.includes(location);
+}
+
 /** Configurations that didn't fully resolve, unless config ignores them. */
 export function gradleResolutionProblems(inventory: GradleInventory, ignored: ReadonlyArray<string>): string[] {
   const problems: string[] = [];
   for (const build of inventory.builds) {
     for (const configuration of build.configurations) {
       const location = gradleLocation(build.build, configuration.id);
-      if (ignored.includes(location)) continue;
+      if (ignoresResolution(ignored, location)) continue;
       if (configuration.error !== undefined) problems.push(`Gradle ${location} didn't resolve: ${configuration.error}`);
       for (const missing of configuration.unresolved) problems.push(`Gradle ${location} couldn't resolve ${missing.requested}: ${missing.failure}`);
     }

@@ -69,7 +69,8 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
        the other's review rebases it.
      - **Never regrouped by a failure:** with two or more held groups, each is planned alone before any agent work.
        For a plan with Maven moves, Gradle also applies its declaration moves and floors to an exported base and
-       resolves the reference: a returned inventory must have the planned declarations and no resolution failures.
+       resolves the reference: a returned inventory must have the planned declarations and no resolution failures
+       (outside the gate's `gradle.ignoreConfigurations`).
        A group whose planning fails, whose reference has problems, or whose Gradle run itself fails (sandbox failure,
        timeout or OOM, or a missing reference inventory) fails on its own, with its error in the run's report; the
        other groups keep their grouping, topics and PRs, and still run. Groups that can only be planned or resolved
@@ -140,8 +141,11 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
    - **The agent** never changes npm dependency fields or lockfiles; only a major may adapt manifest scripts or
      config, and it changes code only for a major move. Direct dependencies outside the plan stay unchanged. In
      Gradle, the edit must resolve and declare exactly what the plan's reference does (the base with the plan applied
-     by Gradle, so a planned plugin fix's own fallout is in it; [`core/gate/README.md`](../core/gate/README.md)). Every
-     apply, resolve and adapt path verifies the tool-written files before publishing.
+     by Gradle, so a planned plugin fix's own fallout is in it; [`core/gate/README.md`](../core/gate/README.md)); a
+     configuration the gate's `gradle.ignoreConfigurations` lists may fail to resolve, as in the gate, but the same
+     way as in the plan's reference. A parent's proof and a floor removal's probe don't accept an incomplete
+     resolution there: they keep the floor instead. Every apply, resolve and adapt path verifies the tool-written
+     files before publishing.
    - **The skill asks for** focused edits in each file's style; comments the edit made false fixed without losing
      their context; code kept only for an unsupported old major removed; the repository's checks in every mode; for
      each major, the release notes or changelog it crosses, linked in its verdict; and PR text that maps advisories

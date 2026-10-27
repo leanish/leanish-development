@@ -105,6 +105,29 @@ describe("floor-removal verification", () => {
     expect(await verifyPlan({ ...input, gradle: { ...input.gradle, head: gradle(after.map((entry) => ({ ...entry, version: "9.0" }))) } })).toContainEqual(expect.stringContaining("compatibility floor"));
     expect(await verifyPlan({ ...input, gradle: { ...input.gradle, head: gradle([after[0]!]) } })).toContainEqual(expect.stringContaining("exactly the planned"));
   });
+  it("lets a configuration the gate ignores fail to resolve in the reference and the edit, but still compares it", async () => {
+    const records = JSON.stringify({ floors: [raw("g:lib", "Maven")] });
+    const removed = parseFloors(JSON.parse(records));
+    const text = withoutFloorRecords(records, removed);
+    const before = [{ group: "g", name: "lib", version: "2.0", reason: ID }, { group: "g", name: "parent", version: "3.0", reason: undefined }];
+    const failing = (declared: typeof before): GradleInventory => {
+      const inventory = gradle(declared);
+      return { ...inventory, builds: [{ build: ".", configurations: [{ ...inventory.builds[0]!.configurations[0]!, unresolved: [{ requested: "g:tool:9.9", failure: "not found" }] }] }] };
+    };
+    const plan: ChangePlan = { kind: "floor-removal", topic: "floor-removal", malware: false, severity: undefined, packages: ["Maven|g:lib"], moves: [], floorRemoval: { floors: removed, files: [{ path: FLOORS_PATH, sha256: hash(text) }], notes: [] } };
+    const input = (ignored: string[]): VerifyInputs => {
+      const config = { ".github/supply-chain.json": JSON.stringify({ gradle: { ignoreConfigurations: ignored } }) };
+      return { plan, base: tree("base", { ...config, [FLOORS_PATH]: records, "build.gradle.kts": "before" }), head: tree("head", { ...config, [FLOORS_PATH]: text, "build.gradle.kts": "after" }), env,
+        gradle: { base: gradle(before), head: failing(before.slice(1)) }, reference: failing(before.slice(1)), changedFiles: [FLOORS_PATH, "build.gradle.kts"] };
+    };
+    expect(await verifyPlan(input([":runtimeClasspath"]))).toEqual([]);
+    expect(await verifyPlan(input([":testRuntimeClasspath"]))).toEqual([
+      ":runtimeClasspath doesn't resolve in the plan's reference: g:tool:9.9: not found",
+      ":runtimeClasspath doesn't resolve in the edit: g:tool:9.9: not found",
+    ]);
+    const kept = input([":runtimeClasspath"]);
+    expect(await verifyPlan({ ...kept, reference: failing(before) })).toContain("the plan's reference still declares g:lib 2.0 at :runtimeClasspath");
+  });
   it("rejects a fabricated removal record, even when its file hashes match", async () => {
     const { input } = fixture();
     const unknown: Floor = { ...input.plan.floorRemoval!.floors[0]!, version: "9.0.0" };

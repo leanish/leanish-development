@@ -39,7 +39,11 @@ export interface Config {
      * (not configured): the root build if the tree has one; `[]` turns Gradle off.
      */
     readonly builds: ReadonlyArray<string> | undefined;
-    /** Configuration locations (`:sub:someConfiguration`) whose resolution failures don't fail the run. */
+    /**
+     * Configuration locations (`:sub:someConfiguration`) whose resolution failures don't fail the run; what they
+     * resolve is still scanned. secure-it's Gradle reference checks accept them too, when an edit fails the same way
+     * as the plan's reference.
+     */
     readonly ignoreConfigurations: ReadonlyArray<string>;
   };
   readonly maven: {

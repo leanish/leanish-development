@@ -104,6 +104,34 @@ describe("the plan's Gradle reference", () => {
     expect(referenceDifferences(undefined, undefined)).toEqual([]);
     expect(referenceDifferences(reference, undefined)).toHaveLength(1);
   });
+
+  it("lets a configuration the gate ignores fail to resolve, but only the same way as in the plan's reference", () => {
+    // A thrown resolution, as the exporter writes it: the error, and nothing resolved.
+    const thrown = (error: string, declared = "1.0.0") => inventory([declared], "1.0.0", { error, resolved: [] });
+    const unresolved = (failure: string) => inventory(["1.0.0"], "1.0.0", { unresolved: [{ requested: "g:lib:2.0.0", failure }] });
+    const ignored = [":runtimeClasspath"];
+    expect(referenceDifferences(thrown("boom"), thrown("boom"), ignored)).toEqual([]);
+    expect(referenceDifferences(unresolved("not found"), unresolved("not found"), ignored)).toEqual([]);
+    // Outside the ignored ones, any failure on either side is reported, the same one included.
+    expect(referenceDifferences(thrown("boom"), thrown("boom"), ["tools/:runtimeClasspath"])).toEqual([
+      ":runtimeClasspath doesn't resolve in the plan's reference: boom",
+      ":runtimeClasspath doesn't resolve in the edit: boom",
+    ]);
+    // An edit there (a forced version, say) that changes, adds or removes a failure.
+    expect(referenceDifferences(thrown("boom"), thrown("Could not resolve g:lib:9.0.0"), ignored)).toEqual([
+      ":runtimeClasspath, unlike the plan's reference, also fails to resolve Could not resolve g:lib:9.0.0 and no longer fails to resolve boom",
+    ]);
+    expect(referenceDifferences(inventory(["1.0.0"], "1.0.0", { resolved: [] }), thrown("boom"), ignored)).toEqual([
+      ":runtimeClasspath, unlike the plan's reference, also fails to resolve boom",
+    ]);
+    expect(referenceDifferences(unresolved("not found"), unresolved("timed out"), ignored)).toEqual([
+      ":runtimeClasspath, unlike the plan's reference, also fails to resolve g:lib:2.0.0: timed out and no longer fails to resolve g:lib:2.0.0: not found",
+    ]);
+    // What it declares still has to match.
+    expect(referenceDifferences(thrown("boom"), thrown("boom", "1.1.0"), ignored)).toEqual([
+      ":runtimeClasspath, unlike the plan's reference, also declares g:lib 1.1.0 and no longer declares g:lib 1.0.0",
+    ]);
+  });
 });
 
 describe.each(["declaration", "constraint"] as const)("rich version of a %s", (kind) => {
