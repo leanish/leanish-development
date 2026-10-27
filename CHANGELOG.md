@@ -47,6 +47,16 @@
 
 ### Fixed
 
+- `@leanish/agent-runtime`'s final line no longer costs a command its exit code when the stream fails the write
+  (EPIPE, ENOSPC): `startRunReport`'s end and signal path and `writeFinalLine` listen for the `error` a Node stream
+  emits after calling the failed write back, which can come well after it, and drop it instead of the process dying
+  with exit code 1. They listen only from the write until the stream's `error` or `close` (after a successful write,
+  not past it), leave the host's own listeners alone, and don't wait for either: `end` resolves as before. Nothing more
+  is written to the failed stream, and the `after-final-line` marker stays unwritten, so the wrapper still writes its
+  own line. `writeFinalLine` now resolves on a stream that throws instead of calling back, as it does on a failed
+  write, saying nothing either way. Only the stream's first `error` or `close` after the write is heard: a second one
+  ends the process as before. A stream already destroyed or errored, or one without events, is written without listening, so
+  writing to it again and again leaves no listener behind.
 - The gate reads npm's SLSA v0.2 provenance (`invocation.configSource`: the repository from its `git+<URL>@<ref>`
   uri, the workflow from its `entryPoint`) as well as v1. Before, a package version published with it (npm's earlier
   format) made the whole run fail to complete. Both name a source the same way, so a package moving from v0.2 to v1
