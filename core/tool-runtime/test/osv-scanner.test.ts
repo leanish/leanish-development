@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -41,9 +42,10 @@ describe("ensureOsvScanner", () => {
 
   it("compares canonical paths by whole components", async () => {
     if (process.platform === "darwin") {
-      // macOS's /tmp is a symlink to /private/tmp.
-      expect(isInside("/tmp/x/osv-scanner", "/private/tmp")).toBe(true);
-      expect(isInside("/private/tmp/x/osv-scanner", "/tmp")).toBe(true);
+      // macOS's /tmp is a symlink to /private/tmp. A fresh name: an existing /tmp/x file would make the path impossible.
+      const fresh = randomUUID();
+      expect(isInside(`/tmp/${fresh}/osv-scanner`, "/private/tmp")).toBe(true);
+      expect(isInside(`/private/tmp/${fresh}/osv-scanner`, "/tmp")).toBe(true);
     }
     expect(isInside(join(cache, "..trusted", "osv-scanner"), cache)).toBe(true);
     expect(isInside(join(cache, "..", "elsewhere"), cache)).toBe(false);

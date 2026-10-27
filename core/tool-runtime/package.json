@@ -26,7 +26,6 @@
     "yaml": "^2.9.1"
   },
   "exports": {
-    "./ci-state": "./src/ci-state.ts",
     "./command": "./src/command.ts",
     "./config": "./src/config.ts",
     "./edit-checks": "./src/edit-checks.ts",

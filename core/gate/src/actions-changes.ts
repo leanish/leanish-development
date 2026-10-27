@@ -85,16 +85,13 @@ export async function actionChanges(
     if (seen.has(occurrence)) continue;
     seen.add(occurrence);
     const resolution = resolutions.get(resolutionKey(use))!;
-    const label = `${use.name}${use.path === undefined ? "" : `/${use.path}`}@${use.ref} (${use.file})`;
+    const label = labelOf(use);
     const changed = after.get(occurrence)! > (before.get(occurrence) ?? 0);
-    if (resolution.kind === "unpinned") {
-      if (changed) problems.push(`${label} is new or changed, so it must be pinned to a full commit SHA with a \`# vX.Y.Z\` comment`);
-      else gaps.push(`GitHub Actions ${label}: not pinned to a commit, so its version (and advisories) can't be told`);
-      continue;
-    }
-    if (resolution.kind === "unverified") {
-      if (changed) problems.push(`${label}: ${resolution.reason}`);
-      else gaps.push(`GitHub Actions ${label}: ${resolution.reason}`);
+    if (resolution.kind !== "pinned") {
+      // An unchanged use is the base's gap, inherited; a new or changed one must resolve.
+      if (!changed) gaps.push(gapOf(use, resolution));
+      else if (resolution.kind === "unpinned") problems.push(`${label} is new or changed, so it must be pinned to a full commit SHA with a \`# vX.Y.Z\` comment`);
+      else problems.push(`${label}: ${resolution.reason}`);
       continue;
     }
     if (!changed) continue;
@@ -128,11 +125,20 @@ export function actionGaps(inventory: ActionsInventory, resolutions: ReadonlyMap
     if (seen.has(occurrence)) continue;
     seen.add(occurrence);
     const resolution = resolutions.get(resolutionKey(use))!;
-    const label = `${use.name}@${use.ref} (${use.file})`;
-    if (resolution.kind === "unpinned") gaps.push(`GitHub Actions ${label}: not pinned to a commit, so its version (and advisories) can't be told`);
-    else if (resolution.kind === "unverified") gaps.push(`GitHub Actions ${label}: ${resolution.reason}`);
+    if (resolution.kind !== "pinned") gaps.push(gapOf(use, resolution));
   }
   return gaps;
+}
+
+/** How problems and gaps name a use: the action, the folder in its repository when it names one, its ref, and the file. */
+function labelOf(use: ActionUse): string {
+  return `${use.name}${use.path === undefined ? "" : `/${use.path}`}@${use.ref} (${use.file})`;
+}
+
+/** The gap an unpinned or unverified use leaves, worded alike by compare and a full scan. */
+function gapOf(use: ActionUse, resolution: Exclude<Resolution, { readonly kind: "pinned" }>): string {
+  const why = resolution.kind === "unpinned" ? "not pinned to a commit, so its version (and advisories) can't be told" : resolution.reason;
+  return `GitHub Actions ${labelOf(use)}: ${why}`;
 }
 
 /** An action's versions are its releases' tags; their dates, the publish times of the immutable ones (see `releasePublished`). */

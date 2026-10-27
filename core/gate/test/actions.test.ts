@@ -179,6 +179,20 @@ describe("resolving uses", () => {
     expect(actionGaps(head, resolutions)).toHaveLength(3);
   });
 
+  it("words an unchanged use's gap as a full scan does, folder included", async () => {
+    const unpinned = { name: "acme/tools", path: "lint", ref: "v1", comment: undefined, file: "ci.yml" };
+    const uncommented = { ...unpinned, path: "build", ref: CHECKOUT_SHA };
+    const tree: ActionsInventory = { uses: [unpinned, uncommented], docker: [], files: ["ci.yml"], gaps: [] };
+    const gh = github();
+    const resolutions = await resolveUses([tree], gh);
+    const { gaps } = await actionChanges(tree, tree, resolutions, gh, parseConfig({}));
+    expect(gaps).toEqual([
+      "GitHub Actions acme/tools/lint@v1 (ci.yml): not pinned to a commit, so its version (and advisories) can't be told",
+      `GitHub Actions acme/tools/build@${CHECKOUT_SHA} (ci.yml): no \`# vX.Y.Z\` comment names its full version`,
+    ]);
+    expect(actionGaps(tree, resolutions)).toEqual(gaps);
+  });
+
   it("fails a changed action without a published release, unless it's an own action", async () => {
     const own = { name: "acme/tools", path: undefined, ref: CHECKOUT_SHA, comment: "v1.0.0", file: "ci.yml" };
     const gh = github({
