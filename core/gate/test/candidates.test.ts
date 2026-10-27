@@ -89,6 +89,43 @@ function moves(fixes: ReadonlyArray<SecurityFix>): Array<[string, string | undef
   return fixes.map((fix) => [`${fix.name}@${fix.from}`, fix.to?.version, fix.problem]);
 }
 
+const ATTESTATIONS = "https://registry.npmjs.org/-/npm/v1/attestations/";
+const SLSA = "https://slsa.dev/provenance/v1";
+
+/** A manifest with SLSA provenance at the registry's attestation URL for `key` (`name@version`), its tarball's `integrity`. */
+function attested(key: string, integrity: string): object {
+  return { _npmUser: { name: "maintainer" }, dist: { integrity, attestations: { url: `${ATTESTATIONS}${key}`, provenance: { predicateType: SLSA } } } };
+}
+
+/** A manifest whose attestations the registry lists malformed: reading its provenance fails. */
+const MALFORMED = { _npmUser: { name: "maintainer" }, dist: { attestations: { url: "https://example.com/x", provenance: { predicateType: SLSA } } } };
+
+/**
+ * `env` serving the provenance statement of each `name@version` in `statements` (→ its tarball's integrity), all
+ * built by one repository and workflow; any other attestation lookup fails with HTTP 503.
+ */
+function withStatements(env: GateEnvironment, statements: Record<string, string>): GateEnvironment {
+  return {
+    ...env,
+    fetch: async (url, init) => {
+      if (!url.startsWith(ATTESTATIONS)) return env.fetch(url, init);
+      const key = url.slice(ATTESTATIONS.length);
+      const integrity = statements[key];
+      const respond = (status: number, body: unknown) => ({ ok: status === 200, status, headers: { get: () => null }, json: async () => body, text: async () => JSON.stringify(body) });
+      if (integrity === undefined) return respond(503, {});
+      const subject = [{ name: `pkg:npm/${key}`, digest: { sha512: Buffer.from(integrity.slice("sha512-".length), "base64").toString("hex") } }];
+      const predicate = { buildDefinition: { externalParameters: { workflow: { repository: "https://github.com/acme/lib", path: ".github/workflows/release.yml" } } } };
+      const payload = Buffer.from(JSON.stringify({ subject, predicateType: SLSA, predicate })).toString("base64");
+      return respond(200, { attestations: [{ predicateType: SLSA, bundle: { dsseEnvelope: { payload } } }] });
+    },
+  };
+}
+
+/** `moves`, sorted by package and version. */
+function sortedMoves(fixes: ReadonlyArray<SecurityFix>): Array<[string, string | undefined, string | undefined]> {
+  return moves(fixes).sort(([a], [b]) => a.localeCompare(b));
+}
+
 describe("securityCandidates", () => {
   it("judges dtv-shaped coupled directs on the security batch's snapshot, reading each registry document once", async () => {
     const names = ["vitest", "@vitest/ui", "@vitest/coverage-v8"];
@@ -427,6 +464,55 @@ describe("securityCandidates, regressions", () => {
     expect(blockers(stuck)).toEqual([["lib@1.0.0", "1.0.1", refused], ["lib@2.0.0", undefined, undefined]]);
   });
 
+  it("blocks an ordinary copy whose baseline provenance can't be read, alone, and fixes the rest", async () => {
+    // lib@1.0.0's baseline statement fails with HTTP 503; the malicious nested 2.0.0 leaves in a unit of its own.
+    const registry = { lib: { "1.0.0": OLD, "1.0.1": OLD, "2.0.0": OLD, "2.0.1": OLD }, other: { "1.0.0": OLD, "1.0.1": OLD } };
+    const candidate = "sha512-BBBB";
+    const manifests = { "lib@1.0.0": attested("lib@1.0.0", "sha512-AAAA"), "lib@1.0.1": attested("lib@1.0.1", candidate) };
+    const nested = { "node_modules/x/node_modules/lib": { version: "2.0.0", resolved: "https://registry.npmjs.org/lib/-/lib-2.0.0.tgz", integrity: "sha512-AAAA" } };
+    const head = await tree({ lib: "1.0.0", other: "1.0.0" }, {}, { name: "app" }, nested);
+    const affected = { "lib@1.0.0": ["GHSA-a"], "lib@2.0.0": ["MAL-2026-1"], "other@1.0.0": ["GHSA-o"] };
+    const found = await securityCandidates(head, withStatements(environment(affected, registry, [], manifests), { "lib@1.0.1": candidate }));
+    expect(sortedMoves(found.fixes)).toEqual([
+      ["lib@1.0.0", undefined, `lib@1.0.0's publisher identity can't be decided: attestation lookup ${ATTESTATIONS}lib@1.0.0 failed with HTTP 503`],
+      ["lib@2.0.0", "2.0.1", undefined],
+      ["other@1.0.0", "1.0.1", undefined],
+    ]);
+    expect(found.fixes.find((fix) => fix.name === "lib" && fix.from === "1.0.0")).toMatchObject({ targets: ["GHSA-a"], unfixable: [] });
+  });
+
+  it("takes the move of every copy in a unit whose identity can't be decided, the ones judged before the failure too", async () => {
+    const registry = { lib: { "1.0.0": OLD, "1.0.1": OLD, "2.0.0": OLD, "2.0.1": OLD }, other: { "1.0.0": OLD, "1.0.1": OLD } };
+    const nested = { "node_modules/x/node_modules/lib": { version: "2.0.0", resolved: "https://registry.npmjs.org/lib/-/lib-2.0.0.tgz", integrity: "sha512-AAAA" } };
+    const head = await tree({ lib: "1.0.0", other: "1.0.0" }, {}, { name: "app" }, nested);
+    const affected = { "lib@1.0.0": ["GHSA-a"], "lib@2.0.0": ["GHSA-a"], "other@1.0.0": ["GHSA-o"] };
+    const why = (version: string) => `publisher identity can't be decided: registry has malformed attestations for lib@${version}`;
+    // Either copy's fix can be the one whose provenance can't be read: the other passes alone, before or after it.
+    for (const broken of ["1.0.1", "2.0.1"]) {
+      const found = await securityCandidates(head, environment(affected, registry, [], { [`lib@${broken}`]: MALFORMED }));
+      expect(sortedMoves(found.fixes)).toEqual([
+        ["lib@1.0.0", undefined, `lib@1.0.0's ${why(broken)}`],
+        ["lib@2.0.0", undefined, `lib@2.0.0's ${why(broken)}`],
+        ["other@1.0.0", "1.0.1", undefined],
+      ]);
+    }
+  });
+
+  it("blocks only the malware unit whose identity can't be decided, leaving its package's ordinary copy and the rest", async () => {
+    // secure-it's `selectWork` then takes no work at all: malware goes first and whole (its own tests).
+    const registry = { lib: { "1.0.0": OLD, "1.0.1": OLD, "2.0.0": OLD, "2.0.1": OLD }, other: { "1.0.0": OLD, "1.0.1": OLD } };
+    const nested = { "node_modules/x/node_modules/lib": { version: "2.0.0", resolved: "https://registry.npmjs.org/lib/-/lib-2.0.0.tgz", integrity: "sha512-AAAA" } };
+    const head = await tree({ lib: "1.0.0", other: "1.0.0" }, {}, { name: "app" }, nested);
+    const affected = { "lib@1.0.0": ["MAL-2026-1"], "lib@2.0.0": ["GHSA-a"], "other@1.0.0": ["GHSA-o"] };
+    const found = await securityCandidates(head, environment(affected, registry, [], { "lib@1.0.1": MALFORMED }));
+    expect(sortedMoves(found.fixes)).toEqual([
+      ["lib@1.0.0", undefined, "lib@1.0.0's publisher identity can't be decided: registry has malformed attestations for lib@1.0.1"],
+      ["lib@2.0.0", "2.0.1", undefined],
+      ["other@1.0.0", "1.0.1", undefined],
+    ]);
+    expect(found.fixes.find((fix) => fix.from === "1.0.0" && fix.name === "lib")?.malicious).toBe(true);
+  });
+
   it("says when the inventory is incomplete, so an empty list can't read as clean", async () => {
     const head = await tree({}, { "settings.gradle": "" });
     const gradle = {
@@ -603,6 +689,19 @@ describe("bumpCandidates", () => {
     ]);
   });
 
+  it("gives a dependency whose publisher identity can't be decided no move in any line, and still moves the others", async () => {
+    const registry = { lib: { "1.0.0": OLD, "1.1.0": OLD, "2.0.0": OLD }, dev: { "1.0.0": OLD, "1.0.1": OLD } };
+    const head = await tree({ lib: "1.0.0", dev: "1.0.0" }, {}, { name: "app", dependencies: { lib: "^1.0.0", dev: "^1.0.0" } });
+    // The own line's choice fails, or the newer line's after the own line's was accepted: neither move is proposed.
+    for (const broken of ["1.1.0", "2.0.0"]) {
+      const found = await bumpCandidates(head, environment({}, registry, [], { [`lib@${broken}`]: MALFORMED }));
+      expect(found.bumps.map((bump) => [bump.name, bump.minor?.version, bump.major?.version, bump.problems])).toEqual([
+        ["dev", "1.0.1", undefined, []],
+        ["lib", undefined, undefined, [`lib@${broken}'s publisher identity can't be decided, so no move is proposed: registry has malformed attestations for lib@${broken}`]],
+      ]);
+    }
+  });
+
   it("reads workspaces' own copies, lets own packages skip the wait, and ignores non-registry specs", async () => {
     const registry = { "@acme/kit": { "1.0.0": OLD, "1.0.1": YESTERDAY }, shared: { "2.0.0": OLD, "2.1.0": OLD } };
     const head = await tree(
@@ -748,6 +847,36 @@ describe("securityCandidates, bundled copies", () => {
       ["brace@5.0.9", "5.0.12", undefined],
       ["carrier@1.0.0", undefined, expect.stringContaining("carrier move can't be decided: registry has malformed attestations")],
     ]);
+  });
+
+  it("blocks a carrier and the ordinary copy moving with it when the carrier's baseline provenance can't be read, fixing the rest", async () => {
+    // carrier 1.0.0's statement fails with HTTP 503, and the nested 1.2.0's fix is judged with it: its unit replaces both.
+    const times = { "1.0.0": OLD, "1.1.0": OLD, "1.2.0": OLD, "1.2.1": OLD };
+    const fixed = "sha512-CCCC";
+    const manifests = {
+      ...carrierManifests,
+      "carrier@1.0.0": attested("carrier@1.0.0", archives["1.0.0"].integrity),
+      "carrier@1.1.0": attested("carrier@1.1.0", archives["1.1.0"].integrity),
+      "carrier@1.2.1": attested("carrier@1.2.1", fixed),
+    };
+    const carrierTree = await tree({ other: "1.0.0" }, {}, { name: "app", dependencies: { carrier: "^1.0.0" } }, {
+      "node_modules/carrier": { version: "1.0.0", resolved: carrierTarball("1.0.0"), integrity: archives["1.0.0"].integrity },
+      "node_modules/carrier/node_modules/brace": { version: "5.0.9", inBundle: true },
+      "node_modules/x/node_modules/carrier": { version: "1.2.0", resolved: carrierTarball("1.2.0"), integrity: "sha512-AAAA" },
+    });
+    const affected = { "brace@5.0.9": ["GHSA-brace"], "carrier@1.2.0": ["GHSA-c"], "other@1.0.0": ["GHSA-o"] };
+    const env = withStatements(withArchives(environment(affected, { ...registry, carrier: times, other: { "1.0.0": OLD, "1.0.1": OLD } }, [], manifests)), {
+      "carrier@1.1.0": archives["1.1.0"].integrity, "carrier@1.2.1": fixed,
+    });
+    const found = await securityCandidates(carrierTree, env);
+    const unavailable = `attestation lookup ${ATTESTATIONS}carrier@1.0.0 failed with HTTP 503`;
+    expect(sortedMoves(found.fixes)).toEqual([
+      ["carrier@1.0.0", undefined, `carrier@1.0.0's carrier move can't be decided: ${unavailable}`],
+      ["carrier@1.2.0", undefined, `carrier@1.2.0's publisher identity can't be decided: ${unavailable}`],
+      ["other@1.0.0", "1.0.1", undefined],
+    ]);
+    // What was decided before the identity check stays for people: what the carrier move would have carried.
+    expect(found.fixes.find((fix) => fix.from === "1.0.0" && fix.name === "carrier")).toMatchObject({ carries: [expect.objectContaining({ name: "brace", to: ["5.0.12"] })] });
   });
 
   it("judges a carrier move's publisher with the package's other copies its unit moves", async () => {

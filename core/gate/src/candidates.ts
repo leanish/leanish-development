@@ -324,32 +324,38 @@ interface ChoiceContext {
  * the copies of every move of the same package and kind. secure-it keeps a package's fixes in one unit or blocks
  * them together, so these are the copies verification will see replaced. Malware leaves on its own, so a malicious
  * copy never borrows the history of a sibling that isn't, and a fix without a move lends none: it blocks the package.
+ * An identity check that fails (a provenance the registry won't serve, say) is the unit's problem, not the run's:
+ * every move of that unit loses its move, the ones judged before the failure too, so no copy moves on a judgment
+ * made without the rest of its unit. Other units and packages go on.
  */
 async function withUnitIdentity(fixes: ReadonlyArray<SecurityFix>, identity: IdentityCheck): Promise<SecurityFix[]> {
   const unitOf = (fix: SecurityFix) => `${fix.name}|${fix.malicious}`;
+  const moves = (fix: SecurityFix) => fix.ecosystem === "npm" && fix.to !== undefined;
   const replaced = new Map<string, string[]>();
   for (const fix of fixes) {
-    if (fix.ecosystem === "npm" && fix.to !== undefined) replaced.set(unitOf(fix), [...replaced.get(unitOf(fix)) ?? [], ...fix.locations]);
+    if (moves(fix)) replaced.set(unitOf(fix), [...replaced.get(unitOf(fix)) ?? [], ...fix.locations]);
   }
-  const judged: SecurityFix[] = [];
+  const blockers = new Map<SecurityFix, string[]>();
+  // The first error of each unit whose identity can't be decided; its other moves aren't checked any further.
+  const failed = new Map<string, string>();
   for (const fix of fixes) {
-    if (fix.ecosystem !== "npm" || fix.to === undefined) {
-      judged.push(fix);
-      continue;
-    }
-    let blockers: string[];
+    if (!moves(fix) || failed.has(unitOf(fix))) continue;
     try {
-      blockers = await identity.problems({ ecosystem: "npm", name: fix.name, version: fix.from }, fix.to.version, replaced.get(unitOf(fix)));
+      blockers.set(fix, await identity.problems({ ecosystem: "npm", name: fix.name, version: fix.from }, fix.to!.version, replaced.get(unitOf(fix))));
     } catch (error) {
-      if (fix.carries === undefined) throw error;
-      // As in `carrierFix`: a carrier move that can't be decided (its provenance unreadable, say) is that fix's
-      // problem, not the run's. It now has no move, so its package is blocked with it.
-      judged.push({ ...fix, to: undefined, problem: `${fix.name}@${fix.from}'s carrier move can't be decided: ${error instanceof Error ? error.message : String(error)}` });
-      continue;
+      failed.set(unitOf(fix), error instanceof Error ? error.message : String(error));
     }
-    judged.push({ ...fix, to: { ...fix.to, blockers } });
   }
-  return judged;
+  return fixes.map((fix) => {
+    if (!moves(fix)) return fix;
+    const error = failed.get(unitOf(fix));
+    if (error === undefined) return { ...fix, to: { ...fix.to!, blockers: blockers.get(fix)! } };
+    // As in `carrierFix` for a carrier. Without a move, the package is blocked with it (secure-it's `selectWork`).
+    const problem = fix.carries === undefined
+      ? `${fix.name}@${fix.from}'s publisher identity can't be decided: ${error}`
+      : `${fix.name}@${fix.from}'s carrier move can't be decided: ${error}`;
+    return { ...fix, to: undefined, problem };
+  });
 }
 
 async function chooseMove(
@@ -504,7 +510,10 @@ export interface BumpCandidate {
   readonly minor: BumpMove | undefined;
   /** The highest acceptable version of the highest newer line that has one (each major is a PR of its own). */
   readonly major: BumpMove | undefined;
-  /** What kept versions out: a line whose weighed versions all add an advisory, an identity break, a registry that can't list. */
+  /**
+   * What kept versions out: a line whose weighed versions all add an advisory, an identity break, a registry that can't
+   * list, a publisher identity that can't be decided (then no move at all).
+   */
   readonly problems: ReadonlyArray<string>;
 }
 
@@ -535,7 +544,8 @@ interface Pending {
  * and in the highest newer line that has an acceptable version (lines are
  * tried from the highest down), the highest version at least `releaseAgeDays`
  * old (own packages skip the wait) that adds no advisory group, no malware
- * and, on npm, no publisher identity break. Each round of lines is judged on
+ * and, on npm, no publisher identity break (one that can't be decided leaves
+ * the dependency without moves, as a problem). Each round of lines is judged on
  * one snapshot of the current versions and every version weighed in it.
  * Direct means: npm dependencies the root and the workspaces of every checked
  * lockfile declare (aliases included); Gradle dependencies declared with a
@@ -560,6 +570,8 @@ export async function bumpCandidates(head: Tree, env: GateEnvironment, gradle: G
   // Higher lines still to try per dependency, highest first.
   const higherLines = new Map<string, string[]>();
   const newerOf = new Map<string, ReadonlyArray<string>>();
+  // Dependencies whose publisher identity couldn't be decided: no move for them.
+  const undecided = new Set<string>();
   let round: Pending[] = [];
   for (const pkg of direct) {
     const listed = await catalogs[pkg.ecosystem].versions(pkg);
@@ -590,17 +602,32 @@ export async function bumpCandidates(head: Tree, env: GateEnvironment, gradle: G
     const next: Pending[] = [];
     for (const { pkg, line, versions } of round) {
       const key = versionKey(pkg);
+      if (undecided.has(key)) continue;
       const ownLine = line === compatibleLine(config, pkg, pkg.version);
       let accepted: string | undefined;
       for (const version of versions) {
         if (!fixes(snapshot, pkg, pkg.version, [], version)) continue;
-        const breaks = await identity.problems(pkg, version);
+        let breaks: string[];
+        try {
+          breaks = await identity.problems(pkg, version);
+        } catch (error) {
+          // An identity check that fails (a provenance the registry won't serve, say) is the dependency's problem, not
+          // the run's: it gets no move at all, in any line, and no failed read counts as an acceptable version.
+          undecided.add(key);
+          problems.get(key)!.push(`${pkg.name}@${version}'s publisher identity can't be decided, so no move is proposed: ${error instanceof Error ? error.message : String(error)}`);
+          break;
+        }
         if (breaks.length > 0) {
           problems.get(key)!.push(...breaks);
           continue;
         }
         accepted = version;
         break;
+      }
+      if (undecided.has(key)) {
+        minors.delete(key);
+        majors.delete(key);
+        continue;
       }
       if (accepted !== undefined) {
         (ownLine ? minors : majors).set(key, { version: accepted, line });
