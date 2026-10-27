@@ -161,6 +161,18 @@ describe("runner adapters", () => {
     const claudeTuning = { bin: "/opt/claude", captureCapBytes: 10, confinement: "sandbox", buildCacheRoot: "/elsewhere" } as unknown as Parameters<typeof claudeCodeRunnerOptions>[2];
     const claude = claudeCodeRunnerOptions(policy, "restricted", claudeTuning);
     expect(claude).toMatchObject({ bin: "/opt/claude", captureCapBytes: 10, confinement: "restricted", buildCacheRoot: SETTINGS.buildCacheRoot });
+    // Nor link a login the policy doesn't name: its auth.json wouldn't be denied.
+    const login = { loginHome: "/home/someone/.codex" } as unknown as Parameters<typeof codexRunnerOptions>[1];
+    expect(codexRunnerOptions(LAMBDA, login)).not.toHaveProperty("loginHome");
+    expect(codexRunnerOptions(policy, login).loginHome).toBe(policy.loginHome);
+  });
+
+  it("denies the login a hand-made policy links, even when the policy doesn't", () => {
+    const linked = codexRunnerOptions({ ...LAMBDA, loginHome: "/synthetic/codex-home" });
+    expect(linked).toMatchObject({ loginHome: "/synthetic/codex-home", readDenied: ["/synthetic/codex-home/auth.json"] });
+    // A policy that already denies it lists it once.
+    expect(codexRunnerOptions({ ...LAMBDA, loginHome: "/synthetic/codex-home", readDenied: ["/synthetic/codex-home/auth.json"] }).readDenied)
+      .toEqual(["/synthetic/codex-home/auth.json"]);
   });
 
   it("accepts a Lambda function's hand-made policy, with no settings, home or login", () => {
@@ -174,6 +186,9 @@ describe("runner adapters", () => {
     const invalid: ReadonlyArray<readonly [unknown, string]> = [
       [{ ...LAMBDA, readDenied: ["private"] }, "readDenied entries must be absolute paths; got 'private'"],
       [{ ...LAMBDA, readDenied: "/private" }, "readDenied must be an array"],
+      [{ ...LAMBDA, readDenied: ["/private", undefined] }, "readDenied entries must be absolute paths; got 'undefined'"],
+      // A hole in the array, as a plain-JavaScript caller might leave.
+      [{ ...LAMBDA, readDenied: ["/private", , "/other"] }, "readDenied entries must be absolute paths; got 'undefined'"],
       [{ readDenied: [], env: {} }, "buildCacheRoot must be an absolute path; got 'undefined'"],
       [{ ...LAMBDA, buildCacheRoot: "cache" }, "buildCacheRoot must be an absolute path; got 'cache'"],
       [{ ...LAMBDA, loginHome: ".codex" }, "loginHome must be an absolute path when given; got '.codex'"],

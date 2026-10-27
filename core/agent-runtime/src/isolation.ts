@@ -138,12 +138,10 @@ export function isolationPolicy(settings: IsolationSettings, machine: Partial<Ma
   if (exclude !== undefined) throw new Error(`releaseAgeExclude patterns must be non-empty and have no comma; got '${exclude}'`);
   // Absolute, as the adapters require; CodexRunner resolved it the same way.
   const loginHome = resolve(nonEmpty(env["CODEX_HOME"]) ?? join(home, ".codex"));
-  const loginPath = join(loginHome, "auth.json");
   const readDenied = [
     ...SENSITIVE_HOME_PATHS.map((path) => join(home, path)).filter(exists),
     ...settings.readDeny,
-    loginPath,
-    ...(exists(loginPath) ? [realpath(loginPath)] : []),
+    ...loginDenials(loginHome, exists, realpath),
   ];
   const path = nonEmpty(env["PATH"]);
   const commandPath = settings.commandPath.join(":");
@@ -171,14 +169,26 @@ export function isolationPolicy(settings: IsolationSettings, machine: Partial<Ma
   };
 }
 
-/** `CodexRunner`'s options for `policy`, with the `tuning` that isn't isolation. */
+/** The login file of `loginHome`, and its canonical path when it exists: never readable by the agent's commands. */
+function loginDenials(loginHome: string, exists: (path: string) => boolean, realpath: (path: string) => string): string[] {
+  const loginPath = join(loginHome, "auth.json");
+  return [loginPath, ...(exists(loginPath) ? [realpath(loginPath)] : [])];
+}
+
+/**
+ * `CodexRunner`'s options for `policy`, with the `tuning` that isn't isolation. A login the policy links stays
+ * unreadable to the agent's commands even when a hand-made policy doesn't deny it (`isolationPolicy`'s already does).
+ */
 export function codexRunnerOptions(policy: IsolationPolicy, tuning: CodexRunnerTuning = {}): CodexRunnerOptions {
   assertValidPolicy(policy, "codexRunnerOptions");
+  // The policy alone decides the login, even against a plain-JavaScript `tuning` that names one.
+  const { loginHome: _ignored, ...rest } = tuning as CodexRunnerTuning & { readonly loginHome?: unknown };
+  const login = policy.loginHome === undefined ? [] : loginDenials(policy.loginHome, existsSync, realpathSync);
   return {
-    ...tuning,
+    ...rest,
     ...(policy.loginHome !== undefined ? { loginHome: policy.loginHome } : {}),
     buildCacheRoot: policy.buildCacheRoot,
-    readDenied: [...policy.readDenied],
+    readDenied: [...new Set([...policy.readDenied, ...login])],
     env: { ...policy.env },
   };
 }
@@ -204,8 +214,9 @@ function assertValidPolicy(policy: IsolationPolicy, adapter: string): void {
   if (typeof policy !== "object" || policy === null) throw new Error(`${adapter}: the isolation policy must be an object`);
   const { readDenied, env, buildCacheRoot, loginHome } = policy;
   if (!Array.isArray(readDenied)) throw new Error(`${adapter}: readDenied must be an array of absolute paths`);
-  const relative = readDenied.find((path: unknown) => typeof path !== "string" || !isAbsolute(path));
-  if (relative !== undefined) throw new Error(`${adapter}: readDenied entries must be absolute paths; got '${String(relative)}'`);
+  // By index, so an `undefined` entry (or a hole) is caught too.
+  const relative = readDenied.findIndex((path: unknown) => typeof path !== "string" || !isAbsolute(path));
+  if (relative !== -1) throw new Error(`${adapter}: readDenied entries must be absolute paths; got '${String(readDenied[relative])}'`);
   if (typeof buildCacheRoot !== "string" || !isAbsolute(buildCacheRoot)) {
     throw new Error(`${adapter}: buildCacheRoot must be an absolute path; got '${String(buildCacheRoot)}'`);
   }
