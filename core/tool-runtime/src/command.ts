@@ -18,8 +18,7 @@ import { isDeepStrictEqual, parseArgs } from "node:util";
 
 import { createGitHubClient } from "@leanish/agent-runtime/github/github-client";
 import { guardDir } from "@leanish/agent-runtime/guard-dir";
-import { codexIsolation } from "@leanish/agent-runtime/isolation";
-import type { CodexRunnerOptions } from "@leanish/agent-runtime/skill/codex-runner";
+import { claudeCodeRunnerOptions, codexRunnerOptions, type IsolationPolicy, isolationPolicy } from "@leanish/agent-runtime/isolation";
 import { ConsoleLogger } from "@leanish/agent-runtime/logger/console-logger";
 import { reportOnTerminationSignals, RunReport, writeFinalLine } from "@leanish/agent-runtime/report/run-report";
 import { ClaudeCodeRunner } from "@leanish/agent-runtime/skill/claude-code-runner";
@@ -69,7 +68,7 @@ export interface ToolRunContext {
   /** The agent's read-only token: for the gate's own GitHub reads (advisories, actions), never for writes. */
   readonly readToken: string;
   /** How the agent is isolated; `runSandboxed` runs repository code the same way. */
-  readonly isolation: CodexRunnerOptions;
+  readonly isolation: IsolationPolicy;
   /** Runs a skill with write access and the read-only token; restoredFiles declares dependency restores to its guard only. */
   readonly agent: <TInput, TOutput>(call: { readonly entrypoint: string; readonly input: TInput; readonly restoredFiles?: ReadonlyArray<FileState> }) => Promise<TOutput>;
 }
@@ -93,7 +92,7 @@ export interface Machine {
   /** Creates a directory and its missing parents, private to the user; leaves an existing one as it is. */
   readonly ensureDir: (path: string) => Promise<void>;
   readonly workspace: (root: string, token: string, config: ToolConfig) => Workspace;
-  readonly runner: (codingAgent: CodingAgent, isolation: CodexRunnerOptions) => CodingAgentRunner;
+  readonly runner: (codingAgent: CodingAgent, isolation: IsolationPolicy) => CodingAgentRunner;
   /** run.sh's marker file (`TOOL_REPORT_MARKER`): written once the final line is out, so run.sh doesn't write one too. */
   readonly reportMarker: string | undefined;
 }
@@ -153,7 +152,7 @@ export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray
     const workingCopy = synced.workingCopies[0]!;
     const { config: repoConfig } = await readSettings(workingTree(workingCopy.path));
     const releaseAgeExclude = repoConfig.ownPackages.npmScopes.map((scope) => `${scope}/*`);
-    const isolation = codexIsolation({
+    const isolation = isolationPolicy({
       commitIdentity: config.commitIdentity,
       readDeny: config.readDeny,
       commandPath: [GUARD_DIR],
@@ -272,8 +271,8 @@ function defaultMachine(): Machine {
     // Both runners get the same isolation: denied paths, the agent's env and its build cache.
     runner: (codingAgent, isolation) =>
       codingAgent === "codex"
-        ? new CodexRunner(isolation)
-        : new ClaudeCodeRunner({ confinement: "sandbox", env: isolation.env ?? {}, readDenied: isolation.readDenied ?? [], ...(isolation.buildCacheRoot !== undefined ? { buildCacheRoot: isolation.buildCacheRoot } : {}) }),
+        ? new CodexRunner(codexRunnerOptions(isolation))
+        : new ClaudeCodeRunner(claudeCodeRunnerOptions(isolation, "sandbox")),
   };
 }
 

@@ -42,7 +42,7 @@ async function fixture(change?: (dir: string) => Promise<void>) {
   git("-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "fixture");
   const sha = git("rev-parse", "HEAD");
   const workingCopy: WorkingCopy = { projectId: "acme/widget", path, gitDir, headSha: sha, branch: "main" };
-  const context = { workingCopy, isolation: {} } as ToolRunContext;
+  const context = { workingCopy, isolation: { readDenied: [], env: {}, buildCacheRoot: "/tmp/bump-it-test-cache" } } as unknown as ToolRunContext;
   const commands: string[][] = [];
   let scratch: string | undefined;
   const run: RunProcess = async (command, args, options) => {

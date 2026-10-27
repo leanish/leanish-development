@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { CodexRunnerOptions } from "@leanish/agent-runtime/skill/codex-runner";
+import type { IsolationPolicy } from "@leanish/agent-runtime/isolation";
 import type { WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
 import { treeSources } from "@leanish/gate/gate";
 import { gradleFailureDetails, type GradleInventory, parseGradleInventory } from "@leanish/gate/gradle";
@@ -49,7 +49,7 @@ export interface GradleInventories {
   ofWorkingTree(tree: Tree): Promise<GradleInventory | undefined>;
 }
 
-export function sandboxedGradleInventories(isolation: CodexRunnerOptions, workingCopy: WorkingCopy, codex = "codex"): GradleInventories {
+export function sandboxedGradleInventories(isolation: IsolationPolicy, workingCopy: WorkingCopy, codex = "codex"): GradleInventories {
   const inventory = async (dir: string, tree: Tree, label: string, transform?: GradleTransform): Promise<GradleInventory | undefined> => {
     const builds = (await treeSources(tree)).gradleBuilds;
     if (builds.length === 0) return undefined;

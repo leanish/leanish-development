@@ -48,7 +48,7 @@ async function fixture(npmVersion: string) {
   const base: Tree = { id: "a".repeat(40), read: async (path) => files[path], list: async () => [] };
   const context = {
     workingCopy: { path: "/synthetic/widget", projectId: "leanish/widget", gitDir: "/synthetic/git", headSha: base.id, branch: "main" },
-    isolation: {},
+    isolation: { readDenied: [], env: {}, buildCacheRoot: "/tmp/bump-it-test-cache" },
     releaseAgeDays: 7,
     releaseAgeExclude: [],
   } as unknown as ToolRunContext;
