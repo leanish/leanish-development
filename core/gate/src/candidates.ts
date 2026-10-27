@@ -337,7 +337,16 @@ async function withUnitIdentity(fixes: ReadonlyArray<SecurityFix>, identity: Ide
       judged.push(fix);
       continue;
     }
-    const blockers = await identity.problems({ ecosystem: "npm", name: fix.name, version: fix.from }, fix.to.version, replaced.get(unitOf(fix)));
+    let blockers: string[];
+    try {
+      blockers = await identity.problems({ ecosystem: "npm", name: fix.name, version: fix.from }, fix.to.version, replaced.get(unitOf(fix)));
+    } catch (error) {
+      if (fix.carries === undefined) throw error;
+      // As in `carrierFix`: a carrier move that can't be decided (its provenance unreadable, say) is that fix's
+      // problem, not the run's. It now has no move, so its package is blocked with it.
+      judged.push({ ...fix, to: undefined, problem: `${fix.name}@${fix.from}'s carrier move can't be decided: ${error instanceof Error ? error.message : String(error)}` });
+      continue;
+    }
     judged.push({ ...fix, to: { ...fix.to, blockers } });
   }
   return judged;
@@ -664,7 +673,9 @@ async function preparePeers(head: Tree, state: ScanState, registry: NpmRegistry,
     versions: (name) => catalog.versions({ ecosystem: "npm", name }),
     manifest: async (name, version) => (await registry.packument(name)).versions[version],
     published: (name, version) => catalog.published({ ecosystem: "npm", name, version }),
-    identity: (name, from, to) => identity.problems({ ecosystem: "npm", name, version: from }, to),
+    // A security unit's moves are judged against every copy they replace together, as `withUnitIdentity` judged them;
+    // bump planning keeps checking each source version on its own.
+    identity: (name, from, to, replaced) => identity.problems({ ecosystem: "npm", name, version: from }, to, security ? replaced : undefined),
     line: (name, version) => compatibleLine(config, { ecosystem: "npm", name }, version),
     isOwn: (name) => isOwnPackage(config.ownPackages, { ecosystem: "npm", name }),
     now,

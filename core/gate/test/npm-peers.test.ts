@@ -79,6 +79,20 @@ describe("direct npm peer sets", () => {
     expect((await peers.resolve([move], judged)).blocked).toHaveLength(1);
   });
 
+  it("judges a planned move's identity with every copy the planned moves replace, and a companion's on its own", async () => {
+    const h = fixture({ outward: true });
+    // Another copy of vitest the same unit moves, outside the peer group: it must join the move's baseline.
+    const nested = { name: "vitest", from: "4.1.0", to: "4.1.11", locations: ["node_modules/x/node_modules/vitest"] };
+    const identity = vi.fn(async (_name: string, _from: string, _to: string, replaced?: ReadonlyArray<string>) =>
+      replaced?.includes(nested.locations[0]!) === false ? ["no history without the nested copy"] : []);
+    h.sources.identity = identity;
+    const peers = await prepareNpmPeers(h.locks, [seed], h.sources);
+    const result = await peers.resolve([move, nested], snapshot(peers));
+    expect(result.blocked).toEqual([]);
+    expect(identity).toHaveBeenCalledWith("vitest", "4.1.7", "4.1.11", ["node_modules/vitest", "node_modules/x/node_modules/vitest"]);
+    expect(identity).toHaveBeenCalledWith(UI, "4.1.7", "4.1.11", undefined);
+  });
+
   it("lets only own packages skip the companion age requirement, and does not give young companions the security exemption", async () => {
     const h = fixture();
     h.sources.published = vi.fn(async () => YOUNG);

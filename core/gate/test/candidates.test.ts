@@ -386,6 +386,22 @@ describe("securityCandidates, regressions", () => {
     expect(found.fixes[0]?.to?.blockers).toEqual([expect.stringContaining("stranger")]);
   });
 
+  it("keeps judging a move with its package's other copies when the direct-peer closure rechecks it", async () => {
+    // As below: alice's lib 1.0.0 and bob's nested 2.0.0 both move; lib also has a satisfied peer, so it's a peer anchor.
+    const registry = { lib: { "1.0.0": OLD, "2.0.0": "2026-06-01T00:00:00Z", "1.0.1": "2026-07-01T00:00:00Z", "2.0.1": "2026-07-01T00:00:00Z" }, host: { "1.0.0": OLD } };
+    const publishers = { "lib@1.0.0": "alice", "lib@2.0.0": "bob", "lib@1.0.1": "bob", "lib@2.0.1": "bob" };
+    const manifests = Object.fromEntries(Object.entries(publishers).map(([key, name]) => [key, { _npmUser: { name }, peerDependencies: { host: "^1.0.0" } }]));
+    const head = await tree({ host: "1.0.0" }, {}, { name: "app", devDependencies: { lib: "^1.0.0", host: "^1.0.0" } }, {
+      "node_modules/lib": { version: "1.0.0", resolved: "https://registry.npmjs.org/lib/-/lib-1.0.0.tgz", integrity: "sha512-AAAA", peerDependencies: { host: "^1.0.0" } },
+      "node_modules/x/node_modules/lib": { version: "2.0.0", resolved: "https://registry.npmjs.org/lib/-/lib-2.0.0.tgz", integrity: "sha512-AAAA" },
+    });
+    const found = await securityCandidates(head, environment({ "lib@1.0.0": ["GHSA-a"], "lib@2.0.0": ["GHSA-a"] }, registry, [], manifests));
+    expect(found.fixes.map((fix) => fix.to?.blockers)).toEqual([[], []]);
+    const resolved = await found.npmPeers!.resolve(found.fixes.map((fix) => ({ name: fix.name, from: fix.from, to: fix.to!.version, locations: fix.locations })));
+    expect(resolved.blocked).toEqual([]);
+    expect(resolved.sets).toEqual([["host", "lib"]]);
+  });
+
   it("judges each move's publisher against every copy of the package moving with it, as verification will", async () => {
     // alice published 1.0.0; bob 2.0.0 and both fixes. Alone, 1.0.0's fix has a publisher with no history up to it.
     const registry = { lib: { "1.0.0": OLD, "2.0.0": "2026-06-01T00:00:00Z", "1.0.1": "2026-07-01T00:00:00Z", "2.0.1": "2026-07-01T00:00:00Z" } };
@@ -722,6 +738,16 @@ describe("securityCandidates, bundled copies", () => {
     } };
     const found = await securityCandidates(await head(true), failing);
     expect(moves(found.fixes)).toEqual([["brace@5.0.9", "5.0.12", undefined], ["carrier@1.0.0", undefined, expect.stringContaining("carrier move can't be decided")]]);
+  });
+
+  it("makes a carrier move whose identity can't be read that fix's problem, not the run's", async () => {
+    const malformed = { ...carrierManifests, "carrier@1.1.0": { dist: { integrity: archives["1.1.0"].integrity,
+      attestations: { url: "https://example.com/x", provenance: { predicateType: "https://slsa.dev/provenance/v1" } } } } };
+    const found = await securityCandidates(await head(true), withArchives(environment({ "brace@5.0.9": ["GHSA-brace"] }, registry, [], malformed)));
+    expect(moves(found.fixes)).toEqual([
+      ["brace@5.0.9", "5.0.12", undefined],
+      ["carrier@1.0.0", undefined, expect.stringContaining("carrier move can't be decided: registry has malformed attestations")],
+    ]);
   });
 
   it("judges a carrier move's publisher with the package's other copies its unit moves", async () => {
