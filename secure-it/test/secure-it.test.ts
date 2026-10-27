@@ -546,6 +546,15 @@ describe("secure-it run", () => {
     expect(planOf(h.github.prs.get(7)!.body)?.packages).toEqual(["npm|left-pad", "npm|vite"]);
   });
 
+  it("still updates a PR that moves no undecided package while another's publisher identity can't be decided", async () => {
+    const problem = "rollup@3.0.0's publisher identity can't be decided: attestation lookup failed with HTTP 503";
+    const rollup = vite({ name: "rollup", from: "3.0.0", locations: ["node_modules/rollup"], to: undefined, problem, undecided: true });
+    const h = harness({ prs: [await vitePr()], fixes: [vite(), leftPad(), rollup] });
+    h.workspace.setRemoteHead("secure-it/2026-10-05-security", HEAD_SHA);
+    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "updated", errors: [problem] });
+    expect(planOf(h.github.prs.get(7)!.body)?.packages).toEqual(["npm|left-pad", "npm|vite"]);
+  });
+
   it("reports blocked packages once when an identical batch is already open", async () => {
     const h = harness({ prs: [await batchPr([vite(), leftPad()])], fixes: [vite({ name: "blocked", severity: "CRITICAL", to: undefined, problem: "identity break" }), leftPad(), vite()] });
     expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "already-open", waiting: ["blocked@8.3.1: identity break"] });

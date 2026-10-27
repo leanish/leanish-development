@@ -480,6 +480,13 @@ describe("bump-it run", () => {
     expect(h.workspace.publications.map((entry) => entry.prepared.branch)).toEqual(["bump-it/2026-10-07-dev-major"]);
     expect(h.workspace.deletions).toEqual([]);
   });
+  it("still updates a PR that moves no undecided dependency while another's publisher identity can't be decided", async () => {
+    const problem = "other@1.0.0's publisher identity can't be decided, so no move is proposed: attestation lookup failed with HTTP 503";
+    const other = candidate({ name: "other", minor: undefined, major: undefined, problems: [problem], undecided: problem });
+    const h = harness({ prs: [await prFor(routine(candidate({ minor: { version: "1.0.1", line: "1" } })))], bumps: [candidate({ major: undefined }), other] });
+    expect(await bumpIt(h.deps).run(h.context)).toMatchObject({ errors: [`other@1.0.0: ${problem}`], units: [{ topic: "routine", outcome: "updated" }] });
+    expect(h.reverted).toEqual([BASE_SHA]);
+  });
   it("reports wrapper omissions in the run and the published plan while npm still proceeds", async () => {
     const h = harness({ bumps: [candidate({ major: undefined })] });
     const notes = ["Gradle wrapper left out: catalog unavailable"];
