@@ -117,6 +117,18 @@ jobs:
     // Outside a job or step such a value doesn't read as an action, so it isn't counted (nor looked up).
     expect(parseUses("env:\n  uses: acme/..@v1\nsteps:\n  - uses: acme/x@v1\n", "ci.yml").uses.map((use) => use.name)).toEqual(["acme/x"]);
   });
+
+  it("follows a local action named with trailing slashes, and reads a long slash run in linear time", async () => {
+    const composite = "runs:\n  using: composite\n  steps:\n    - uses: actions/cache@v4\n";
+    const workflow = `jobs:\n  a:\n    steps:\n      - uses: ./.github/local-action///\n      - uses: ./a${"/".repeat(100_000)}b\n`;
+    const started = performance.now();
+    // The replaced regex rescanned the run from each slash: seconds at this length.
+    const read = await readActionsInventory(tree({ ".github/workflows/ci.yml": workflow, ".github/local-action/action.yml": composite }));
+    const elapsed = performance.now() - started;
+    expect(read.uses.map((use) => [use.name, use.file])).toEqual([["actions/cache", ".github/local-action/action.yml"]]);
+    expect(read.gaps).toEqual([expect.stringMatching(/^GitHub Actions local action \.\/a\/+b \(\.github\/workflows\/ci\.yml\) has no action\.yml/)]);
+    expect(elapsed).toBeLessThan(2_000);
+  });
 });
 
 describe("resolving uses", () => {
@@ -408,6 +420,29 @@ describe("GitHub's advisory database", () => {
       undefined,
     );
     expect((await gh.advisories("a/b", "v1.0.0")).map((advisory) => advisory.id)).toEqual(["GHSA-page-one1-aaaa", "GHSA-page-two2-bbbb"]);
+  });
+
+  it("reads the next page after other links, and a long run of `<` in a Link header in linear time", async () => {
+    const affects = (type: string) => `${API}/advisories?ecosystem=actions&affects=${encodeURIComponent("a/b@v1.0.0")}&type=${type}&per_page=100`;
+    const gh = new ActionsGitHub(
+      fakeFetch({
+        [affects("reviewed")]: { body: [{ ghsa_id: "GHSA-page-one1-aaaa", type: "reviewed" }], headers: { link: `<${API}/advisories?page=9>; rel="last", <${API}/advisories?page=2>; rel="next"` } },
+        [`${API}/advisories?page=2`]: { body: [{ ghsa_id: "GHSA-page-two2-bbbb", type: "reviewed" }] },
+        [affects("malware")]: { body: [{ ghsa_id: "GHSA-page-mal1-cccc", type: "malware" }], headers: { link: "<".repeat(100_000) } },
+      }),
+      undefined,
+    );
+    const started = performance.now();
+    // The replaced regex rescanned the run from each `<`: seconds at this length.
+    expect((await gh.advisories("a/b", "v1.0.0")).map((advisory) => advisory.id)).toEqual(["GHSA-page-one1-aaaa", "GHSA-page-two2-bbbb", "GHSA-page-mal1-cccc"]);
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+
+  it("refuses a next page it can't read whole, or one off GitHub's API host", async () => {
+    const affects = (type: string) => `${API}/advisories?ecosystem=actions&affects=${encodeURIComponent("a/b@v1.0.0")}&type=${type}&per_page=100`;
+    const paging = (link: string) => new ActionsGitHub(fakeFetch({ [affects("reviewed")]: { body: [], headers: { link } }, [affects("malware")]: { body: [] } }), undefined);
+    await expect(paging(`<${API}/advisories?page=2<${API}/x>; rel="next"`).advisories("a/b", "v1.0.0")).rejects.toThrow("GitHub's Link header names a next page that can't be read");
+    await expect(paging('<https://evil.example/page2>; rel="next"').advisories("a/b", "v1.0.0")).rejects.toThrow("a next page off GitHub's API host");
   });
 
   it("refuses a record the reviewed query returns that isn't reviewed: only reviewed ones may trigger a fix", async () => {

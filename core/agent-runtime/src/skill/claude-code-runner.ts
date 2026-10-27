@@ -447,7 +447,9 @@ fi
 export function scrubProxyCredentials(text: string): string {
   return text
     .replace(/(proxy(?:User|Password)=)[^\s"\\]+/g, "$1<redacted>")
-    .replace(/(\/\/)[^\s/@"\\]+:[^\s/@"\\]+@/g, "$1<redacted>@");
+    // Splitting at the first colon after the user's first character matches what `[^…]+:[^…]+` did, without the two
+    // parts trading characters (polynomial backtracking on a run of colons).
+    .replace(/(\/\/)[^\s/@"\\][^\s/@"\\:]*:[^\s/@"\\]+@/g, "$1<redacted>@");
 }
 
 function nonEmpty(value: string | undefined): string | undefined {

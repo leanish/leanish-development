@@ -145,7 +145,8 @@ export async function readActionsInventory(tree: Tree): Promise<ActionsInventory
       uses.push(...parsed.uses);
       docker.push(...parsed.docker);
       for (const local of parsed.local) {
-        const path = posix.normalize(local.replace(/\/+$/, ""));
+        // `(?<!\/)`: starting only at the run's first slash, a long run isn't rescanned from each slash.
+        const path = posix.normalize(local.replace(/(?<!\/)\/+$/, ""));
         // A working tree would read it from outside the checkout, a commit can't: refused before any read, the same on both.
         if (path === ".." || path.startsWith("../")) throw new Error(`${file}: \`uses: ${local}\` points outside the repository`);
         queue.push(

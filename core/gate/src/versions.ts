@@ -311,8 +311,11 @@ function parseSegment(segment: string, partialsAreXRanges: boolean): Interval[] 
     .replaceAll("≥", ">=")
     .replaceAll("=<", "<=")
     .replaceAll("=>", ">=")
-    .replace(/\s*[–—]\s*/g, " - ")
-    .replace(/(\S+)\s+-\s+(\S+)/g, ">=$1 <=$2")
+    // A dash and the spaces around it become " - "; the spaces before it go first, starting only at a run's first space,
+    // so a long run isn't rescanned from each space (nor a long token below from each character).
+    .replace(/(?<!\s)\s+(?=[–—])/g, "")
+    .replace(/[–—]\s*/g, " - ")
+    .replace(/(?<!\S)(\S+)\s+-\s+(\S+)/g, ">=$1 <=$2")
     .replace(/[,;]/g, " ")
     .replace(/([0-9A-Za-z])(<=|>=|<|>)/g, "$1 $2")
     .replace(/(<=|>=|<|>|=)\s+/g, "$1")

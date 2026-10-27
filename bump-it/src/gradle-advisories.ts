@@ -51,7 +51,8 @@ function normalizedRange(range: string): string {
     .replace(/([\[(])\s*(\d+(?:\.\d+){0,2})\s*,\s*(\d+(?:\.\d+){0,2})\s*([\])])/g,
       (_match, left: string, lower: string, upper: string, right: string) =>
         `${left === "[" ? ">=" : ">"}${lower} ${right === "]" ? "<=" : "<"}${upper}`)
-    .replace(/(\d+(?:\.\d+){0,2})\s+(?:to|through)\s+(\d+(?:\.\d+){0,2}(?:\.[xX])?)/g,
+    // Starting only at a number's first digit, a long digit run is scanned once instead of again from each digit.
+    .replace(/(?<!\d)(\d+(?:\.\d+){0,2})\s+(?:to|through)\s+(\d+(?:\.\d+){0,2}(?:\.[xX])?)/g,
       (_match, lower: string, upper: string) => {
         if (!upper.toLowerCase().endsWith(".x")) {
           return `>=${lower} <=${upper}`;

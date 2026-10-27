@@ -123,23 +123,24 @@ export function parseConfig(raw: unknown): Config {
   for (const scope of scopes) {
     if (!/^@[a-z0-9][\w.-]*$/i.test(scope)) throw new Error(`${where}: ownPackages.npm.scopes has ${scope}, not an @scope`);
   }
+  // `(?<!\/)` below: starting only at the run's first slash, a long run isn't rescanned from each slash.
   return {
     npm: {
       lockfiles: strings(npm["lockfiles"], `${where}: npm.lockfiles`),
       registries: (strings(npm["registries"], `${where}: npm.registries`) ?? DEFAULT_CONFIG.npm.registries).map((url) =>
-        url.replace(/\/+$/, ""),
+        url.replace(/(?<!\/)\/+$/, ""),
       ),
     },
     gradle: {
       builds: strings(gradle["builds"], `${where}: gradle.builds`)?.map((build) => {
         if (build.startsWith("/") || build.split("/").includes("..")) throw new Error(`${where}: gradle.builds has ${build}, not a path inside the repository`);
-        return build.replace(/\/+$/, "") || ".";
+        return build.replace(/(?<!\/)\/+$/, "") || ".";
       }),
       ignoreConfigurations: strings(gradle["ignoreConfigurations"], `${where}: gradle.ignoreConfigurations`) ?? [],
     },
     maven: {
       repositories: (strings(maven["repositories"], `${where}: maven.repositories`) ?? DEFAULT_CONFIG.maven.repositories).map((url) =>
-        url.replace(/\/+$/, ""),
+        url.replace(/(?<!\/)\/+$/, ""),
       ),
     },
     releaseAgeDays,

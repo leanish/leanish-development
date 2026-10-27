@@ -63,6 +63,16 @@ describe("reading what an npm archive bundles", () => {
     ]));
   });
 
+  it("reads a directory entry with trailing slashes, and a long slash run in linear time", async () => {
+    expect((await read([...CARRIER, { path: "package/node_modules/inner///", type: "5" }])).complete).toBe(true);
+    const started = performance.now();
+    // The replaced regex rescanned the run from each slash: seconds at this length.
+    const contents = await read([...CARRIER, { path: `package/${"/".repeat(100_000)}x/`, type: "5", pax: true }]);
+    const elapsed = performance.now() - started;
+    expect(reasonOf(contents)).toContain("unsafe tar path");
+    expect(elapsed).toBeLessThan(2_000);
+  });
+
   it("reads a bundle-less archive as complete and empty", async () => {
     expect(await read([{ path: "package/package.json", body: manifest("carrier", "1.0.0") }])).toEqual({ complete: true, packages: [] });
   });

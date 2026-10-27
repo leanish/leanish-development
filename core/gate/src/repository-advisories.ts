@@ -234,9 +234,12 @@ function advisoryOf(entry: Record<string, unknown>, ghsaId: string, where: strin
 
 /** The next page GitHub's `Link` header names; one off GitHub's API host is refused, never followed: the request carries the token. */
 export function nextLink(header: string | null): string | undefined {
-  if (header === null) return undefined;
-  const next = /<([^>]+)>;\s*rel="next"/.exec(header)?.[1];
-  if (next !== undefined && !next.startsWith(`${GITHUB_API}/`)) throw new Error(`a next page off GitHub's API host: ${next}`);
+  if (header === null || !header.includes('rel="next"')) return undefined;
+  // A link starts the header or follows a comma, and its URL holds no `<` (nor a run of them rescanned from each one).
+  // A `rel="next"` read any other way would stop paging early or follow a part of a URL: refused instead.
+  const next = /(?:^|,)\s*<([^<>]+)>;\s*rel="next"/.exec(header)?.[1];
+  if (next === undefined) throw new Error(`GitHub's Link header names a next page that can't be read: ${header.slice(0, 200)}`);
+  if (!next.startsWith(`${GITHUB_API}/`)) throw new Error(`a next page off GitHub's API host: ${next}`);
   return next;
 }
 

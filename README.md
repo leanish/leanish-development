@@ -64,6 +64,11 @@ npm ci --ignore-scripts
 npm run check
 ```
 
+`npm run check` checks the workspace layout, tests the lint's TypeScript parser, lints regular expressions
+(`npm run lint`, see `eslint.config.js`) and runs each workspace's typecheck and tests. The lint reads TypeScript
+through `eslint-typescript-parser.js`, which strips the types with Node and parses the rest with espree, so it relies
+on erasable syntax only (`erasableSyntaxOnly` in every tsconfig).
+
 `npm run clean` removes Vitest's caches (`node_modules/.vite`, `node_modules/.vite-temp`) and `coverage/` from the root
 and each workspace; `npm run clean:deps` also removes every `node_modules`, which `npm ci --ignore-scripts` restores.
 Both run `rm -rf` through `npm exec --workspaces`, so they need no installed dependencies.

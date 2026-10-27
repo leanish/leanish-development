@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { runCompare } from "../src/gate.ts";
 import type { Coordinates, GradleInventory } from "../src/gradle.ts";
 import type { PackageVersion } from "../src/package-version.ts";
-import { fetchRepositoryAdvisories, matchRepositoryAdvisories } from "../src/repository-advisories.ts";
+import { fetchRepositoryAdvisories, matchRepositoryAdvisories, nextLink } from "../src/repository-advisories.ts";
 import { githubRepository, MAVEN_CENTRAL, pomParent, pomRepository, sourceRepository } from "../src/source-repos.ts";
 import { fakeFetch } from "./fake-fetch.ts";
 import { githubRepositoryCases } from "./github-repository-fixture.ts";
@@ -268,5 +268,31 @@ describe("repository advisories", () => {
     expect(requests.some((request) => request.url.startsWith("https://evil.example"))).toBe(false);
     const endless = fakeFetch({ [first]: { body: [], headers: { link: `<${first}>; rel="next"` } } });
     await expect(fetchRepositoryAdvisories("acme/lib", { fetch: endless, token: undefined })).rejects.toThrow("run past 20 pages");
+  });
+
+  it("reads the next page from a Link header as before, and a long run of `<` in linear time", () => {
+    const page = (n: number) => `https://api.github.com/repositories/1/security-advisories?page=${n}`;
+    expect(nextLink(`<${page(2)}>; rel="next", <${page(9)}>; rel="last"`)).toBe(page(2));
+    expect(nextLink(`<${page(1)}>; rel="prev", <${page(3)}>;rel="next"`)).toBe(page(3));
+    expect(nextLink(`<${page(9)}>; rel="last"`)).toBeUndefined();
+    expect(nextLink(null)).toBeUndefined();
+    expect(() => nextLink('<https://evil.example/page2>; rel="next"')).toThrow("a next page off GitHub's API host");
+    const started = performance.now();
+    // The replaced regex rescanned the run from each `<`: seconds at this length.
+    expect(nextLink("<".repeat(100_000))).toBeUndefined();
+    expect(() => nextLink(`${"<".repeat(100_000)}${page(2)}>; rel="next"`)).toThrow("can't be read");
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+
+  it("refuses a next page it can't read whole, instead of stopping early or following part of a URL", () => {
+    const page = (n: number) => `https://api.github.com/repositories/1/security-advisories?page=${n}`;
+    for (const header of [
+      `<${page(2)}<${page(3)}>; rel="next"`,
+      `<https://evil.example/<${page(3)}>; rel="next"`,
+      `<${page(1)}>; rel="prev" <${page(3)}>; rel="next"`,
+      'rel="next"',
+    ]) {
+      expect(() => nextLink(header), header).toThrow("GitHub's Link header names a next page that can't be read");
+    }
   });
 });

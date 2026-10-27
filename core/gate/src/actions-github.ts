@@ -7,6 +7,7 @@
  */
 import { type Fetch, githubRefusal } from "./http.ts";
 import { isObject, optionalString } from "./json.ts";
+import { nextLink } from "./repository-advisories.ts";
 import { type Advisory, isMalware } from "./snapshot.ts";
 
 const GITHUB_API = "https://api.github.com";
@@ -129,8 +130,8 @@ export class ActionsGitHub {
       const hint = githubRefusal(response, this.token !== undefined);
       throw new Error(`GitHub API ${path} failed with HTTP ${response.status}${hint}`);
     }
-    const link = /<([^>]+)>;\s*rel="next"/.exec(response.headers.get("link") ?? "")?.[1];
-    return { body: await response.json(), next: link === undefined ? undefined : link.replace(GITHUB_API, "") };
+    const link = nextLink(response.headers.get("link"));
+    return { body: await response.json(), next: link === undefined ? undefined : link.slice(GITHUB_API.length) };
   }
 }
 
