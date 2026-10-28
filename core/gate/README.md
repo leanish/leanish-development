@@ -61,7 +61,20 @@ A project's own repository advisories are published by whoever controls that rep
 
 `gradle-inventory` runs [`gradle/supply-chain-inventory.init.gradle`](gradle/supply-chain-inventory.init.gradle) on a clean checkout (or, with `--head worktree`, on the working tree as it is, for the tools' own edits) and records, for every project, **every resolvable configuration**: runtime, compile and test classpaths, annotation processors, tool configurations (checkstyle, pitest, jacoco…), the buildscript classpath (where `plugins {}` and `buildscript {}` put plugins) and the settings classpath. Each configuration lists:
 
-- what resolution selected, and what it couldn't resolve;
+- what resolution selected, and what it couldn't resolve, with Gradle's failure messages. In those (a configuration's
+  `error` and each unresolved dependency's `failure`), `gradle-inventory` writes the repository root as
+  `<repository>`, as a path (`<repository>/libs`) or inside a `file:` URI (`file:<repository>/m2`, percent-encoded
+  roots included), whether Gradle printed it as given or as its real path: the tools compare an ignored configuration's
+  failures across builds exported to different directories. Outside `file:` URIs only literal roots match; after
+  `file:` or `file://` only their `pathToFileURL` pathnames match. For root `/tmp/export%20one`,
+  `file:/tmp/export%2520one/m2` matches, while `file:/tmp/export%20one/m2` names a different directory and stays untouched.
+  Only a whole root is replaced: it must end the text or precede a closing quote, parenthesis or bracket, or `/`.
+  The following path, up to whitespace, a quote, a closing parenthesis/bracket or the end of the text, must contain no
+  `..` segment anywhere; in `file:` URIs, percent-encoded
+  dots also count (`%2E%2E`, case-insensitive, including mixed forms). `..cache` and `...` are allowed. Ambiguous suffixes
+  (whitespace, commas, colons), sibling paths such as `/r backup/lib`, and paths such as `/r/lib/../../shared/lib` stay
+  untouched, so differing messages fail closed. Matching is textual: paths that do not match these root forms and
+  boundaries (such as `/r-other` or paths in https URLs) stay as Gradle printed them;
 - the external dependencies it declares or inherits, with Gradle's `because(...)` reason and whether the version is strict (`strictly(...)`);
 - the strict dependency constraints it declares or inherits (`constraints { … strictly(…) }`).
 

@@ -10,12 +10,13 @@
  * A configuration that didn't resolve fails the run: an inventory with holes
  * would read as clean.
  */
-import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import type { Located } from "./findings.ts";
+import { escaped } from "./gradle-sources.ts";
 import { isObject } from "./json.ts";
 import { versionKey } from "./package-version.ts";
 import { type RunProcess, withoutCredentials } from "./process.ts";
@@ -107,6 +108,7 @@ export interface GradleInventoryOptions {
  * configured in the run). Each build's manifest, from Gradle's own model,
  * must be matched: every project exported, and every nested build exported
  * (one the run didn't configure has to be listed in `gradle.builds` itself).
+ * Resolution failures name the repository root as `<repository>` (`withoutRepositoryRoot`).
  */
 export async function runGradleInventory(
   repoDir: string,
@@ -118,6 +120,8 @@ export async function runGradleInventory(
   // Absolute: the wrapper runs with the repository as its working directory, so a relative path would resolve twice.
   const repoRoot = resolve(repoDir);
   if (!(await exists(join(repoRoot, "gradlew")))) throw new Error("supply-chain.json lists Gradle builds, but the repository has no ./gradlew");
+  // Gradle prints the real path (macOS's /var/folders is /private/var/folders); a caller may name it through a symlink.
+  const withoutRoot = withoutRepositoryRoot([repoRoot, await realpath(repoRoot)]);
   const collected = new Map<string, GradleConfiguration[]>();
   const nested = new Set<string>();
   for (const build of builds) {
@@ -163,7 +167,72 @@ export async function runGradleInventory(
   return {
     schemaVersion: GRADLE_INVENTORY_SCHEMA_VERSION,
     tree,
-    builds: [...collected].map(([build, configurations]) => ({ build, configurations })),
+    builds: [...collected].map(([build, configurations]) => ({ build, configurations: configurations.map((configuration) => failuresWithoutRoot(configuration, withoutRoot)) })),
+  };
+}
+
+/** What a repository root becomes in resolution failures. */
+const REPOSITORY_ROOT = "<repository>";
+
+/**
+ * A configuration with the repository root replaced in its `error` and each `unresolved[].failure`, and nothing else:
+ * builds of one repository run from different directories (the tools' reference and their edit are separate exports),
+ * and a failure naming a file under the repository, such as a local Maven repository, must compare equal across them.
+ */
+function failuresWithoutRoot(configuration: GradleConfiguration, withoutRoot: (text: string) => string): GradleConfiguration {
+  return {
+    ...configuration,
+    unresolved: configuration.unresolved.map((entry) => ({ ...entry, failure: withoutRoot(entry.failure) })),
+    error: configuration.error === undefined ? undefined : withoutRoot(configuration.error),
+  };
+}
+
+/**
+ * Replaces each of `roots` (absolute paths) in a text with `<repository>`, as a path or as a `file:` URI's path:
+ * `/r/lib` -> `<repository>/lib`, `file:///r/lib` -> `file://<repository>/lib`, `file:/r/lib` -> `file:<repository>/lib`.
+ * Outside a file: URI, only literal roots match. After `file:` or `file://`, only each root's `pathToFileURL` pathname
+ * matches (percent-encoded as Gradle prints a space, `#` or `%`), never its literal form unless byte-identical.
+ * Only a whole root counts. Before it: the start of the text, whitespace, `"`, `'`, `(` or `[`, optionally followed by
+ * `file:` or `file://`. After it: the end of the text, `"`, `'`, `)` or `]`, or `/`.
+ * The following path, up to whitespace, a quote, `)`, `]` or the end of the text, must contain no `..` segment anywhere.
+ * In file: URIs, percent-encoded dots count too (`%2E%2E`, case-insensitive, including mixed forms); `..cache` and `...`
+ * are ordinary segment names. An immediate `..` before a comma or colon is also left untouched, where ambiguous.
+ * Anything else (`/r backup/lib`, `/r,`, `/r: cause`, `/r/lib/../../shared`, `/r-other`, `/r.y`, `/other/r`, an https URL, a
+ * root ending a sentence with `.`) stays as it is, so a failure that still differs fails closed. Longer roots are
+ * tried first, so a root that ends inside another can't cut it short.
+ */
+export function withoutRepositoryRoot(roots: ReadonlyArray<string>): (text: string) => string {
+  for (const root of roots) {
+    if (!isAbsolute(root)) throw new Error(`repository root ${root} isn't an absolute path`);
+  }
+  const alternatives = (forms: ReadonlyArray<string>) => [...new Set(forms)]
+    .sort((left, right) => right.length - left.length)
+    .map(escaped).join("|");
+  const paths = alternatives(roots);
+  const uris = alternatives(roots.map((root) => pathToFileURL(root).pathname));
+  const pattern = new RegExp(`(?<=^|[\\s"'(\\[])(?:(file:(?://)?)(?:${uris})|(?:${paths}))(?=$|["')\\]]|/(?!\\.\\.(?:$|[/\\s"')\\],:])))`, "g");
+  return (text) => {
+    const path = /[^\s"')\]]*/y;
+    let pathEnd = -1;
+    let lastParent = -1;
+    let lastUriParent = -1;
+    return text.replace(pattern, (match, scheme: string | undefined, offset: number) => {
+      const end = offset + match.length;
+      if (end > pathEnd) {
+        // Scan each path suffix once, even if it contains several root occurrences.
+        path.lastIndex = end;
+        const suffix = path.exec(text)![0];
+        pathEnd = path.lastIndex;
+        lastParent = -1;
+        lastUriParent = -1;
+        for (const parent of suffix.matchAll(/\/(?:\.|%2e){2}(?=\/|$)/gi)) {
+          lastUriParent = end + parent.index;
+          if (parent[0] === "/..") lastParent = lastUriParent;
+        }
+      }
+      if ((scheme === undefined ? lastParent : lastUriParent) >= end) return match;
+      return `${scheme ?? ""}${REPOSITORY_ROOT}`;
+    });
   };
 }
 
