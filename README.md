@@ -21,7 +21,7 @@ The gate runs in GitHub Actions. The tools run on macOS and propose PRs; they do
 not merge them. Node 24 is required; npm 11.17+ is needed for release-age exclusions.
 Adoption uses a reviewed Git commit; only `@leanish/agent-runtime` may also be published to npm, for other
 repositories that share it ([releasing](docs/releasing.md#publishing-leanishagent-runtime)).
-The current release is **v0.9.0**; the [CHANGELOG](CHANGELOG.md) lists its changes
+The current release is **v0.9.1**; the [CHANGELOG](CHANGELOG.md) lists its changes
 and what's unreleased. Licensed under Apache-2.0.
 
 ## Adoption and operation
