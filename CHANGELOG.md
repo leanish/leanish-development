@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- Publishing a stable GitHub release publishes `@leanish/agent-runtime` to npm through
+  `publish-agent-runtime.yml`, with trusted publishing (OIDC, no stored token) and provenance. A first job checks the
+  release (stable tag on main, green checks), packs the tarball and imports every export from a clean install, without
+  publishing permission; a second publishes exactly that tarball in an `npm` environment the owner approves. The
+  owner's one-time setup is in docs/releasing.md.
+
 ### Changed
 
 - bump-it's Gradle reference comparison no longer blocks on every resolution failure in the configurations

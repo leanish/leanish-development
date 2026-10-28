@@ -167,7 +167,7 @@ Invocation: `core/tool-runtime/run.sh <secure-it|bump-it> <run|review> <owner/re
 
 ### Releases
 
-See [releasing](releasing.md): an immutable rc on main, real runs and an **unprimed** whole-state review by someone who did not implement it; the final tag sits at the exact merge commit, with no moving tags; the one package that may be published to npm is `@leanish/agent-runtime`, and only by the owner. Adopters repin when the gate or workflow changes and update their local checkout deliberately. Evidence lives in [validation](validation.md); skipped integration is not passing evidence.
+See [releasing](releasing.md): an immutable rc on main, real runs and an **unprimed** whole-state review by someone who did not implement it; the final tag sits at the exact merge commit, with no moving tags; the one package that may be published to npm is `@leanish/agent-runtime`, from a stable release through trusted publishing, only once the owner approves it (or by the owner by hand). Adopters repin when the gate or workflow changes and update their local checkout deliberately. Evidence lives in [validation](validation.md); skipped integration is not passing evidence.
 
 ## 6. Comparison with alternatives
 
