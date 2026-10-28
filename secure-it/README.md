@@ -75,7 +75,12 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
        timeout or OOM, or a missing reference inventory) fails on its own, with its error in the run's report; the
        other groups keep their grouping, topics and PRs, and still run. Groups that can only be planned or resolved
        together (two young Gradle fixes that conflict until both declarations move) therefore fail apart until they
-       age. If the aged batch can't be planned, it fails with its error; when it has npm work, which of its roots
+       age. That cost is accepted on purpose: a planning error or a reference problem can be transient (a registry
+       error, say), and when v0.8 regrouped on them, it could move the same fixes between PRs from one run to the
+       next, and a fix joined to another waited for that one's young version too; a Gradle execution error (a timeout)
+       failed every held routine group instead. A failure now affects only its own group and is reported for that
+       run. Groups that genuinely need to move together keep failing separately until a person moves the fixes or
+       their versions age into the aged batch. If the aged batch can't be planned, it fails with its error; when it has npm work, which of its roots
        would join held work is unknown, so the held units with npm work (in their fixes or coupled sets) fail that run
        too. Held work without npm still runs, since those roots can't join it, unless its claim is a held PR with npm
        moves (a mixed one from v0.8's fallback or v0.7's single held PR): that PR is kept for its npm work and the unit
