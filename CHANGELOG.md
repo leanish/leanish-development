@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- `startRunReport` writes the `start` marker's failure notice through the same guarded write as the final line: a
+  stream that throws on it, or fails it and emits `error` later, no longer ends the process with exit code 1 nor
+  throws out of `startRunReport`.
+
 ## 0.9.0 - 2026-10-27
 
 ### Changed
