@@ -42,7 +42,8 @@ optional and only the Codex adapter uses it. `isolationPolicy(settings)` builds 
 sensitive home paths, the Codex login, the guards, the commit identity and the release age), as secure-it and bump-it
 do. Runners get it through their adapters, which check it (absolute paths, string env values) and take the runner's
 other options (binary, timeouts, staging…) separately: `codexRunnerOptions(policy, tuning?)` and
-`claudeCodeRunnerOptions(policy, confinement, tuning?)`. A policy can also be written out by hand: nothing in it
+`claudeCodeRunnerOptions(policy, confinement, tuning?)`; `assertValidPolicy(policy, entry)` is that same check, exported
+for other entries that take a policy (the tools' sandboxed commands). A policy can also be written out by hand: nothing in it
 needs settings, a home or a login.
 
 How each incubator host composes it when it adopts this package:

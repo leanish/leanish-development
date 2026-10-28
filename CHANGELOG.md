@@ -7,6 +7,11 @@
 - `startRunReport` writes the `start` marker's failure notice through the same guarded write as the final line: a
   stream that throws on it, or fails it and emits `error` later, no longer ends the process with exit code 1 nor
   throws out of `startRunReport`.
+- `runSandboxed` and `sandboxWritable` (tool-runtime) check a hand-built `IsolationPolicy` with agent-runtime's shared
+  policy validator (`assertValidPolicy`, now exported from `@leanish/agent-runtime/isolation`) before `runSandboxed`
+  makes its temp dir or starts a process. An absent, empty or relative `buildCacheRoot` is refused with an error that
+  names the field and the entry, and so is a `readDenied` entry that is relative or missing, which used to reach Codex
+  unchecked. Valid policies behave as before.
 
 ## 0.9.0 - 2026-10-27
 
