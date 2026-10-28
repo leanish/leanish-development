@@ -30,6 +30,8 @@ jobs:
     permissions:
       contents: read
       checks: read
+      # GitHub lists reading an environment (the npm check below) under Actions read.
+      actions: read
     outputs:
       version: ${{ steps.release.outputs.version }}
       tarball: ${{ steps.pack.outputs.tarball }}
