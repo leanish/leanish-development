@@ -13,6 +13,12 @@
 
 ### Fixed
 
+- secure-it and bump-it no longer reject an edit whose failure in a `gradle.ignoreConfigurations` configuration differs
+  from the plan's reference only by the export's directory. `gradle-inventory` (`runGradleInventory`) writes the
+  repository root, as given and as its real path, as `<repository>` in each configuration's `error` and unresolved
+  `failure`, nested builds included: as a path and inside `file:` URIs, percent-encoded ones too (a local Maven
+  repository under the repository, for one). Only a whole root with an unambiguous ending is replaced; nothing
+  else in the inventory changes, and the schema version stays 3.
 - `startRunReport` writes the `start` marker's failure notice through the same guarded write as the final line: a
   stream that throws on it, or fails it and emits `error` later, no longer ends the process with exit code 1 nor
   throws out of `startRunReport`.

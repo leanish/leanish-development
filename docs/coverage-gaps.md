@@ -64,12 +64,20 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   unless it would claim a held PR with npm moves: such PRs are kept for their npm work, in runs and in reviews (even
   one whose fix has aged since). Each failure is logged and reported.
   Narrowed in 0.9.0.
-- **Ignored Gradle configurations' failures compared verbatim (secure-it, bump-it)**: a resolution failure in a
-  configuration listed in `gradle.ignoreConfigurations` is accepted when the reference build has the same failure,
-  compared as text, and each build runs from its own export directory. A message that carries the export's absolute
-  path reads as a different failure, so verification fails closed and a person makes the change. And since a failing
-  configuration resolves nothing, its failure text is the only thing compared there: a resolution rule the edit adds
-  to it (a force, a substitution) that leaves the text unchanged isn't seen. New in 0.9.0 (bump-it in 0.9.1).
+- **Ignored Gradle configurations' failures compared as text (secure-it, bump-it)**: a resolution failure in a
+  configuration listed in `gradle.ignoreConfigurations` is accepted when the reference build has the same failure
+  text, once the inventory has written the repository root as `<repository>`. Matching is textual: outside `file:` URIs
+  only literal roots match; after `file:` or `file://` only their `pathToFileURL` pathnames match. For root
+  `/tmp/export%20one`, `file:/tmp/export%2520one/m2` matches, while `file:/tmp/export%20one/m2` stays untouched.
+  A failing configuration resolves nothing, so its failure text and its declarations and constraints are all that's
+  compared there: a resolution rule the edit adds to it (a force, a substitution) that leaves the text unchanged isn't
+  seen. Other variable paths in a message (a temp file of the run, a root Gradle prints in a form the inventory doesn't
+  match) still make the same failure read as different. Only a whole root with an unambiguous ending is replaced: end of text,
+  a closing quote, parenthesis or bracket, or `/`. The following path, up to whitespace, a quote, a closing
+  parenthesis/bracket or the end of the text, must contain no `..` segment anywhere; in `file:` URIs, percent-encoded
+  dots also count (`%2E%2E`, case-insensitive, including mixed forms). `..cache` and `...` are allowed. Whitespace, commas
+  and colons after the root stay untouched, as do `/r backup/lib` and `/r/lib/../../shared/lib`, so verification fails
+  closed and a person makes the change. New in 0.9.0 (bump-it in 0.9.1); narrowed in 0.9.1.
 - **Other npm read failures stay quiet (secure-it, bump-it)**: since 0.9.0 an undecided publisher identity on a fix or
   bump blocks its unit and is reported under `errors`. A carrier's other read failures (an unreadable bundle, a
   registry that can't list versions) and a direct peer's identity error still leave the unit blocked or waiting with a

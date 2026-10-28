@@ -363,6 +363,30 @@ dependencies { runtimeOnly "fixture:missing:9.9" }
     expect(gradleResolutionProblems(broken, [":sub:runtimeClasspath", ":sub:testRuntimeClasspath"])).toEqual([]);
   }, 600_000);
 
+  it("names the root in a missing local repository's failure, so two exports of one build compare equal where it's ignored", async () => {
+    // Two copies of one build, as the tools export the plan's reference and their edit; one root needs percent-encoding.
+    const exported = async (name: string) => {
+      const build = join(root, name);
+      await cp(WRAPPER, build, { recursive: true });
+      await write(build, "settings.gradle", `rootProject.name = "exported"\n`);
+      await write(build, "build.gradle", `repositories { maven { url = uri("local-m2") } }
+configurations { broken }
+dependencies { broken "fixture:missing:1.0" }
+`);
+      return parseGradleInventory(JSON.parse(JSON.stringify(await runGradleInventory(build, ["."], "worktree", runProcess))), "worktree", ["."]);
+    };
+    const reference = await exported("export-one");
+    const edit = await exported("export #2 100%");
+    const broken = edit.builds[0]!.configurations.find((configuration) => configuration.id === ":broken")!;
+    expect(broken.unresolved).toEqual([{ requested: "fixture:missing:1.0", failure: expect.stringContaining("file:<repository>/local-m2/fixture/missing/1.0/missing-1.0.pom") }]);
+    expect(broken.unresolved[0]!.failure).not.toContain(root);
+    expect(referenceDifferences(reference, edit, [":broken"])).toEqual([]);
+    expect(referenceDifferences(reference, edit)).toEqual([
+      expect.stringMatching(/^:broken doesn't resolve in the plan's reference: fixture:missing:1.0: Could not find fixture:missing:1.0\./),
+      expect.stringMatching(/^:broken doesn't resolve in the edit: fixture:missing:1.0: Could not find fixture:missing:1.0\./),
+    ]);
+  }, 600_000);
+
   it("fails when resolving a configuration makes another resolvable, rather than leaving it out", async () => {
     const late = join(root, "late");
     await cp(WRAPPER, late, { recursive: true });
