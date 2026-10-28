@@ -13,6 +13,15 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 
 ## Limits
 
+- **An action with no immutable release, newly used (gate)**: under the normal configuration, a new or additional
+  occurrence of a third-party action whose selected version has no immutable release fails the gate, even where the
+  repository already uses it (existing uses don't authorize more copies; `ownPackages` are exempt). In 0.9.1 this held
+  for the versions of `actions/checkout`, `actions/upload-artifact` and `actions/download-artifact` then current. An
+  adopter adding a workflow with them is blocked until it does without (`publish-agent-runtime.yml` fetches with plain
+  `git` and hands its tarball over through job outputs for this reason). By design for now.
+- **Publishing races the release's CI**: `publish-agent-runtime.yml` requires the tag's commit to have its `check` and
+  `supply-chain` checks green, so a GitHub release created while they still run fails before packing (nothing
+  publishes) and isn't retried when they pass. Create the release once they're green, or re-run the run's failed jobs.
 - **A repository advisory range read too wide**: an AND range written upper bound first (`< 2.0.0, >= 1.0.0`) reads
   as every version, so versions outside it count as affected; nothing reports it.
 - **GitHub source repository matching stays as in v0.5.2**: a repository URL whose host only ends in `github.com`
