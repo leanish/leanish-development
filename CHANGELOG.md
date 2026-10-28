@@ -7,9 +7,16 @@
 - Publishing a stable GitHub release publishes `@leanish/agent-runtime` to npm through
   `publish-agent-runtime.yml`, with trusted publishing (OIDC, no stored token) and provenance. A first job checks the
   release (stable tag on main, green checks), packs the tarball and imports every export from a clean install, without
-  publishing permission; a second
-  publishes exactly that tarball in an `npm` environment the owner approves. The owner's one-time setup is in
-  docs/releasing.md.
+  publishing permission; a second publishes exactly that tarball in an `npm` environment the owner approves. The
+  owner's one-time setup is in docs/releasing.md.
+
+### Fixed
+
+- `runSandboxed` and `sandboxWritable` (tool-runtime) check a hand-built `IsolationPolicy` with agent-runtime's shared
+  policy validator (`assertValidPolicy`, now exported from `@leanish/agent-runtime/isolation`) before `runSandboxed`
+  makes its temp dir or starts a process. An absent, empty or relative `buildCacheRoot` is refused with an error that
+  names the field and the entry, and so is a `readDenied` entry that is relative or missing, which used to reach Codex
+  unchecked. Valid policies behave as before.
 
 ## 0.9.0 - 2026-10-27
 

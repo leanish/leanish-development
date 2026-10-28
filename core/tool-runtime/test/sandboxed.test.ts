@@ -3,11 +3,18 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
+import type { ToolRunContext } from "../src/command.ts";
 import { parseToolConfig } from "../src/config.ts";
 import { runSandboxed, sandboxWritable } from "../src/sandboxed.ts";
+
+// A spy over the real `mkdtemp`, so a test can assert that nothing was made.
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, mkdtemp: vi.fn(actual.mkdtemp) };
+});
 
 // Codex can apply its seatbelt here (not inside another sandbox, where `sandbox_apply` is refused).
 const hasCodex = spawnSync("codex", ["sandbox", "--", "/usr/bin/true"], { stdio: "ignore" }).status === 0;
@@ -71,6 +78,37 @@ describe("runSandboxed arguments", () => {
     expect(calls[0]?.args.join(" ")).toContain("network.enabled=true");
     expect(calls[0]?.cwd).toBe(workingCopy.path);
     await expect(runSandboxed({ readDenied: [], buildCacheRoot: "/cache", env: {} }, { workingCopy: { ...workingCopy, gitDir: undefined }, command: ["true"] })).rejects.toThrow("separate directory");
+  });
+});
+
+describe("isolation policy validation", () => {
+  // Hand-built policies (or plain JavaScript) can hold what the type forbids; the casts stand in for such a caller.
+  const INVALID_POLICIES: ReadonlyArray<[string, Record<string, unknown>, string]> = [
+    ["an absent buildCacheRoot", { readDenied: [], env: {} }, "buildCacheRoot must be an absolute path; got 'undefined'"],
+    ["an empty buildCacheRoot", { readDenied: [], env: {}, buildCacheRoot: "" }, "buildCacheRoot must be an absolute path; got ''"],
+    ["a relative buildCacheRoot", { readDenied: [], env: {}, buildCacheRoot: "cache" }, "buildCacheRoot must be an absolute path; got 'cache'"],
+    ["a relative readDenied entry", { readDenied: ["secrets"], env: {}, buildCacheRoot: "/cache" }, "readDenied entries must be absolute paths; got 'secrets'"],
+    ["an undefined readDenied entry", { readDenied: [undefined], env: {}, buildCacheRoot: "/cache" }, "readDenied entries must be absolute paths; got 'undefined'"],
+  ];
+
+  it.each(INVALID_POLICIES)("runSandboxed refuses %s before making a temp dir or starting a process", async (_name, policy, message) => {
+    vi.mocked(mkdtemp).mockClear();
+    let spawned = 0;
+    await expect(runSandboxed(policy as unknown as Parameters<typeof runSandboxed>[0], { workingCopy, command: ["true"] }, async () => {
+      spawned += 1;
+      return { code: 0, stdout: "", stderr: "" };
+    })).rejects.toThrow(`runSandboxed: ${message}`);
+    expect(spawned).toBe(0);
+    expect(mkdtemp).not.toHaveBeenCalled();
+  });
+
+  it.each(INVALID_POLICIES)("sandboxWritable refuses %s", (_name, policy, message) => {
+    const config = parseToolConfig("bump-it", `repos: [{ repo: leanish/widget }]
+agent: { codingAgent: codex, model: sol, effort: medium }
+commitIdentity: { name: tool, email: tool@example.com }
+dirs: { state: /state, cache: /cache }`, "test.yaml");
+    const isolation = policy as unknown as ToolRunContext["isolation"];
+    expect(() => sandboxWritable({ config, workingCopy, isolation })).toThrow(`sandboxWritable: ${message}`);
   });
 });
 
