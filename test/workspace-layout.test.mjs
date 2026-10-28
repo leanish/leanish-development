@@ -79,9 +79,21 @@ const ALLOWED = {
 
 // Published packages' public API that may have no consumer in this repository; every other export needs one.
 const PUBLIC_EXPORTS = {
-  // What the incubator's adapters use and no tool here does: its errors extend the runtime's, and it validates its
-  // descriptors' skills and effort.
-  "@leanish/agent-runtime": ["./errors", "./skill/validate-compat", "./types/effort"],
+  // What the incubator's adapters use and no tool here does: its errors extend the runtime's, it validates its
+  // descriptors' skills and effort, scopes its handlers' correlation, writes its installed skills' plugin dir, and
+  // re-exports the usage records, totals and quota observations from its public API.
+  "@leanish/agent-runtime": [
+    "./errors",
+    "./logger/correlation",
+    "./logger/redactor",
+    "./skill/skill",
+    "./skill/stage-skills",
+    "./skill/validate-compat",
+    "./types/effort",
+    "./usage/quota",
+    "./usage/skill-usage-record",
+    "./usage/usage-totals",
+  ],
 };
 
 function directionProblem(source, target, testFile = false) {

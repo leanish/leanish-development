@@ -53,7 +53,7 @@ Lambda), and the target-credentials resolver (the tools pass the agent's read-on
 | `src/skill/fake-runner.ts` | `core/runtime/src/skill/fake-runner.ts` | copied | — |
 | `src/skill/input-render.ts` | `core/runtime/src/skill/input-render.ts` | copied | — |
 | `src/skill/output-parse.ts` | `core/runtime/src/skill/output-parse.ts` | copied | — |
-| `src/skill/run-skill.ts` | `core/runtime/src/skill/run-skill.ts` | copied | the agent descriptor, `needs` and the target-credentials resolver are replaced by `SkillContext` (the tool's entrypoints and support skills) and `SkillCall` (coding agent, model, effort, access and the credential env, all from the tool's config) |
+| `src/skill/run-skill.ts` | `core/runtime/src/skill/run-skill.ts` | copied | the agent descriptor, `needs` and the target-credentials resolver are replaced by `SkillContext` (the tool's entrypoints and support skills) and `SkillCall` (coding agent, model, effort, access and the credential env, all from the tool's config); the credentials may instead be a resolver, called once per call where the source resolved them (after the call's checks and finding its runner, before its usage is started), whose failure is logged by the error's class only and is the call's, with nothing started or recorded, and whose `null` means no credentials |
 | `src/skill/runner.ts` | `core/runtime/src/skill/runner.ts` | copied | `Access` from `types/access.ts` instead of the agent descriptor |
 | `src/skill/schema-subset.ts` | `core/runtime/src/skill/schema-subset.ts` at `17883e3` | copied | — |
 | `src/skill/skill-loader.ts` | `core/runtime/src/skill/skill-loader.ts` | copied | — |
@@ -111,7 +111,7 @@ Lambda), and the target-credentials resolver (the tools pass the agent's read-on
 | `test/packed-package.test.ts` | — | new | — |
 | `test/quota.test.ts` | `core/runtime/test/unit/quota.test.ts` | copied | imports this package's modules from `../src/` instead of `../../src/` |
 | `test/run-report.test.ts` | signal cases from `core/runtime/test/unit/run-local-cli.test.ts` | new | on a bare command instead of run-local; the tools' line pinned byte for byte; host identity and extras, on a normal end and on a signal; `startRunReport`'s end, signals, races, throwing callbacks, markers and listener cleanup; a real stream failing the final line's write |
-| `test/run-skill.test.ts` | `core/runtime/test/unit/run-skill-usage.test.ts`, `run-skill-invocation.test.ts` | adapted | the same cases against `SkillContext`/`SkillCall` |
+| `test/run-skill.test.ts` | `core/runtime/test/unit/run-skill-usage.test.ts`, `run-skill-invocation.test.ts` | adapted | the same cases against `SkillContext`/`SkillCall`; lazy credentials: resolved once per call right before the runner, never for a call that fails before it, their resolver's error the call's and logged without its message, a `null` from it no credentials, its credentials handed on as the object form's |
 | `test/schema-subset.test.ts` | `core/runtime/test/unit/schema-subset.test.ts` at `17883e3` | copied | imports this package's modules from `../src/` instead of `../../src/` |
 | `test/skill-loader.test.ts` | `core/runtime/test/unit/skill-loader.test.ts` | copied | imports this package's modules from `../src/` instead of `../../src/` |
 | `test/spawn-capture-env.test.ts` | `core/runtime/test/unit/spawn-capture-env.test.ts` | copied | imports this package's modules from `../src/` instead of `../../src/`; the per-line stdout callback covered; timeout tests synchronize startup and assert process state |

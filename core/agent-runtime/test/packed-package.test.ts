@@ -16,6 +16,10 @@ const NAME = "@leanish/agent-runtime";
 const require = createRequire(import.meta.url);
 const repoExports: Record<string, string> = JSON.parse(readFileSync(join(PACKAGE_DIR, "package.json"), "utf8")).exports;
 const subpaths = Object.keys(repoExports).sort();
+// The TypeScript consumer's Node types are this repository's own install (with their one dependency), packed, so
+// installing them needs no registry.
+const typesNodePackageJson = require.resolve("@types/node/package.json");
+const nodeTypesDirs = [dirname(typesNodePackageJson), dirname(createRequire(typesNodePackageJson).resolve("undici-types/package.json"))];
 
 let workDir: string;
 let tarball: string;
@@ -67,13 +71,20 @@ describe("the packed package", () => {
     expect(manifest.version).toBe(JSON.parse(readFileSync(join(PACKAGE_DIR, "..", "..", "package.json"), "utf8")).version);
     expect(manifest.devDependencies).toBeUndefined();
     expect(manifest.scripts).toBeUndefined();
-    // Its declarations name Node's types, so a consumer's compiler gets them through this peer.
+    // Its declarations name Node's types, so a consumer's compiler gets them through this peer; it's optional, since
+    // plain JavaScript doesn't need them.
     expect(manifest.peerDependencies).toEqual({ "@types/node": ">=24" });
+    expect(manifest.peerDependenciesMeta).toEqual({ "@types/node": { optional: true } });
     expect(Object.keys(manifest.exports).sort()).toEqual(subpaths);
     for (const subpath of subpaths) {
       const module = repoExports[subpath]!.replace(/^\.\/src\//, "").replace(/\.ts$/, "");
       expect(manifest.exports[subpath]).toEqual({ types: `./dist/${module}.d.ts`, default: `./dist/${module}.js` });
     }
+  });
+
+  it("leaves its optional @types/node peer out of a consumer that doesn't install it", () => {
+    // Only the type-checking test installs Node's types, in a consumer of its own.
+    expect(existsSync(join(workDir, "consumer", "node_modules", "@types", "node"))).toBe(false);
   });
 
   it("loads every export with plain Node, with the same runtime exports as the sources", async () => {
@@ -99,17 +110,43 @@ console.log(JSON.stringify({ loaded, guardDir: guardDir() }));
   });
 
   it("type-checks a consumer against its declarations", () => {
-    const consumer = join(workDir, "consumer");
+    const consumer = join(workDir, "ts-consumer");
+    mkdirSync(consumer);
+    writeFileSync(join(consumer, "package.json"), JSON.stringify({ name: "ts-consumer", private: true, type: "module" }));
+    // A TypeScript consumer installs Node's types itself: the package's peer on them is optional. --offline proves the
+    // packed types need no registry; ajv and yaml are in the npm cache since beforeAll's install.
+    const nodeTypes = nodeTypesDirs.map((directory) => join(workDir, "tarball", JSON.parse(execFileSync(
+      "npm",
+      ["pack", "--json", "--ignore-scripts", "--pack-destination", join(workDir, "tarball"), directory],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
+    ))[0].filename));
+    execFileSync("npm", ["install", "--offline", "--no-audit", "--no-fund", tarball, ...nodeTypes], {
+      cwd: consumer,
+      stdio: ["ignore", "ignore", "inherit"],
+    });
     const imports = subpaths.map((subpath, index) => `import * as module${index} from "${NAME}${subpath.slice(1)}";`);
     writeFileSync(join(consumer, "consumer.ts"), `${imports.join("\n")}
 import { guardDir } from "${NAME}/guard-dir";
+import { getCorrelation, withCorrelation } from "${NAME}/logger/correlation";
+import type { SecretEntry } from "${NAME}/logger/redactor";
 import { FakeCodingAgentRunner } from "${NAME}/skill/fake-runner";
+import type { Credentials, SkillCall } from "${NAME}/skill/run-skill";
 import type { CodingAgentRunner } from "${NAME}/skill/runner";
+import type { LoadedSkill } from "${NAME}/skill/skill";
+import { writePluginDir, type WritePluginDirArgs } from "${NAME}/skill/stage-skills";
 import type { Logger } from "${NAME}/types/logger";
 import { assertRepoSourceId, type RepoSource } from "${NAME}/types/repo-source";
 import { parseModelPrices, type ModelPriceTable } from "${NAME}/usage/model-prices";
+import { observeQuota, type QuotaUsage, type QuotaWindowObservation, type RateLimitSnapshot } from "${NAME}/usage/quota";
+import type { ModelUsageSummary, SkillRunStart, SkillUsageOutcome, SkillUsageRecord, SkillUsageRecorder } from "${NAME}/usage/skill-usage-record";
+import { totalSkillUsage, type UsageTotals } from "${NAME}/usage/usage-totals";
 
 export const modules = [${subpaths.map((_, index) => `module${index}`).join(", ")}];
+// What the incubator imports by name: a missing export fails here, where a namespace import wouldn't.
+export const functions = [getCorrelation, withCorrelation, writePluginDir, observeQuota, totalSkillUsage];
+export type Types = [SecretEntry, Credentials, LoadedSkill, WritePluginDirArgs, QuotaUsage, QuotaWindowObservation,
+  RateLimitSnapshot, ModelUsageSummary, SkillRunStart, SkillUsageOutcome, SkillUsageRecord, SkillUsageRecorder, UsageTotals];
+export const lazyCredentials: SkillCall<object>["credentials"] = async (): Promise<Credentials | undefined> => undefined;
 export const guards: string = guardDir();
 export const runner: CodingAgentRunner = new FakeCodingAgentRunner("codex");
 export const prices: ModelPriceTable = parseModelPrices({}, "consumer");
@@ -121,7 +158,6 @@ export function log(logger: Logger): Logger {
 // @ts-expect-error A RepoSource needs its source; this fails only while the declarations are really checked.
 export const incomplete: RepoSource = { id: "owner/repo" };
 `);
-    // Node's types come from the consumer's own install, through the package's peer dependency.
     expect(existsSync(join(consumer, "node_modules", "@types", "node", "package.json"))).toBe(true);
     writeFileSync(join(consumer, "tsconfig.json"), JSON.stringify({
       compilerOptions: {
