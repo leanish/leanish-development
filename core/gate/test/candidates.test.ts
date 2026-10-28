@@ -850,6 +850,34 @@ describe("securityCandidates, bundled copies", () => {
     expect(moves(found.fixes)).toEqual([["brace@5.0.9", "5.0.12", undefined], ["carrier@1.0.0", undefined, expect.stringContaining("carrier move can't be decided")]]);
   });
 
+  it("marks a carrier whose reads fail as undecided, while the rest still moves", async () => {
+    const env = environment({ "brace@5.0.9": ["GHSA-brace"] }, registry, [], carrierManifests);
+    const serve = (versions: ReadonlyArray<"1.0.0" | "1.1.0">): GateEnvironment => ({
+      ...env, fetchArchive: serving(Object.fromEntries(versions.map((version) => [carrierTarball(version), archives[version].bytes]))),
+    });
+    const unlisted: GateEnvironment = { ...serve(["1.0.0", "1.1.0"]), fetch: async (url, init) => (url === "https://registry.npmjs.org/carrier"
+      ? { ok: false, status: 503, headers: { get: () => null }, json: async () => ({}), text: async () => "" }
+      : env.fetch(url, init)) };
+    const cases: Array<[GateEnvironment, string]> = [
+      // Its locked archive, a candidate's archive, its version listing.
+      [serve(["1.1.0"]), `carrier@1.0.0's bundle can't be read: carrier@1.0.0: GET ${carrierTarball("1.0.0")} answered HTTP 404`],
+      [serve(["1.0.0"]), `carrier@1.1.0's bundle can't be read: carrier@1.1.0: GET ${carrierTarball("1.1.0")} answered HTTP 404`],
+      [unlisted, "carrier@1.0.0's carrier move can't be decided: registry lookup of carrier failed with HTTP 503"],
+    ];
+    for (const [broken, problem] of cases) {
+      const found = await securityCandidates(await head(true), broken);
+      expect(moves(found.fixes)).toEqual([["brace@5.0.9", "5.0.12", undefined], ["carrier@1.0.0", undefined, problem]]);
+      expect(undecided(found.fixes)).toEqual(["carrier@1.0.0"]);
+    }
+  });
+
+  it("leaves a carrier move the rule refuses a refusal, not undecided", async () => {
+    // 1.1.0 still bundles an affected brace: the rule judged it and found no fix.
+    const found = await securityCandidates(await head(), withArchives(environment({ "brace@5.0.9": ["GHSA-brace"], "brace@5.0.12": ["GHSA-brace"] }, registry, [], carrierManifests)));
+    expect(moves(found.fixes)).toEqual([["carrier@1.0.0", undefined, "no carrier version above 1.0.0 ships a bundle without brace GHSA-brace"]]);
+    expect(undecided(found.fixes)).toEqual([]);
+  });
+
   it("makes a carrier move whose identity can't be read that fix's problem, not the run's", async () => {
     const malformed = { ...carrierManifests, "carrier@1.1.0": { dist: { integrity: archives["1.1.0"].integrity,
       attestations: { url: "https://example.com/x", provenance: { predicateType: "https://slsa.dev/provenance/v1" } } } } };

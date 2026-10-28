@@ -9,6 +9,32 @@
   makes its temp dir or starts a process. An absent, empty or relative `buildCacheRoot` is refused with an error that
   names the field and the entry, and so is a `readDenied` entry that is relative or missing, which used to reach Codex
   unchecked. Valid policies behave as before.
+- A carrier's read failures and a direct peer's are now reported as errors too, as 0.9.0 did for an undecided
+  publisher identity. A carrier whose locked or candidate bundle can't be read, whose versions the registry can't
+  list, whose candidate's publish time is unknown, or whose decision throws gets `undecided` on its fix; a direct-peer
+  set gets `undecided` on its blocked entry when its locked manifests can't be read, a copy's version listing or
+  candidate manifest can't be read, the version a fix requires of it can't be worked out, a candidate's identity or
+  publish-time check throws, a candidate's publish time is unknown, or a chosen companion's publish time can't be read
+  (which used to fail the unit when the read threw). The unit is blocked and the rest of the repository goes on, but
+  both tools' runs now also list the reason under `errors`, so a batch counts the repository as failed; the command's own exit
+  code is unchanged. Existing PRs are kept as for an undecided identity: a run's unit fails instead of rewriting a PR
+  whose plan moves such a package, also when what can't be decided leaves the unit blocked or with nothing to move,
+  and a review keeps the PR it would recompute. bump-it now computes the routine, majors with an open PR and the first
+  `maxNewMajorsPerRun` new majors before any unit acts on a PR, so a direct-peer set that first pass can't decide holds
+  back every unit's PR that moves it, as in secure-it. A later new major that runs because an earlier one didn't
+  publish is computed in its turn: its failed sets reach `errors` and hold back subsequent units' PRs, but PRs already
+  handled aren't rechecked. This keeps execution order and the cap on actual new publications. A failed read is never
+  acceptance nor "nothing to do"; a move the rules judge and refuse keeps its note and isn't an error. Changed or new messages:
+  - a direct-peer set (both tools, new): "<name>@<version>: the publish time is unknown" within its blocked reason,
+    also reported under `errors`;
+  - a run's unit (both tools, new): "npm <name>'s direct-peer set can't be decided; keeping the PR", or with every cause
+    when there are several ("npm <name>'s publisher identity and direct-peer set can't be decided; keeping the PR");
+  - a run's unit (secure-it, new): "npm <name>'s carrier move can't be decided; keeping the PR", also for a carrier
+    whose publisher identity check failed, which read "npm <name>'s publisher identity can't be decided; keeping the
+    PR";
+  - a review (secure-it, changed): "publisher identity can't be decided on the new base; keeping the PR: …" now reads
+    "a fix can't be decided on the new base; keeping the PR: …";
+  - a review (both tools, new): "a direct-peer set can't be decided on the new base; keeping the PR: …".
 
 ## 0.9.0 - 2026-10-27
 

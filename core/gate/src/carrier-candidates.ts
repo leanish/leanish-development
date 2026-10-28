@@ -112,6 +112,11 @@ export interface CarrierDecision {
   /** Its `blockers` are left empty: the caller judges identity against every copy the unit replaces with it. */
   readonly to: { readonly version: string; readonly line: string; readonly aged: boolean; readonly major: boolean; readonly blockers: ReadonlyArray<string> } | undefined;
   readonly problem: string | undefined;
+  /**
+   * Set when there's no `to` because something the rule needs couldn't be read (a bundle, the version listing, a publish
+   * time): a check that failed, to report as a failure, not a move the rule refused.
+   */
+  readonly undecided?: true;
   /** Carrier versions the search read and ruled out only by unreviewed advisories (`carrier-fixes.ts`), the ones nearest the choice. */
   readonly vetoed?: ReadonlyArray<Veto>;
   /** How many more such versions the search read, when there were more than `vetoed` shows. */
@@ -127,15 +132,17 @@ export async function decideCarrier(group: CarrierGroup, own: ReadonlyArray<stri
     .map(([name, entry]) => ({ name, from: [...entry.versions].sort(), locations: [...entry.locations].sort(), advisories: [...entry.advisories].sort(), to: to(name) }))
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   const none = (problem: string): CarrierDecision => ({ from: group.version, locations, carries: carries(() => []), unfixable: [], to: undefined, problem });
+  // A read that failed decides nothing: never "doesn't fix", never acceptance.
+  const unread = (problem: string): CarrierDecision => ({ ...none(problem), undecided: true });
 
   const integrities = new Set(group.copies.map(({ copy }) => copy.integrity));
   if (integrities.size !== 1) return none(`the copies of ${group.name}@${group.version} lock different archives`);
   const fromBundle = await context.reader.read(group.name, group.version, [...integrities][0]);
-  if (!fromBundle.complete) return none(`${group.name}@${group.version}'s bundle can't be read: ${fromBundle.reason}`);
+  if (!fromBundle.complete) return unread(`${group.name}@${group.version}'s bundle can't be read: ${fromBundle.reason}`);
   const recorded = group.copies.flatMap(({ lockfile, copy }) => bundleMismatches(lockfile.packages, copy.path, fromBundle).map((problem) => `${lockfile.path}: ${problem}`));
   if (recorded.length > 0) return none(recorded.join("; "));
   const listed = await context.catalog.versions(pkg);
-  if (listed === undefined) return none(`the registry doesn't list ${group.name}'s versions completely, so the rule can't be applied`);
+  if (listed === undefined) return unread(`the registry doesn't list ${group.name}'s versions completely, so the rule can't be applied`);
   const versions = movesFrom(pkg, group.version, listed, malicious ? "any" : "above");
   // An own advisory no version fixes is left, as for any fix: it can't hold back the bundled one.
   const ownSnapshot = own.length === 0 ? undefined : await context.scan([pkg, ...versions.map((version) => ({ ...pkg, version }))]);
@@ -163,7 +170,7 @@ export async function decideCarrier(group: CarrierGroup, own: ReadonlyArray<stri
   });
   // The vetoes go last, after the reason: a retry attributes the refusal without them (`withoutVetoNote`).
   if (choice.kind === "none") return { ...none(`${choice.reason}${vetoNote(choice.vetoed)}`), unfixable };
-  if (choice.kind !== "chosen") return { ...none(choice.reason), unfixable };
+  if (choice.kind !== "chosen") return { ...unread(choice.reason), unfixable };
   const line = (version: string) => compatibleLine(context.config, pkg, version);
   return {
     from: group.version,

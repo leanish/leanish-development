@@ -7,8 +7,14 @@ import type { NpmDeclaration } from "@leanish/gate/candidates";
 
 import type { DirectMove, Unit } from "./units.ts";
 
+/** A direct-peer set left out because its checks failed, not refused: the npm names it leaves out, and why. */
+export interface UndecidedPeers {
+  readonly names: ReadonlyArray<string>;
+  readonly reason: string;
+}
+
 export async function coupledUnit(unit: Unit, locks: ReadonlyMap<string, unknown>, peers?: NpmPeerPlanner) {
-  if (peers === undefined) return { unit, notes: [], sets: [] as ReadonlyArray<ReadonlyArray<string>> };
+  if (peers === undefined) return { unit, notes: [], sets: [] as ReadonlyArray<ReadonlyArray<string>>, undecided: [] as ReadonlyArray<UndecidedPeers> };
   const anchors: PeerMove[] = unit.moves.filter((move) => move.ecosystem === "npm").map((move) => ({
     name: move.name, from: move.from, to: move.to,
     locations: move.declarations.flatMap((declaration) => {
@@ -29,7 +35,12 @@ export async function coupledUnit(unit: Unit, locks: ReadonlyMap<string, unknown
     locations: [...new Set(move.declarations.map((edge) => `${edge.lockfile}#${edge.workspace || "."}`))].sort(),
     declarations: move.declarations.map((edge) => ({ lockfile: edge.lockfile, workspace: edge.workspace || ".", declaredAs: edge.declaredAs, spec: edge.spec })),
   }));
-  return { unit: { ...unit, moves: [...moves, ...companions] }, notes: result.blocked.map((group) => group.reason), sets: result.sets };
+  const undecided = result.blocked.filter((group) => group.undecided === true).map((group): UndecidedPeers => {
+    const names = new Set(group.moves.map((move) => move.name));
+    expandOmitted(names, result.sets);
+    return { names: [...names].sort(), reason: group.reason };
+  });
+  return { unit: { ...unit, moves: [...moves, ...companions] }, notes: result.blocked.map((group) => group.reason), sets: result.sets, undecided };
 }
 
 export function expandOmitted(names: Set<string>, sets: ReadonlyArray<ReadonlyArray<string>>): void {
