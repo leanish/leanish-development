@@ -29,10 +29,33 @@ Most of it is copied from the runtime of leanish-development-incubator (private)
 instead of its copies; until it does, a fix to a copied file is made in both repositories.
 [PROVENANCE.md](PROVENANCE.md) lists every file, where it comes from and what changed.
 
+Its exports are the modules tool-runtime, secure-it and bump-it import, plus what the incubator's runtime uses and they
+don't: `./errors`, `./skill/validate-compat`, `./types/effort`, `./logger/correlation` (`withCorrelation`,
+`getCorrelation`), `./logger/redactor` (`SecretEntry`), `./skill/skill` (`LoadedSkill`), `./skill/stage-skills` (`writePluginDir`,
+`WritePluginDirArgs`), `./usage/skill-usage-record` (`SkillUsageRecorder`, `SkillUsageRecord`, `SkillRunStart`,
+`SkillUsageOutcome`, `ModelUsageSummary`), `./usage/usage-totals` (`totalSkillUsage`, `UsageTotals`) and
+`./usage/quota` (`observeQuota`, `QuotaUsage`, `QuotaWindowObservation`, `RateLimitSnapshot`). The symbols named are
+what the incubator uses, but each exported subpath's whole module is public API: everything else it exports too (such as
+`./logger/redactor`'s `Redactor`, `./skill/stage-skills`' `stageSkills`, `./usage/quota`'s `RESET_JITTER_SECONDS` or
+`./usage/skill-usage-record`'s `toSkillUsageRecord`).
+
 Skill schemas also accept the `[object, null]` type union and a restricted constant-property
 `if`/`then` that requires one non-null object. Both tools' answers use them so that only cannot-apply may leave
 `publication` null; applied still needs the complete publication text. Other unions, general conditionals, unknown
 keywords and malformed objects are still rejected.
+
+## Credentials
+
+`SkillCall.credentials` gives the agent's commands their env with the secret values among it (`Credentials`, from
+`./skill/run-skill`), or a resolver for them, `() => Promise<Credentials | undefined>`. An object is used as given. A
+resolver is called once per `runSkill` call (nothing is cached across calls) after the call's checks pass (a declared
+entrypoint, its skills loaded, valid input, a working copy for a write run), its input is rendered and its runner
+found, and before the call is announced to the `usageRecorder` and its runner starts. When it throws or rejects,
+`runSkill` logs `runSkill failed` once with the reason `credentials-unresolved` and the error's class only (its
+message could quote a secret the logger can't redact yet), then fails with that same error, and nothing is started or
+recorded. `undefined`, or `null` from a resolver written without the types, means no credentials, as when the field is
+left out. So a host such as the incubator, whose target credentials are resolved per call, resolves them
+only for calls that reach a runner.
 
 ## Isolation policy
 
@@ -130,7 +153,13 @@ The published package has:
   `default`), so the two export maps can't drift apart;
 - `guard/`, with `gh` and `git` executable; `guardDir()` (`./guard-dir`) returns its path from either form;
 - `README.md`, `PROVENANCE.md` and the repository's `LICENSE`;
-- the same dependencies (`ajv`, `yaml`), and no scripts or devDependencies.
+- the same dependencies (`ajv`, `yaml`), and no scripts or devDependencies;
+- `@types/node` (`>=24`) as an optional peer, which npm doesn't install: a JavaScript consumer goes without it, and a
+  TypeScript consumer must declare `@types/node` `>=24` itself, since the declarations name Node's types. With
+  `skipLibCheck: true`, a consumer missing it gets no error: the declarations' `NodeJS.*` references silently become
+  `any`.
 
-`test/packed-package.test.ts` packs it, installs the tarball into a consumer outside the repository, loads every export
-with plain Node and type-checks a consumer against the declarations.
+`test/packed-package.test.ts` packs it and installs the tarball into consumers outside the repository. One gets no
+`@types/node` and loads every export with plain Node. The other also installs this repository's own `@types/node`,
+packed, without the registry, and type-checks against the declarations a file that imports by name every symbol listed
+above, and `Credentials`.
