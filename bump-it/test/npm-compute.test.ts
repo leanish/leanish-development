@@ -376,6 +376,23 @@ describe("exact npm computation", () => {
     expect(result.changes).toEqual([{ lockfile: "package-lock.json", path: "node_modules/child", name: "child", from: "1.0.0", to: "1.1.0" }]);
     expect(await readFile(join(h.dir, "package.json"), "utf8")).toBe(json(manifest));
   });
+  it("reports a package whose copies only moved between paths as re-hoisted, next to the unchanged per-path changes", async () => {
+    const h = await fixture();
+    const { "node_modules/child": _hoisted, ...others } = lock().packages;
+    const base = { ...lock(), packages: { ...others, "node_modules/parent/node_modules/child": { version: "1.0.0" } } };
+    await writeFile(join(h.dir, "package-lock.json"), json(base));
+    const npm: NpmCommand = async (dir, args) => {
+      if (args[0] === "--version") return { code: 0, stdout: "11.20.0", stderr: "" };
+      await writeFile(join(dir, "package-lock.json"), json(lock()));
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const result = await computeNpm({ ...h.inputs, npm, moves: [], baseLocks: new Map([["package-lock.json", base]]), sources: { ...h.inputs.sources, versions: async () => ["1.0.0"] } });
+    expect(result.changes).toEqual([
+      { lockfile: "package-lock.json", path: "node_modules/child", name: "child", from: undefined, to: "1.0.0" },
+      { lockfile: "package-lock.json", path: "node_modules/parent/node_modules/child", name: "child", from: "1.0.0", to: undefined },
+    ]);
+    expect(result.rehoisted).toEqual(["package-lock.json\0child"]);
+  });
   it.each(["missing", "throwing", "invalid"])("excludes an unreadable locked publish time (%s), notes it and keeps the base target", async (failure) => {
     const h = await fixture();
     const published = vi.fn(async (name: string) => {

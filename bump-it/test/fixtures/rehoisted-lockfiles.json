@@ -1,0 +1,111 @@
+{
+  "before": {
+    "packages": {
+      "": {
+        "name": "root",
+        "workspaces": [
+          "core/*"
+        ],
+        "devDependencies": {
+          "eslint": "^10.0.0"
+        }
+      },
+      "core/agent-runtime": {
+        "name": "@leanish/agent-runtime",
+        "version": "0.0.0",
+        "dependencies": {
+          "ajv": "^8.20.0"
+        }
+      },
+      "core/gate": {
+        "name": "@leanish/gate",
+        "version": "0.0.0",
+        "dependencies": {
+          "ajv": "^8.20.0"
+        }
+      },
+      "node_modules/@leanish/agent-runtime": {
+        "resolved": "core/agent-runtime",
+        "link": true
+      },
+      "node_modules/@leanish/gate": {
+        "resolved": "core/gate",
+        "link": true
+      },
+      "node_modules/eslint": {
+        "version": "10.4.0",
+        "dependencies": {
+          "ajv": "^6.14.0"
+        }
+      },
+      "node_modules/ajv": {
+        "version": "8.20.0"
+      },
+      "node_modules/eslint/node_modules/ajv": {
+        "version": "6.15.0",
+        "dependencies": {
+          "json-schema-traverse": "^0.4.1"
+        }
+      },
+      "node_modules/eslint/node_modules/json-schema-traverse": {
+        "version": "0.4.1"
+      }
+    }
+  },
+  "after": {
+    "packages": {
+      "": {
+        "name": "root",
+        "workspaces": [
+          "core/*"
+        ],
+        "devDependencies": {
+          "eslint": "^10.0.0"
+        }
+      },
+      "core/agent-runtime": {
+        "name": "@leanish/agent-runtime",
+        "version": "0.0.0",
+        "dependencies": {
+          "ajv": "^8.20.0"
+        }
+      },
+      "core/gate": {
+        "name": "@leanish/gate",
+        "version": "0.0.0",
+        "dependencies": {
+          "ajv": "^8.20.0"
+        }
+      },
+      "node_modules/@leanish/agent-runtime": {
+        "resolved": "core/agent-runtime",
+        "link": true
+      },
+      "node_modules/@leanish/gate": {
+        "resolved": "core/gate",
+        "link": true
+      },
+      "node_modules/eslint": {
+        "version": "10.4.0",
+        "dependencies": {
+          "ajv": "^6.14.0"
+        }
+      },
+      "node_modules/ajv": {
+        "version": "6.15.0",
+        "dependencies": {
+          "json-schema-traverse": "^0.4.1"
+        }
+      },
+      "node_modules/ajv/node_modules/json-schema-traverse": {
+        "version": "0.4.1"
+      },
+      "core/agent-runtime/node_modules/ajv": {
+        "version": "8.20.0"
+      },
+      "core/gate/node_modules/ajv": {
+        "version": "8.20.0"
+      }
+    }
+  }
+}

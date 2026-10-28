@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,7 +23,8 @@ import { MemoryJournal } from "@leanish/tool-runtime/test/memory-journal";
 import { branchFor, stateOf, withMarker } from "@leanish/tool-runtime/own-pr";
 import { BASE_SHA, FakeGitHub, GREEN, HEAD_SHA, ownPr, PUSHED_SHA, RED } from "@leanish/tool-runtime/test/fake-github";
 import { bumpIt, type BumpItDeps, RULES } from "../src/bump-it.ts";
-import type { NpmResult } from "../src/npm-compute.ts";
+import { changesBetween, type NpmResult } from "../src/npm-compute.ts";
+import { NpmGraph } from "../src/npm-graph.ts";
 import { type BumpPlan, planFor, planOf, planSection } from "../src/plan.ts";
 import { majorUnits, routineUnit, type Unit } from "../src/units.ts";
 import { WRAPPER_FILES, WRAPPER_JAR, WRAPPER_PROPERTIES, WRAPPER_PACKAGE, type WrapperCandidates, type WrapperTarget } from "../src/gradle-wrapper.ts";
@@ -966,6 +968,29 @@ describe("bump-it review", () => {
     expect(h.agentCalls).toMatchObject([{ input: { mode: "adapt", failingChecks: ["check", "legacy"] } }]);
     expect(h.github.calls.filter((call) => call.startsWith("headChecks "))).toHaveLength(1);
     expect(stateOf(h.github.prs.get(7)!.body)?.adaptations).toBe(1);
+  });
+  it("rewrites a major's table from its lockfiles when it adapts, so a re-hoist keeps showing as a move", async () => {
+    const lockfiles = JSON.parse(readFileSync(new URL("./fixtures/rehoisted-lockfiles.json", import.meta.url), "utf8"));
+    const [before, after] = [JSON.stringify(lockfiles.before), JSON.stringify(lockfiles.after)];
+    const manifest = JSON.stringify({ dependencies: { lib: "^1.0.0" } });
+    const changes = changesBetween("package-lock.json", new NpmGraph(lockfiles.before), new NpmGraph(lockfiles.after));
+    const unit = major();
+    const plan = await planFor(unit, { files: new Map([["package-lock.json", after], ["package.json", manifest]]), changes, notes: [] }, async () => "1".repeat(40));
+    const body = withMarker(RULES, `Body.\n\n${planSection(plan)}`, { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 });
+    expect(body).not.toContain("| moved |");
+    const adaptOn = async (baseLockfile: string) => {
+      const h = harness({ prs: [ownPr({ headRef: branchFor(RULES, new Date("2026-10-05T00:00:00Z"), unit.topic), labels: [RULES.label], body })] });
+      h.github.checks = RED;
+      const trees = { commit: async (_wc: WorkingCopy, sha: string) => tree(sha, { "package-lock.json": baseLockfile }), working: () => tree("worktree", { "package-lock.json": after, "package.json": manifest }) };
+      expect(await bumpIt({ ...h.deps, trees }).review(h.context)).toMatchObject({ reviewed: [{ outcome: "adapted" }] });
+      return h.github.prs.get(7)!.body;
+    };
+    const adapted = await adaptOn(before);
+    expect(adapted).toContain("| `ajv` | `8.20.0` | moved |");
+    expect(planOf(adapted)).toEqual(plan);
+    // A base that doesn't yield the recorded changes (here, one more) proves nothing about them.
+    const moved = JSON.stringify({ packages: { ...lockfiles.before.packages, "node_modules/other": { version: "1.0.0" } } });
+    expect(await adaptOn(moved)).not.toContain("| moved |");
   });
   it.each([
     ["four spaces, CRLF and a final newline", "    ", "\r\n", true],

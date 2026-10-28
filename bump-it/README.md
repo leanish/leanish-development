@@ -111,6 +111,17 @@ core/tool-runtime/run.sh bump-it review leanish/widget   # every few hours
 
 Plans carry moves and npm file hashes, with a bounded copy-change summary, never file contents. Major manifests also
 carry a hash of their dependency fields, allowing later review to protect them while retaining script adaptations.
+In the PR's "What bump-it moved" table, a package's copy changes show as each version `moved` from some paths to others
+only when bump-it's check of the base and head lockfile graphs finds that no consumer changed version: every changed copy
+has a dependent, every dependent (a workspace or an installed package) resolves the same versions before and after, no
+path changed its package, and each participating installed identity (name and version) has only one installed copy
+anywhere in either graph, counting copies that resolve no edge too (duplicates can't be told apart, so the package is
+left as it is); a row for copies gained or lost on the way follows. Every other copy change keeps its per-path from/to
+row, as does a package whose moved rows would be more numerous or longer. Grouped rows are used only when the whole
+section fits without dropping any lines, with either a plain or compressed plan block. If the section would be cut at
+all, every package keeps its per-path rows. This is display only, kept out of the plan block, its digest and
+verification; the table is recomputed from the lockfiles whenever bump-it rewrites a body (a fresh run, a rebase, an
+adaptation), and a body whose lockfiles can't be read, or no longer give the recorded changes, shows per-path rows.
 A routine with only npm and wrapper moves needs no agent.
 
 ### Gradle wrapper
