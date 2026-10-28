@@ -2,8 +2,44 @@
 
 ## Unreleased
 
+### Added
+
+- Publishing a stable GitHub release publishes `@leanish/agent-runtime` to npm through
+  `publish-agent-runtime.yml`, with trusted publishing (OIDC, no stored token) and provenance. A first job checks the
+  release (stable tag on main, green checks), packs the tarball and imports every export from a clean install, without
+  publishing permission; a second publishes exactly that tarball in an `npm` environment the owner approves. The
+  owner's one-time setup is in docs/releasing.md.
+- `@leanish/agent-runtime` exports what the incubator's runtime needs from it and couldn't import:
+  `./logger/correlation` (`withCorrelation`, `getCorrelation`), `./logger/redactor` (`SecretEntry`), `./skill/skill`
+  (`LoadedSkill`), `./skill/stage-skills` (`writePluginDir`, `WritePluginDirArgs`), `./usage/skill-usage-record`
+  (`SkillUsageRecorder`, `SkillUsageRecord`, `SkillRunStart`, `SkillUsageOutcome`, `ModelUsageSummary`),
+  `./usage/usage-totals` (`totalSkillUsage`, `UsageTotals`) and `./usage/quota` (`observeQuota`, `QuotaUsage`,
+  `QuotaWindowObservation`, `RateLimitSnapshot`).
+- `runSkill`'s `SkillCall.credentials` may be a resolver, `() => Promise<Credentials | undefined>` (`Credentials` is
+  exported from `@leanish/agent-runtime/skill/run-skill`). It's called once per call, after the call's checks pass and
+  its runner is found and before the call is announced to the usage recorder, so a call rejected earlier never
+  resolves credentials; a resolver that throws or rejects fails the call with its own error (logged once as
+  `credentials-unresolved`, naming only the error's class), with nothing started or recorded, and `undefined` (or
+  `null`) means no credentials. An object is used as before.
+
+### Changed
+
+- bump-it's Gradle reference comparison no longer blocks on every resolution failure in the configurations
+  `gradle.ignoreConfigurations` lists. The gate skips them; like secure-it, bump-it accepts an edit that fails to
+  resolve there the same way as the plan's reference, even when the planned update itself is what makes it fail (the
+  check proves the edit matches the plan, not that the ignored configuration resolves). A failure the edit adds,
+  removes or changes there is still reported, those configurations' declarations are still compared with the
+  reference, and every planned move must still land. bump-it has no Gradle reference check besides verification's.
+- `@leanish/agent-runtime`'s `@types/node` peer is optional (`peerDependenciesMeta`), so npm no longer installs it
+  through this package. A JavaScript consumer goes without it; a TypeScript consumer must now declare `@types/node`
+  `>=24` itself (the same range as before). With `skipLibCheck: true`, one that doesn't gets no error: the
+  declarations' `NodeJS.*` references silently become `any`.
+
 ### Fixed
 
+- `startRunReport` writes the `start` marker's failure notice through the same guarded write as the final line: a
+  stream that throws on it, or fails it and emits `error` later, no longer ends the process with exit code 1 nor
+  throws out of `startRunReport`.
 - `runSandboxed` and `sandboxWritable` (tool-runtime) check a hand-built `IsolationPolicy` with agent-runtime's shared
   policy validator (`assertValidPolicy`, now exported from `@leanish/agent-runtime/isolation`) before `runSandboxed`
   makes its temp dir or starts a process. An absent, empty or relative `buildCacheRoot` is refused with an error that

@@ -1,7 +1,8 @@
 // Copied from leanish/leanish-development core/runtime/src/skill/run-skill.ts at c6282df; see PROVENANCE.md.
 // Local changes: the agent descriptor, `needs` and the target-credentials resolver are replaced by `SkillContext`
 // (the tool's entrypoints and support skills) and `SkillCall` (coding agent, model, effort, access and the
-// credential env, all from the tool's config).
+// credential env, all from the tool's config). The credentials may come from a resolver, called where the original
+// resolved them: after the call's checks, right before the runner.
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 
@@ -35,7 +36,8 @@ import { SchemaValidator } from "./validator.ts";
  *   2. Load the Entry-point Skill (cached) + every Support Skill.
  *   3. Validate `input` against the Entry-point Skill's `inputSchema`.
  *   4. Render `input` as YAML (deterministic key order).
- *   5. Hand off to the coding agent's `CodingAgentRunner`.
+ *   5. Resolve the call's credentials when they are lazy, then hand off to
+ *      the coding agent's `CodingAgentRunner`.
  *   6. Extract the terminal fenced-`json` block from the response.
  *   7. Validate the parsed value against `outputSchema`.
  *   8. Return the typed result.
@@ -68,8 +70,19 @@ export interface SkillCall<TInput> {
   readonly model?: string;
   readonly effort?: string;
   readonly access: Access;
-  /** Env for the agent's commands (its read-only GitHub token, say), with the secret values among it. */
-  readonly credentials?: { readonly env: Readonly<Record<string, string>>; readonly secrets: ReadonlyArray<SecretEntry> };
+  /**
+   * The credentials for the agent's commands, or a resolver for them. The resolver is called once per `runSkill` call,
+   * after the skills are loaded, the call checked, its input rendered and its runner found, and before the call is
+   * announced to `usageRecorder`; if it throws or rejects, that error is the call's (logged by its class only), and
+   * nothing is started or recorded. `undefined` (or `null` from the resolver) means no credentials.
+   */
+  readonly credentials?: Credentials | (() => Promise<Credentials | undefined>);
+}
+
+/** Env for the agent's commands (its read-only GitHub token, say), with the secret values among it. */
+export interface Credentials {
+  readonly env: Readonly<Record<string, string>>;
+  readonly secrets: ReadonlyArray<SecretEntry>;
 }
 
 export async function runSkill<TInput, TOutput>(ctx: SkillContext, call: SkillCall<TInput>): Promise<TOutput> {
@@ -112,7 +125,10 @@ export async function runSkill<TInput, TOutput>(ctx: SkillContext, call: SkillCa
 
   const renderedArguments = renderInput(call.input, entrypoint.inputSchema);
   const runner = runnerFor(call.codingAgent);
-  const credentials = call.credentials;
+  // Outside the try below: a call whose credentials can't be resolved never reached the runner, so it has no usage.
+  const credentials = typeof call.credentials === "function"
+    ? await resolveCredentials(logger, call.entrypoint, call.credentials)
+    : call.credentials;
 
   const invocationId = randomUUID();
   const startedAt = performance.now();
@@ -151,6 +167,33 @@ export async function runSkill<TInput, TOutput>(ctx: SkillContext, call: SkillCa
       outcome,
     });
   }
+}
+
+/**
+ * Calls the call's credentials resolver. A failure is logged once and rethrown as is; the log names only the error's
+ * class, since its message may quote the very secret it failed on, which the logger can't redact without the resolved
+ * secrets.
+ */
+async function resolveCredentials(
+  logger: Logger,
+  entrypoint: string,
+  resolve: () => Promise<Credentials | undefined>,
+): Promise<Credentials | undefined> {
+  let resolved: Credentials | null | undefined;
+  try {
+    resolved = await resolve();
+  } catch (err) {
+    try {
+      logEntrypointFailure(logger, "error", entrypoint, "credentials-unresolved", {
+        error: err instanceof Error ? err.name : typeof err,
+      });
+    } catch {
+      // A failing logger must not replace the resolver's error, which is what the caller gets.
+    }
+    throw err;
+  }
+  // A resolver written without the types may answer null: no credentials, as for undefined.
+  return resolved ?? undefined;
 }
 
 /** Steps 6–7: the terminal JSON block, validated against `outputSchema`. */
