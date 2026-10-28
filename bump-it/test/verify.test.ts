@@ -231,6 +231,49 @@ describe("bump verification", () => {
       .toContain("the plan's reference declares g:lib 1.0 at :runtimeClasspath, not 1.1.0");
     expect(await verifyPlan({ ...input, reference: undefined })).toContainEqual(expect.stringContaining("the edit added the Gradle inventory"));
   });
+  it("lets a configuration the gate ignores fail to resolve the same way as in the plan's reference, while every move still has to land", async () => {
+    const plan = await planFor(routineUnit([candidate({ ecosystem: "Maven", name: "g:lib", from: "1.0", locations: [":runtimeClasspath"], declarations: [] })]), { files: new Map(), changes: [], notes: [] }, async () => undefined);
+    const FAILED = "Could not resolve all dependencies for configuration ':tool'.";
+    // :tool's resolution throws, as the exporter writes it: the error, and nothing resolved.
+    const inventory = (lib: string, tool: { error?: string | undefined; declares?: string; kind?: "project" | "buildscript" } = {}): GradleInventory => ({ schemaVersion: 1, tree: "worktree", builds: [{ build: ".", configurations: [
+      { id: ":runtimeClasspath", kind: "project", unresolved: [], error: undefined, resolved: [{ group: "g", name: "lib", version: lib }], declared: [{ group: "g", name: "lib", version: lib, reason: undefined }] },
+      { id: ":tool", kind: tool.kind ?? "project", unresolved: [], error: "error" in tool ? tool.error : FAILED, resolved: [], declared: [{ group: "g", name: "tool", version: tool.declares ?? "9.9", reason: undefined }] },
+    ] }] });
+    const config = (ignored: string[] | undefined) => ({ "build.gradle.kts": "", ...ignored === undefined ? {} : { ".github/supply-chain.json": JSON.stringify({ gradle: { ignoreConfigurations: ignored } }) } });
+    const verifyWith = (ignored: string[] | undefined, landed: string, edit: { head?: GradleInventory; reference?: GradleInventory; headIgnored?: string[] } = {}) => {
+      const headIgnored = edit.headIgnored ?? ignored;
+      return verifyPlan({ plan, npmFiles: new Map(), base: tree("base", config(ignored)), head: tree("head", config(headIgnored)), env, gradle: { base: inventory("1.0"), head: edit.head ?? inventory(landed) },
+        reference: markMoved(edit.reference ?? inventory(landed), "g:lib", landed, [":runtimeClasspath"]),
+        changedFiles: ["build.gradle.kts", ...headIgnored === ignored ? [] : [".github/supply-chain.json"]], toolWritten: undefined });
+    };
+    expect(await verifyWith([":tool"], "1.1.0")).toEqual([]);
+    // Outside the ignored ones, any failure on either side is reported, the same one included.
+    for (const ignored of [undefined, [":runtimeClasspath"]]) {
+      expect(await verifyWith(ignored, "1.1.0")).toEqual([
+        `:tool doesn't resolve in the plan's reference: ${FAILED}`,
+        `:tool doesn't resolve in the edit: ${FAILED}`,
+      ]);
+    }
+    // An edit can't ignore a configuration for itself: the policy fence refuses it first.
+    expect(await verifyWith(undefined, "1.1.0", { headIgnored: [":tool"] })).toEqual([expect.stringContaining("gate's own policy")]);
+    // The edit changed how it fails (a forced version there, say): what it resolves can't tell, its failure does.
+    const forced = "Cannot find a version of 'g:tool' that satisfies the version constraints";
+    expect(await verifyWith([":tool"], "1.1.0", { head: inventory("1.1.0", { error: forced }) })).toEqual([
+      `:tool, unlike the plan's reference, also fails to resolve ${forced} and no longer fails to resolve ${FAILED}`,
+    ]);
+    // A failure the edit adds where the reference resolves.
+    expect(await verifyWith([":tool"], "1.1.0", { reference: inventory("1.1.0", { error: undefined }) })).toEqual([
+      `:tool, unlike the plan's reference, also fails to resolve ${FAILED}`,
+    ]);
+    // What it declares, and its kind, still have to match.
+    expect(await verifyWith([":tool"], "1.1.0", { head: inventory("1.1.0", { declares: "9.10" }) })).toEqual([
+      ":tool, unlike the plan's reference, also declares g:tool 9.10 and no longer declares g:tool 9.9",
+    ]);
+    expect(await verifyWith([":tool"], "1.1.0", { head: inventory("1.1.0", { kind: "buildscript" }) })).toEqual([
+      ":tool is a buildscript configuration in the edit, project in the plan's reference",
+    ]);
+    expect(await verifyWith([":runtimeClasspath", ":tool"], "1.0")).toContain("the plan's reference declares g:lib 1.0 at :runtimeClasspath, not 1.1.0");
+  });
   it("lets a planned plugin update's fallout through when the reference, running the new plugin, shows it", async () => {
     const marker = "org.jetbrains.kotlin.jvm:org.jetbrains.kotlin.jvm.gradle.plugin";
     const plan = await planFor(routineUnit([candidate({ ecosystem: "Maven", name: marker, from: "2.0.0", minor: { version: "2.1.0", line: "2" }, major: undefined, locations: [":buildscript.classpath"], declarations: [] })]), { files: new Map(), changes: [], notes: [] }, async () => undefined);

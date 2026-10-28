@@ -96,9 +96,11 @@ core/tool-runtime/run.sh bump-it review leanish/widget   # every few hours
     paths out (see [tool-runtime](../core/tool-runtime)).
 - Verification fences off policy changes first, then requires exact planned lockfiles and dependency fields, exact
   planned Gradle declarations, unchanged unplanned declarations and floors, interpreted strict declarations and strict
-  constraints matching the Gradle reference, correct action pins, and all generated wrapper bytes/modes plus official checksums. Only after every local check passes does it run
-  `compare`, which must also pass. A report of local problems means `compare` has not run. Floor declarations are
-  checked as in [secure-it's verification](../secure-it/README.md#what-a-run-does) (step 6).
+  constraints matching the Gradle reference, correct action pins, and all generated wrapper bytes/modes plus official
+  checksums. The gate skips resolution failures in the configurations its `gradle.ignoreConfigurations` lists; like
+  secure-it, bump-it accepts an edit that fails to resolve there the same way as the plan's reference. Only after every
+  local check passes does it run `compare`, which must also pass. A report of local problems means `compare` has not
+  run. Floor declarations are checked as in [secure-it's verification](../secure-it/README.md#what-a-run-does) (step 6).
 - Open PRs count only when the head matches their body state or the exact tool journal entry, and are matched by the
   plan the journal saved for that head when the body lags behind. Same plan: leave it to
   review. Changed plan: redo on a clean base checkout, apply the new plan, verify and append a normal commit to the

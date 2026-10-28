@@ -3,7 +3,7 @@ import { basename } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { type CooldownEvaluation, heldLines } from "@leanish/gate/cooldown";
-import { type GateEnvironment, type GradleInputs, readSettings, runCompare, treeSources } from "@leanish/gate/gate";
+import { type GateEnvironment, type GradleInputs, readSettings, runCompare, type Settings, treeSources } from "@leanish/gate/gate";
 import type { GradleInventory } from "@leanish/gate/gradle";
 import type { Tree } from "@leanish/gate/tree";
 import { actionsOutsidePlan, declaredAt, directChangesOutside, directVersions, FLOORS_FILE, isDependencyFile, policyFence, preservedMavenFloorProblems } from "@leanish/tool-runtime/edit-checks";
@@ -11,7 +11,7 @@ import { actionsOutsidePlan, declaredAt, directChangesOutside, directVersions, F
 import type { WrapperFile } from "./wrapper-generation.ts";
 import { WRAPPER_FILES, type WrapperPlanner } from "./gradle-wrapper.ts";
 import { plannedPinsLanded } from "./action-pins.ts";
-import { referenceDifferences, type ReferenceMove, referenceProblems } from "@leanish/tool-runtime/gradle-reference";
+import { referenceDifferences, type ReferenceFloor, type ReferenceMove, referenceProblems } from "@leanish/tool-runtime/gradle-reference";
 import { type BumpPlan, DEPENDENCY_FIELDS, dependencyDigest, sha256 } from "./plan.ts";
 
 export interface VerifyInputs {
@@ -63,10 +63,14 @@ export async function verifyPlan(inputs: VerifyInputs): Promise<string[]> {
   if (await base.read(FLOORS_FILE) !== await head.read(FLOORS_FILE)) {
     problems.push("bump-it may not change dependency floors");
   }
-  problems.push(...await floorProblems(base, head, gradle));
+  // The gate reads head's config; the policy fence above has kept it base's.
+  const { config, floors } = await readSettings(base);
+  problems.push(...await floorProblems(floors, base, head, gradle));
   problems.push(...directChangesOutside(await directVersions(base), await directVersions(head), (ecosystem, name, where) => includesDeclaration(plan, ecosystem, name, where)));
-  // Gradle: the plan landed in the reference, and head resolves and declares exactly what the reference does.
-  problems.push(...referenceProblems(gradle.base, inputs.reference, referenceMoves(plan), []), ...referenceDifferences(inputs.reference, gradle.head));
+  // Gradle: the plan landed in the reference, and head resolves and declares exactly what the reference does; a
+  // configuration the gate's `gradle.ignoreConfigurations` lists may fail to resolve, but the same way as there.
+  const noFloors: ReferenceFloor[] = []; // bump-it never adds floors; the ignore list goes to referenceDifferences.
+  problems.push(...referenceProblems(gradle.base, inputs.reference, referenceMoves(plan), noFloors), ...referenceDifferences(inputs.reference, gradle.head, config.gradle.ignoreConfigurations));
   problems.push(...await plannedPinsLanded(plan.moves, base, head), ...await actionsOutsidePlan(pins, base, head));
   if (plan.kind !== "major") {
     const outside = inputs.changedFiles.filter((path) => !isDependencyFile(path, pins.length > 0) && !(wrapperMoves.length > 0 && WRAPPER_FILES.includes(path)));
@@ -177,9 +181,9 @@ function matchesPlannedFile(plan: BumpPlan, file: BumpPlan["npmFiles"][number], 
   return sha256(text) === file.sha256;
 }
 
-async function floorProblems(base: Tree, head: Tree, gradle: GradleInputs): Promise<string[]> {
+async function floorProblems(floors: Settings["floors"], base: Tree, head: Tree, gradle: GradleInputs): Promise<string[]> {
   const problems: string[] = [];
-  for (const floor of (await readSettings(base)).floors) {
+  for (const floor of floors) {
     if (floor.ecosystem === "Maven") {
       if (floor.purpose === "security") {
         problems.push(...preservedMavenFloorProblems(floor, gradle.base, gradle.head));
