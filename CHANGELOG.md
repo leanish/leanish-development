@@ -9,6 +9,18 @@
   release (stable tag on main, green checks), packs the tarball and imports every export from a clean install, without
   publishing permission; a second publishes exactly that tarball in an `npm` environment the owner approves. The
   owner's one-time setup is in docs/releasing.md.
+- `@leanish/agent-runtime` exports what the incubator's runtime needs from it and couldn't import:
+  `./logger/correlation` (`withCorrelation`, `getCorrelation`), `./logger/redactor` (`SecretEntry`), `./skill/skill`
+  (`LoadedSkill`), `./skill/stage-skills` (`writePluginDir`, `WritePluginDirArgs`), `./usage/skill-usage-record`
+  (`SkillUsageRecorder`, `SkillUsageRecord`, `SkillRunStart`, `SkillUsageOutcome`, `ModelUsageSummary`),
+  `./usage/usage-totals` (`totalSkillUsage`, `UsageTotals`) and `./usage/quota` (`observeQuota`, `QuotaUsage`,
+  `QuotaWindowObservation`, `RateLimitSnapshot`).
+- `runSkill`'s `SkillCall.credentials` may be a resolver, `() => Promise<Credentials | undefined>` (`Credentials` is
+  exported from `@leanish/agent-runtime/skill/run-skill`). It's called once per call, after the call's checks pass and
+  its runner is found and before the call is announced to the usage recorder, so a call rejected earlier never
+  resolves credentials; a resolver that throws or rejects fails the call with its own error (logged once as
+  `credentials-unresolved`, naming only the error's class), with nothing started or recorded, and `undefined` (or
+  `null`) means no credentials. An object is used as before.
 
 ### Changed
 
@@ -22,21 +34,6 @@
   through this package. A JavaScript consumer goes without it; a TypeScript consumer must now declare `@types/node`
   `>=24` itself (the same range as before). With `skipLibCheck: true`, one that doesn't gets no error: the
   declarations' `NodeJS.*` references silently become `any`.
-
-### Added
-
-- `@leanish/agent-runtime` exports what the incubator's runtime needs from it and couldn't import:
-  `./logger/correlation` (`withCorrelation`, `getCorrelation`), `./logger/redactor` (`SecretEntry`), `./skill/skill`
-  (`LoadedSkill`), `./skill/stage-skills` (`writePluginDir`, `WritePluginDirArgs`), `./usage/skill-usage-record`
-  (`SkillUsageRecorder`, `SkillUsageRecord`, `SkillRunStart`, `SkillUsageOutcome`, `ModelUsageSummary`),
-  `./usage/usage-totals` (`totalSkillUsage`, `UsageTotals`) and `./usage/quota` (`observeQuota`, `QuotaUsage`,
-  `QuotaWindowObservation`, `RateLimitSnapshot`).
-- `runSkill`'s `SkillCall.credentials` may be a resolver, `() => Promise<Credentials | undefined>` (`Credentials` is
-  exported from `@leanish/agent-runtime/skill/run-skill`). It's called once per call, after the call's checks pass and
-  its runner is found and before the call is announced to the usage recorder, so a call rejected earlier never
-  resolves credentials; a resolver that throws or rejects fails the call with its own error (logged once as
-  `credentials-unresolved`, naming only the error's class), with nothing started or recorded, and `undefined` (or
-  `null`) means no credentials. An object is used as before.
 
 ### Fixed
 
