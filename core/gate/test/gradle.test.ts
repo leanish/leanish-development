@@ -174,6 +174,20 @@ describe("running the Gradle inventory", () => {
     };
   }
 
+  it.each([
+    ["tools/conventions/", "tools/conventions"],
+    ["tools///conventions///", "tools/conventions"],
+    ["/", "."],
+    ["///", "."],
+    ["", "."],
+    [".", "."],
+  ])("normalizes build path %j to %j and inventories it once", async (build, normalized) => {
+    const calls: string[][] = [];
+    const inventory = await runGradleInventory(repo, [build, normalized], "worktree", gradlew(["."], calls, []));
+    expect(inventory.builds.map((entry) => entry.build)).toEqual([normalized]);
+    expect(calls).toHaveLength(1);
+  });
+
   it("keeps GitHub and Actions credentials out of the Gradle child environment", async () => {
     const credentials = [
       "GITHUB_TOKEN", "GH_TOKEN", "GIT_FETCH_TOKEN", "ACTIONS_RUNTIME_TOKEN",
