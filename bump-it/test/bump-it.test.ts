@@ -12,7 +12,7 @@ import { SkillLoader } from "@leanish/agent-runtime/skill/skill-loader";
 import { SchemaValidator } from "@leanish/agent-runtime/skill/validator";
 import { runCompare } from "@leanish/gate/gate";
 import type { BumpCandidate } from "@leanish/gate/candidates";
-import { prepareNpmPeers } from "@leanish/gate/npm-peers";
+import { type NpmPeerPlanner, prepareNpmPeers } from "@leanish/gate/npm-peers";
 import { versionKey } from "@leanish/gate/package-version";
 import { Snapshot } from "@leanish/gate/snapshot";
 import type { Tree } from "@leanish/gate/tree";
@@ -120,6 +120,32 @@ function harness(options: { bumps?: BumpCandidate[]; prs?: GitHubPullRequest[]; 
 }
 const major = (bump = candidate()) => majorUnits([bump])[0]!;
 const routine = (bump = candidate()) => routineUnit([bump]);
+
+/** A base declaring both lib and dev, so a routine moving both can plan their direct peers. */
+const LIB_AND_DEV = (() => {
+  const root = { dependencies: { lib: "^1.0.0", dev: "^1.0.0" } };
+  return { "package.json": JSON.stringify(root), "package-lock.json": JSON.stringify({ lockfileVersion: 3, packages: { "": root, "node_modules/lib": { version: "1.0.0" }, "node_modules/dev": { version: "1.0.0" } } }) };
+})();
+const dev = () => candidate({ name: "dev", minor: { version: "1.0.1", line: "1" }, declarations: [{ lockfile: "package-lock.json", workspace: ".", declaredAs: "dev", spec: "^1.0.0" }] });
+/** A failed direct-peer identity read, as the gate's planner reports the set it blocks. */
+const PEER_UNDECIDED = "no safe aged compatible direct-peer set for lib@1.1.0: companion@1.0.1: attestation lookup failed with HTTP 503; no eligible compatible combination satisfies all peer ranges";
+/** A direct-peer planner that blocks lib's set, as one whose checks failed (`undecided`) or as refused; other moves pass. */
+function blockingLib(undecided: boolean): NpmPeerPlanner {
+  return {
+    resolve: async (moves) => {
+      const stuck = moves.filter((move) => move.name === "lib");
+      return { additions: [], sets: [], blocked: stuck.length === 0 ? [] : [{ moves: stuck, reason: PEER_UNDECIDED, ...(undecided ? { undecided: true as const } : {}) }] };
+    },
+  };
+}
+/** `h`'s deps on the lib-and-dev base, with `peers` as the candidates' direct-peer planner. */
+function withPeers(h: ReturnType<typeof harness>, peers: NpmPeerPlanner): BumpItDeps {
+  return {
+    ...h.deps,
+    candidates: async (...args) => ({ ...await h.deps.candidates(...args), npmPeers: peers }),
+    trees: { ...h.deps.trees, commit: async (_wc, sha) => tree(sha, LIB_AND_DEV) },
+  };
+}
 
 const wrapperTarget: WrapperTarget = {
   distributionUrl: "https://services.gradle.org/distributions/gradle-8.1-bin.zip",
@@ -489,6 +515,101 @@ describe("bump-it run", () => {
     expect(await bumpIt(h.deps).run(h.context)).toMatchObject({ errors: [`other@1.0.0: ${problem}`], units: [{ topic: "routine", outcome: "updated" }] });
     expect(h.reverted).toEqual([BASE_SHA]);
   });
+  it("keeps a PR that moves a dependency whose direct-peer set can't be decided, reporting an error while another unit still publishes", async () => {
+    const lib = candidate({ major: undefined });
+    const pr = await prFor(routineUnit([lib, dev()]));
+    const run = async (undecided: boolean) => {
+      const h = harness({ prs: [pr], bumps: [lib, dev()] });
+      return { h, result: await bumpIt(withPeers(h, blockingLib(undecided))).run(h.context) };
+    };
+    // Without the check, the routine would rewrite #7 to move dev alone, as if lib had nothing left to move.
+    const failed = await run(true);
+    expect(failed.result).toMatchObject({
+      errors: [PEER_UNDECIDED],
+      units: [
+        { topic: "routine", outcome: "failed", detail: "npm lib's direct-peer set can't be decided; keeping the PR" },
+        { topic: "dev-major", outcome: "published" },
+      ],
+    });
+    expect(failed.h.github.prs.get(7)).toEqual(pr);
+    expect(failed.h.workspace.publications.map((entry) => entry.prepared.branch)).toEqual(["bump-it/2026-10-07-dev-major"]);
+    // A set the rules refuse reports as before: a note, no error, and the routine moves the rest.
+    const refused = await run(false);
+    expect(refused.result).toMatchObject({ units: [{ topic: "routine", outcome: "updated", notes: expect.arrayContaining([PEER_UNDECIDED]) }, { topic: "dev-major", outcome: "published" }] });
+    expect(refused.result).not.toHaveProperty("errors");
+  });
+  it("keeps a routine's PR whose only move's direct-peer set can't be decided, instead of finding nothing to move", async () => {
+    const lib = candidate({ major: undefined });
+    const pr = await prFor(routine(lib));
+    const h = harness({ prs: [pr], bumps: [lib] });
+    expect(await bumpIt(withPeers(h, blockingLib(true))).run(h.context)).toMatchObject({
+      errors: [PEER_UNDECIDED],
+      units: [{ topic: "routine", outcome: "failed", detail: "npm lib's direct-peer set can't be decided; keeping the PR" }],
+    });
+    expect(h.github.prs.get(7)).toEqual(pr);
+    // A set the rules refuse leaves nothing to move, as before.
+    const refused = harness({ prs: [pr], bumps: [lib] });
+    expect(await bumpIt(withPeers(refused, blockingLib(false))).run(refused.context)).toMatchObject({ units: [{ topic: "routine", outcome: "nothing-to-move" }] });
+  });
+  it("keeps a PR whose move only another unit's computation couldn't decide", async () => {
+    // lib's routine move decides; its major's direct-peer set can't be. The routine comes first, so the major's
+    // failure has to be known before the routine reuses #7, which records lib.
+    const lib = candidate({ minor: { version: "1.2.0", line: "1" } });
+    const dev = candidate({ name: "dev", minor: { version: "1.0.1", line: "1" }, major: undefined, declarations: [{ lockfile: "package-lock.json", workspace: ".", declaredAs: "dev", spec: "^1.0.0" }] });
+    const pr = await prFor(routineUnit([candidate({ major: undefined }), dev]));
+    const h = harness({ prs: [pr], bumps: [lib, dev] });
+    const reason = "no safe aged compatible direct-peer set for lib@2.0.0: companion@2.0.0: attestation lookup failed with HTTP 503";
+    const peers: NpmPeerPlanner = { resolve: async (moves) => {
+      const stuck = moves.filter((move) => move.name === "lib" && move.to === "2.0.0");
+      return { additions: [], sets: [], blocked: stuck.length === 0 ? [] : [{ moves: stuck, reason, undecided: true }] };
+    } };
+    expect(await bumpIt(withPeers(h, peers)).run(h.context)).toMatchObject({
+      errors: [reason],
+      units: [
+        { topic: "routine", outcome: "failed", detail: "npm lib's direct-peer set can't be decided; keeping the PR" },
+        { topic: "lib-major", outcome: "blocked" },
+      ],
+    });
+    expect(h.github.prs.get(7)).toEqual(pr);
+    expect(h.workspace.publications).toEqual([]);
+  });
+  it("names every cause when a dependency's publisher identity and its direct-peer set both can't be decided", async () => {
+    const problem = "lib@1.1.0's publisher identity can't be decided, so no move is proposed: attestation lookup failed with HTTP 503";
+    const pr = await prFor(routineUnit([candidate({ major: undefined }), dev()]));
+    const h = harness({ prs: [pr], bumps: [candidate({ minor: undefined, major: undefined, problems: [problem], undecided: problem }), candidate({ ...dev(), major: undefined })] });
+    // dev's set, which takes lib in, can't be decided either.
+    const peers: NpmPeerPlanner = { resolve: async (moves) => ({ additions: [], sets: [["dev", "lib"]], blocked: [{ moves: [...moves], reason: PEER_UNDECIDED, undecided: true }] }) };
+    expect(await bumpIt(withPeers(h, peers)).run(h.context)).toMatchObject({
+      units: [{ topic: "routine", outcome: "failed", detail: "npm lib's publisher identity and direct-peer set can't be decided; keeping the PR; npm dev's direct-peer set can't be decided; keeping the PR" }],
+    });
+    expect(h.github.prs.get(7)).toEqual(pr);
+  });
+  it("reports a direct peer's failed read from the gate's planner as an error, keeping the PR that moves it", async () => {
+    // The real planner: lib's version listing answers HTTP 503, so its set can't be decided; dev's has no peers.
+    const lib = candidate({ major: undefined });
+    const pr = await prFor(routineUnit([lib, dev()]));
+    const h = harness({ prs: [pr], bumps: [lib, dev()] });
+    const lock = JSON.parse(LIB_AND_DEV["package-lock.json"]) as unknown;
+    const prepared = await prepareNpmPeers(new Map([["package-lock.json", lock]]), [{ ecosystem: "npm", name: "lib", version: "1.1.0" }, { ecosystem: "npm", name: "dev", version: "1.0.1" }], {
+      versions: async (name) => {
+        if (name === "lib") throw new Error("registry lookup of lib failed with HTTP 503");
+        return ["1.0.0", "1.0.1", "2.0.0"];
+      },
+      manifest: async () => ({}), published: async () => new Date("2026-01-01"), identity: async () => [],
+      line: (_name, version) => version.split(".")[0]!, isOwn: () => false, now: NOW, releaseAgeDays: 7,
+    });
+    const snapshot = new Snapshot(new Map([...prepared.bases, ...prepared.candidates].map((pkg) => [versionKey(pkg), []])), [], NOW);
+    const result = await bumpIt(withPeers(h, { resolve: (moves) => prepared.resolve(moves, snapshot) })).run(h.context);
+    const reason = "no safe aged compatible direct-peer set for lib@1.1.0: registry lookup of lib failed with HTTP 503; lib: no candidate passes age, advisory and identity checks; no eligible compatible combination satisfies all peer ranges";
+    expect(result).toMatchObject({
+      errors: [reason],
+      units: [
+        { topic: "routine", outcome: "failed", detail: "npm lib's direct-peer set can't be decided; keeping the PR" },
+        { topic: "dev-major", outcome: "published" },
+      ],
+    });
+    expect(h.github.prs.get(7)).toEqual(pr);
+  });
   it("reports wrapper omissions in the run and the published plan while npm still proceeds", async () => {
     const h = harness({ bumps: [candidate({ major: undefined })] });
     const notes = ["Gradle wrapper left out: catalog unavailable"];
@@ -767,6 +888,41 @@ describe("bump-it run", () => {
     await bumpIt(next.deps).run(next.context);
     expect(next.computed[1]?.topic).toBe("b-major");
   });
+  it("reports a late-computed major's undecided set without rechecking a PR already updated", async () => {
+    const lib = candidate({ minor: { version: "1.2.0", line: "1" } });
+    const pr = await prFor(routine(candidate({ major: undefined })));
+    // dev sorts before lib. With a cap of one, its refusal leaves room for lib's major to run later.
+    const h = harness({ bumps: [lib, { ...dev(), minor: undefined }], prs: [pr] });
+    const refused = "no compatible direct-peer set for dev@2.0.0";
+    const reason = "no safe aged compatible direct-peer set for lib@2.0.0: companion@2.0.0: attestation lookup failed with HTTP 503";
+    const resolutions: Array<{ targets: string[]; routineTo: string | undefined }> = [];
+    const peers: NpmPeerPlanner = { resolve: async (moves) => {
+      resolutions.push({ targets: moves.map((move) => `${move.name}@${move.to}`), routineTo: planOf(h.github.prs.get(pr.number)!.body)?.moves.find((move) => move.name === "lib")?.to });
+      const first = moves.filter((move) => move.name === "dev" && move.to === "2.0.0");
+      const late = moves.filter((move) => move.name === "lib" && move.to === "2.0.0");
+      return { additions: [], sets: [], blocked: [
+        ...(first.length === 0 ? [] : [{ moves: first, reason: refused }]),
+        ...(late.length === 0 ? [] : [{ moves: late, reason, undecided: true as const }]),
+      ] };
+    } };
+
+    expect(await bumpIt(withPeers(h, peers)).run(h.context)).toMatchObject({
+      errors: [reason],
+      units: [
+        { topic: "routine", outcome: "updated" },
+        { topic: "dev-major", outcome: "blocked", detail: refused },
+        { topic: "lib-major", outcome: "blocked", detail: reason },
+      ],
+    });
+    expect(resolutions).toEqual([
+      { targets: ["lib@1.2.0"], routineTo: "1.1.0" },
+      { targets: ["dev@2.0.0"], routineTo: "1.1.0" },
+      { targets: ["lib@2.0.0"], routineTo: "1.2.0" },
+    ]);
+    expect(h.deferred()).toEqual([]);
+    expect(h.workspace.publications.map((entry) => entry.prepared.branch)).toEqual([pr.headRef]);
+    expect(planOf(h.github.prs.get(pr.number)!.body)?.moves.map((move) => [move.name, move.to])).toEqual([["lib", "1.2.0"]]);
+  });
   it("refuses a base or PR head race before any edit or push", async () => {
     const h = harness({ prs: [await prFor(routine(candidate({ minor: { version: "1.0.1", line: "1" } })))], bumps: [candidate({ major: undefined })] });
     const prepare = h.workspace.prepareBranch.bind(h.workspace);
@@ -927,6 +1083,19 @@ describe("bump-it review", () => {
     expect(h.github.branches.has(pr.headRef)).toBe(true);
     expect(h.github.calls.filter((call) => call.startsWith("closePullRequest") || call.startsWith("updatePullRequest"))).toEqual([]);
     expect([h.workspace.deletions, h.workspace.publications, h.agentCalls, h.computed, h.reverted]).toEqual([[], [], [], [], []]);
+  });
+  it("keeps a routine's PR, untouched, while a direct-peer set can't be decided on the new base", async () => {
+    const pr = await prFor(routineUnit([candidate({ major: undefined }), dev()]));
+    const h = harness({ prs: [pr], bumps: [candidate({ major: undefined }), candidate({ ...dev(), major: undefined })], baseSha: NEW_BASE });
+    h.github.branches.add(pr.headRef);
+    // Without the guard: rebased onto dev alone, as if lib had nothing left to move.
+    expect(await bumpIt(withPeers(h, blockingLib(true))).review(h.context)).toMatchObject({ reviewed: [
+      { number: pr.number, outcome: "error", detail: `a direct-peer set can't be decided on the new base; keeping the PR: ${PEER_UNDECIDED}` },
+    ] });
+    expect(h.github.prs.get(pr.number)).toEqual(pr);
+    expect(h.github.branches.has(pr.headRef)).toBe(true);
+    expect(h.github.calls.filter((call) => call.startsWith("closePullRequest") || call.startsWith("updatePullRequest"))).toEqual([]);
+    expect([h.workspace.deletions, h.workspace.publications, h.agentCalls, h.reverted]).toEqual([[], [], [], []]);
   });
   it("recomputes the whole routine on a moved base and reconciles a changed plan", async () => {
     const h = harness({ prs: [await prFor(routine())], baseSha: NEW_BASE, bumps: [candidate({ minor: { version: "1.2.0", line: "1" }, major: undefined })] });

@@ -58,7 +58,7 @@ const FAILING = fileURLToPath(new URL("./fixtures/final-line-on-failing-stream.t
 
 /** Runs the failing stream's fixture to its exit (`signal`: sends it a SIGTERM once it's ready), with what it printed. */
 async function onFailingStream(
-  mode: "end" | "no-close" | "write-final-line" | "signal",
+  mode: "end" | "no-close" | "write-final-line" | "start-notice" | "signal",
   marker: string,
 ): Promise<{ code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string }> {
   const child = spawn(process.execPath, [FAILING, mode], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, TEST_REPORT_MARKER: marker } });
@@ -536,6 +536,73 @@ describe("startRunReport", () => {
     expect(lines(unmarked.writes[1])).toEqual([expect.objectContaining({ msg: "run finished" })]);
   });
 
+  it("returns from startRunReport when the start marker's notice throws, leaving no listener, and still ends with its line", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "run-report-marker-"));
+    const attempts: string[] = [];
+    const throwing = Object.assign(new EventEmitter(), {
+      write: (text: string) => {
+        attempts.push(text);
+        throw new Error("stream destroyed");
+      },
+    });
+    const report = startRunReport({
+      stream: throwing as unknown as NodeJS.WritableStream,
+      env: { TEST_REPORT_MARKER: join(dir, "no-such-dir", "marker") },
+      marker: { env: "TEST_REPORT_MARKER", when: "start" },
+    });
+    expect(attempts).toEqual([expect.stringContaining("run report: can't write TEST_REPORT_MARKER=")]);
+    expect(throwing.listenerCount("error")).toBe(0);
+    expect(throwing.listenerCount("close")).toBe(0);
+    await expect(report.end({ status: "ok", exitCode: 0 })).resolves.toBeUndefined();
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]).toContain('"run finished"');
+    expect(throwing.listenerCount("error")).toBe(0);
+    expect(throwing.listenerCount("close")).toBe(0);
+  });
+
+  it("keeps exactly one listener for the start marker's notice until the failed stream's 'error', and none after", async () => {
+    const missing = join(mkdtempSync(join(tmpdir(), "run-report-marker-")), "no-such-dir", "marker");
+    for (const emitClose of [true, false]) {
+      const failing = failingWritable(emitClose);
+      const emitted = errorEmitted(failing);
+      const watching = failing.listenerCount("error");
+      const report = startRunReport({ stream: failing, env: { TEST_REPORT_MARKER: missing }, marker: { env: "TEST_REPORT_MARKER", when: "start" } });
+      await settle();
+      expect(failing.listenerCount("error")).toBe(watching + 1);
+      await emitted;
+      expect(failing.listenerCount("error")).toBe(0);
+      expect(failing.listenerCount("close")).toBe(0);
+      // Not ended: only the notice was written.
+      report.end({ status: "ok", exitCode: 0 }).catch(() => undefined);
+    }
+  });
+
+  it("never rejects, nor leaves a listener, when the stream throws while it is being set up", async () => {
+    const cases: Array<[string, () => { stream: NodeJS.WritableStream; emitter?: EventEmitter }]> = [
+      ["on throws", () => ({ stream: { write: () => { throw new Error("gone"); }, on: () => { throw new Error("no events"); } } as unknown as NodeJS.WritableStream })],
+      ["destroyed getter throws", () => ({ stream: { get destroyed(): boolean { throw new Error("no state"); }, on: () => undefined, write: () => true } as unknown as NodeJS.WritableStream })],
+      ["close's on throws", () => {
+        const emitter = Object.assign(new EventEmitter(), { write: () => true });
+        const on = emitter.on.bind(emitter);
+        emitter.on = ((event: string, listener: (...args: unknown[]) => void) => {
+          if (event === "close") throw new Error("no close");
+          return on(event, listener);
+        }) as typeof emitter.on;
+        return { stream: emitter as unknown as NodeJS.WritableStream, emitter };
+      }],
+    ];
+    for (const [name, make] of cases) {
+      const { stream, emitter } = make();
+      await expect(writeFinalLine(stream, "{}\n"), name).resolves.toBeUndefined();
+      expect(emitter?.listenerCount("error") ?? 0, name).toBe(0);
+      const missing = join(mkdtempSync(join(tmpdir(), "run-report-marker-")), "no-such-dir", "marker");
+      const report = startRunReport({ stream, env: { TEST_REPORT_MARKER: missing }, marker: { env: "TEST_REPORT_MARKER", when: "start" } });
+      await settle();
+      await expect(report.end({ status: "ok", exitCode: 0 }), name).resolves.toBeUndefined();
+      expect(emitter?.listenerCount("error") ?? 0, name).toBe(0);
+    }
+  });
+
   it("removes the marker's variable from process.env as it starts, before any child process can inherit it", async () => {
     const marker = join(mkdtempSync(join(tmpdir(), "run-report-marker-")), "marker");
     vi.stubEnv("TEST_REPORT_MARKER", marker);
@@ -582,6 +649,25 @@ describe("startRunReport", () => {
     await expect(writeFinalLine(throwing as unknown as NodeJS.WritableStream, "{}\n")).resolves.toBeUndefined();
     expect(throwing.listenerCount("error")).toBe(0);
     expect(throwing.listenerCount("close")).toBe(0);
+  });
+
+  it("drops each listener on its own when a removal throws, and retries the one left on the stream's next event", async () => {
+    let throwOnce = true;
+    const flaky = Object.assign(new EventEmitter(), { write: (_text: string, callback: () => void) => callback() });
+    const remove = flaky.removeListener.bind(flaky);
+    flaky.removeListener = (event: string | symbol, listener: (...args: unknown[]) => void) => {
+      if (throwOnce) {
+        throwOnce = false;
+        throw new Error("removal failed");
+      }
+      return remove(event, listener);
+    };
+    await writeFinalLine(flaky as unknown as NodeJS.WritableStream, "{}\n");
+    // The 'error' removal threw; the 'close' one still went through.
+    expect(flaky.listenerCount("error")).toBe(1);
+    expect(flaky.listenerCount("close")).toBe(0);
+    flaky.emit("error", new Error("late"));
+    expect(flaky.listenerCount("error")).toBe(0);
   });
 
   it("writes to a stream already destroyed without listening, so repeated writes leave no listener behind", async () => {
@@ -668,6 +754,13 @@ describe("startRunReport", () => {
     },
     20_000,
   );
+
+  it("on a stream whose write fails the start marker's notice, keeps the process's exit code, its later 'error' heard", async () => {
+    const marker = join(mkdtempSync(join(tmpdir(), "run-report-marker-")), "no-such-dir", "marker");
+    const { code, signal, stdout, stderr } = await onFailingStream("start-notice", marker);
+    expect({ code, signal }, stderr).toEqual({ code: 0, signal: null });
+    expect(stdout).toBe("started\ndestroyed\n");
+  }, 20_000);
 
   it("on a real SIGTERM with a failing stream, still dies of the signal, without the marker", async () => {
     const marker = join(mkdtempSync(join(tmpdir(), "run-report-marker-")), "marker");

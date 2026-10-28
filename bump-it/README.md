@@ -50,7 +50,9 @@ core/tool-runtime/run.sh bump-it review leanish/widget   # every few hours
   - One peer snapshot judges the fixed targets and all companions together. Impossible sets or repository constraints
     that exclude a companion are reported and left out, while unrelated routine moves continue.
   - Unreadable locked peer metadata blocks npm moves because incoming constraints cannot be ruled out. New or purely
-    transitive peers stay with npm resolution and `compare`.
+    transitive peers stay with npm resolution and `compare`. That, and any other read a set needs that fails (a copy's
+    version listing or candidate manifest, a candidate's identity or publish time), also reports the set under
+    `errors`, so a batch counts the repository as failed.
   - A major's PR still belongs to its primary package and counts as one new major. A major whose direct-peer set can't
     coexist within the companions' compatible lines is reported as `blocked` with its reason; bump-it does not
     coordinate several major migrations into one PR.
@@ -96,16 +98,18 @@ core/tool-runtime/run.sh bump-it review leanish/widget   # every few hours
     paths out (see [tool-runtime](../core/tool-runtime)).
 - Verification fences off policy changes first, then requires exact planned lockfiles and dependency fields, exact
   planned Gradle declarations, unchanged unplanned declarations and floors, interpreted strict declarations and strict
-  constraints matching the Gradle reference, correct action pins, and all generated wrapper bytes/modes plus official checksums. Only after every local check passes does it run
-  `compare`, which must also pass. A report of local problems means `compare` has not run. Floor declarations are
-  checked as in [secure-it's verification](../secure-it/README.md#what-a-run-does) (step 6).
+  constraints matching the Gradle reference, correct action pins, and all generated wrapper bytes/modes plus official
+  checksums. The gate skips resolution failures in the configurations its `gradle.ignoreConfigurations` lists; like
+  secure-it, bump-it accepts an edit that fails to resolve there the same way as the plan's reference. Only after every
+  local check passes does it run `compare`, which must also pass. A report of local problems means `compare` has not
+  run. Floor declarations are checked as in [secure-it's verification](../secure-it/README.md#what-a-run-does) (step 6).
 - Open PRs count only when the head matches their body state or the exact tool journal entry, and are matched by the
   plan the journal saved for that head when the body lags behind. Same plan: leave it to
   review. Changed plan: redo on a clean base checkout, apply the new plan, verify and append a normal commit to the
   existing PR history. Earlier major adaptations are redone for the new target.
   A human push is left alone; a separate PR is opened. Other tools' overlapping PRs never suppress work. A PR whose
-  plan moves a dependency whose publisher identity can't be decided now is kept as it is: its unit fails rather than
-  rewrite it without that move, and the other units go on.
+  plan moves a dependency that can't be decided now (its publisher identity or its direct-peer set, because a check
+  failed) is kept as it is: its unit fails rather than rewrite it without that move, and the other units go on.
 - `maxNewMajorsPerRun` (default 3) caps only new major PRs. Updates are uncapped. Deferred packages are saved under
   `<state>/deferred/` and get priority next run. Reports include every failed/deferred unit and unresolved copy.
 
@@ -155,8 +159,9 @@ handles pending/green checks without a model. A routine recomputes the whole rou
 - Otherwise merge, resolve dependency conflicts from base (wrapper jars restored as binary) and re-apply (major code
   conflicts go to the agent's `resolve` mode), verify, publish normally. Clean same-target major merges preserve
   existing script/config adaptations.
-- While any dependency's publisher identity can't be decided on the new base (its check failed), the tick reports an
-  `error` and keeps the PR as it is: a dependency left without a move that way may still have something to move.
+- While any dependency's publisher identity can't be decided on the new base (its check failed), or a direct-peer set
+  in the PR's recomputation can't be, the tick reports an `error` and keeps the PR as it is: a dependency left without
+  a move that way may still have something to move.
 - If recomputation blocks a major's direct-peer set, the tick reports an `error` with the reason and retains the PR and
   branch for a later tick; it does not treat the blocked move as completed work.
 - Failed major CI gets at most two adaptations, with the attempt counted before the agent starts. Routine CI failures

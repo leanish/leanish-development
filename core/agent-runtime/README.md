@@ -29,10 +29,33 @@ Most of it is copied from the runtime of leanish-development-incubator (private)
 instead of its copies; until it does, a fix to a copied file is made in both repositories.
 [PROVENANCE.md](PROVENANCE.md) lists every file, where it comes from and what changed.
 
+Its exports are the modules tool-runtime, secure-it and bump-it import, plus what the incubator's runtime uses and they
+don't: `./errors`, `./skill/validate-compat`, `./types/effort`, `./logger/correlation` (`withCorrelation`,
+`getCorrelation`), `./logger/redactor` (`SecretEntry`), `./skill/skill` (`LoadedSkill`), `./skill/stage-skills` (`writePluginDir`,
+`WritePluginDirArgs`), `./usage/skill-usage-record` (`SkillUsageRecorder`, `SkillUsageRecord`, `SkillRunStart`,
+`SkillUsageOutcome`, `ModelUsageSummary`), `./usage/usage-totals` (`totalSkillUsage`, `UsageTotals`) and
+`./usage/quota` (`observeQuota`, `QuotaUsage`, `QuotaWindowObservation`, `RateLimitSnapshot`). The symbols named are
+what the incubator uses, but each exported subpath's whole module is public API: everything else it exports too (such as
+`./logger/redactor`'s `Redactor`, `./skill/stage-skills`' `stageSkills`, `./usage/quota`'s `RESET_JITTER_SECONDS` or
+`./usage/skill-usage-record`'s `toSkillUsageRecord`).
+
 Skill schemas also accept the `[object, null]` type union and a restricted constant-property
 `if`/`then` that requires one non-null object. Both tools' answers use them so that only cannot-apply may leave
 `publication` null; applied still needs the complete publication text. Other unions, general conditionals, unknown
 keywords and malformed objects are still rejected.
+
+## Credentials
+
+`SkillCall.credentials` gives the agent's commands their env with the secret values among it (`Credentials`, from
+`./skill/run-skill`), or a resolver for them, `() => Promise<Credentials | undefined>`. An object is used as given. A
+resolver is called once per `runSkill` call (nothing is cached across calls) after the call's checks pass (a declared
+entrypoint, its skills loaded, valid input, a working copy for a write run), its input is rendered and its runner
+found, and before the call is announced to the `usageRecorder` and its runner starts. When it throws or rejects,
+`runSkill` logs `runSkill failed` once with the reason `credentials-unresolved` and the error's class only (its
+message could quote a secret the logger can't redact yet), then fails with that same error, and nothing is started or
+recorded. `undefined`, or `null` from a resolver written without the types, means no credentials, as when the field is
+left out. So a host such as the incubator, whose target credentials are resolved per call, resolves them
+only for calls that reach a runner.
 
 ## Isolation policy
 
@@ -42,7 +65,8 @@ optional and only the Codex adapter uses it. `isolationPolicy(settings)` builds 
 sensitive home paths, the Codex login, the guards, the commit identity and the release age), as secure-it and bump-it
 do. Runners get it through their adapters, which check it (absolute paths, string env values) and take the runner's
 other options (binary, timeouts, staging…) separately: `codexRunnerOptions(policy, tuning?)` and
-`claudeCodeRunnerOptions(policy, confinement, tuning?)`. A policy can also be written out by hand: nothing in it
+`claudeCodeRunnerOptions(policy, confinement, tuning?)`; `assertValidPolicy(policy, entry)` is that same check, exported
+for other entries that take a policy (the tools' sandboxed commands). A policy can also be written out by hand: nothing in it
 needs settings, a home or a login.
 
 How each incubator host composes it when it adopts this package:
@@ -74,9 +98,12 @@ once the line is flushed, and a second `end`, or one racing a signal, writes not
 When the stream fails the write (a closed pipe, a full disk), `end` still resolves and the command keeps its exit
 code: the `error` the stream emits afterwards is heard and dropped, only by the listener the write added, which goes
 once the stream reports `error` or `close` (after a successful write, at once). It hears that first event only: a
-second `error`, one after `close`, or one while the `start` marker's failure is written, still ends a process with no
-`error` listener of its own, as before 0.9.0, and so does an `error` a stream emits while being destroyed by something
-else: a stream already destroyed or errored is written without listening, since its write fails without a new `error`.
+second `error`, or one after `close`, still ends a process with no `error` listener of its own, as before 0.9.0, and so
+does an `error` a stream emits while being destroyed by something else: a stream already destroyed or errored is
+written without listening, since its write fails without a new `error`. While such a listener waits it hears the stream's
+first `error` whatever its cause, so an unrelated `error` in that window is dropped too, the notice's and the final
+line's alike. The `start` marker's failure notice is written the same way, so a stream that fails it, throws, or whose
+`on` throws doesn't end the process nor `startRunReport`.
 `marker` is for a wrapper that writes its own final line unless told otherwise: its `env` variable names the file, and
 is read and removed from the environment as reporting starts, before the command starts any child process.
 `when: "start"` writes the file as soon as reporting is in place; `when: "after-final-line"` once the final line is
@@ -126,7 +153,13 @@ The published package has:
   `default`), so the two export maps can't drift apart;
 - `guard/`, with `gh` and `git` executable; `guardDir()` (`./guard-dir`) returns its path from either form;
 - `README.md`, `PROVENANCE.md` and the repository's `LICENSE`;
-- the same dependencies (`ajv`, `yaml`), and no scripts or devDependencies.
+- the same dependencies (`ajv`, `yaml`), and no scripts or devDependencies;
+- `@types/node` (`>=24`) as an optional peer, which npm doesn't install: a JavaScript consumer goes without it, and a
+  TypeScript consumer must declare `@types/node` `>=24` itself, since the declarations name Node's types. With
+  `skipLibCheck: true`, a consumer missing it gets no error: the declarations' `NodeJS.*` references silently become
+  `any`.
 
-`test/packed-package.test.ts` packs it, installs the tarball into a consumer outside the repository, loads every export
-with plain Node and type-checks a consumer against the declarations.
+`test/packed-package.test.ts` packs it and installs the tarball into consumers outside the repository. One gets no
+`@types/node` and loads every export with plain Node. The other also installs this repository's own `@types/node`,
+packed, without the registry, and type-checks against the declarations a file that imports by name every symbol listed
+above, and `Credentials`.

@@ -13,7 +13,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { IsolationPolicy } from "@leanish/agent-runtime/isolation";
+import { assertValidPolicy, type IsolationPolicy } from "@leanish/agent-runtime/isolation";
 import { codexPermissionArgs } from "@leanish/agent-runtime/skill/codex-permissions";
 import { scrubbedProcessEnv, withoutAmbientCredentials } from "@leanish/agent-runtime/skill/spawn-capture";
 import type { WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
@@ -22,6 +22,7 @@ import type { ToolRunContext } from "./command.ts";
 
 /** Every writable root shared by the agent and repository commands; trusted tool state must stay outside these. */
 export function sandboxWritable(context: Pick<ToolRunContext, "config" | "workingCopy" | "isolation">): ReadonlyArray<string> {
+  assertValidPolicy(context.isolation, "sandboxWritable");
   return [context.config.dirs.cache, context.workingCopy.path, tmpdir(), "/tmp", context.isolation.buildCacheRoot];
 }
 
@@ -40,6 +41,7 @@ export async function runSandboxed(
   run: RunProcess = runProcess,
   codex = "codex",
 ): Promise<{ code: number; stdout: string; stderr: string }> {
+  assertValidPolicy(isolation, "runSandboxed");
   if (command.length === 0) throw new Error("runSandboxed needs a command");
   if (workingCopy.gitDir === undefined) throw new Error(`${workingCopy.path}'s git metadata must be in a separate directory`);
   // `codexPermissionArgs` denies the staged Codex home's auth.json; a sandboxed command has no Codex home, so an empty one.

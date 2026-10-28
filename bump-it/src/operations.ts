@@ -20,7 +20,7 @@ import { constrainedUnit } from "./constraints.ts";
 import type { BumpItDeps } from "./deps.ts";
 import { assertLocalFile } from "./files.ts";
 import { formatManifest } from "./manifest-format.ts";
-import { coupledUnit, constrainedPeers } from "./peers.ts";
+import { coupledUnit, constrainedPeers, type UndecidedPeers } from "./peers.ts";
 import { assertNoPlanMarker } from "@leanish/tool-runtime/plan-blocks";
 import { type BumpPlan, DEPENDENCY_FIELDS, planFor, planSection } from "./plan.ts";
 import type { Unit } from "./units.ts";
@@ -47,6 +47,8 @@ export interface Computed {
   readonly wrapperFiles?: ReadonlyArray<WrapperArtifact>;
   readonly wrapperOmitted?: boolean;
   readonly blocked?: string;
+  /** Direct-peer sets whose checks failed (`coupledUnit`): moves left out that may still be needed, a failure to report. */
+  readonly undecided?: ReadonlyArray<UndecidedPeers>;
 }
 
 interface SkillAnswer {
@@ -78,7 +80,11 @@ export async function compute(execution: Execution, unit: Unit, base: Tree, grad
   const planned = await planFor(generated.unit, { ...npm, notes: [...notes, ...npm.notes] }, (name, tag) => actions.tagCommit(name, tag));
   const wrapperFiles = generated.files;
   const plan = wrapperFiles.length === 0 ? planned : { ...planned, wrapperFiles: wrapperFiles.map(({ bytes: _bytes, ...file }) => file) };
-  return { plan, files: npm.files, wrapperFiles, wrapperOmitted: wrapper.unavailable === true || generated.notes.length > 0, base, gradle, ...(blocked === undefined ? {} : { blocked }) };
+  return {
+    plan, files: npm.files, wrapperFiles, wrapperOmitted: wrapper.unavailable === true || generated.notes.length > 0, base, gradle,
+    ...(blocked === undefined ? {} : { blocked }),
+    ...(coupled.undecided.length === 0 ? {} : { undecided: coupled.undecided }),
+  };
 }
 
 async function prepareWrapper(execution: Execution, unit: Unit, baseSha: string): Promise<{ unit: Unit; files: ReadonlyArray<WrapperArtifact>; notes: string[] }> {

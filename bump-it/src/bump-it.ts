@@ -86,20 +86,37 @@ async function run(context: ToolRunContext, deps: BumpItDeps): Promise<Readonly<
   const order = (unit: Unit) => (unit.package === undefined ? -1 : deferredBefore.indexOf(unit.package));
   const majors = majorUnits(found.bumps, wrapper).sort((a, b) => (order(a) === -1 ? Infinity : order(a)) - (order(b) === -1 ? Infinity : order(b)));
   const units = [routineUnit(found.bumps, wrapper), ...majors];
-  const undecided = new Set(found.bumps.filter((bump) => bump.undecided !== undefined).map(packageKey));
+  const maxNewMajors = context.config.maxNewMajorsPerRun ?? DEFAULT_MAX_NEW_MAJORS_PER_RUN;
+  const prepared = await prepareUnits(execution, units, own, maxNewMajors, (unit) => compute(execution, unit, base, gradle, found.npmPeers, wrapper));
+  // The first pass's failed peer sets protect every unit's PR before any acts. A new major computed later, if an
+  // earlier one didn't publish, adds its failed sets only for units that haven't acted yet.
+  const identities = found.bumps.filter((bump) => bump.undecided !== undefined).map((bump) => [packageKey(bump), "publisher identity"] as const);
+  const computedBefore = [...prepared.values()].flatMap((entry) => (entry.computed === undefined ? [] : [entry.computed]));
+  let undecided = byPackage([...identities, ...computedBefore.flatMap(undecidedPeerKeys)]);
+  // Direct-peer sets whose checks failed, as each unit's computation found them.
+  const undecidedPeers = computedBefore.flatMap((computed) => (computed.undecided ?? []).map((set) => set.reason));
   const results: UnitReport[] = [];
   const deferred: string[] = [];
   let openedMajors = 0;
   for (const unit of units) {
     try {
-      const owned = await recognised(execution, unit, own);
-      if (unit.kind === "major" && owned.length === 0 && openedMajors >= (context.config.maxNewMajorsPerRun ?? DEFAULT_MAX_NEW_MAJORS_PER_RUN)) {
+      const entry = prepared.get(unit)!;
+      if (entry.error !== undefined) {
+        throw entry.error;
+      }
+      if (unit.kind === "major" && entry.owned.length === 0 && openedMajors >= maxNewMajors) {
         results.push({ topic: unit.topic, outcome: "deferred" });
         deferred.push(unit.package!);
         continue;
       }
-      const computed = await compute(execution, unit, base, gradle, found.npmPeers, wrapper);
-      const result = await runUnit(execution, computed, unit, own, owned, undecided);
+      let computed = entry.computed;
+      if (computed === undefined) {
+        // A new major past the first `maxNewMajors` that runs anyway (an earlier one didn't publish): computed in its turn.
+        computed = await compute(execution, unit, base, gradle, found.npmPeers, wrapper);
+        undecidedPeers.push(...(computed.undecided ?? []).map((set) => set.reason));
+        undecided = byPackage([...[...undecided].flatMap(([key, causes]) => causes.map((cause) => [key, cause] as const)), ...undecidedPeerKeys(computed)]);
+      }
+      const result = await runUnit(execution, computed, unit, own, entry.owned, undecided);
       if (unit.kind === "major" && result.outcome === "published") {
         openedMajors++;
       }
@@ -112,8 +129,10 @@ async function run(context: ToolRunContext, deps: BumpItDeps): Promise<Readonly<
   }
   await priority.write(deferred);
   // A dependency whose publisher identity couldn't be decided gets no move, as one with only refused versions, but it's a
-  // check that failed: reported as an error too, so the run reads as one that broke.
-  const errors = undecidedProblems(found.bumps);
+  // check that failed: reported as an error too, so the run reads as one that broke. So is a direct-peer set whose
+  // checks failed.
+  // A routine and a major can block the same set the same way: reported once.
+  const errors = [...new Set([...undecidedProblems(found.bumps), ...undecidedPeers])];
   return {
     outcome: "completed",
     units: results,
@@ -129,17 +148,73 @@ function undecidedProblems(bumps: ReadonlyArray<BumpCandidate>): string[] {
   return bumps.flatMap((bump) => (bump.undecided === undefined ? [] : [`${bump.name}@${bump.from}: ${bump.undecided}`]));
 }
 
+/** A unit's open PRs and its computation when prepared in the first pass; or why either failed. */
+interface PreparedUnit {
+  readonly owned: ReadonlyArray<Ours>;
+  readonly computed?: Computed;
+  readonly error?: unknown;
+}
+
 /**
- * Throws, keeping the PR, when the plan an open PR records moves a dependency (by ecosystem and name) whose publisher
- * identity can't be decided now: the recomputed plan lacks that move only because the check failed, so reusing the PR
- * would rewrite it as if the move were no longer needed.
+ * Every unit's open PRs, and the computation of the routine, majors with an open PR and the first `maxNewMajors` new
+ * majors, before any unit acts: their failed peer sets then hold back every unit's PR. Later new majors may be
+ * deferred, so aren't computed here; if one runs, its failed sets can't hold back PRs already handled. A failure is
+ * the unit's, not the run's.
  */
-function assertNoUndecidedMoves(recorded: BumpPlan | undefined, undecided: ReadonlySet<string>): void {
+async function prepareUnits(
+  execution: Execution,
+  units: ReadonlyArray<Unit>,
+  own: ReadonlyArray<GitHubPullRequest>,
+  maxNewMajors: number,
+  computeUnit: (unit: Unit) => Promise<Computed>,
+): Promise<ReadonlyMap<Unit, PreparedUnit>> {
+  const prepared = new Map<Unit, PreparedUnit>();
+  let newMajors = 0;
+  for (const unit of units) {
+    let owned: ReadonlyArray<Ours> = [];
+    try {
+      owned = await recognised(execution, unit, own);
+      if (unit.kind === "major" && owned.length === 0 && newMajors++ >= maxNewMajors) {
+        prepared.set(unit, { owned });
+        continue;
+      }
+      prepared.set(unit, { owned, computed: await computeUnit(unit) });
+    } catch (error) {
+      prepared.set(unit, { owned, error });
+    }
+  }
+  return prepared;
+}
+
+/** The npm packages `computed`'s direct-peer sets that can't be decided leave out, as package key → cause. */
+function undecidedPeerKeys(computed: Computed): Array<readonly [string, string]> {
+  return (computed.undecided ?? []).flatMap((set) => set.names.map((name) => [`npm|${name}`, "direct-peer set"] as const));
+}
+
+/** Causes by package key, each once: a key with more than one keeps them all, none overriding another. */
+function byPackage(entries: ReadonlyArray<readonly [string, string]>): ReadonlyMap<string, ReadonlyArray<string>> {
+  const causes = new Map<string, string[]>();
+  for (const [key, cause] of entries) {
+    const known = causes.get(key) ?? [];
+    if (!known.includes(cause)) {
+      causes.set(key, [...known, cause]);
+    }
+  }
+  return causes;
+}
+
+/**
+ * Throws, keeping the PR, when the plan an open PR records moves a dependency (by ecosystem and name) that can't be
+ * decided now (`undecided`: package key → what can't be: its publisher identity, its direct-peer set, or both): the
+ * recomputed plan lacks that move only because a check failed, so reusing the PR would rewrite it as if the move were no
+ * longer needed.
+ */
+function assertNoUndecidedMoves(recorded: BumpPlan | undefined, undecided: ReadonlyMap<string, ReadonlyArray<string>>): void {
   const lost = new Map((recorded?.moves ?? []).filter((move) => undecided.has(packageKey(move))).map((move) => [packageKey(move), move]));
   if (lost.size === 0) {
     return;
   }
-  throw new Error([...lost.values()].map((move) => `${move.ecosystem} ${move.name}'s publisher identity can't be decided; keeping the PR`).join("; "));
+  throw new Error([...lost.values()].map((move) => `${move.ecosystem} ${move.name}'s ${undecided.get(packageKey(move))!.join(" and ")} can't be decided; keeping the PR`).join("; "));
 }
 
 /**
@@ -186,19 +261,20 @@ async function runUnit(
   unit: Unit,
   own: ReadonlyArray<GitHubPullRequest>,
   owned: ReadonlyArray<Ours>,
-  undecided: ReadonlySet<string>,
+  undecided: ReadonlyMap<string, ReadonlyArray<string>>,
 ): Promise<UnitReport> {
+  const same = owned.find((candidate) => samePlan(candidate.pr, planDigest(computed.plan), digestOf));
+  // The PR this unit reuses, checked before anything repairs or redoes it, and before a unit left blocked or empty by
+  // what can't be decided reads as one with nothing to do.
+  const reused = same ?? owned[0];
+  if (reused !== undefined) {
+    assertNoUndecidedMoves(planOf(reused.pr.body), undecided);
+  }
   if (computed.blocked !== undefined) {
     return { topic: unit.topic, outcome: "blocked", detail: computed.blocked, notes: computed.plan.notes };
   }
   if (empty(computed)) {
     return { topic: unit.topic, outcome: "nothing-to-move", notes: computed.plan.notes };
-  }
-  const same = owned.find((candidate) => samePlan(candidate.pr, planDigest(computed.plan), digestOf));
-  // The PR this unit reuses, checked before anything repairs or redoes it.
-  const reused = same ?? owned[0];
-  if (reused !== undefined) {
-    assertNoUndecidedMoves(planOf(reused.pr.body), undecided);
   }
   if (same !== undefined) {
     const pr = await repairOwnership(execution.publication, same);
@@ -301,6 +377,10 @@ async function review(context: ToolRunContext, deps: BumpItDeps): Promise<Readon
       }
       const unit = unitFor(previous, found.bumps, wrapper);
       const computed = unit === undefined ? undefined : await compute(execution, unit, base, gradle, found.npmPeers, wrapper);
+      // As for an identity: a direct-peer set whose checks failed leaves out moves that may still be needed.
+      if (computed?.undecided !== undefined) {
+        throw new Error(`a direct-peer set can't be decided on the new base; keeping the PR: ${computed.undecided.map((set) => set.reason).join("; ")}`);
+      }
       if (computed?.blocked !== undefined) {
         throw new Error(`recomputation is blocked; keeping the PR: ${computed.blocked}`);
       }

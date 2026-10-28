@@ -3,7 +3,9 @@
 // well after the write's callback (later than any setImmediate); nothing of this command listens for it. `end` ends a
 // startRunReport (its marker after the final line, named in TEST_REPORT_MARKER), `no-close` the same on a stream that
 // never emits 'close', `write-final-line` writes with writeFinalLine; each then sets the exit code it means. `signal`
-// waits for a SIGTERM instead.
+// waits for a SIGTERM instead, and `start-notice` starts a report whose `start` marker can't be written (the path in
+// TEST_REPORT_MARKER is in a directory that doesn't exist), so the failure notice is the only write, then leaves
+// without ending the report.
 import { Writable } from "node:stream";
 
 import { RunReport, startRunReport, writeFinalLine } from "../../src/report/run-report.ts";
@@ -25,6 +27,10 @@ if (mode === "write-final-line") {
   if (line === undefined) throw new Error("no line");
   await writeFinalLine(stream, line);
   process.stdout.write("settled\n");
+  process.exitCode = 0;
+} else if (mode === "start-notice") {
+  startRunReport({ stream, marker: { env: "TEST_REPORT_MARKER", when: "start" } });
+  process.stdout.write("started\n");
   process.exitCode = 0;
 } else {
   const report = startRunReport({ stream, marker: { env: "TEST_REPORT_MARKER", when: "after-final-line" } });

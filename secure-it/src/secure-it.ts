@@ -262,17 +262,21 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   const tree = await deps.trees.commit(context.workingCopy, context.workingCopy.headSha);
   const base = { tree, gradle: await inventories.ofCommit(tree) };
   const found = await deps.candidates(tree, env, { head: base.gradle });
-  // A fix whose publisher identity couldn't be decided is blocked like a refused one, but it's a check that failed:
-  // reported as an error, so the run reads as one that broke, while the other units still go on. Spread last in every
-  // result, so no unit's own keys can replace it.
+  // A fix that can't be decided (its publisher identity, a carrier's reads) is blocked like a refused one, but it's a
+  // check that failed: reported as an error, so the run reads as one that broke, while the other units still go on.
+  // Spread last in every result, so no unit's own keys can replace it.
   const undecided = undecidedProblems(found.fixes);
-  const errors = undecided.length > 0 ? { errors: undecided } : {};
-  const undecidedPackages = new Set(found.fixes.filter((fix) => fix.undecided === true).map(packageKey));
   const report = { gaps: found.gaps.length };
-  if (found.incomplete.length > 0) return { ...report, outcome: "incomplete", incomplete: found.incomplete, ...errors };
+  if (found.incomplete.length > 0) return { ...report, outcome: "incomplete", incomplete: found.incomplete, ...errorsOf(undecided) };
   const planned = await withParentsPlanned(found, base, env, inventories);
   const selection = await coupledWork(planned.fixes, planned.peers);
   const waiting = selection.blocked.flatMap((group) => group.reasons);
+  // A direct-peer set whose checks failed is the same: an error, and its packages' PRs are kept.
+  const errors = errorsOf([...undecided, ...(selection.undecided ?? []).map((set) => set.reason)]);
+  const undecidedPackages = byPackage([
+    ...found.fixes.filter((fix) => fix.undecided === true).map((fix) => [packageKey(fix), fix.carries === undefined ? "publisher identity" : "carrier move"] as const),
+    ...(selection.undecided ?? []).flatMap((set) => set.packages.map((key) => [key, "direct-peer set"] as const)),
+  ]);
 
   const execution = { context, deps, env, inventories, publication: publicationOf(context, deps), npmFiles: new Map<string, string>(), branches: new Set<string>(), heldReferences: new Map<string, Promise<ReadonlyArray<string>>>() };
   const own = await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base);
@@ -313,20 +317,36 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   return { ...report, ...(results.length === 1 ? results[0]! : { outcome: "completed" }), waiting, blocked: selection.blocked, units: results, ...errors };
 }
 
-/** Why each fix whose publisher identity couldn't be decided (`SecurityFix.undecided`) has no move. */
+/** Why each fix that can't be decided (`SecurityFix.undecided`: its publisher identity, a carrier's reads) has no move. */
 function undecidedProblems(fixes: ReadonlyArray<SecurityFix>): string[] {
   return fixes.flatMap((fix) => (fix.undecided === true && fix.problem !== undefined ? [fix.problem] : []));
 }
 
+/** The run's `errors` field: checks that failed, each once, when there are any. */
+function errorsOf(problems: ReadonlyArray<string>): { readonly errors?: ReadonlyArray<string> } {
+  return problems.length > 0 ? { errors: [...new Set(problems)] } : {};
+}
+
+/** Causes by package key, each once: a key with more than one keeps them all, none overriding another. */
+function byPackage(entries: ReadonlyArray<readonly [string, string]>): ReadonlyMap<string, ReadonlyArray<string>> {
+  const causes = new Map<string, string[]>();
+  for (const [key, cause] of entries) {
+    const known = causes.get(key) ?? [];
+    if (!known.includes(cause)) causes.set(key, [...known, cause]);
+  }
+  return causes;
+}
+
 /**
  * Throws, keeping the PR, when the plan an open PR records moves a package (by ecosystem and name, companions included)
- * whose publisher identity can't be decided now: the recomputed plan lacks that move only because the check failed, so
- * reusing the PR would rewrite it as if the move were no longer needed.
+ * that can't be decided now (`undecided`: package key → what can't be: its publisher identity, its carrier move, its
+ * direct-peer set, or several): the recomputed plan lacks that move only because a check failed, so reusing the PR
+ * would rewrite it as if the move were no longer needed.
  */
-function assertNoUndecidedMoves(recorded: ChangePlan | undefined, undecided: ReadonlySet<string>): void {
+function assertNoUndecidedMoves(recorded: ChangePlan | undefined, undecided: ReadonlyMap<string, ReadonlyArray<string>>): void {
   const lost = new Map((recorded?.moves ?? []).filter((move) => undecided.has(packageKey(move))).map((move) => [packageKey(move), move]));
   if (lost.size === 0) return;
-  throw new Error([...lost.values()].map((move) => `${move.ecosystem} ${move.name}'s publisher identity can't be decided; keeping the PR`).join("; "));
+  throw new Error([...lost.values()].map((move) => `${move.ecosystem} ${move.name}'s ${undecided.get(packageKey(move))!.join(" and ")} can't be decided; keeping the PR`).join("; "));
 }
 
 /**
@@ -702,7 +722,7 @@ async function runUnit(
   base: PlanBase,
   own: ReadonlyArray<GitHubPullRequest>,
   claimed: number | undefined,
-  undecided: ReadonlySet<string>,
+  undecided: ReadonlyMap<string, ReadonlyArray<string>>,
 ): Promise<Readonly<Record<string, unknown>>> {
   const { context, publication } = execution;
   const plan = await planUnit(execution, unit, base);
@@ -983,11 +1003,11 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       const baseGradle = await inventories.ofCommit(base);
       const found = await deps.candidates(base, env, { head: baseGradle });
       if (found.incomplete.length > 0) throw new Error(`the new base's inventory is incomplete: ${found.incomplete.join("; ")}`);
-      // A fix without a move because its identity check failed isn't one the base no longer needs. On any package, not
-      // only this PR's, since how fixes split into units (malware first) depends on all of them: nothing is retired,
-      // replaced or rewritten until it can be decided.
+      // A fix without a move because a check failed (its identity, a carrier's reads) isn't one the base no longer
+      // needs. On any package, not only this PR's, since how fixes split into units (malware first) depends on all of
+      // them: nothing is retired, replaced or rewritten until it can be decided.
       const undecided = undecidedProblems(found.fixes);
-      if (undecided.length > 0) throw new Error(`publisher identity can't be decided on the new base; keeping the PR: ${undecided.join("; ")}`);
+      if (undecided.length > 0) throw new Error(`a fix can't be decided on the new base; keeping the PR: ${undecided.join("; ")}`);
       if (previous.kind === "floor-removal") {
         if (found.fixes.some((fix) => fix.malicious)) throw new Error("malware on base must be fixed before removing floors");
         const removal = await computeRemoval(execution, { tree: base, gradle: baseGradle });
@@ -1006,7 +1026,11 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
         return "rebased";
       }
       const planned = await withParentsPlanned(found, { tree: base, gradle: baseGradle }, env, inventories);
-      const { units, blocked } = await reviewUnits(previous, planned.fixes, planned.peers);
+      const { units, blocked, undecided: undecidedPeers } = await reviewUnits(previous, planned.fixes, planned.peers);
+      // The same for a direct-peer set whose checks failed: the moves it leaves out may still be needed.
+      if (undecidedPeers !== undefined) {
+        throw new Error(`a direct-peer set can't be decided on the new base; keeping the PR: ${undecidedPeers.map((set) => set.reason).join("; ")}`);
+      }
       if (blocked.length > 0) notes.push({ number: pr.number, blocked });
       // Split exactly as a run would, required-dependency moves included, before telling which unit is this PR's.
       const held = await holdRequiredYoung(execution, units, { tree: base, gradle: baseGradle });
