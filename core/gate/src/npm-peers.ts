@@ -24,7 +24,13 @@ export interface PeerAddition extends PeerMove {
 
 export interface PeerResolution {
   readonly additions: ReadonlyArray<PeerAddition>;
-  readonly blocked: ReadonlyArray<{ readonly moves: ReadonlyArray<PeerMove>; readonly reason: string }>;
+  /**
+   * Sets no combination satisfies. `undecided` when something the set needs couldn't be read: a locked or candidate
+   * manifest, a version listing, the required version a fix forces, or a candidate's checks threw (its publisher
+   * identity or publish time, say), including an unknown publish time. A set that can't be decided, to report as a
+   * failure, not one the rules refused.
+   */
+  readonly blocked: ReadonlyArray<{ readonly moves: ReadonlyArray<PeerMove>; readonly reason: string; readonly undecided?: true }>;
   /** Package names in each connected set, for an indivisible verification retry. */
   readonly sets: ReadonlyArray<ReadonlyArray<string>>;
 }
@@ -57,6 +63,7 @@ interface Node {
   readonly packages: Record<string, Entry>;
   readonly manifests: Map<string, Entry>;
   readonly candidates: string[];
+  /** What `loadCandidates` couldn't read (its listing, a candidate manifest): the set can't be decided. */
   problem?: string;
 }
 
@@ -115,8 +122,9 @@ export async function prepareNpmPeers(locks: ReadonlyMap<string, unknown>, seeds
   return {
     bases: relevant.map((node) => pkg(node, node.from)),
     candidates: relevant.flatMap((node) => [...node.manifests.keys()].map((version) => pkg(node, version))),
+    // Incoming constraints can't be ruled out without the locked manifests: every move is blocked, undecided.
     resolve: (moves, snapshot) => unreadable.length === 0 ? resolve(relevant, moves, snapshot, sources) : Promise.resolve({
-      additions: [], sets: [], blocked: moves.length === 0 ? [] : [{ moves, reason: `cannot read locked direct-peer metadata: ${unreadable.join("; ")}` }],
+      additions: [], sets: [], blocked: moves.length === 0 ? [] : [{ moves, reason: `cannot read locked direct-peer metadata: ${unreadable.join("; ")}`, undecided: true as const }],
     }),
   };
 }
@@ -218,7 +226,7 @@ function components(nodes: ReadonlyArray<Node>): Node[][] {
 
 async function resolve(nodes: ReadonlyArray<Node>, moves: ReadonlyArray<PeerMove>, snapshot: Snapshot, sources: PeerSources): Promise<PeerResolution> {
   const additions: PeerAddition[] = [];
-  const blocked: Array<{ moves: PeerMove[]; reason: string }> = [];
+  const blocked: Array<{ moves: PeerMove[]; reason: string; undecided?: true }> = [];
   const sets: string[][] = [];
   for (const group of components(nodes)) {
     const anchors = moves.filter((move) => group.some((node) => matches(node, move)));
@@ -226,38 +234,62 @@ async function resolve(nodes: ReadonlyArray<Node>, moves: ReadonlyArray<PeerMove
     sets.push([...new Set(group.map((node) => node.name))].sort());
     const options = new Map<string, string[]>();
     const reasons: string[] = [];
+    let undecided = false;
     for (const node of group) {
       const found = await optionsFor(node, anchors, moves, snapshot, sources);
       options.set(node.key, found.versions);
       reasons.push(...found.problems);
+      undecided ||= found.undecided;
     }
     // Fixed targets first prune incompatible companions immediately; remaining copies keep a deterministic order.
     const order = [...group].sort((a, b) => Number(anchors.some((move) => matches(b, move))) - Number(anchors.some((move) => matches(a, move))) || a.key.localeCompare(b.key));
     const solved = reasons.length === 0 ? solve(order, options) : undefined;
+    const block = (detail: string, failed: boolean) => blocked.push({
+      moves: anchors, reason: `no safe aged compatible direct-peer set for ${anchors.map((move) => `${move.name}@${move.to}`).join(", ")}: ${detail}`,
+      ...(failed ? { undecided: true as const } : {}),
+    });
     if (solved === undefined) {
-      const detail = [...reasons, ...lockedConflicts(group, anchors), "no eligible compatible combination satisfies all peer ranges"].join("; ");
-      blocked.push({ moves: anchors, reason: `no safe aged compatible direct-peer set for ${anchors.map((move) => `${move.name}@${move.to}`).join(", ")}: ${detail}` });
+      block([...reasons, ...lockedConflicts(group, anchors), "no eligible compatible combination satisfies all peer ranges"].join("; "), undecided);
       continue;
     }
-    for (const node of group) {
-      const to = solved.get(node.key)!;
-      if (to === node.from || anchors.some((move) => matches(node, move))) continue;
-      additions.push({ name: node.name, from: node.from, to, line: sources.line(node.name, to), aged: await isAged(node.name, to, sources), locations: [node.location],
-        declarations: node.declarations.map((declaration) => ({ ...declaration, lockfile: node.lockfile })) });
-    }
+    const added = await companionsOf(group, anchors, solved, sources);
+    // A companion's publish time that can't be read decides nothing: the set can't be decided, never accepted.
+    if (typeof added === "string") block(added, true);
+    else additions.push(...added);
   }
   return { additions, blocked, sets };
+}
+
+/** The companions a solved set moves, or why one of them couldn't be read. */
+async function companionsOf(group: ReadonlyArray<Node>, anchors: ReadonlyArray<PeerMove>, solved: ReadonlyMap<string, string>, sources: PeerSources): Promise<PeerAddition[] | string> {
+  const additions: PeerAddition[] = [];
+  for (const node of group) {
+    const to = solved.get(node.key)!;
+    if (to === node.from || anchors.some((move) => matches(node, move))) continue;
+    let aged: boolean;
+    try {
+      aged = await isAged(node.name, to, sources);
+    } catch (error) {
+      return `${node.name}@${to}: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    additions.push({ name: node.name, from: node.from, to, line: sources.line(node.name, to), aged, locations: [node.location],
+      declarations: node.declarations.map((declaration) => ({ ...declaration, lockfile: node.lockfile })) });
+  }
+  return additions;
 }
 
 async function optionsFor(node: Node, anchors: ReadonlyArray<PeerMove>, moves: ReadonlyArray<PeerMove>, snapshot: Snapshot, sources: PeerSources) {
   const targets = [...new Set(anchors.filter((move) => matches(node, move)).map((move) => move.to))];
   const problems = node.problem === undefined ? [] : [node.problem];
+  // Something this copy needs couldn't be read or a candidate's checks threw: it blocks the set as one that can't be
+  // decided, not as refused. Its listing or a candidate manifest (`loadCandidates`) is one.
+  let undecided = node.problem !== undefined;
   if (targets.length > 1) problems.push(`${node.name} has conflicting planned targets ${targets.join(", ")}`);
   let forced: string | undefined;
   try {
     if (targets.length === 0) forced = await sources.requiredYoung?.(node.name, node.from, node.lockfile, node.path, anchors);
   } catch (error) {
-    return { versions: [], problems: [...problems, `${node.name}: ${error instanceof Error ? error.message : String(error)}`] };
+    return { versions: [], problems: [...problems, `${node.name}: ${error instanceof Error ? error.message : String(error)}`], undecided: true };
   }
   // Every copy the planned moves replace with this one, nested ones outside the peer group included.
   const replaced = targets.length > 0 ? moves.filter((move) => move.name === node.name).flatMap((move) => move.locations) : undefined;
@@ -267,20 +299,19 @@ async function optionsFor(node: Node, anchors: ReadonlyArray<PeerMove>, moves: R
     try {
       if (version !== node.from && !fixes(snapshot, pkg(node, node.from), node.from, [], version)) continue;
       // Rule targets already satisfy their age rule (security fixes may be young); companions must be aged.
-      if (targets.length === 0 && version !== node.from && !sources.isOwn(node.name)) {
-        const published = await sources.published(node.name, version);
-        if (!hasAged(published, sources.releaseAgeDays, sources.now)) {
-          if (version !== forced) continue;
-        }
+      if (targets.length === 0 && version !== node.from) {
+        if (!await isAged(node.name, version, sources) && version !== forced) continue;
       }
       if (version !== node.from && (await sources.identity(node.name, node.from, version, replaced)).length > 0) continue;
       versions.push(version);
     } catch (err) {
+      // A candidate whose checks threw was never judged.
       problems.push(`${node.name}@${version}: ${err instanceof Error ? err.message : String(err)}`);
+      undecided = true;
     }
   }
   if (versions.length === 0) problems.push(`${node.name}: no candidate passes age, advisory and identity checks`);
-  return { versions, problems };
+  return { versions, problems, undecided };
 }
 
 /** Describe the concrete constraints that made the original fixed moves need companions. */
@@ -331,9 +362,10 @@ function consistent(nodes: ReadonlyArray<Node>, chosen: ReadonlyMap<string, stri
   return true;
 }
 
-/** The gate's view: an own package never waits, so the gate never holds it, whatever its age. */
+/** Own packages never wait; an unknown publish time can't decide whether any other package has aged. */
 async function isAged(name: string, version: string, sources: PeerSources): Promise<boolean> {
   if (sources.isOwn(name)) return true;
   const published = await sources.published(name, version);
+  if (published === undefined) throw new Error("the publish time is unknown");
   return hasAged(published, sources.releaseAgeDays, sources.now);
 }

@@ -85,8 +85,9 @@ export interface SecurityFix {
   /** Why there's no `to`. */
   readonly problem: string | undefined;
   /**
-   * Set when `to` was dropped because an error kept its unit's publisher identity from being decided (`problem` says
-   * which): a check that failed, to report as a failure, not a move the rules refused.
+   * Set when there's no `to` because a check failed (`problem` says which): an error kept its unit's publisher identity
+   * from being decided, or a carrier move's reads failed (an archive, the version listing, a publish time). To report
+   * as a failure, not a move the rules refused.
    */
   readonly undecided?: true;
   /** A carrier move: the bundled packages it replaces, and their advisories (`carrier-candidates.ts`). */
@@ -277,12 +278,16 @@ function unreviewedReports(unreviewed: ReadonlyArray<Finding>, triggers: Readonl
   return { reports, notes, held };
 }
 
-/** A carrier version's fix; a decision that can't be made (an archive, a scan) is the fix's problem, not the run's. */
+/**
+ * A carrier version's fix; a decision that can't be made (an archive, a scan) is the fix's problem, not the run's. It's
+ * a check that failed, though, not a refusal: marked `undecided`, as an identity that can't be decided.
+ */
 async function carrierFix(group: CarrierGroup, own: FailingVersion | undefined, context: CarrierContext): Promise<SecurityFix> {
   const malicious = group.malicious || own?.malicious === true;
   const decision: CarrierDecision = await decideCarrier(group, own?.advisories ?? [], malicious, context).catch((error: unknown) => ({
     from: group.version, locations: [], carries: [], unfixable: [], to: undefined,
     problem: `${group.name}@${group.version}'s carrier move can't be decided: ${error instanceof Error ? error.message : String(error)}`,
+    undecided: true as const,
   }));
   return {
     ecosystem: "npm",
@@ -295,6 +300,7 @@ async function carrierFix(group: CarrierGroup, own: FailingVersion | undefined, 
     severity: highestSeverity([...group.severities, ...(own?.severities ?? [])]),
     to: decision.to,
     problem: decision.problem,
+    ...(decision.undecided === true ? { undecided: true as const } : {}),
     carries: decision.carries,
     ...(decision.vetoed === undefined ? {} : { vetoed: decision.vetoed }),
     ...(decision.vetoesLeftOut === undefined ? {} : { vetoesLeftOut: decision.vetoesLeftOut }),

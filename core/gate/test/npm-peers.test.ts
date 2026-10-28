@@ -93,6 +93,22 @@ describe("direct npm peer sets", () => {
     expect(identity).toHaveBeenCalledWith(UI, "4.1.7", "4.1.11", undefined);
   });
 
+  it("blocks a set whose candidate's identity check fails as undecided, and one whose identity breaks as refused", async () => {
+    const h = fixture();
+    const peers = await prepareNpmPeers(h.locks, [seed], h.sources);
+    const other = { name: "other", from: "1.0.0", to: "1.0.1", locations: ["node_modules/other"] };
+    h.sources.identity = vi.fn(async (name, _from, to) => {
+      if (name === UI && to === "4.1.11") throw new Error("attestation lookup failed with HTTP 503");
+      return [];
+    });
+    const failed = await peers.resolve([move, other], snapshot(peers));
+    // Never taken as acceptance: the set is blocked, marked as one that can't be decided; the unrelated move isn't.
+    expect(failed.blocked).toEqual([{ moves: [move], reason: expect.stringContaining(`${UI}@4.1.11: attestation lookup failed with HTTP 503`), undecided: true }]);
+    h.sources.identity = vi.fn(async (name) => (name === UI ? ["publisher changed"] : []));
+    const refused = await peers.resolve([move, other], snapshot(peers));
+    expect(refused.blocked).toEqual([{ moves: [move], reason: expect.stringContaining(`${UI}@4.1.7 requires peer vitest 4.1.7, not 4.1.11`) }]);
+  });
+
   it("lets only own packages skip the companion age requirement, and does not give young companions the security exemption", async () => {
     const h = fixture();
     h.sources.published = vi.fn(async () => YOUNG);
@@ -146,6 +162,93 @@ describe("direct npm peer sets", () => {
     h.manifests.delete(`${UI}@4.1.7`);
     const peers = await prepareNpmPeers(h.locks, [seed], h.sources);
     expect((await peers.resolve([move], snapshot(peers))).blocked[0]?.reason).toContain("cannot read locked direct-peer metadata");
+  });
+
+  it.each<{ which: string; reason: string; broken: (h: ReturnType<typeof fixture>) => void }>([
+    { which: "a locked manifest", reason: `cannot read locked direct-peer metadata: ${UI}@4.1.7: no manifest for ${UI}@4.1.7`, broken: (h) => h.manifests.delete(`${UI}@4.1.7`) },
+    { which: "an incomplete listing", reason: `the registry doesn't list ${UI}'s versions completely`, broken: (h) => {
+      const original = h.sources.versions;
+      h.sources.versions = async (name) => (name === UI ? undefined : original(name));
+    } },
+    { which: "a listing that fails", reason: `registry lookup of ${UI} failed with HTTP 503`, broken: (h) => {
+      const original = h.sources.versions;
+      h.sources.versions = async (name) => {
+        if (name === UI) throw new Error(`registry lookup of ${UI} failed with HTTP 503`);
+        return original(name);
+      };
+    } },
+    { which: "a candidate manifest", reason: `invalid peer ranges in ${UI}@4.1.11`, broken: (h) => h.manifests.set(`${UI}@4.1.11`, { peerDependencies: { vitest: 42 } }) },
+    { which: "the version a fix requires", reason: `${UI}: required peer lookup failed with HTTP 503`, broken: (h) => {
+      h.sources = { ...h.sources, requiredYoung: async () => { throw new Error("required peer lookup failed with HTTP 503"); } };
+    } },
+  ])("blocks a set as undecided when $which can't be read, never as refused nor accepted", async ({ reason, broken }) => {
+    const h = fixture();
+    broken(h);
+    const peers = await prepareNpmPeers(h.locks, [seed], h.sources);
+    const result = await peers.resolve([move], snapshot(peers));
+    expect(result.additions).toEqual([]);
+    expect(result.blocked).toEqual([{ moves: [move], reason: expect.stringContaining(reason), undecided: true }]);
+  });
+
+  it("distinguishes an unknown candidate publish time from a known-too-young one", async () => {
+    const h = fixture();
+    h.sources.published = vi.fn(async (name, version) => name === UI && version === "4.1.11" ? undefined : OLD);
+    const peers = await prepareNpmPeers(h.locks, [seed], h.sources);
+    const judged = snapshot(peers);
+    const unknown = await peers.resolve([move], judged);
+    expect(unknown.additions).toEqual([]);
+    expect(unknown.blocked).toEqual([{ moves: [move], reason: expect.stringContaining(`${UI}@4.1.11: the publish time is unknown`), undecided: true }]);
+
+    h.sources.published = vi.fn(async (name, version) => name === UI && version === "4.1.11" ? YOUNG : OLD);
+    const young = await peers.resolve([move], judged);
+    expect(young.additions).toEqual([]);
+    expect(young.blocked).toEqual([{ moves: [move], reason: expect.stringContaining(`${UI}@4.1.7 requires peer vitest 4.1.7, not 4.1.11`) }]);
+
+    h.sources.published = vi.fn(async (name, version) => {
+      if (name === UI && version === "4.1.11") throw new Error("publish-time lookup failed with HTTP 503");
+      return OLD;
+    });
+    const failed = await peers.resolve([move], judged);
+    expect(failed.additions).toEqual([]);
+    expect(failed.blocked).toEqual([{ moves: [move], reason: expect.stringContaining(`${UI}@4.1.11: publish-time lookup failed with HTTP 503`), undecided: true }]);
+  });
+
+  it("blocks a solved set as undecided when a chosen companion's publish time is unknown on re-read", async () => {
+    const h = fixture();
+    const reads = new Map<string, number>();
+    h.sources.published = vi.fn(async (name, version) => {
+      const key = `${name}@${version}`;
+      reads.set(key, (reads.get(key) ?? 0) + 1);
+      return name === UI && reads.get(key)! > 1 ? undefined : OLD;
+    });
+    const peers = await prepareNpmPeers(h.locks, [seed], h.sources);
+    const result = await peers.resolve([move], snapshot(peers));
+    expect(result.additions).toEqual([]);
+    expect(result.blocked).toEqual([{ moves: [move], reason: expect.stringContaining(`${UI}@4.1.11: the publish time is unknown`), undecided: true }]);
+  });
+
+  it("blocks a solved set as undecided when a chosen companion's publish time can't be read again", async () => {
+    const h = fixture();
+    // Judging the candidates reads each publish time once; the second read, for the chosen companion's `aged`, fails.
+    const reads = new Map<string, number>();
+    h.sources.published = vi.fn(async (name, version) => {
+      const key = `${name}@${version}`;
+      reads.set(key, (reads.get(key) ?? 0) + 1);
+      if (name === UI && reads.get(key)! > 1) throw new Error("registry lookup of @vitest/ui failed with HTTP 503");
+      return OLD;
+    });
+    const peers = await prepareNpmPeers(h.locks, [seed], h.sources);
+    const result = await peers.resolve([move], snapshot(peers));
+    expect(result.additions).toEqual([]);
+    expect(result.blocked).toEqual([{ moves: [move], reason: expect.stringContaining(`${UI}@4.1.11: registry lookup of @vitest/ui failed with HTTP 503`), undecided: true }]);
+  });
+
+  it("leaves a set no peer ranges satisfy unmarked: a refusal, not a failed read", async () => {
+    const h = fixture();
+    const peers = await prepareNpmPeers(h.locks, [seed], h.sources);
+    const pinnedUi = { name: UI, from: "4.1.7", to: "4.1.8", locations: [`node_modules/${UI}`] };
+    const result = await peers.resolve([move, pinnedUi], snapshot(peers));
+    expect(result.blocked).toEqual([{ moves: [move, pinnedUi], reason: expect.stringContaining(`${UI}@4.1.8 requires peer vitest 4.1.8, not 4.1.11`) }]);
   });
 
   it("closes a chain of direct peers introduced by a companion's candidate manifest", async () => {

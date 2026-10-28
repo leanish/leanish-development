@@ -11,6 +11,7 @@ import { InMemoryWorkspace } from "@leanish/agent-runtime/working-copy/in-memory
 import { gradleResolutionProblems, type GradleInventory } from "@leanish/gate/gradle";
 import type { AdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import { securityCandidates, type SecurityFix } from "@leanish/gate/candidates";
+import type { NpmPeerPlanner } from "@leanish/gate/npm-peers";
 import { FLOORS_PATH, parseFloors } from "@leanish/gate/floors";
 import { selectRemovals, withoutFloorRecords } from "../src/floor-removal.ts";
 import type { Tree } from "@leanish/gate/tree";
@@ -161,6 +162,19 @@ async function batchPr(fixes: SecurityFix[], overrides: Partial<GitHubPullReques
 async function vitePr(overrides: Partial<GitHubPullRequest> = {}, fix = vite()): Promise<GitHubPullRequest> {
   return batchPr([fix], overrides);
 }
+
+/** A direct-peer planner that blocks vite's set, as one whose checks failed (`undecided`) or as refused; other moves pass. */
+function blockingVite(reason: string, undecided: boolean): NpmPeerPlanner {
+  return {
+    resolve: async (moves) => {
+      const stuck = moves.filter((move) => move.name === "vite");
+      return { additions: [], sets: [], blocked: stuck.length === 0 ? [] : [{ moves: stuck, reason, ...(undecided ? { undecided: true as const } : {}) }] };
+    },
+  };
+}
+
+/** A failed direct-peer identity read, as the gate's planner reports the set it blocks. */
+const PEER_UNDECIDED = "no safe aged compatible direct-peer set for vite@8.3.3: @vitejs/plugin@2.0.1: attestation lookup failed with HTTP 503; no eligible compatible combination satisfies all peer ranges";
 
 describe("secure-it run", () => {
   it("doesn't publish an own-only young carrier as a bundle fix when a repository-only finding preserves carrier identity", async () => {
@@ -699,6 +713,70 @@ describe("secure-it run", () => {
     expect(h.agentCalls.map((call) => (call.input["moves"] as Array<{ name: string }>).map((move) => move.name))).toEqual([["rollup"]]);
   });
 
+  it("keeps a PR that moves a carrier whose reads failed, reporting an error while another unit still publishes", async () => {
+    const problem = "left-pad@1.0.0's bundle can't be read: left-pad@1.0.0: GET https://registry.npmjs.org/left-pad/-/left-pad-1.0.0.tgz answered HTTP 503";
+    const rollup = vite({ name: "rollup", from: "3.0.0", locations: ["node_modules/rollup"], to: { version: "4.0.1", line: "4", aged: true, major: true, blockers: [] } });
+    const pr = await batchPr([vite(), leftPad()]);
+    const h = harness({ prs: [pr], fixes: [vite(), leftPad({ to: undefined, problem, undecided: true, carries: [] }), rollup] });
+    h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
+    expect(await secureIt(h.deps).run(h.context)).toMatchObject({
+      errors: [problem],
+      waiting: [`left-pad@1.0.0: ${problem}`],
+      units: [
+        { topic: "security", outcome: "failed", detail: "npm left-pad's carrier move can't be decided; keeping the PR" },
+        { topic: "rollup-major", outcome: "published" },
+      ],
+    });
+    expect(h.github.prs.get(7)).toEqual(pr);
+    expect(h.workspace.publications.map((entry) => entry.prepared.branch)).toEqual(["secure-it/2026-10-07-rollup-major"]);
+  });
+
+  it("names every cause when a package's publisher identity and its direct-peer set both can't be decided", async () => {
+    const problem = "left-pad@1.0.0's publisher identity can't be decided: attestation lookup failed with HTTP 503";
+    // other still moves, so the routine runs and meets #7, which records vite and left-pad.
+    const fixes = [vite(), leftPad({ to: undefined, problem, undecided: true }), vite({ name: "other", from: "1.0.0", locations: ["node_modules/other"] })];
+    const pr = await batchPr([vite(), leftPad()]);
+    const h = harness({ prs: [pr], fixes });
+    h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
+    // vite's set, which takes left-pad in, can't be decided either.
+    const peers: NpmPeerPlanner = { resolve: async (moves) => ({ additions: [], sets: [["vite", "left-pad"]],
+      blocked: [{ moves: moves.filter((move) => move.name === "vite"), reason: PEER_UNDECIDED, undecided: true }] }) };
+    const deps = { ...h.deps, candidates: async () => ({ fixes, incomplete: [], gaps: [], osvScannerVersion: "2.6.0", npmPeers: peers }) };
+    expect(await secureIt(deps).run(h.context)).toMatchObject({
+      errors: [problem, PEER_UNDECIDED],
+      outcome: "failed", detail: "npm vite's direct-peer set can't be decided; keeping the PR; npm left-pad's publisher identity and direct-peer set can't be decided; keeping the PR",
+    });
+    expect(h.github.prs.get(7)).toEqual(pr);
+  });
+
+  it("keeps a PR that moves a package whose direct-peer set can't be decided, reporting an error while another unit still publishes", async () => {
+    const rollup = vite({ name: "rollup", from: "3.0.0", locations: ["node_modules/rollup"], to: { version: "4.0.1", line: "4", aged: true, major: true, blockers: [] } });
+    const fixes = [vite(), leftPad(), rollup];
+    const pr = await batchPr([vite(), leftPad()]);
+    const run = async (undecided: boolean) => {
+      const h = harness({ prs: [pr], fixes });
+      h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
+      const deps = { ...h.deps, candidates: async () => ({ fixes, incomplete: [], gaps: [], osvScannerVersion: "2.6.0", npmPeers: blockingVite(PEER_UNDECIDED, undecided) }) };
+      return { h, result: await secureIt(deps).run(h.context) };
+    };
+    // Without the check, the routine would rewrite #7 to move left-pad alone, as if vite needed no fix any more.
+    const failed = await run(true);
+    expect(failed.result).toMatchObject({
+      errors: [PEER_UNDECIDED],
+      waiting: [PEER_UNDECIDED],
+      units: [
+        { topic: "security", outcome: "failed", detail: "npm vite's direct-peer set can't be decided; keeping the PR" },
+        { topic: "rollup-major", outcome: "published" },
+      ],
+    });
+    expect(failed.h.github.prs.get(7)).toEqual(pr);
+    expect(failed.h.workspace.publications.map((entry) => entry.prepared.branch)).toEqual(["secure-it/2026-10-07-rollup-major"]);
+    // A set the rules refuse reports as before: waiting, no error, and the routine moves the rest.
+    const refused = await run(false);
+    expect(refused.result).toMatchObject({ waiting: [PEER_UNDECIDED], units: [{ topic: "security", outcome: "updated" }, { topic: "rollup-major", outcome: "published" }] });
+    expect(refused.result).not.toHaveProperty("errors");
+  });
+
   it("continues to a major when the routine fails, and leaves legacy package PRs to review", async () => {
     const previous = await vitePr();
     const legacy = { ...planOf(previous.body)!, kind: undefined, topic: "vite" };
@@ -1058,8 +1136,26 @@ describe("secure-it review", () => {
     h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
     h.github.branches.add(pr.headRef);
     expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [
-      { number: 7, outcome: "error", detail: `publisher identity can't be decided on the new base; keeping the PR: ${detail}` },
+      { number: 7, outcome: "error", detail: `a fix can't be decided on the new base; keeping the PR: ${detail}` },
     ] });
+    expect(h.github.prs.get(7)).toEqual(pr);
+    expect(h.github.branches.has(pr.headRef)).toBe(true);
+    expect(h.github.calls.filter((call) => call.startsWith("closePullRequest") || call.startsWith("updatePullRequest"))).toEqual([]);
+    expect([h.workspace.deletions, h.workspace.publications, h.agentCalls, h.reverted]).toEqual([[], [], [], []]);
+  });
+
+  it.each([
+    // Without the guard: retired, its carrier fix read as one the base no longer needs.
+    { which: "a carrier's bundle", fixes: () => [vite({ carries: [], to: undefined, problem: "vite@8.3.1's bundle can't be read: GET answered HTTP 503", undecided: true })], peers: undefined, detail: "a fix can't be decided on the new base; keeping the PR: vite@8.3.1's bundle can't be read: GET answered HTTP 503" },
+    // Without the guard: rebased onto left-pad alone, as if vite's move were no longer needed.
+    { which: "a direct-peer set", fixes: () => [vite(), leftPad()], peers: blockingVite(PEER_UNDECIDED, true), detail: `a direct-peer set can't be decided on the new base; keeping the PR: ${PEER_UNDECIDED}` },
+  ])("keeps a PR, untouched, while $which can't be decided on the new base", async ({ fixes, peers, detail }) => {
+    const pr = await batchPr([vite(), leftPad()]);
+    const h = harness({ prs: [pr], baseSha: NEW_BASE });
+    h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
+    h.github.branches.add(pr.headRef);
+    const deps = { ...h.deps, candidates: async () => ({ fixes: fixes(), incomplete: [], gaps: [], osvScannerVersion: "2.6.0", ...(peers === undefined ? {} : { npmPeers: peers }) }) };
+    expect(await secureIt(deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "error", detail }] });
     expect(h.github.prs.get(7)).toEqual(pr);
     expect(h.github.branches.has(pr.headRef)).toBe(true);
     expect(h.github.calls.filter((call) => call.startsWith("closePullRequest") || call.startsWith("updatePullRequest"))).toEqual([]);
