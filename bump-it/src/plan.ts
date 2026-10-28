@@ -2,12 +2,13 @@
 import { createHash } from "node:crypto";
 
 import { safePath } from "@leanish/tool-runtime/local-files";
-import { planPayload, planSection as sectionOf, withPlanSection as replaceSection } from "@leanish/tool-runtime/plan-blocks";
+import { defused, planBlock, planPayload, planSection as sectionOf, SECTION_LIMIT, withPlanSection as replaceSection } from "@leanish/tool-runtime/plan-blocks";
 import { literal } from "@leanish/tool-runtime/pr-text";
 
 import type { WrapperFile } from "./wrapper-generation.ts";
 import { WRAPPER_FILES, WRAPPER_PROPERTIES } from "./gradle-wrapper.ts";
 import type { CopyChange, NpmResult } from "./npm-compute.ts";
+import { cell, changeRows, row } from "./change-rows.ts";
 import type { DirectMove, Unit } from "./units.ts";
 
 export interface PlannedMove extends DirectMove {
@@ -24,6 +25,11 @@ export interface BumpPlan {
   readonly changes: ReadonlyArray<CopyChange>;
   readonly changeCount: number;
   readonly notes: ReadonlyArray<string>;
+  /**
+   * Display only, never recorded in the plan block, so absent from a plan read back from a PR: the packages (see
+   * `rehoistKey`) whose changes the table may show as moved. Not part of the plan's identity.
+   */
+  readonly rehoisted?: ReadonlyArray<string>;
 }
 
 export const DEPENDENCY_FIELDS = [
@@ -82,6 +88,7 @@ export async function planFor(unit: Unit, npm: NpmResult, tagCommit: (name: stri
     changes: npm.changes.slice(0, 30),
     changeCount: npm.changes.length,
     notes: npm.notes,
+    ...(npm.rehoisted === undefined || npm.rehoisted.length === 0 ? {} : { rehoisted: npm.rehoisted }),
   };
 }
 
@@ -117,7 +124,8 @@ export function planOf(body: string): BumpPlan | undefined {
   if (!Array.isArray(value.notes) || !value.notes.every((note) => typeof note === "string")) {
     return undefined;
   }
-  return value as unknown as BumpPlan;
+  const { rehoisted: _display, ...recorded } = value;
+  return recorded as unknown as BumpPlan;
 }
 
 function validWrapperFiles(files: unknown): boolean {
@@ -226,25 +234,34 @@ function validCommitSha(value: unknown): boolean {
   return typeof value === "string" && /^[0-9a-f]{40}$/i.test(value);
 }
 
-/** Text from elsewhere (names, versions, paths) in a table cell, as a literal code span. */
-const cell = (text: string) => literal(text, { table: true });
-
 export function planSection(plan: BumpPlan): string {
   // Lockfile-only copy changes (an in-range npm update) are rows too, so a PR without declared moves doesn't show an empty table.
+  const shown = plan.changes.slice(0, 30);
+  const complete = plan.changeCount === shown.length;
+  const rehoisted = new Set(complete ? plan.rehoisted : []);
+  const grouped = sectionParts(plan, changeRows(shown, complete, rehoisted));
+  if (rehoisted.size === 0) {
+    return sectionOf(grouped);
+  }
+  // The shared renderer cuts lines only if neither complete encoding fits. In that case every package stays per path.
+  const fits = [false, true].some((compressed) =>
+    [grouped.heading, defused(grouped.people), planBlock(grouped.payload, compressed)].join("\n\n").length <= SECTION_LIMIT);
+  return sectionOf(fits ? grouped : sectionParts(plan, changeRows(shown, complete, new Set())));
+}
+
+function sectionParts(plan: BumpPlan, copyRows: ReadonlyArray<string>) {
   const rows = [
     ...plan.moves.map((move) => row(cell(move.name), cell(move.from), cell(move.to), move.locations.map(cell).join(", "))),
-    ...plan.changes.slice(0, 30).map((change) =>
-      row(cell(change.name), change.from === undefined ? "new" : cell(change.from), change.to === undefined ? "removed" : cell(change.to), cell(`${change.lockfile}:${change.path}`))),
+    ...copyRows,
   ];
   const table = rows.length === 0 ? [] : ["| Package | From | To | Locations |", "|---|---|---|---|", ...rows];
   const more = plan.changeCount > 30 ? [`- and ${plan.changeCount - 30} more npm copy changes`] : [];
   const notes = plan.notes.map((note) => `- ${literal(note)}`);
   const people = [table, more, notes].filter((lines) => lines.length > 0).map((lines) => lines.join("\n")).join("\n\n");
-  return sectionOf({ heading: HEADING, people, payload: plan, name: "bump-it's plan" });
+  // The recorded plan never carries the display-only `rehoisted`; a review recomputes it from the lockfiles.
+  const { rehoisted: _display, ...recorded } = plan;
+  return { heading: HEADING, people, payload: recorded, name: "bump-it's plan" };
 }
-
-/** A table row of cells already rendered: literal spans, or the tool's own words for a copy added or removed. */
-const row = (name: string, from: string, to: string, locations: string) => `| ${name} | ${from} | ${to} | ${locations} |`;
 
 export function withPlanSection(body: string, plan: BumpPlan): string {
   return replaceSection(body, HEADING, planSection(plan));

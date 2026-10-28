@@ -23,6 +23,7 @@ import { repositoryOverrides } from "./npm-overrides.ts";
 import { retentionManifests } from "./npm-pins.ts";
 import { type Decision, decideTargets, meetsReleaseAge, type TargetSources } from "./npm-targets.ts";
 import { npmWindowFor, requireNpmExcludes } from "./npm-window.ts";
+import { provenRehoists } from "./rehoists.ts";
 
 /** Runs npm with `args` in `cwd` (an absolute directory in the scratch copy). */
 export type NpmCommand = (cwd: string, args: ReadonlyArray<string>) => Promise<{ code: number; stdout: string; stderr: string }>;
@@ -58,6 +59,8 @@ export interface NpmResult {
   /** Repo-relative path → content, for each npm file that differs from the base. */
   readonly files: ReadonlyMap<string, string>;
   readonly changes: ReadonlyArray<CopyChange>;
+  /** Packages (`rehoistKey`) whose changes are only copies moving between paths: display only, see `provenRehoists`. */
+  readonly rehoisted?: ReadonlyArray<string>;
   /** Copies left as they were, and why. */
   readonly notes: ReadonlyArray<string>;
 }
@@ -70,6 +73,7 @@ type Manifest = Record<string, unknown>;
 export async function computeNpm(inputs: NpmInputs): Promise<NpmResult> {
   const files = new Map<string, string>();
   const changes: CopyChange[] = [];
+  const rehoisted: string[] = [];
   const baseVersions = versionsByName(inputs.baseLocks);
   const lockfiles = [...inputs.baseLocks.keys()]
     .filter((lockfile) => inputs.kind === "routine" || inputs.moves.some((move) => move.lockfile === lockfile))
@@ -93,11 +97,12 @@ export async function computeNpm(inputs: NpmInputs): Promise<NpmResult> {
       files.set(path, content);
     }
     changes.push(...result.changes);
+    rehoisted.push(...result.rehoisted ?? []);
     for (const note of result.notes) {
       notes.add(note);
     }
   }
-  return { files, changes, notes: [...notes].sort() };
+  return { files, changes, rehoisted, notes: [...notes].sort() };
 }
 
 async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions: ReadonlyMap<string, ReadonlyArray<string>>, runtime: NodeRuntime, lockedNames: ReadonlySet<string>): Promise<NpmResult> {
@@ -235,7 +240,8 @@ async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions
   if (new NpmGraph(JSON.parse(finalText)).copies().some((copy) => copy.name === "@types/node")) {
     notes.push(nodeTypeProblem(runtime));
   }
-  return { files, changes: changesBetween(lockfile, baseGraph, new NpmGraph(JSON.parse(finalText))), notes };
+  const headGraph = new NpmGraph(JSON.parse(finalText));
+  return { files, changes: changesBetween(lockfile, baseGraph, headGraph), rehoisted: provenRehoists(lockfile, baseGraph, headGraph), notes };
 }
 
 /** Existing incompatible types need manual correction; never accept a new incompatible copy. */
@@ -441,7 +447,8 @@ function versionsByName(locks: ReadonlyMap<string, unknown>): Map<string, string
   return new Map([...versions].map(([name, set]) => [name, [...set].sort()]));
 }
 
-function changesBetween(lockfile: string, base: NpmGraph, head: NpmGraph): CopyChange[] {
+/** Every path whose copy differs between two lockfile graphs. */
+export function changesBetween(lockfile: string, base: NpmGraph, head: NpmGraph): CopyChange[] {
   const before = new Map(base.copies().map((copy) => [copy.path, copy]));
   const after = new Map(head.copies().map((copy) => [copy.path, copy]));
   const changes: CopyChange[] = [];

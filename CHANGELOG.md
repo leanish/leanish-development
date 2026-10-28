@@ -34,6 +34,18 @@
   through this package. A JavaScript consumer goes without it; a TypeScript consumer must now declare `@types/node`
   `>=24` itself (the same range as before). With `skipLibCheck: true`, one that doesn't gets no error: the
   declarations' `NodeJS.*` references silently become `any`.
+- bump-it's "What bump-it moved" table shows a package's copy changes as moves instead of up/downgrades when its
+  lockfile graphs prove that no consumer changed version: every changed copy has a dependent, every dependent
+  (workspaces included) resolves the same versions before and after, no path changed its package, the changed copies
+  took away the versions they brought, and each participating installed identity (name and version) has only one copy
+  anywhere in either graph, counting copies that resolve no edge too. Each version is a row `moved` from its old paths
+  to its new ones, and copies gained or lost on the way get a row of their own (leanish-development#305 had `ajv` 8.20.0
+  and 6.15.0 swap places with no consumer changing version). Anything else, a list cut short, and a package whose moved
+  rows would be more numerous or longer than its per-path rows keep their per-path rows. Grouped rows are used only
+  when the whole section fits without dropping any lines, with either a plain or compressed plan block; otherwise
+  every package keeps its per-path rows. This is display only: the plan block, its digest and verification are unchanged,
+  and the verdict is recomputed from the lockfiles each time bump-it writes a body, including an adaptation, never read
+  from the PR.
 
 ### Fixed
 
