@@ -937,3 +937,80 @@ What each step added, with rough API-equivalent cost (about $209.5 in all, the s
   per-PR ones, and one reporting problem already in v0.8.2, fixed during the release (#301).
 
 v0.9.0 (`86f5f22`) is rc.4 plus its release metadata (#299).
+
+## Release reviews and candidate of 0.9.1 — 2026-10-28
+
+0.9.1 makes `@leanish/agent-runtime` ready for the incubator, publishes it from stable releases, and fixes four
+problems set aside in 0.9.0, in eight PRs:
+- isolation policies validated at their boundary (#310);
+- bump-it's Gradle reference checks honour `gradle.ignoreConfigurations` (#311);
+- the trusted-publishing workflow (#312);
+- the run report's `start` notice written through the guarded write (#313);
+- the exports and lazy credentials the incubator needs (#314);
+- quiet read failures reported under `errors` (#315);
+- Gradle failures compared without the export root (#316);
+- npm re-hoists shown as moves in bump-it's table (#317).
+
+The release review added a ninth, #318.
+
+Each PR had a Haiku pair, then Sol. Claude sub-agents wrote the first versions and the main session read every diff.
+From the afternoon on, Sol wrote the fix rounds (`--write`), and a fresh Sol label gave the final review. Sol raised 12
+P2 and 2 P3 on #312 to #317, all fixed before merge. Four of them came from a fresh label after Sol's own fix rounds,
+one on #316 and three on #317.
+
+- **rc.1 (`3197eca`)**:
+  - The Haiku pair on `git diff v0.9.0 6c9060b` found one real point. `prepare` in `publish-agent-runtime.yml` reads
+    the `npm` environment, which GitHub lists under Actions read, without that permission. #318 added it before the
+    tag. Its other points were settled with it.
+  - Sol, unprimed, found nothing.
+  - Astra found one should-fix: a release created before the merge commit's checks pass makes `prepare` fail, and
+    nothing retries it. Settled with Sol as not blocking, since it fails closed and can be re-run. The release waited
+    for those checks, and `releasing.md` now says so.
+  - Fixtures with Claude Code: secure-it 12 of 12 (8 PRs) and bump-it 12 of 12 (15 PRs), with no `errors` and CI
+    green on every open fixture PR. TEST_npm-actions#600 shows a re-hoist as two `moved` rows plus a copy gained.
+  - The incubator passed its checks (856 tests), its local smoke run and `cdk synth` against the candidate's packed
+    package.
+- **Release**:
+  - v0.9.1 (`293e9dd`) is rc.1 plus its release metadata (#319).
+  - The GitHub release was created once `293e9dd`'s checks were green.
+  - `publish-agent-runtime.yml` ran and stopped at the `npm`-environment check, before fetching or packing, because that environment doesn't exist yet;
+    nothing was packed or published.
+  - The owner published `@leanish/agent-runtime` 0.9.1 by hand, as with 0.9.0. The registry's shasum `e0bfcd22…`
+    matches the tarball packed from the tag.
+- **Adoption**: leanish-development-incubator#44 replaced the runtime's copied modules with the published package.
+  - Haiku ×2 found one real point: a relative `XDG_CACHE_HOME` now failed `run-local`. It's now ignored, as the XDG
+    spec says.
+  - Sol, final, found a should-fix: a catalog credential mapped to `CLAUDE_CONFIG_DIR` made the package's refusal print
+    the secret before redaction. The incubator now reserves the name; the package's message is for 0.9.2.
+  - 861 tests, the smoke run and `cdk synth` pass.
+  - Both of the Docker image's installs were reproduced locally with only the files it copies. A real `docker build`
+    wasn't run.
+- **Passes on v0.9.1**:
+  - The six fixture repins (`fixture-repin`) merged green.
+  - Pass 1 (2026-10-28, ending 21:03Z): 28 commands, none failed, none reported `errors`. As a patch, the repin came inside
+    each adopter's routine PR.
+    - Three moved only the pin and merged: leanish-skills#45 and java-conventions#104 once green, and kryptovero#22
+      as it was, since its CI is off.
+    - Four also refresh dependencies and are left for the owner: sqs-codec#182, leanish-development#321, dtv#60 and
+      leanish-development-incubator#43. leanish-development#321 shows the `ajv` re-hoist #305 had misreported, now as
+      moves.
+  - Pass 2 (2026-10-28 22:05Z): 28 commands, each exited 0, and none reported `errors`. It opened nothing new and kept
+    the four refreshes up to date (leanish-development-incubator#43 adapted to the adoption).
+
+Known limitations, for 0.9.2:
+- A new occurrence of an action with no immutable release fails the gate (in [coverage gaps](coverage-gaps.md)).
+- Publishing races the release's CI (in coverage gaps; `releasing.md` now says to wait for the checks).
+- The runtime's `CLAUDE_CONFIG_DIR` refusal prints the variable's value; the incubator reserves the name meanwhile.
+
+After the release, #322 changed the code behind the two open CodeQL alerts (both false positives); GitHub marked both
+fixed at 21:49Z.
+
+What each step added, with rough API-equivalent cost (about $105.6 in all, the sub-agents' cache writes priced at the
+1-hour rate; about $99.6 at the 5-minute rate they were logged at):
+- Haiku, 24 runs (about $1.01): real findings on most PRs. On rc.1, the missing `actions: read` (#318), which had
+  also been raised on #312.
+- Sol, 33 calls (about $11.13, 8 of them `--write` fix rounds): 14 findings on six PRs, the adoption's secret leak,
+  a clean unprimed review of rc.1, and agreement on how Astra's finding was settled.
+- Astra, 1 call (about $4.68): rc.1's only finding, the publishing race.
+- Claude main session (about $47.7) and sub-agents (about $41.1): five Opus and three Sonnet implementers wrote the
+  first versions. The main session wrote #312 and #318, cut and ran the candidate, released and repinned.

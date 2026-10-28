@@ -92,8 +92,10 @@ unreleased changes collect under its "Unreleased" heading.
    including commits main gained meanwhile, needs a new candidate, run and
    reviewed.
    Squash-merge the release PR and create a lightweight `v<version>` tag at
-   **its exact merge commit**. Create the matching GitHub release with the fixes
-   and a link to `CHANGELOG.md`, as java-conventions does. Do not move an
+   **its exact merge commit**. Once that commit's `check` and `supply-chain` checks
+   are green (publishing requires them; a release created earlier fails before
+   packing, and its run's failed jobs can be re-run), create the matching GitHub
+   release with the fixes and a link to `CHANGELOG.md`, as java-conventions does. Do not move an
    existing tag; publishing `@leanish/agent-runtime` is a separate step (below).
 6. When the reusable workflow or gate code changes, resolve the tag's full commit
    SHA and repin adopting workflows to
