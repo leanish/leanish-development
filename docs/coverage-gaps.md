@@ -68,6 +68,17 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   verification includes the resolution failures of the configurations the gate is told to ignore, so a failure there
   can block an update the gate wouldn't. secure-it's preflight and verification leave them out since 0.9.0; bump-it's
   wasn't part of that change. Pre-existing in 0.7.x.
+- **Ignored Gradle configurations' failures compared verbatim (secure-it)**: a resolution failure in a configuration
+  listed in `gradle.ignoreConfigurations` is accepted when the reference build has the same failure, compared as text,
+  and each build runs from its own export directory. A message that carries the export's absolute path reads as a
+  different failure, so verification fails closed and a person makes the change. New in 0.9.0.
+- **A hand-built `IsolationPolicy` without a build cache root (tool-runtime)**: the tools always supply
+  `buildCacheRoot`, but a hand-built policy passed directly to `runSandboxed` without it fails while the sandbox's
+  cache paths are made, before anything runs, with an error that doesn't name the missing field. New in 0.9.0.
+- **Other npm read failures stay quiet (secure-it, bump-it)**: since 0.9.0 an undecided publisher identity on a fix or
+  bump blocks its unit and is reported under `errors`. A carrier's other read failures (an unreadable bundle, a
+  registry that can't list versions) and a direct peer's identity error still leave the unit blocked or waiting with a
+  note, not under `errors`, so a batch doesn't count the repository as failed. Pre-existing in 0.8.x.
 - **Optional root peers and the npm deprecation check (bump-it)**: a transitive version a major brings is exempt when the root declares the package, including as an optional peer it never installed, so a deprecated or unreadable version of it isn't refused. Pre-existing in 0.6.0; not fixed in 0.8.0.
 - **npm aliases without a version** (`"compat": "npm:lib"`): the inventory reads them, but neither tool can rewrite them, so an update fails visibly and a person makes it.
 - **Scheduled runs are best effort**: GitHub may delay or skip them, and disables them after 60 days without activity in a public repository. Nothing else watches that the scheduled scan still runs.
