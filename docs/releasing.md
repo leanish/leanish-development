@@ -2,7 +2,7 @@
 
 All workspace packages stay private in this repository, and adopters use a
 reviewed Git commit. The root version identifies the release. One package,
-`@leanish/agent-runtime`, can also be published to npm from a release; see
+`@leanish/agent-runtime`, is also published to npm from each stable release; see
 [Publishing @leanish/agent-runtime](#publishing-leanishagent-runtime).
 
 The flow follows java-conventions: a small release PR with a dated CHANGELOG
@@ -115,18 +115,46 @@ decisions. Subsequent development must not move a released tag or an adopter's p
 
 ## Publishing @leanish/agent-runtime
 
-`@leanish/agent-runtime` can be published to npm as compiled JavaScript with
-declarations, so other repositories can run a coding agent the same way. It is
-optional, not part of every release: publishing is the owner's decision and
-step, with their npm credentials or trusted publishing.
+`@leanish/agent-runtime` is published to npm as compiled JavaScript with
+declarations, so other repositories can run a coding agent the same way. Its
+first version, 0.9.0, was published by hand; from then on, publishing a stable
+GitHub release runs [publish-agent-runtime.yml](../.github/workflows/publish-agent-runtime.yml),
+with npm's trusted publishing (OIDC): no npm token is stored anywhere, and npm
+adds provenance (it does for a public repository like this one).
 
-1. Check out the commit of a stable `v<version>` tag.
-2. Run `npm ci`, then `npm run pack -w @leanish/agent-runtime -- --out <absolute-dir>`.
-   It stages the package outside the checkout with the release's version (the
-   root `package.json`'s) and prints the tarball's path as its last line; its
-   [README](../core/agent-runtime/README.md#publishing) says what it contains.
-3. Publish that tarball (`npm publish <tarball>`; a scoped package is
-   restricted unless `--access public` is given).
+1. `prepare` skips prereleases (candidates never publish) and accepts only a
+   stable `v<major>.<minor>.<patch>` release. It requires the `npm`
+   environment to have a required reviewer, the tag's commit on main with its
+   `check` and `supply-chain` checks green (`cooldown` runs on pull requests
+   only), and npm 11.5.1 or later. It runs `npm ci`, packs the package
+   (`npm run pack -w @leanish/agent-runtime`), checks the tarball's name and
+   version against the tag, installs it in an empty project and imports every
+   export, and records its sha512 integrity. It has no publishing permission.
+2. `publish` runs in the `npm` environment, so it waits for the owner's
+   approval; nothing else in the release flow waits for it. It publishes
+   exactly the tarball `prepare` checked (its integrity is compared first). A
+   rerun after a publish that went through only confirms the published
+   integrity: a version is never replaced. Rerun `publish` alone within 7 days
+   (the tarball artifact's retention); after that, rerun the whole workflow.
+
+**One-time setup, by the owner:**
+
+- GitHub: an environment `npm` with the owner as required reviewer and
+  deployments limited to tags `v*`. Leave "Prevent self-review" off while the
+  owner is also the account that creates the release.
+- npmjs.com, package settings: a trusted publisher for GitHub Actions with
+  repository `leanish/leanish-development`, workflow `publish-agent-runtime.yml`
+  and environment `npm`, allowed to `npm publish` (not only `npm stage publish`).
+  Set it up shortly before the first publish through the workflow: it expires
+  if it isn't used. Once that publish works, set "require two-factor
+  authentication and disallow tokens".
+
+**By hand** (the fallback, e.g. while the workflow is unavailable): check out
+the stable tag, run `npm ci`, then
+`npm run pack -w @leanish/agent-runtime -- --out <absolute-dir>` (it prints the
+tarball's path as its last line; its
+[README](../core/agent-runtime/README.md#publishing) says what it contains), and
+`npm publish <tarball> --access public` with the owner's npm login.
 
 The repository's manifest keeps `private: true` and `0.0.0`; only the staged
 one is published.

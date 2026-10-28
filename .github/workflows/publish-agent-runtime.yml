@@ -1,0 +1,191 @@
+name: publish agent-runtime
+
+# Publishes @leanish/agent-runtime to npm from a stable release, with npm's trusted publishing (OIDC): no npm token is
+# stored anywhere. `prepare` checks the release and packs and smoke-tests the tarball without any publishing
+# permission; `publish` sends exactly that tarball, inside the `npm` environment, whose required reviewer (the owner)
+# approves it. One-time setup and the manual fallback: docs/releasing.md#publishing-leanishagent-runtime.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+# A release publishes once; a second run for the same release waits instead of racing it.
+concurrency:
+  group: publish-agent-runtime-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+# `bash` explicitly: GitHub's default for `run` has no pipefail, so a failing `npm run pack | tail` would pass.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  prepare:
+    # Candidates are prereleases: skipped quietly here, and refused again below in case this condition is ever edited.
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      checks: read
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tarball: ${{ steps.pack.outputs.tarball }}
+      integrity: ${{ steps.pack.outputs.integrity }}
+    steps:
+      - name: Accept only a stable release
+        id: release
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          if [ "$PRERELEASE" != "false" ]; then echo "::error::$TAG is a prerelease; only stable releases publish"; exit 1; fi
+          if ! [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::$TAG isn't a stable v<major>.<minor>.<patch> tag"; exit 1
+          fi
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      # Without required reviewers, GitHub would run `publish` with no approval (it even creates a missing environment
+      # unprotected), so this is checked before anything is packed. It guards against a misconfiguration, not against
+      # an edited workflow: that defense is the environment's own deployment rules.
+      - name: Require an approval for the npm environment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          if ! environment=$(gh api "repos/$REPO/environments/npm" 2> "$RUNNER_TEMP/environment.err"); then
+            if grep -q "HTTP 404" "$RUNNER_TEMP/environment.err"; then
+              echo "::error::the npm environment doesn't exist; create it with a required reviewer first"
+            else
+              echo "::error::can't read the npm environment: $(cat "$RUNNER_TEMP/environment.err")"
+            fi
+            exit 1
+          fi
+          reviewers=$(jq '[.protection_rules[]? | select(.type == "required_reviewers") | .reviewers[]?] | length' <<<"$environment")
+          if [ "$reviewers" -lt 1 ]; then echo "::error::the npm environment has no required reviewer"; exit 1; fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ github.event.release.tag_name }}
+          # Every branch, so origin/main is there to check the tag against.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require the tag's commit on main, with its checks green
+        id: commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name }}
+          ACTIONS_APP_ID: "15368"
+        run: |
+          sha=$(git rev-parse "refs/tags/$TAG^{commit}")
+          git merge-base --is-ancestor "$sha" refs/remotes/origin/main || { echo "::error::$TAG ($sha) isn't on main"; exit 1; }
+          # The release commit is a squash merge on main, so main's CI ran on it. Several workflows can have a job with
+          # the same name (one skipped on a push), so each check needs a success from GitHub Actions and no failure.
+          # `cooldown` isn't one: it runs on pull requests only.
+          for check in check supply-chain; do
+            conclusions=$(gh api "repos/$REPO/commits/$sha/check-runs?check_name=$check&app_id=$ACTIONS_APP_ID" --jq '[.check_runs[].conclusion]')
+            verdict=$(jq -r 'if any(. == "success") and all(. == "success" or . == "skipped" or . == "neutral") then "success" else tostring end' <<<"$conclusions")
+            if [ "$verdict" != "success" ]; then echo "::error::check '$check' on $sha: $verdict"; exit 1; fi
+          done
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          # No cache: a publish job installs from the lockfile only.
+          package-manager-cache: false
+
+      # Checked here, before the owner's approval: `publish` uses the same Node.
+      - name: Require npm 11.5.1 or later (trusted publishing)
+        run: |
+          node -e 'const [a, b, c] = process.argv[1].split(".").map(Number); process.exit(a > 11 || (a === 11 && (b > 5 || (b === 5 && c >= 1))) ? 0 : 1)' "$(npm --version)" \
+            || { echo "::error::npm $(npm --version) can't use trusted publishing (needs 11.5.1+)"; exit 1; }
+
+      - run: npm ci --ignore-scripts
+
+      - name: Pack and check the tarball
+        id: pack
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          SHA: ${{ steps.commit.outputs.sha }}
+        run: |
+          test "$(jq -r .version package.json)" = "$VERSION" || { echo "::error::package.json's version isn't $VERSION"; exit 1; }
+          tarball=$(npm run --silent pack -w @leanish/agent-runtime -- --out "$RUNNER_TEMP/tarball" | tail -n 1)
+          manifest=$(tar -xOf "$tarball" package/package.json)
+          test "$(jq -r .name <<<"$manifest")" = "@leanish/agent-runtime" || { echo "::error::the tarball isn't @leanish/agent-runtime"; exit 1; }
+          test "$(jq -r .version <<<"$manifest")" = "$VERSION" || { echo "::error::the tarball's version isn't $VERSION"; exit 1; }
+          integrity="sha512-$(openssl dgst -sha512 -binary "$tarball" | base64 -w 0)"
+          echo "tarball=$(basename "$tarball")" >> "$GITHUB_OUTPUT"
+          echo "integrity=$integrity" >> "$GITHUB_OUTPUT"
+          echo "Packed $(basename "$tarball") from $SHA: $integrity" >> "$GITHUB_STEP_SUMMARY"
+
+      # Outside the monorepo, as a consumer installs it: every exported module must load.
+      - name: Install the tarball in an empty project and import every export
+        env:
+          TARBALL: ${{ runner.temp }}/tarball/${{ steps.pack.outputs.tarball }}
+          SMOKE: ${{ runner.temp }}/smoke
+        run: |
+          mkdir -p "$SMOKE"
+          echo '{"name":"smoke","private":true,"type":"module"}' > "$SMOKE/package.json"
+          npm --prefix "$SMOKE" install --ignore-scripts --no-audit --no-fund "$TARBALL"
+          cd "$SMOKE"
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            const { exports } = JSON.parse(readFileSync("node_modules/@leanish/agent-runtime/package.json", "utf8"));
+            for (const subpath of Object.keys(exports)) {
+              await import(subpath === "." ? "@leanish/agent-runtime" : `@leanish/agent-runtime/${subpath.slice(2)}`);
+            }
+            console.log(`imported ${Object.keys(exports).length} exports`);
+          '
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: agent-runtime-tarball
+          path: ${{ runner.temp }}/tarball/${{ steps.pack.outputs.tarball }}
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: prepare
+    runs-on: ubuntu-26.04
+    environment: npm
+    # Only the OIDC token npm's trusted publishing exchanges; the artifact comes from this run without other permissions.
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: agent-runtime-tarball
+          path: ${{ runner.temp }}/tarball
+
+      # No registry-url: it would write an .npmrc expecting a token; npm finds the OIDC credentials itself.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Publish the approved tarball
+        env:
+          TARBALL: ${{ runner.temp }}/tarball/${{ needs.prepare.outputs.tarball }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          INTEGRITY: ${{ needs.prepare.outputs.integrity }}
+        run: |
+          actual="sha512-$(openssl dgst -sha512 -binary "$TARBALL" | base64 -w 0)"
+          test "$actual" = "$INTEGRITY" || { echo "::error::the tarball isn't the one prepare checked"; exit 1; }
+          # A rerun after a publish that went through only confirms it: a published version can't be replaced. Only a
+          # 404 means "not published yet"; any other registry error stops here.
+          if published=$(npm view "@leanish/agent-runtime@$VERSION" dist.integrity 2> "$RUNNER_TEMP/view.err"); then
+            if [ -n "$published" ]; then
+              test "$published" = "$INTEGRITY" || { echo "::error::$VERSION is already published with $published"; exit 1; }
+              echo "$VERSION was already published with this tarball" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          elif ! grep -q "E404" "$RUNNER_TEMP/view.err"; then
+            echo "::error::can't read the registry: $(cat "$RUNNER_TEMP/view.err")"; exit 1
+          fi
+          npm publish "$TARBALL" --access public
+          echo "Published @leanish/agent-runtime@$VERSION ($INTEGRITY)" >> "$GITHUB_STEP_SUMMARY"
