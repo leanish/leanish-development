@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- The gate strips a Gradle build path's trailing slash without a regular expression, clearing a CodeQL false
+  positive; the results are unchanged.
+
 ## 0.9.1 - 2026-10-28
 
 ### Added
