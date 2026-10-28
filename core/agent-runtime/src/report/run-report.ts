@@ -177,27 +177,39 @@ export async function writeFinalLine(stream: NodeJS.WritableStream, line: string
  * event: a stream may never emit 'close' (`emitClose: false`). A write that throws is followed by no event, so it stops
  * listening at once. A stream already destroyed or errored fails the write without a new 'error' (whatever its
  * destruction or first error still emits is theirs), and a stream without events (a host's stub) has none to hear: they
- * are written without listening, so writing to them again and again leaves nothing behind.
+ * are written without listening, so writing to them again and again leaves nothing behind. Nothing here rejects: any
+ * throw while setting up or tearing down settles to false.
  */
 function flushed(stream: NodeJS.WritableStream, text: string): Promise<boolean> {
   return new Promise((done) => {
-    const state = stream as { readonly destroyed?: boolean; readonly errored?: Error | null };
-    const listening = typeof stream.on === "function" && state.destroyed !== true && (state.errored ?? null) === null;
+    // Only the listeners actually attached, each kept until its own removal works.
+    const attached = new Set<"error" | "close">();
     // Settles a write the stream ended before calling back, if any; nothing more comes after either event.
     const streamEnded = (): void => {
       done(false);
       stopListening();
     };
     const stopListening = (): void => {
-      if (!listening) return;
-      stream.removeListener("error", streamEnded);
-      stream.removeListener("close", streamEnded);
+      for (const event of [...attached]) {
+        try {
+          stream.removeListener(event, streamEnded);
+          attached.delete(event);
+        } catch {
+          // Kept, and still no rejection: the stream's next 'error' or 'close' tries again. One whose removal always
+          // throws keeps the listener, swallowing its later 'error's.
+        }
+      }
     };
-    if (listening) {
-      stream.on("error", streamEnded);
-      stream.on("close", streamEnded);
-    }
+    // All of it inside the try: a stream whose `on` (or a getter) throws settles to false like one whose write throws,
+    // since this must never reject (`startRunReport` doesn't wait for the start notice's).
     try {
+      const state = stream as { readonly destroyed?: boolean; readonly errored?: Error | null };
+      if (typeof stream.on === "function" && state.destroyed !== true && (state.errored ?? null) === null) {
+        stream.on("error", streamEnded);
+        attached.add("error");
+        stream.on("close", streamEnded);
+        attached.add("close");
+      }
       stream.write(text, (err) => {
         const written = err === undefined || err === null;
         done(written);
@@ -300,8 +312,9 @@ export function startRunReport(options: RunReportOptions): StartedRunReport {
     try {
       writeFileSync(marker.path, "reported\n");
     } catch (err) {
-      // The wrapper will then write a final line of its own too; say why there are two.
-      options.stream.write(`run report: can't write ${marker.env}=${marker.path} (${messageOf(err)}); the wrapper may report this run as well\n`);
+      // The wrapper will then write a final line of its own too; say why there are two. Through the guarded write, so a
+      // stream that fails it can't end the process or throw out of here; nothing waits for it.
+      void flushed(options.stream, `run report: can't write ${marker.env}=${marker.path} (${messageOf(err)}); the wrapper may report this run as well\n`);
     }
   }
   return {
