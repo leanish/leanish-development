@@ -130,12 +130,18 @@ adds provenance (it does for a public repository like this one).
    (`npm run pack -w @leanish/agent-runtime`), checks the tarball's name and
    version against the tag, installs it in an empty project and imports every
    export, and records its sha512 integrity. It has no publishing permission.
+   It hands the tarball to `publish` through its job outputs (base64, at most
+   256 KiB encoded; a bigger tarball fails here and is published by hand). The
+   workflow uses plain `git` and no artifact actions: those actions have no
+   immutable releases, so the supply-chain gate can't trust their age.
 2. `publish` runs in the `npm` environment, so it waits for the owner's
    approval; nothing else in the release flow waits for it. It publishes
    exactly the tarball `prepare` checked (its integrity is compared first). A
    rerun after a publish that went through only confirms the published
-   integrity: a version is never replaced. Rerun `publish` alone within 7 days
-   (the tarball artifact's retention); after that, rerun the whole workflow.
+   integrity: a version is never replaced. Rerun `publish` alone while GitHub
+   still lets the run be rerun (up to 30 days); after that, no rerun is
+   possible (the workflow only starts from a release being published), so
+   publish by hand (below).
 
 **One-time setup, by the owner:**
 
