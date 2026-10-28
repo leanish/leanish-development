@@ -70,9 +70,6 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   path reads as a different failure, so verification fails closed and a person makes the change. And since a failing
   configuration resolves nothing, its failure text is the only thing compared there: a resolution rule the edit adds
   to it (a force, a substitution) that leaves the text unchanged isn't seen. New in 0.9.0 (bump-it in 0.9.1).
-- **A hand-built `IsolationPolicy` without a build cache root (tool-runtime)**: the tools always supply
-  `buildCacheRoot`, but a hand-built policy passed directly to `runSandboxed` without it fails while the sandbox's
-  cache paths are made, before anything runs, with an error that doesn't name the missing field. New in 0.9.0.
 - **Other npm read failures stay quiet (secure-it, bump-it)**: since 0.9.0 an undecided publisher identity on a fix or
   bump blocks its unit and is reported under `errors`. A carrier's other read failures (an unreadable bundle, a
   registry that can't list versions) and a direct peer's identity error still leave the unit blocked or waiting with a

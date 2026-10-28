@@ -209,8 +209,15 @@ export function claudeCodeRunnerOptions(policy: IsolationPolicy, confinement: Cl
   };
 }
 
-/** A host may build a policy by hand (or in plain JavaScript), so each adapter checks it before a runner gets it. */
-function assertValidPolicy(policy: IsolationPolicy, adapter: string): void {
+/**
+ * A host may build a policy by hand (or in plain JavaScript), so each entry that takes one checks it before anything is
+ * made or run: the adapters before a runner gets it, and the tools' sandboxed commands. `adapter` names the entry in
+ * the error.
+ */
+export function assertValidPolicy(
+  policy: Pick<IsolationPolicy, "readDenied" | "buildCacheRoot" | "env"> & Partial<Pick<IsolationPolicy, "loginHome">>,
+  adapter: string,
+): void {
   if (typeof policy !== "object" || policy === null) throw new Error(`${adapter}: the isolation policy must be an object`);
   const { readDenied, env, buildCacheRoot, loginHome } = policy;
   if (!Array.isArray(readDenied)) throw new Error(`${adapter}: readDenied must be an array of absolute paths`);
