@@ -64,14 +64,12 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   unless it would claim a held PR with npm moves: such PRs are kept for their npm work, in runs and in reviews (even
   one whose fix has aged since). Each failure is logged and reported.
   Narrowed in 0.9.0.
-- **`gradle.ignoreConfigurations` in reference checks (bump-it)**: bump-it's Gradle reference comparison in
-  verification includes the resolution failures of the configurations the gate is told to ignore, so a failure there
-  can block an update the gate wouldn't. secure-it's preflight and verification leave them out since 0.9.0; bump-it's
-  wasn't part of that change. Pre-existing in 0.7.x.
-- **Ignored Gradle configurations' failures compared verbatim (secure-it)**: a resolution failure in a configuration
-  listed in `gradle.ignoreConfigurations` is accepted when the reference build has the same failure, compared as text,
-  and each build runs from its own export directory. A message that carries the export's absolute path reads as a
-  different failure, so verification fails closed and a person makes the change. New in 0.9.0.
+- **Ignored Gradle configurations' failures compared verbatim (secure-it, bump-it)**: a resolution failure in a
+  configuration listed in `gradle.ignoreConfigurations` is accepted when the reference build has the same failure,
+  compared as text, and each build runs from its own export directory. A message that carries the export's absolute
+  path reads as a different failure, so verification fails closed and a person makes the change. And since a failing
+  configuration resolves nothing, its failure text is the only thing compared there: a resolution rule the edit adds
+  to it (a force, a substitution) that leaves the text unchanged isn't seen. New in 0.9.0 (bump-it in 0.9.1).
 - **Other npm read failures stay quiet (secure-it, bump-it)**: since 0.9.0 an undecided publisher identity on a fix or
   bump blocks its unit and is reported under `errors`. A carrier's other read failures (an unreadable bundle, a
   registry that can't list versions) and a direct peer's identity error still leave the unit blocked or waiting with a
