@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed
+
+- bump-it's Gradle reference comparison no longer blocks on every resolution failure in the configurations
+  `gradle.ignoreConfigurations` lists. The gate skips them; like secure-it, bump-it accepts an edit that fails to
+  resolve there the same way as the plan's reference, even when the planned update itself is what makes it fail (the
+  check proves the edit matches the plan, not that the ignored configuration resolves). A failure the edit adds,
+  removes or changes there is still reported, those configurations' declarations are still compared with the
+  reference, and every planned move must still land. bump-it has no Gradle reference check besides verification's.
+
 ## 0.9.0 - 2026-10-27
 
 ### Changed
