@@ -19,7 +19,9 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
    - Each package needing a major gets its own PR. A package's failing copies stay together: if any copy needs a
      major, all its actionable copies go in that major unit.
    - A package with a blocked copy (no fix or an identity break) is left out and reported, without blocking other
-     packages. Keeping copies together preserves verification's requirement that targeted advisories affect no
+     packages. A copy that can't be decided because a check failed (its publisher identity, or a carrier's bundle,
+     version listing or publish time, couldn't be read) is left out the same way and also reported under `errors`, so
+     a batch counts the repository as failed. Keeping copies together preserves verification's requirement that targeted advisories affect no
      version of a planned package left in the tree. Advisories no version fixes stay, inherited.
    - A Gradle fix is blocked and reported when its coordinate is pinned with `strictly(...)` (declared or as a
      dependency constraint) where the fix would act: where it's vulnerable, and every configuration declaring it. The
@@ -37,7 +39,9 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
      necessary.
    - All these choices use the security batch's same advisory snapshot, and each registry document is read once.
    - An impossible set leaves the batch blocked, with the conflicting peer ranges reported; unrelated fixes proceed.
-     Unreadable locked manifests leave npm work blocked because incoming peer constraints cannot be ruled out.
+     Unreadable locked manifests leave npm work blocked because incoming peer constraints cannot be ruled out. Those,
+     and any other read a set needs that fails (a copy's version listing or candidate manifest, the version a fix
+     requires of it, a candidate's identity or publish time), also report the set under `errors`.
 
    | Ecosystem | Situation | Mechanism |
    |---|---|---|
@@ -106,8 +110,9 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
      prepared as a clean base checkout for the new plan, so nothing the old plan did lingers. After verification,
      the tool appends the verified tree to the existing PR history as a normal commit.
    - One someone else pushed to: the fix goes in a PR of its own.
-   - One whose plan moves a package (companions included) whose publisher identity can't be decided now: the unit
-     fails and the PR is kept as it is, rather than rewritten without that move. Other units still go on.
+   - One whose plan moves a package (companions included) that can't be decided now (its publisher identity, its
+     carrier move or its direct-peer set, because a check failed): the unit fails and the PR is kept as it is, rather
+     than rewritten without that move. Other units still go on.
    - A held unit is recognised by its packages, not its name (a group's lowest package can change as members age or
      join): it takes the open held PR sharing most of its own packages (`members` in the plan; companions planning
      adds don't count), strongest pairs first across all units, each PR going to one unit at most; a review gives a
@@ -252,9 +257,10 @@ The tick from [`core/tool-runtime`](../core/tool-runtime), with secure-it's step
   - The routine recomputes **the entire batch** on the new base, including newly actionable packages and retiring
     fixes the base now has. A major recomputes only its package's major unit. A unit with no actionable work is
     closed; blocked groups are reported. New malware on base prevents other units from verifying until it is fixed.
-  - While any package's publisher identity can't be decided on the new base (its check failed), the PR is kept as it
-    is and the tick reports an `error`: a move lost to a failed check isn't work the base no longer needs, so nothing
-    is retired, replaced or rewritten until it can be decided.
+  - While any package's fix can't be decided on the new base (its publisher identity or a carrier's reads failed),
+    or a direct-peer set in the PR's recomputation can't be, the PR is kept as it is and the tick reports an `error`:
+    a move lost to a failed check isn't work the base no longer needs, so nothing is retired, replaced or rewritten
+    until it can be decided.
   - Older per-package plans without a batch kind keep their original package scope and topic during review. Runs
     create the new units independently; legacy PRs retire once their fixes are on the base.
   - A different plan on the new base: the PR is reconciled as in a run (reverted to the base, conflicts included,

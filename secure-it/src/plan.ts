@@ -226,18 +226,25 @@ async function completedWork(fixes: ReadonlyArray<SecurityFix>, peers?: NpmPeerP
   if (peers === undefined) return selected;
   const units: SecurityUnit[] = [];
   const blocked = [...selected.blocked];
+  const undecided: Array<{ packages: string[]; reason: string }> = [];
   for (const unit of selected.units) {
     const result = await peers.resolve(unit.work.filter((fix) => fix.ecosystem === "npm").map((fix) => ({ ...fix, to: fix.to!.version })));
-    const omitted = new Set(result.blocked.flatMap((group) => group.moves.map((move) => move.name)));
     // Copies of a package and their connected companions remain indivisible across lockfiles too, as do a copy and
     // the parents (or carriers) it's tied to.
     const tied = (unit.coupled ?? []).map((set) => set.filter((key) => key.startsWith("npm|")).map((key) => key.slice("npm|".length)));
-    for (;;) {
-      const size = omitted.size;
-      for (const set of [...result.sets, ...tied]) {
-        if (set.some((name) => omitted.has(name))) for (const name of set) omitted.add(name);
+    const leftOut = (groups: typeof result.blocked) => {
+      const names = new Set(groups.flatMap((group) => group.moves.map((move) => move.name)));
+      for (;;) {
+        const size = names.size;
+        for (const set of [...result.sets, ...tied]) {
+          if (set.some((name) => names.has(name))) for (const name of set) names.add(name);
+        }
+        if (names.size === size) return names;
       }
-      if (omitted.size === size) break;
+    };
+    const omitted = leftOut(result.blocked);
+    for (const group of result.blocked.filter((group) => group.undecided === true)) {
+      undecided.push({ packages: [...leftOut([group])].map((name) => `npm|${name}`).sort(), reason: group.reason });
     }
     if (result.blocked.length > 0) {
       // Malware leaves as a whole unit, with every copy of its packages (malicious or not); otherwise the work left out.
@@ -257,12 +264,17 @@ async function completedWork(fixes: ReadonlyArray<SecurityFix>, peers?: NpmPeerP
     const coupled = [...(unit.coupled ?? []).filter((set) => set.every((key) => kept.has(key))), ...peerSets];
     units.push({ ...unit, work: [...work, ...companions], coupled });
   }
-  return { units, blocked };
+  return { units, blocked, ...(undecided.length > 0 ? { undecided } : {}) };
 }
 
 export interface Selection {
   readonly units: ReadonlyArray<SecurityUnit>;
   readonly blocked: ReadonlyArray<{ readonly packages: ReadonlyArray<string>; readonly reasons: ReadonlyArray<string> }>;
+  /**
+   * Direct-peer sets left out because a check failed (`PeerResolution`'s `undecided`), not because the rules refused
+   * them: the packages each leaves out (also in `blocked`) and why. A failure to report, never "nothing to do".
+   */
+  readonly undecided?: ReadonlyArray<{ readonly packages: ReadonlyArray<string>; readonly reason: string }>;
 }
 
 const isActionable = (fix: SecurityFix) => fix.to !== undefined && fix.to.blockers.length === 0;

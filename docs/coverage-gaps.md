@@ -78,10 +78,21 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   dots also count (`%2E%2E`, case-insensitive, including mixed forms). `..cache` and `...` are allowed. Whitespace, commas
   and colons after the root stay untouched, as do `/r backup/lib` and `/r/lib/../../shared/lib`, so verification fails
   closed and a person makes the change. New in 0.9.0 (bump-it in 0.9.1); narrowed in 0.9.1.
-- **Other npm read failures stay quiet (secure-it, bump-it)**: since 0.9.0 an undecided publisher identity on a fix or
-  bump blocks its unit and is reported under `errors`. A carrier's other read failures (an unreadable bundle, a
-  registry that can't list versions) and a direct peer's identity error still leave the unit blocked or waiting with a
-  note, not under `errors`, so a batch doesn't count the repository as failed. Pre-existing in 0.8.x.
+- **Some listing failures stay quiet notes (secure-it, bump-it)**: an action with more releases than the gate reads
+  has an incomplete version listing, which neither tool reports under `errors`: secure-it blocks that action's fix
+  with the note "the registry doesn't list …'s versions completely, so the rule can't be applied", and bump-it gives
+  it no move with "the registry doesn't list …'s versions completely" among its waiting problems. The same notes cover
+  a Maven package that no configured repository lists (each answers 404). bump-it's npm resolution also leaves a
+  transitive copy whose versions the registry couldn't list, or didn't list completely, where it is, with a plain
+  note ("… stays at …: the registry couldn't list …'s versions: …"). Other listing failures fail the run: a Maven
+  repository that answers another error, or metadata without `<versions>`, and the npm listing of a package the gate
+  reads for a fix or a direct dependency. Pre-existing in 0.8.x.
+- **Late-computed new majors (bump-it)**: the first pass computes the routine, majors with an open PR and the first
+  `maxNewMajorsPerRun` new majors. Their failed direct-peer sets protect every unit's PR before any acts. Later new
+  majors aren't computed if deferred; their failed reads become known when they run. If an earlier new major doesn't
+  publish, a later one can still run in the same run and is computed in its turn. Its undecided sets block its moves
+  and reach `errors`, and protect subsequent units' PRs, but PRs already handled aren't rechecked and may already have
+  been rewritten. This accepted limit keeps execution order and the cap on actual new publications. New in 0.9.1.
 - **Optional root peers and the npm deprecation check (bump-it)**: a transitive version a major brings is exempt when the root declares the package, including as an optional peer it never installed, so a deprecated or unreadable version of it isn't refused. Pre-existing in 0.6.0; not fixed in 0.8.0.
 - **npm aliases without a version** (`"compat": "npm:lib"`): the inventory reads them, but neither tool can rewrite them, so an update fails visibly and a person makes it.
 - **Scheduled runs are best effort**: GitHub may delay or skip them, and disables them after 60 days without activity in a public repository. Nothing else watches that the scheduled scan still runs.
