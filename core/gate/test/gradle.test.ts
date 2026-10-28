@@ -1,11 +1,12 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { isOwnPackage, parseConfig } from "../src/config.ts";
-import { gradleLocated, gradleResolutionProblems, parseGradleInventory, runGradleInventory, strictPins } from "../src/gradle.ts";
+import { gradleLocated, gradleResolutionProblems, parseGradleInventory, runGradleInventory, strictPins, withoutRepositoryRoot } from "../src/gradle.ts";
 import { MavenCatalog } from "../src/catalogs.ts";
 import { type Config } from "../src/config.ts";
 import { MavenDates, mavenChanges } from "../src/maven-changes.ts";
@@ -300,6 +301,168 @@ describe("running the Gradle inventory", () => {
     await expect(runGradleInventory(repo, ["."], "worktree", failing)).rejects.toThrow(
       "exit code 1: Caused by: java.io.FileNotFoundException: /worktree/.gradle/fileHashes.lock (Operation not permitted)",
     );
+  });
+});
+
+describe("the repository root in Gradle's resolution failures", () => {
+  const remove = withoutRepositoryRoot(["/tmp/x"]);
+
+  it("replaces every whole root in a path, keeping what's around it", () => {
+    expect(remove("/tmp/x/lib")).toBe("<repository>/lib");
+    expect(remove("/tmp/x/..cache/lib")).toBe("<repository>/..cache/lib");
+    expect(remove("/tmp/x/.../lib")).toBe("<repository>/.../lib");
+    expect(remove("/tmp/x")).toBe("<repository>");
+    expect(remove("Could not read /tmp/x/a.jar, '/tmp/x/b' (/tmp/x)\n/tmp/x/c")).toBe("Could not read <repository>/a.jar, '<repository>/b' (<repository>)\n<repository>/c");
+  });
+
+  it("replaces a root as a file: URI's path, keeping the scheme", () => {
+    expect(remove("file:///tmp/x/lib")).toBe("file://<repository>/lib");
+    expect(remove("Searched in the following locations:\n  - file:/tmp/x/m2/g/a/1.0/a-1.0.pom")).toBe("Searched in the following locations:\n  - file:<repository>/m2/g/a/1.0/a-1.0.pom");
+    expect(remove("(file:/tmp/x)")).toBe("(file:<repository>)");
+  });
+
+  it("finds a root with spaces and regex metacharacters as a path, and percent-encoded only in a URI", () => {
+    const root = "/tmp/my repo#1 (100%) $x+[y].z";
+    const encoded = pathToFileURL(root).pathname;
+    expect(encoded).toContain("my%20repo%231");
+    const strip = withoutRepositoryRoot([root]);
+    expect(strip(`boom at ${root}/a and file:${encoded}/lib, file://${encoded}`)).toBe("boom at <repository>/a and file:<repository>/lib, file://<repository>");
+    expect(strip(`${encoded}/lib`)).toBe(`${encoded}/lib`);
+    expect(strip("/tmp/my repo#1 (100%) $x+[y]Az")).toBe("/tmp/my repo#1 (100%) $x+[y]Az");
+  });
+
+  it("accepts only unambiguous endings after a whole root", () => {
+    const around = [["", ""], [" ", ""], ["\t", ""], ["\n", ""], ["\"", "\""], ["'", "'"], ["(", ")"], ["[", "]"]];
+    for (const [before, after] of around) expect(remove(`${before}/tmp/x${after}`)).toBe(`${before}<repository>${after}`);
+  });
+
+  it.each(["/tmp/export%20one", "/tmp/export%20two"])("keeps literal and URI forms of %s separate", (root) => {
+    const roots = [root, `/private${root}`];
+    const strip = withoutRepositoryRoot(roots);
+    for (const form of roots) {
+      const encoded = pathToFileURL(form).pathname;
+      expect(encoded).toContain("export%2520");
+      expect(strip(`${form}/m2`)).toBe("<repository>/m2");
+      expect(strip(`${encoded}/m2`)).toBe(`${encoded}/m2`);
+      for (const scheme of ["file:", "file://"]) {
+        expect(strip(`${scheme}${encoded}/m2`)).toBe(`${scheme}<repository>/m2`);
+        expect(strip(`${scheme}${form}/m2`)).toBe(`${scheme}${form}/m2`);
+      }
+    }
+  });
+
+  it.each(["..", "%2E%2E", "%2e%2e", ".%2E", "%2e."])("leaves a file: URI with a later %s segment untouched", (segment) => {
+    for (const scheme of ["file:", "file://"]) {
+      for (const ending of ["/shared/x.jar", "", " ", "\t", "\n", "'", "\"", ")", "]"]) {
+        const text = `${scheme}/tmp/x/lib/${segment}${ending}`;
+        expect(remove(text)).toBe(text);
+      }
+    }
+  });
+
+  it("leaves a later plain parent segment untouched, even when it doesn't escape the repository", () => {
+    for (const suffix of ["/lib/../../shared/x.jar", "/lib/../shared/x.jar", "/lib/..", "/lib/.. ", "/lib/..'", "/lib/..)", "/lib/..]"]) {
+      expect(remove(`/tmp/x${suffix}`)).toBe(`/tmp/x${suffix}`);
+    }
+  });
+
+  it("keeps similar segment names and stops looking at each path's delimiter", () => {
+    for (const scheme of ["", "file:", "file://"]) {
+      for (const segment of ["..cache", "...", "%2E%2Ecache", "%2e%2e%2e"]) {
+        expect(remove(`${scheme}/tmp/x/lib/${segment}/a`)).toBe(`${scheme}<repository>/lib/${segment}/a`);
+      }
+      for (const delimiter of [" ", "\t", "\n", "'", "\"", ")", "]"]) {
+        expect(remove(`${scheme}/tmp/x/lib${delimiter}/../elsewhere`)).toBe(`${scheme}<repository>/lib${delimiter}/../elsewhere`);
+      }
+    }
+    expect(remove("/tmp/x/lib/%2E%2E/a")).toBe("<repository>/lib/%2E%2E/a");
+    expect(remove("/tmp/x/lib/../a /tmp/x/lib/a")).toBe("/tmp/x/lib/../a <repository>/lib/a");
+    expect(remove("/tmp/x/lib/../nested(/tmp/x/lib")).toBe("/tmp/x/lib/../nested(<repository>/lib");
+  });
+
+  it.each([" ", "\t", "\n", ",", ":", ": cause", " backup/x.jar", ",backup/x.jar", ": backup/x.jar", "/../shared/x.jar", "/..", "/..'", "/..\"", "/..)", "/..]", "/.. cause", "/..,"])("leaves the suffix %j untouched in paths and file: URIs", (suffix) => {
+    for (const root of ["/A/repo", "/B/repo", "/A/my repo#1", "/B/my repo#1"]) {
+      const strip = withoutRepositoryRoot([root]);
+      for (const scheme of ["", "file:", "file://"]) {
+        const forms = scheme === "" ? [root] : [root, pathToFileURL(root).pathname];
+        for (const form of forms) {
+          const text = `${scheme}${form}${suffix}`;
+          expect(strip(text)).toBe(text);
+        }
+      }
+    }
+  });
+
+  it("leaves a root that's part of something else as it is, so the failure still differs", () => {
+    const untouched = [
+      "/tmp/x-other", "/tmp/x.y", "/tmp/x_2", "/tmp/xy", "/other/tmp/x/module", "relative/tmp/x",
+      "https://example.com/tmp/x/lib", "https://example.com/search?path=/tmp/x", "https://example.com/?u=file:/tmp/x/lib",
+      "file://host/tmp/x/lib", "/tmp/x:/elsewhere", "/tmp/x;", "Could not read /tmp/x.",
+    ];
+    for (const text of untouched) expect(remove(text)).toBe(text);
+  });
+
+  it("replaces several roots in one text, the longer first when one ends inside another", () => {
+    const strip = withoutRepositoryRoot(["/tmp/x", "/private/tmp/x"]);
+    expect(strip("/private/tmp/x/a, file:/private/tmp/x/b and /tmp/x/c")).toBe("<repository>/a, file:<repository>/b and <repository>/c");
+    const inside = withoutRepositoryRoot(["/r", "/r/inner"]);
+    expect(inside("/r/inner/a /r/inner-b")).toBe("<repository>/a <repository>/inner-b");
+  });
+
+  it("refuses a relative root", () => {
+    expect(() => withoutRepositoryRoot(["repo"])).toThrow("repository root repo isn't an absolute path");
+  });
+
+  describe("in the inventory runGradleInventory returns", () => {
+    let parent: string;
+    let linked: string;
+    let canonical: string;
+    beforeEach(async () => {
+      parent = await mkdtemp(join(tmpdir(), "supply-chain-gradle-root-"));
+      const real = join(parent, "real");
+      await mkdir(join(real, "tools/conventions"), { recursive: true });
+      await writeFile(join(real, "gradlew"), "");
+      linked = join(parent, "linked");
+      await symlink(real, linked);
+      // The path Gradle prints; on macOS the temp dir itself is under a symlink (/var -> /private/var).
+      canonical = await realpath(linked);
+    });
+    afterEach(async () => {
+      await rm(parent, { recursive: true, force: true });
+    });
+
+    /** A configuration that names the repository, as given and as its real path, in every field. */
+    const failing = (dir: string) => configuration(":runtimeClasspath", ["com.acme:lib:1.0"], {
+      unresolved: [{ requested: "com.acme:gone:1.0", failure: `Could not find com.acme:gone:1.0.\nSearched in the following locations:\n  - file:${pathToFileURL(canonical).pathname}/${dir}/m2/gone-1.0.pom` }],
+      declared: [{ group: "com.acme", name: "lib", version: "1.0", reason: `see ${linked}/${dir}/README` }],
+      edges: [{ from: `project ${canonical}/${dir}`, to: "com.acme:lib:1.0", constraint: false }],
+      error: `Could not read '${linked}/${dir}/a.jar' (also ${canonical}/${dir}/a.jar)`,
+    });
+
+    const run: RunProcess = async (_command, args) => {
+      const out = args.find((arg) => arg.startsWith("-DsupplyChain.out="))!.slice("-DsupplyChain.out=".length);
+      for (const [build, dir] of [[".", "root"], ["tools/conventions", "conventions"]] as const) {
+        const file = (project: string) => join(out, `${encodeURIComponent(`${build}|${project}`)}.json`);
+        await writeFile(file(":"), JSON.stringify({ schemaVersion: 3, build, project: ":", configurations: [failing(dir)] }));
+        const manifest = { projects: [":"], nestedBuilds: build === "." ? ["tools/conventions"] : [] };
+        await writeFile(file("manifest"), JSON.stringify({ schemaVersion: 3, build, project: "manifest", manifest }));
+        await writeFile(file("settings"), JSON.stringify({ schemaVersion: 3, build, project: "settings", configurations: [] }));
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    };
+
+    it("names the root in error and unresolved failures, as given and as its real path, nested builds included, and changes nothing else", async () => {
+      const inventory = await runGradleInventory(linked, ["."], "worktree", run);
+      const expected = (dir: string) => ({
+        ...failing(dir),
+        unresolved: [{ requested: "com.acme:gone:1.0", failure: `Could not find com.acme:gone:1.0.\nSearched in the following locations:\n  - file:<repository>/${dir}/m2/gone-1.0.pom` }],
+        error: `Could not read '<repository>/${dir}/a.jar' (also <repository>/${dir}/a.jar)`,
+      });
+      expect(inventory.builds).toEqual([
+        { build: ".", configurations: [expected("root")] },
+        { build: "tools/conventions", configurations: [expected("conventions")] },
+      ]);
+    });
   });
 });
 

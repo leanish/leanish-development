@@ -1,6 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
-import type { GradleInventory } from "@leanish/gate/gradle";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { type GradleInventory, parseGradleInventory, runGradleInventory, withoutRepositoryRoot } from "@leanish/gate/gradle";
+import type { RunProcess } from "@leanish/gate/process";
 import { referenceDifferences, referenceProblems, referenceTransform } from "../src/gradle-reference.ts";
 
 import { RICH_VERSION, RICH_VERSION_CHANGES, richVersionInventory } from "./rich-version-inventory.ts";
@@ -130,6 +136,118 @@ describe("the plan's Gradle reference", () => {
     // What it declares still has to match.
     expect(referenceDifferences(thrown("boom"), thrown("boom", "1.1.0"), ignored)).toEqual([
       ":runtimeClasspath, unlike the plan's reference, also declares g:lib 1.1.0 and no longer declares g:lib 1.0.0",
+    ]);
+  });
+});
+
+describe("an ignored configuration's failures from exports in different directories", () => {
+  let parent: string;
+  beforeEach(async () => {
+    parent = await mkdtemp(join(tmpdir(), "tool-runtime-gradle-exports-"));
+  });
+  afterEach(async () => {
+    await rm(parent, { recursive: true, force: true });
+  });
+
+  interface Failures {
+    readonly unresolved: ReadonlyArray<{ readonly requested: string; readonly failure: string }>;
+    readonly error?: string;
+  }
+
+  /**
+   * An inventory of one export of the repository, as the tools make the plan's reference and their edit: produced by
+   * runGradleInventory from what a fake Gradle wrote in its own directory, written as JSON and read back.
+   */
+  async function exported(failures: (uri: string) => Failures): Promise<GradleInventory> {
+    const root = await mkdtemp(join(parent, "export-"));
+    await writeFile(join(root, "gradlew"), "");
+    const run: RunProcess = async (_command, args, options) => {
+      const out = args.find((arg) => arg.startsWith("-DsupplyChain.out="))!.slice("-DsupplyChain.out=".length);
+      // Gradle prints a local Maven repository under the build as Java's file: URI of its real path.
+      const { unresolved, error = null } = failures(`file:${pathToFileURL(await realpath(options!.cwd!)).pathname}`);
+      const configuration = { id: ":runtimeClasspath", kind: "project", resolved: [], unresolved, declared: [{ group: "g", name: "lib", version: "1.0.0", reason: null }], edges: [], error };
+      const file = (project: string) => join(out, `${encodeURIComponent(`.|${project}`)}.json`);
+      await writeFile(file(":"), JSON.stringify({ schemaVersion: 3, build: ".", project: ":", configurations: [configuration] }));
+      await writeFile(file("manifest"), JSON.stringify({ schemaVersion: 3, build: ".", project: "manifest", manifest: { projects: [":"], nestedBuilds: [] } }));
+      await writeFile(file("settings"), JSON.stringify({ schemaVersion: 3, build: ".", project: "settings", configurations: [] }));
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const produced = await runGradleInventory(root, ["."], "tree", run);
+    return parseGradleInventory(JSON.parse(JSON.stringify(produced)), "tree", ["."]);
+  }
+
+  const missing = (requested: string, suffix = "m2") => (uri: string) => ({ requested, failure: `Could not find ${requested}.\nSearched in the following locations:\n  - ${uri}/${suffix}/g/lib/${requested.split(":")[2]}/lib.pom` });
+  const ignored = [":runtimeClasspath"];
+
+  it.each(["file:", "file://"])("distinguishes a repository URI from the URI of its decoded name after %s, in both directions", (scheme) => {
+    const failed = (root: string, encoded: boolean) => {
+      const path = encoded ? pathToFileURL(root).pathname : root;
+      const failure = withoutRepositoryRoot([root])(`Could not read ${scheme}${path}/m2`);
+      return inventory([], "1.0.0", { resolved: [], unresolved: [{ requested: "g:lib:1.0.0", failure }] });
+    };
+    const roots = ["/tmp/export%20one", "/tmp/export%20two"] as const;
+    const differs = (reference: GradleInventory, edit: GradleInventory) => {
+      for (const [before, after] of [[reference, edit], [edit, reference]]) {
+        expect(referenceDifferences(before, after, ignored)).toEqual([expect.stringContaining("unlike the plan's reference")]);
+      }
+    };
+    for (const root of roots) differs(failed(root, true), failed(root, false));
+    expect(referenceDifferences(failed(roots[0], true), failed(roots[1], true), ignored)).toEqual([]);
+    differs(failed(roots[0], false), failed(roots[1], false));
+    differs(failed(roots[0], true), failed(roots[1], false));
+  });
+
+  it.each([
+    ["", "lib/../../shared/x.jar"],
+    ["file:", "lib/../../shared/x.jar"],
+    ["file://", "lib/%2E%2E/%2e%2e/shared/x.jar"],
+  ])("keeps different roots visible through referenceDifferences for %s paths with %s", (scheme, suffix) => {
+    const failed = (root: string) => {
+      const message = `Could not read ${scheme}${root}/${suffix}`;
+      const failure = withoutRepositoryRoot([root])(message);
+      expect(failure).toBe(message);
+      return inventory([], "1.0.0", { resolved: [], error: failure, unresolved: [{ requested: "g:lib:1.0.0", failure }] });
+    };
+    expect(referenceDifferences(failed("/A/repo"), failed("/B/repo"), ignored)).toEqual([
+      expect.stringContaining("unlike the plan's reference"),
+    ]);
+  });
+
+  it.each(["lib/../../shared/x.jar", "lib/%2E%2E/%2e%2e/shared/x.jar"])("preserves a parent path from runGradleInventory through referenceDifferences: %s", async (suffix) => {
+    const failures = (uri: string) => ({ unresolved: [{ requested: "g:lib:1.0.0", failure: `Could not read ${uri}/${suffix}` }] });
+    expect(referenceDifferences(await exported(failures), await exported(failures), ignored)).toEqual([
+      expect.stringContaining("unlike the plan's reference"),
+    ]);
+  });
+
+  it("accepts the same failure when only the export's root differs", async () => {
+    const failures = (uri: string) => ({ unresolved: [missing("g:lib:2.0.0")(uri)], error: `Could not resolve ${uri}/m2` });
+    const reference = await exported(failures);
+    const edit = await exported(failures);
+    expect(referenceDifferences(reference, edit, ignored)).toEqual([]);
+  });
+
+  it("still finds another path under the root, another dependency, an added or removed failure, or another message", async () => {
+    const reference = await exported((uri) => ({ unresolved: [missing("g:lib:2.0.0")(uri)] }));
+    const changed: Array<(uri: string) => Failures> = [
+      (uri) => ({ unresolved: [missing("g:lib:2.0.0", "m2-other")(uri)] }),
+      (uri) => ({ unresolved: [missing("g:lib:2.1.0")(uri)] }),
+      (uri) => ({ unresolved: [missing("g:lib:2.0.0")(uri), missing("g:other:1.0.0")(uri)] }),
+      () => ({ unresolved: [] }),
+      (uri) => ({ unresolved: [missing("g:lib:2.0.0")(uri)], error: "boom" }),
+      (uri) => ({ unresolved: [{ requested: "g:lib:2.0.0", failure: `Could not GET ${uri}/m2/g/lib/2.0.0/lib.pom` }] }),
+    ];
+    for (const failures of changed) {
+      expect(referenceDifferences(reference, await exported(failures), ignored)).toEqual([expect.stringContaining("unlike the plan's reference")]);
+    }
+  });
+
+  it("still reports the same failure outside the configurations gradle.ignoreConfigurations lists", async () => {
+    const failures = (uri: string) => ({ unresolved: [missing("g:lib:2.0.0")(uri)] });
+    const failure = "g:lib:2.0.0: Could not find g:lib:2.0.0.\nSearched in the following locations:\n  - file:<repository>/m2/g/lib/2.0.0/lib.pom";
+    expect(referenceDifferences(await exported(failures), await exported(failures))).toEqual([
+      `:runtimeClasspath doesn't resolve in the plan's reference: ${failure}`,
+      `:runtimeClasspath doesn't resolve in the edit: ${failure}`,
     ]);
   });
 });

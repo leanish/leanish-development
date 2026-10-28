@@ -55,7 +55,8 @@ export async function gradleSourceIndex(tree: Tree): Promise<GradleSourceIndex> 
   };
 }
 
-function escaped(text: string): string {
+/** `text` as a regular expression that matches it literally. */
+export function escaped(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
