@@ -20,14 +20,18 @@ core/tool-runtime/run.sh bump-it review leanish/widget   # every few hours
   PR, including every declaration of that package with a selected major move. Each unit starts from the default branch,
   and a unit's failure does not stop others. Gradle transitives are never explicitly moved; induced changes are judged
   by `compare`. Recorded security and compatibility floors stay untouched.
-- Deprecated npm releases are never selected as direct or transitive targets, accidental majors included. A deprecated
-  version already in the base can stay when no eligible replacement exists. A major keeps the graph npm induces, but
-  fails when it brings a transitive version that is deprecated or whose catalog can't be read.
+- Deprecated npm releases are excluded from selected direct and transitive targets, accidental majors included. A
+  deprecated version already in the base can stay when no eligible replacement exists. A major fails when it brings
+  a new npmjs-resolved copy that is deprecated or whose catalog can't be read. Only checked direct targets and
+  versions kept from base are exempt from that check; newly installed peers and newly declared root/workspace
+  dependencies are checked too. Bundled copies follow their carrier; other sources, including
+  [npm mirrors](../docs/coverage-gaps.md#limits), remain subject to the gate's source rules.
 - A Gradle coordinate pinned with `strictly(...)` (declared or as a dependency constraint) in a configuration that
   declares it is never moved, in any configuration: the pin is the owner's. The run's notes list each such pin. Pins
   only elsewhere (Gradle's own strict constraints on its embedded Kotlin, on buildscript and settings classpaths) don't
-  count. The agent is told never to change a `strictly` version, and verification refuses an edit that changes a
-  line with `strictly` in its code (not in a string or a comment).
+  count. The agent is told never to change a `strictly` version. Verification compares interpreted declarations and
+  constraints with the plan's Gradle reference; the [security model](../docs/security-model.md#secure-it-and-bump-it)
+  explains that comparison and its limit for pins Gradle does not interpret.
 - `@types/node` targets never exceed the lowest supported Node major found in `engines.node`, `.nvmrc`,
   `.node-version`, `volta.node`, or static `actions/setup-node` CI versions (including matrices).
   - Root, lockfile-root and declaring-workspace constraints are combined by taking the minimum; a newer development or

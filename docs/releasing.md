@@ -11,14 +11,6 @@ release candidate is run for real and reviewed first, so the release ships what
 was reviewed. Each release lists its changes in [the CHANGELOG](../CHANGELOG.md);
 unreleased changes collect under its "Unreleased" heading.
 
-For the `trustedPackages` migration, repin the gate before renaming configuration:
-older gates reject the new field. Keep this repository's `.github/supply-chain.json`
-on the deprecated `ownPackages` alias while `released-supply-chain.yml` uses an
-older gate. After the gate repins, migrate this repository, adopters and fixtures
-to `trustedPackages`, removing `ownPackages` rather than keeping both. 0.11.0 removes
-the alias, so every configuration must be migrated before repinning to it. Renaming
-the alias preserves trust under head's policy.
-
 1. Start from the latest reviewed main. Keep PAT mode documented; GitHub App mode
    remains deferred and will be an alternative to PAT mode when implemented.
 2. Tag the candidate commit on main with a lightweight `v<version>-rc.<n>` tag
@@ -123,6 +115,22 @@ the alias preserves trust under head's policy.
 These steps release supply-chain only; consumer repository releases are separate
 decisions. Subsequent development must not move a released tag or an adopter's pin.
 
+## trustedPackages migration
+
+The tools read `.github/supply-chain.json` at startup as well as during verification.
+v0.10.0 is the first release that accepts `trustedPackages`; the v0.9.1 parser rejects it.
+Migrate each repository in this order:
+
+1. Keep `ownPackages` while moving every gate pin and every installed bump-it and
+   secure-it that reads the repository to v0.10.0 (or a later release that still accepts the alias).
+   Include runners, scheduled tasks and manual checkouts; installing a new release
+   alone does not repoint an existing schedule. For this repository, include
+   `released-supply-chain.yml`.
+2. Once every reader supports it, rename `ownPackages` to `trustedPackages` in this
+   repository, adopters and fixtures. Remove the old name; configuring both is an
+   error. Renaming preserves the same trust under head's policy.
+3. Complete the rename before moving any reader to 0.11.0, which removes the alias.
+
 ## Publishing @leanish/agent-runtime
 
 `@leanish/agent-runtime` is published to npm as compiled JavaScript with
@@ -142,8 +150,9 @@ adds provenance (it does for a public repository like this one).
    export, and records its sha512 integrity. It has no publishing permission.
    It hands the tarball to `publish` through its job outputs (base64, at most
    256 KiB encoded; a bigger tarball fails here and is published by hand). The
-   workflow uses plain `git` and no artifact actions: those actions have no
-   immutable releases, so the supply-chain gate can't trust their age.
+   workflow uses plain `git` and no artifact actions. This repository now trusts
+   `actions`, so the gate permits them; the workflow still avoids the artifact
+   actions because they have no immutable releases, using job outputs for the handoff.
 2. `publish` runs in the `npm` environment, so it waits for the owner's
    approval; nothing else in the release flow waits for it. It publishes
    exactly the tarball `prepare` checked (its integrity is compared first). A

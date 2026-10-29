@@ -25,9 +25,8 @@ What secure-it and bump-it need to run a coding agent, without leanish-developme
   The isolation is an agent-neutral `IsolationPolicy` (see below), which either runner gets through its adapter.
 - **Secrets:** `SecretStore`, with macOS Keychain as its one implementation for now (`secret-store.ts`).
 
-Most of it is copied from the runtime of leanish-development-incubator (private), which is to consume this package
-instead of its copies; until it does, a fix to a copied file is made in both repositories.
-[PROVENANCE.md](PROVENANCE.md) lists every file, where it comes from and what changed.
+Most of it comes from leanish-development-incubator (private), whose runtime now consumes this package.
+[Provenance](PROVENANCE.md#provenance) records the adoption and lists every file, where it comes from and what changed.
 
 Its exports are the modules tool-runtime, secure-it and bump-it import, plus what the incubator's runtime uses and they
 don't: `./errors`, `./skill/validate-compat`, `./types/effort`, `./logger/correlation` (`withCorrelation`,
@@ -69,16 +68,16 @@ other options (binary, timeouts, staging…) separately: `codexRunnerOptions(pol
 for other entries that take a policy (the tools' sandboxed commands). A policy can also be written out by hand: nothing in it
 needs settings, a home or a login.
 
-How each incubator host composes it when it adopts this package:
+The incubator's host adapters compose it as follows ([provenance](PROVENANCE.md#provenance)):
 
-- **Local Codex:** `isolationPolicy(...)` from what its `localCodexOptions` reads today: `AGENT_RUNTIME_READ_DENY`
+- **Local Codex:** `isolationPolicy(...)` from what its `localCodexOptions` reads: `AGENT_RUNTIME_READ_DENY`
   as `readDeny`, `AGENT_RUNTIME_COMMAND_PATH` as `commandPath`, the developer's git identity as `commitIdentity`, its
   release age (7 days), and its `XDG_CACHE_HOME`-based cache as `buildCacheRoot`; then
   `new CodexRunner(codexRunnerOptions(policy))`.
-- **Local Claude Code:** the same policy with `claudeCodeRunnerOptions(policy, "restricted")`, so adoption doesn't
-  suddenly require a working sandbox.
+- **Local Claude Code:** the same policy with `claudeCodeRunnerOptions(policy, "restricted")`, preserving read-only
+  operation without requiring a working sandbox.
 - **Lambda:** `{ buildCacheRoot: LAMBDA_BUILD_CACHE_ROOT, readDenied: [], env: {} }`, with no login: Codex gets its
-  cache under `/tmp` as today, and Claude Code runs `restricted` (it gets the cache's env too, but runs no commands).
+  cache under `/tmp`, and Claude Code runs `restricted` (it gets the cache's env too, but runs no commands).
 
 Write access still needs the `sandbox` confinement: a `restricted` runner refuses a write run before staging
 anything, and a `sandbox` run fails when Claude Code's sandbox is unavailable (`failIfUnavailable`).
@@ -111,12 +110,12 @@ flushed (best effort: if writing it fails, the wrapper writes its own line too, 
 secure-it and bump-it use `after-final-line` with run.sh's `TOOL_REPORT_MARKER`, and `beforeFinalLine` for their
 `GitHub API requests` line.
 
-How the incubator's hosts compose it when they adopt this package:
+The incubator's hosts use the report API as follows ([provenance](PROVENANCE.md#provenance)):
 
 - **Local (`run-local`):** `startRunReport({ stream: stderr, marker: { env: "AGENT_RUNTIME_REPORT_MARKER", when:
   "start" }, extra: () => counts })`, with its dispatch, delayed-message and self-publish counts as `extra`;
-  `identified({ agent })` replaces its `agentIdentified(...)`, and `end(...)` its `finally` block. The marker file then
-  holds `reported` instead of `run-local`; a wrapper only checks that it isn't empty.
+  `identified({ agent })` identifies the agent, and `end(...)` runs from its `finally` block. The marker file
+  holds `reported`; a wrapper only checks that it isn't empty.
 - **Lambda:** no `startRunReport`, whose signal handlers belong to a process, not to an invocation. Each invocation
   creates its own `RunReport`, passes its `usageRecorder` to the skills it runs, and logs the line
   `finish({ ..., extra })` returns (`finishRecord` also gives the record). `writeFinalLine` writes it to a stream when

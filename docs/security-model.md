@@ -47,13 +47,12 @@ is genuine. For GitHub Actions the age comes from the release, and only an immut
 controls an action could otherwise move an old release's tag to new code, which would arrive already "old". Proving that a version is the rule-picked fix, or the lowest version that fix requires, limits *which*
 young version comes in; it doesn't make that version safe, and the build, tests and CI run it either way.
 
-So the gate holds every young version a PR adds or changes, justified or not: the separate `cooldown` check stays
-red until the last one turns old enough, and no exception clears it. secure-it keeps such fixes in draft PRs of
-their own. Taking one earlier is a person's explicit decision.
-
-The PR is judged by head's release-age and trusted-package policy, like its exceptions. A person's PR can change
-that policy in the same PR; review those changes in `.github/supply-chain.json`. The tools' policy fence prevents
-their proposals from editing configuration or exceptions, so their head policy stays the same as base's.
+Selection proofs do not establish merge readiness; the gate owns the
+[cooldown policy](../core/gate/README.md#the-cooldown-young-versions-are-held-however-justified) and the
+[scope and risks of trust](../core/gate/README.md#configuration-githubsupply-chainjson).
+Review human policy changes in `.github/supply-chain.json`; the gate highlights them with a
+[plain note](../core/gate/README.md#the-cooldown-young-versions-are-held-however-justified).
+The tools' policy fence prevents their proposals from editing that file.
 
 The gate also reads a dependency's own repository advisories, which name a fix days before GitHub reviews them into
 its database and OSV imports them. Whoever controls that repository and the package can publish an advisory and a

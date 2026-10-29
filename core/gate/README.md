@@ -55,7 +55,7 @@ A project's own repository advisories are published by whoever controls that rep
 - **Only a reviewed advisory triggers and justifies:** secure-it plans a fix only for reviewed targets, and only reviewed targets make a young version the rule-picked fix, a young carrier a bundle fix, or a young npm dependency required by one. A version affected only by unreviewed advisories gets no fix: the run reports it, and it waits until a reviewed source lists it.
 - **A veto can steer the choice, even to a young version:** when an unreviewed advisory rules out the version the rule would otherwise take, the rule takes another fixing version, held when it's young. secure-it's plan notes the ten candidates ruled out that way nearest the choice, on either side, carriers included (among the carrier versions the search read), and counts the rest: a sample, not every veto that shaped the choice. A required npm dependency is the exception: its version is set by the requirement, so a veto there refuses the fix instead, and the refusal names each advisory it adds, marked when unreviewed. When no version is left, a refusal (planning's, and since 0.8.2 verification's for a bundled fix's carrier) names the versions unreviewed advisories ruled out, at most ten with three advisories each, and counts the rest.
 - **Malware counts from any source,** and **a `releaseAge` exception** may still name an unreviewed advisory: it's the owner's written override.
-- **Every young version is held** by the [cooldown](#the-cooldown-young-versions-are-held-however-justified), however justified (trusted packages aside: they skip the wait); taking it early is a person's decision.
+- Selection and merge readiness are separate: see the [cooldown policy](#the-cooldown-young-versions-are-held-however-justified).
 
 ## Gradle builds
 
@@ -81,7 +81,9 @@ A project's own repository advisories are published by whoever controls that rep
 The tools read strict versions as the owner's pins and never plan a move of a strictly pinned coordinate. With `--init-script <file> --define <key>=<value>`, another init script runs first, given that system property: the tools pass [`gradle/supply-chain-reference.init.gradle`](gradle/supply-chain-reference.init.gradle) and a plan, to inventory the base with the plan applied by Gradle (the reference their edits must match), or secure-it's floor-removal script.
 
 - `buildSrc`, included builds and plugin builds (`pluginManagement { includeBuild(...) }`) that Gradle configures from the root build are covered by the same run, under their own location prefix (`buildSrc/:compileClasspath`). Each build also writes a manifest from Gradle's own model (its projects and nested builds), so a project without output, or a nested build the run didn't export, fails the run; such a build has to be listed in `gradle.builds`.
-- A configuration that doesn't resolve fails the run on either side: a hole in the inventory would read as clean. `gradle.ignoreConfigurations` names locations to leave out, explicitly.
+- A configuration that doesn't resolve fails the run on either side: a hole in the inventory would read as clean.
+  `gradle.ignoreConfigurations` tolerates resolution failures at the named locations; any modules they resolve are
+  still scanned. The tools also compare their declarations, constraints and failure text with the planned reference.
 - The inventory names the commit it was made from, and `compare`/`scan` check it matches and covers the builds the tree lists.
 - Base and head each have their own sources: a PR can add a repository's first Gradle build (base needs no inventory) or remove its last one (base's inventory still counts, and what it had shows as fixed).
 - A plugin's injected dependencies show up in its consumers' builds, which run this gate themselves (for example, java-conventions' checkstyle and errorprone dependencies in sqs-codec).
@@ -136,8 +138,7 @@ For every version a PR adds or changes:
   - an npm dependency such a fix provably requires (below);
   - named by a `releaseAge` exception whose advisory, in this run's snapshot, affects a version the PR replaces and not this one (malware advisories don't count).
 
-  Passing this way still leaves the version held by the [cooldown](#the-cooldown-young-versions-are-held-however-justified),
-  except for a trusted package, which the cooldown never holds.
+  Merge readiness is governed by the [cooldown policy](#the-cooldown-young-versions-are-held-however-justified).
 - **Source:** every locked package comes from an allowed registry (`npm.registries`, default the npm registry) as its own tarball: on the npm registry exactly `<name>/-/<unscoped name>-<version>.tgz`; elsewhere the full name (scope included) as consecutive path segments followed by that same `-/<unscoped name>-<version>.tgz` or by the exact version (GitHub Packages' `download/@scope/name/<version>/…`), so a lockfile can't keep a name and version while fetching another package's archive. The gate checks age and identity only against the npm registry, so a package from another allowed registry fails, unless it's a trusted package with an unexpired `identity` exception recording that its publish was reviewed (trusted packages skip only the wait).
 - **Identity:** a version that replaces another fails on a publisher identity break: provenance dropped or from another repository or workflow, provenance from a repository the replaced version doesn't declare, or (without provenance) a publisher who hadn't published the package up to the replaced version. Every provenance statement must name the exact package, version and locked sha512.
 - Bundles the lockfile doesn't fully record fail: every `bundleDependencies` entry, and what it depends on, needs an `inBundle` entry inside the package that ships it.
@@ -227,8 +228,8 @@ Ordinary bumps don't qualify, and this applies only to npm: Maven/Gradle and Act
 ## The cooldown: young versions are held, however justified
 
 Passing the release-age rule makes a young version *acceptable*, not *trusted* (why: the
-[security model](../../docs/security-model.md#young-versions-the-cooldown)). So every version a PR adds or changes
-that is younger than `releaseAgeDays` is **held**, whether the rule picked it, a security fix requires it, or a
+[security model](../../docs/security-model.md#young-versions-the-cooldown)). Unless trusted under head's policy,
+every version a PR adds or changes that is younger than `releaseAgeDays` is **held**, whether the rule picked it, a security fix requires it, or a
 `releaseAge` exception names it:
 
 - The `supply-chain` verdict is unchanged: it says whether the change is right.
@@ -239,12 +240,14 @@ that is younger than `releaseAgeDays` is **held**, whether the rule picked it, a
 - The separate `cooldown` job stays red while anything is held (and whenever it can't tell: a comparison that didn't
   pass, a missing report, a report for another head). Its log and step summary list each held version and when it
   turns old enough. Require it next to `supply-chain` (see GitHub settings below).
-- The policy that judges a PR comes from head, like its exceptions. Adding trust or shortening `releaseAgeDays`
-  applies to the PR's own versions too: newly trusted versions, or versions old enough under the shorter wait,
-  are not held. If `.github/supply-chain.json` is absent from head, including when the PR deletes it, the defaults
-  apply. Review policy changes in that file's diff. The tools' policy fence prevents their proposals from editing
-  it. In the gate's comparison, unparseable base settings do not block cooldown evaluation; the tools still
-  require parseable base settings.
+- Head supplies the policy, like its exceptions, including changes the PR makes to `releaseAgeDays` or `trustedPackages`.
+  If `.github/supply-chain.json` is absent from head, including when the PR deletes it, the defaults apply.
+  Review policy changes in that file's diff. The tools' policy fence prevents their proposals from editing it.
+  Unparseable head settings fail the run. Unparseable base settings do not block the gate's cooldown evaluation;
+  the tools still require them to parse.
+- The comparison adds a plain note to its report and step summary when release-age, trust or source policy changes
+  (`maven.repositories`, including order, or `npm.registries`), including configuration deletion. If base's policy
+  cannot be read or parsed, the note says so. These notes appear even when nothing is held and do not change the verdict.
 - Exceptions don't clear a hold. Taking a held version before its time is a person's decision: every other check
   green, the reason written on the PR, then an admin merge past the red `cooldown` check. Where nothing enforces
   the check (no ruleset, e.g. a private repository on the free plan), the same: a merge with the reason written.
@@ -252,7 +255,7 @@ that is younger than `releaseAgeDays` is **held**, whether the rule picked it, a
   secure-it retires each held PR once its own versions aged and plans fresh ones (bump-it never publishes held versions).
   For a person's PR, re-run the **whole** workflow after the time it gives (a re-run of the `cooldown` job alone
   reads the old report and stays red), or push. A base that raises its wait later doesn't re-hold a PR that was
-  already green.
+  already green. A re-run uses the original merge commit; a new PR event compares with the current base.
 
 `compare` writes the held versions into its report (`cooldown`, report schema 2); `supply-chain cooldown --report
 <file> --head <sha>` reads it, refusing anything but a complete, passing comparison of that exact head.
@@ -283,9 +286,13 @@ Optional; read from head. Unknown fields fail, so a typo can't turn a check off.
 
 - Without `npm.lockfiles`, the gate reads `package-lock.json` if the tree has one; without `gradle.builds`, the root build if the tree has a `settings.gradle(.kts)` or `build.gradle(.kts)`. So an ecosystem in the repository is never skipped for lack of configuration; `"builds": []` turns Gradle off explicitly. Workflows are always read. A tree with none of these fails.
 - Every listed lockfile must exist in head; one base doesn't have yet reads as empty there.
+- A selected `package-lock.json` with an adjacent `npm-shrinkwrap.json` is refused: npm would install from the
+  shrinkwrap. Select that `npm-shrinkwrap.json` explicitly in `npm.lockfiles`; selection never switches automatically.
+  Without explicit `npm.lockfiles`, a root `npm-shrinkwrap.json` is refused whether or not `package-lock.json` exists.
+  Compare, scan and signature verification enforce this; baseline discovery remains lenient.
 - Trusted packages skip only the release-age wait. Trusted Maven packages: exact `groups`, and `pluginIdPrefixes` that only match Gradle plugin markers (`<id>:<id>.gradle.plugin`). Prefixes match at dot boundaries: `com.acme` matches that ID and its descendants, while `com.acme.` matches descendants only; neither matches `com.acmecorp`. Other artifacts in `com.acme.*` groups are not exempt.
 - `trustedPackages` can include third parties as well as your own packages. Trusting a package or Actions owner removes the cooldown's detection window for it: a compromised publisher's release can pass immediately. Trusted Actions also need no immutable release or release date. Publisher identity, advisory, malware, source and pin checks still apply; dependencies do not inherit trust.
-- `ownPackages` is a deprecated alias with the same shape and meaning, accepted without a warning. Use one name only: configuring both is an error. A rename preserves the same trust policy. Repin older gates to a release supporting `trustedPackages` before migrating configuration; older gates reject the new field. 0.11.0 removes the alias: migrate before repinning to it.
+- `ownPackages` is a deprecated alias, accepted without warnings but never alongside `trustedPackages`; follow the [migration sequence](../../docs/releasing.md#trustedpackages-migration) before its removal in 0.11.0.
 - `repositories`: a package's GitHub source repository, for its repository advisories; it takes precedence over what the manifest or POM names.
 - `compatibleLines`: how many leading numeric segments, after one optional `v` or `V`, make a compatible line for a package (a trailing `*` matches a prefix), where the default (npm's caret range; Maven's first numeric segment, or `0.N` when the first is 0) doesn't fit.
 
