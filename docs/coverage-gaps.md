@@ -15,10 +15,8 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 
 - **An action with no immutable release, newly used (gate)**: a new or additional occurrence fails unless its
   owner is listed in `trustedPackages["GitHub Actions"].owners`. Existing uses do not authorize more copies.
-  Trusting the owner lets the gate and tools accept versions without immutable releases or release dates, removing
-  the cooldown detection window: a compromised publisher's release can pass immediately. Pins and other checks
-  remain required ([configuration](../core/gate/README.md#configuration-githubsupply-chainjson)). This repository
-  trusts `actions` and `aws-actions`; adopters choose their own policy.
+  The gate documents the [scope and risks of trusting an owner](../core/gate/README.md#configuration-githubsupply-chainjson).
+  This repository trusts `actions` and `aws-actions`; adopters choose their own policy.
 - **Publishing races the release's CI**: `publish-agent-runtime.yml` requires the tag's commit to have its `check` and
   `supply-chain` checks green, so a GitHub release created while they still run fails before packing (nothing
   publishes) and isn't retried when they pass. Create the release once they're green, or re-run the run's failed jobs.
@@ -106,7 +104,9 @@ are included, peers or not; bundled copies are exempt.
 
 ## Automated test coverage
 
-- **Reusable workflow required-check guards**: the guards that keep a failed Gradle inventory from skipping the required comparison, and keep cooldown red when comparison fails, have no automated test (see [Adopting the gate](../core/gate/README.md#adopting-the-gate) and the `supply-chain` and `cooldown` job conditions in [supply-chain.yml](../.github/workflows/supply-chain.yml)); only this repository's own bridge to its required check has one (`core/gate/test/required-check.test.ts`).
+- **Reusable workflow required-check guards**: [gate-workflow.test.ts](../core/gate/test/gate-workflow.test.ts)
+  tests the inventory and comparison guards, job conditions and cooldown report handling;
+  [required-check.test.ts](../core/gate/test/required-check.test.ts) tests this repository's required-check bridge.
 
 ## Gradle wrapper updates
 

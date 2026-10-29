@@ -27,14 +27,14 @@ Malware listed by the advisory sources always fails, even if it was already
 present. Exceptions cannot allow malware. This is advisory-based detection,
 not a scan of package contents for unknown malicious code.
 
-New or changed versions normally wait seven days (configurable). The gate uses the PR's proposed policy
-(head), so a PR can shorten its own wait or add trust. The tools cannot edit that policy. Trusted packages
-skip the wait; their dependencies do not inherit trust.
-A proven young security fix can pass the version rule but stays held by the separate **cooldown check**;
-an exception does not clear it. Missing data needed for a decision fails the check. See the gate's
-[release-age rules](../core/gate/README.md#release-age-source-and-identity-npm) and
-[cooldown policy](../core/gate/README.md#the-cooldown-young-versions-are-held-however-justified), and the
-[reason for waiting](security-model.md#young-versions-the-cooldown).
+New or changed versions normally wait seven days (configurable); see the
+[release-age rules](../core/gate/README.md#release-age-source-and-identity-npm).
+The PR's proposed policy (head) applies. Review changes to `.github/supply-chain.json` in the PR;
+the gate highlights release-age, trust or source policy changes with a
+[plain note](../core/gate/README.md#the-cooldown-young-versions-are-held-however-justified).
+The tools cannot edit that policy. Passing the version rule does not establish merge readiness:
+see the [cooldown policy](../core/gate/README.md#the-cooldown-young-versions-are-held-however-justified).
+Missing data needed for a decision fails the check.
 Some missing coverage is instead reported as a gap: **a passing PR can have gaps**.
 
 secure-it keeps all malware repairs in one PR, before other work. It seeks the nearest
@@ -208,9 +208,8 @@ count too. Advisory and release-age checks use the GitHub release, not the tag's
 date. Unless the action's owner is listed in `trustedPackages["GitHub Actions"].owners`, the release must be
 immutable for its age to count: a mutable tag can be moved to newer code that inherits an old date. Without an
 immutable release, the gate refuses a new or changed use and the tools skip that version. The owner can wait for
-immutable releases or choose to trust the Actions owner. Trust lets the gate and tools accept versions without
-a release date or immutable release and removes the cooldown detection window: a compromised publisher's release can pass immediately. Pins and the
-other checks still apply; see the [gate's configuration](../core/gate/README.md#configuration-githubsupply-chainjson).
+immutable releases or choose to trust the Actions owner under the gate's
+[trust scope and risks](../core/gate/README.md#configuration-githubsupply-chainjson).
 
 For an untrusted action, a mutable release in a fixing line has no trusted date, so secure-it and the gate's
 young-fix proof cannot select that line even when it also has an immutable fix. They report the unknown-age
@@ -249,9 +248,8 @@ Each tool reviews its own open PRs on later runs:
 - **The base moved:** the tool recomputes the plan and updates the PR, merging the
   new base or redoing the change if the plan changed.
 - **CI is green:** the draft is marked ready. **Held by the cooldown:** it waits.
-  secure-it holds young fixes in one draft per group that can move apart; each is
-  retired once its versions have aged, and the next run plans a fresh one. A held
-  draft a person marked ready is theirs.
+  secure-it maintains separate [held drafts](../secure-it/README.md#what-a-run-does)
+  until they graduate or a person takes them over.
 - **CI failed:** the agent adapts the PR, **at most twice**; an attempt counts even
   if it changes nothing. If CI still fails after the second, the next review closes
   the PR and deletes its branch, and a later run starts over. A run that replans an
@@ -391,11 +389,9 @@ Check scan health, read gaps and omissions, and review exceptions before they ex
 Review migrations and run application tests. Compatibility floors need manual review.
 For fork PRs, check them against the default branch yourself before merging.
 
-Young fixes stay draft, with a warning and the date the wait ends. To take one
-early, make every other check green, write the reason on the PR, and make an admin
-merge past cooldown. The build and tests can already execute a young release while
-its PR is held. [The gate's cooldown](../core/gate/README.md#the-cooldown-young-versions-are-held-however-justified)
-has the details, including how a person's PR is re-checked.
+Read [secure-it's warning](../secure-it/README.md#the-cooldown-warning) before considering early acceptance
+under the [gate's cooldown policy](../core/gate/README.md#the-cooldown-young-versions-are-held-however-justified).
+The build and tests can already execute a young release while its PR is held.
 
 For details: [scenario rules](requirements.md), [coverage gaps](coverage-gaps.md),
 [security boundaries](security-model.md),

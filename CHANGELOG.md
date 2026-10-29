@@ -4,17 +4,14 @@
 
 ### Changed
 
-- Comparisons note changes to the PR's release-age, trust or source policy (`maven.repositories`, including order,
-  and `npm.registries`), including configuration deletion, and note when base's policy cannot be parsed. The note
-  appears in the step summary even when no versions are held.
+- Comparisons flag release-age, trust or source policy changes with a [plain note](core/gate/README.md#the-cooldown-young-versions-are-held-however-justified).
 - PRs use head's release-age and trusted-package policy, like exceptions. Adding trust or shortening
   `releaseAgeDays` applies to the PR's own versions too: newly trusted versions, or versions old enough under
   the shorter wait, are not held. In the gate's comparison, unparseable base settings no longer prevent cooldown
   evaluation. The tools still require parseable base settings and cannot edit the gate's policy.
 - The release-age exemption is named `trustedPackages`, with the same npm scopes, Maven groups/plugin ID prefixes
-  and GitHub Actions owners. It can include third parties as well as the repository's own packages. Trust removes
-  the cooldown detection window (and Actions' immutable-release requirement); identity, advisory, malware, source
-  and pin checks still apply. Renaming the configuration field preserves trust.
+  and GitHub Actions owners. It can include third parties as well as the repository's own packages. Trust skips
+  the wait ([scope and risks](core/gate/README.md#configuration-githubsupply-chainjson)); renaming the field preserves trust.
   This repository now also trusts the `actions` and `aws-actions` owners; this is
   repository policy, not a default for adopters.
   Run/report reason texts now say "trusted" instead of "own", including "trusted-package" and "configured
@@ -38,10 +35,7 @@
 
 ### Deprecated
 
-- `ownPackages` remains accepted as an alias for `trustedPackages`, without warnings; configuring both is an error.
-  Update gate pins and every installed tool before renaming configuration, including runners, scheduled tasks and
-  manual checkouts. Keep `ownPackages` until then. The alias is removed in 0.11.0; follow the
-  [migration sequence](docs/releasing.md#trustedpackages-migration).
+- `ownPackages` is deprecated; follow the [migration sequence](docs/releasing.md#trustedpackages-migration) before its removal in 0.11.0.
 
 ## 0.9.1 - 2026-10-28
 

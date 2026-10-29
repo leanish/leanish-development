@@ -26,7 +26,7 @@ What secure-it and bump-it need to run a coding agent, without leanish-developme
 - **Secrets:** `SecretStore`, with macOS Keychain as its one implementation for now (`secret-store.ts`).
 
 Most of it comes from leanish-development-incubator (private), whose runtime now consumes this package.
-[PROVENANCE.md](PROVENANCE.md) records the adoption status and lists every file, where it comes from and what changed.
+[Provenance](PROVENANCE.md#provenance) records the adoption and lists every file, where it comes from and what changed.
 
 Its exports are the modules tool-runtime, secure-it and bump-it import, plus what the incubator's runtime uses and they
 don't: `./errors`, `./skill/validate-compat`, `./types/effort`, `./logger/correlation` (`withCorrelation`,
@@ -68,7 +68,7 @@ other options (binary, timeouts, staging…) separately: `codexRunnerOptions(pol
 for other entries that take a policy (the tools' sandboxed commands). A policy can also be written out by hand: nothing in it
 needs settings, a home or a login.
 
-The incubator's host adapters compose it as follows ([adoption status](PROVENANCE.md)):
+The incubator's host adapters compose it as follows ([provenance](PROVENANCE.md#provenance)):
 
 - **Local Codex:** `isolationPolicy(...)` from what its `localCodexOptions` reads: `AGENT_RUNTIME_READ_DENY`
   as `readDeny`, `AGENT_RUNTIME_COMMAND_PATH` as `commandPath`, the developer's git identity as `commitIdentity`, its
@@ -110,7 +110,7 @@ flushed (best effort: if writing it fails, the wrapper writes its own line too, 
 secure-it and bump-it use `after-final-line` with run.sh's `TOOL_REPORT_MARKER`, and `beforeFinalLine` for their
 `GitHub API requests` line.
 
-The incubator's hosts use the report API as follows ([adoption status](PROVENANCE.md)):
+The incubator's hosts use the report API as follows ([provenance](PROVENANCE.md#provenance)):
 
 - **Local (`run-local`):** `startRunReport({ stream: stderr, marker: { env: "AGENT_RUNTIME_REPORT_MARKER", when:
   "start" }, extra: () => counts })`, with its dispatch, delayed-message and self-publish counts as `extra`;

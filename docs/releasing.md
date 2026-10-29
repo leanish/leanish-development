@@ -118,10 +118,11 @@ decisions. Subsequent development must not move a released tag or an adopter's p
 ## trustedPackages migration
 
 The tools read `.github/supply-chain.json` at startup as well as during verification.
-The v0.9.1 parser rejects `trustedPackages`, so migrate each repository in this order:
+v0.10.0 is the first release that accepts `trustedPackages`; the v0.9.1 parser rejects it.
+Migrate each repository in this order:
 
 1. Keep `ownPackages` while moving every gate pin and every installed bump-it and
-   secure-it that reads the repository to a release supporting `trustedPackages`.
+   secure-it that reads the repository to v0.10.0 (or a later release that still accepts the alias).
    Include runners, scheduled tasks and manual checkouts; installing a new release
    alone does not repoint an existing schedule. For this repository, include
    `released-supply-chain.yml`.
@@ -149,9 +150,9 @@ adds provenance (it does for a public repository like this one).
    export, and records its sha512 integrity. It has no publishing permission.
    It hands the tarball to `publish` through its job outputs (base64, at most
    256 KiB encoded; a bigger tarball fails here and is published by hand). The
-   workflow uses plain `git` and no artifact actions. This design predates this
-   repository's trust in the `actions` owner: their lack of immutable releases
-   originally blocked adoption; the current policy permits them.
+   workflow uses plain `git` and no artifact actions. This repository now trusts
+   `actions`, so the gate permits them; the workflow still avoids the artifact
+   actions because they have no immutable releases, using job outputs for the handoff.
 2. `publish` runs in the `npm` environment, so it waits for the owner's
    approval; nothing else in the release flow waits for it. It publishes
    exactly the tarball `prepare` checked (its integrity is compared first). A

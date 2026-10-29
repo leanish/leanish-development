@@ -21,9 +21,11 @@ core/tool-runtime/run.sh bump-it review leanish/widget   # every few hours
   and a unit's failure does not stop others. Gradle transitives are never explicitly moved; induced changes are judged
   by `compare`. Recorded security and compatibility floors stay untouched.
 - Deprecated npm releases are excluded from selected direct and transitive targets, accidental majors included. A
-  deprecated version already in the base can stay when no eligible replacement exists. Majors also check newly induced
-  registry transitives for deprecation and readable catalogs, within the scope described in
-  [coverage gaps](../docs/coverage-gaps.md#limits).
+  deprecated version already in the base can stay when no eligible replacement exists. A major fails when it brings
+  a new npmjs-resolved copy that is deprecated or whose catalog can't be read. Only checked direct targets and
+  versions kept from base are exempt from that check; newly installed peers and newly declared root/workspace
+  dependencies are checked too. Bundled copies follow their carrier; other sources, including
+  [npm mirrors](../docs/coverage-gaps.md#limits), remain subject to the gate's source rules.
 - A Gradle coordinate pinned with `strictly(...)` (declared or as a dependency constraint) in a configuration that
   declares it is never moved, in any configuration: the pin is the owner's. The run's notes list each such pin. Pins
   only elsewhere (Gradle's own strict constraints on its embedded Kotlin, on buildscript and settings classpaths) don't
