@@ -12,6 +12,8 @@
   and GitHub Actions owners. It can include third parties as well as the repository's own packages. Trust removes
   the cooldown detection window (and Actions' immutable-release requirement); identity, advisory, malware, source
   and pin checks still apply. Renaming the configuration field preserves trust.
+  This repository now also trusts the `actions` and `aws-actions` owners; this is
+  repository policy, not a default for adopters.
   Run/report reason texts now say "trusted" instead of "own", including "trusted-package" and "configured
   trusted-package exclusions".
 - Trusted Gradle plugin ID prefixes now match at dot boundaries: `com.acme` matches that ID and its descendants,
@@ -31,8 +33,9 @@
 ### Deprecated
 
 - `ownPackages` remains accepted as an alias for `trustedPackages`, without warnings; configuring both is an error.
-  Repin older gates before migrating configuration, including this repository and the adopter fixtures. The alias
-  is removed in 0.11.0, so migrate before repinning to it; see docs/releasing.md.
+  Update gate pins and every installed tool before renaming configuration, including runners, scheduled tasks and
+  manual checkouts. Keep `ownPackages` until then. The alias is removed in 0.11.0; follow the
+  [migration sequence](docs/releasing.md#trustedpackages-migration).
 
 ## 0.9.1 - 2026-10-28
 

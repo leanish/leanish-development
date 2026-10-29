@@ -37,8 +37,8 @@ In Claude Code or Codex desktop, ask "install bump-it", "install secure-it", or 
 - [Tool configuration](docs/tool-configuration.md): every agent.yaml field, including
   the coding agent, model and effort
 - [Security model](docs/security-model.md) and [coverage gaps](docs/coverage-gaps.md)
-- [Simplification candidates](docs/simplification-candidates.md): code for rare cases that could be removed,
-  and what removing it would give up
+- [Recorded simplification decisions](docs/simplification-candidates.md): what was removed or kept and why;
+  no open candidates
 - [Validation evidence](docs/validation.md): real runs on fixture repositories and
   what each behaviour's evidence is
 - [Release procedure](docs/releasing.md) and [CHANGELOG](CHANGELOG.md)
@@ -51,11 +51,13 @@ In Claude Code or Codex desktop, ask "install bump-it", "install secure-it", or 
   removal of security floors; compatibility floors stay
 - [`bump-it`](bump-it): routine/major plans, tool-computed npm changes and
   checksummed Gradle wrapper generation
+- [`@leanish/setup`](core/setup/README.md): [guided installation](core/setup/install.md), gate adoption and
+  local app schedules; its README is the command reference
 - [`@leanish/tool-runtime`](core/tool-runtime): shared config, sandboxed inventories,
   publication (PR text cleanup, race checks, journal recovery), review ticks and `run.sh`
 - [`@leanish/agent-runtime`](core/agent-runtime): the Codex and Claude Code runners and their
-  support; the shared core the incubator's runtime is to consume, and the one package that may be published to
-  npm ([provenance](core/agent-runtime/PROVENANCE.md))
+  support; also consumed by the incubator's runtime, as recorded in
+  [provenance](core/agent-runtime/PROVENANCE.md), and the one package that may be published to npm
 
 ## Development
 

@@ -13,12 +13,12 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 
 ## Limits
 
-- **An action with no immutable release, newly used (gate)**: under the normal configuration, a new or additional
-  occurrence of a third-party action whose selected version has no immutable release fails the gate, even where the
-  repository already uses it (existing uses don't authorize more copies; `trustedPackages` are exempt). In 0.9.1 this held
-  for the versions of `actions/checkout`, `actions/upload-artifact` and `actions/download-artifact` then current. An
-  adopter adding a workflow with them is blocked until it does without (`publish-agent-runtime.yml` fetches with plain
-  `git` and hands its tarball over through job outputs for this reason). By design for now.
+- **An action with no immutable release, newly used (gate)**: a new or additional occurrence fails unless its
+  owner is listed in `trustedPackages["GitHub Actions"].owners`. Existing uses do not authorize more copies.
+  Trusting the owner lets the gate and tools accept versions without immutable releases or release dates, removing
+  the cooldown detection window: a compromised publisher's release can pass immediately. Pins and other checks
+  remain required ([configuration](../core/gate/README.md#configuration-githubsupply-chainjson)). This repository
+  trusts `actions` and `aws-actions`; adopters choose their own policy.
 - **Publishing races the release's CI**: `publish-agent-runtime.yml` requires the tag's commit to have its `check` and
   `supply-chain` checks green, so a GitHub release created while they still run fails before packing (nothing
   publishes) and isn't retried when they pass. Create the release once they're green, or re-run the run's failed jobs.
@@ -65,28 +65,15 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 - **Held bodies keep raw length budgets (secure-it)**: a held PR's body is composed within raw UTF-16 budgets (61,440
   for fresh text, 65,280 with its marker), which can cut table rows, drop evidence or refuse a body publication
   would accept. Publication checks every body as it sends it. Kept since 0.8.0.
-- **Held work that only plans together fails until it ages (secure-it)**: errors no longer regroup held work, so held
-  groups that can't be planned apart (npm roots keeping each other's old requirements) or whose Gradle references only
-  resolve together each fail visibly, run after run, until their versions age into the aged batch or a person moves
-  them. When the aged batch can't be planned and has npm work, which of its roots join held work is unknown, so the
-  held units with npm work fail that run with it rather than be grouped without it. Held work without npm still runs,
-  unless it would claim a held PR with npm moves: such PRs are kept for their npm work, in runs and in reviews (even
-  one whose fix has aged since). Each failure is logged and reported.
-  Narrowed in 0.9.0.
-- **Ignored Gradle configurations' failures compared as text (secure-it, bump-it)**: a resolution failure in a
-  configuration listed in `gradle.ignoreConfigurations` is accepted when the reference build has the same failure
-  text, once the inventory has written the repository root as `<repository>`. Matching is textual: outside `file:` URIs
-  only literal roots match; after `file:` or `file://` only their `pathToFileURL` pathnames match. For root
-  `/tmp/export%20one`, `file:/tmp/export%2520one/m2` matches, while `file:/tmp/export%20one/m2` stays untouched.
-  A failing configuration resolves nothing, so its failure text and its declarations and constraints are all that's
-  compared there: a resolution rule the edit adds to it (a force, a substitution) that leaves the text unchanged isn't
-  seen. Other variable paths in a message (a temp file of the run, a root Gradle prints in a form the inventory doesn't
-  match) still make the same failure read as different. Only a whole root with an unambiguous ending is replaced: end of text,
-  a closing quote, parenthesis or bracket, or `/`. The following path, up to whitespace, a quote, a closing
-  parenthesis/bracket or the end of the text, must contain no `..` segment anywhere; in `file:` URIs, percent-encoded
-  dots also count (`%2E%2E`, case-insensitive, including mixed forms). `..cache` and `...` are allowed. Whitespace, commas
-  and colons after the root stay untouched, as do `/r backup/lib` and `/r/lib/../../shared/lib`, so verification fails
-  closed and a person makes the change. New in 0.9.0 (bump-it in 0.9.1); narrowed in 0.9.1.
+- **Held work that only plans together fails until it ages (secure-it)**: held groups that cannot be planned or
+  resolved separately fail visibly until their versions age into the aged batch or a person moves them. An aged
+  batch planning failure can also block held npm work; existing affected PRs are kept. The coupling, preflight and
+  failure-propagation rules are in [secure-it](../secure-it/README.md#what-a-run-does), step 3. Narrowed in 0.9.0.
+- **Ignored Gradle configurations' failures compared as text (secure-it, bump-it)**: when an ignored configuration
+  resolves nothing, its failure text, declarations and constraints are all the reference can compare. A resolution
+  rule that leaves those unchanged is unseen. Variable paths the inventory cannot normalize can also make equivalent
+  failures differ and refuse a valid edit. See the [gate's normalization rules](../core/gate/README.md#gradle-builds).
+  New in 0.9.0 (bump-it in 0.9.1); narrowed in 0.9.1.
 - **Some listing failures stay quiet notes (secure-it, bump-it)**: an action with more releases than the gate reads
   has an incomplete version listing, which neither tool reports under `errors`: secure-it blocks that action's fix
   with the note "the registry doesn't list …'s versions completely, so the rule can't be applied", and bump-it gives

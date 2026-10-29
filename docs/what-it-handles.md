@@ -27,15 +27,14 @@ Malware listed by the advisory sources always fails, even if it was already
 present. Exceptions cannot allow malware. This is advisory-based detection,
 not a scan of package contents for unknown malicious code.
 
-New or changed versions normally need to be **at least seven days old**.
-The wait is configurable. Packages explicitly listed in `trustedPackages`, including third parties, skip the
-wait, but keep the other checks. This removes the cooldown detection window: a compromised
-publisher's release can pass immediately. Their dependencies do not inherit that exemption.
-A PR cannot shorten its own wait or declare its new dependencies exempt.
-
-A proven security fix can pass the version rule before seven days. Its separate
-**cooldown check still stays red** until the wait ends. An exception does not
-clear that hold. Missing data needed for a decision fails the check.
+New or changed versions normally wait seven days (configurable). The gate uses the PR's proposed policy
+(head), so a PR can shorten its own wait or add trust. The tools cannot edit that policy. Trusted packages
+skip the wait; their dependencies do not inherit trust.
+A proven young security fix can pass the version rule but stays held by the separate **cooldown check**;
+an exception does not clear it. Missing data needed for a decision fails the check. See the gate's
+[release-age rules](../core/gate/README.md#release-age-source-and-identity-npm) and
+[cooldown policy](../core/gate/README.md#the-cooldown-young-versions-are-held-however-justified), and the
+[reason for waiting](security-model.md#young-versions-the-cooldown).
 Some missing coverage is instead reported as a gap: **a passing PR can have gaps**.
 
 secure-it keeps all malware repairs in one PR, before other work. It seeks the nearest
@@ -50,12 +49,8 @@ The gate reads configured `package-lock.json` files, including workspace
 dependencies and transitive dependencies. A transitive dependency is one another
 package brings in. Recorded bundles are included. Configure lockfiles outside the root too.
 
-If a selected `package-lock.json` has an `npm-shrinkwrap.json` beside it in head,
-the gate refuses: npm would install from the shrinkwrap. List the effective
-`npm-shrinkwrap.json` in `npm.lockfiles`; selection never switches automatically.
-Implicit discovery also refuses a root `npm-shrinkwrap.json` when `package-lock.json`
-is absent. Compare, scan and signature verification all require that explicit selection;
-baseline discovery stays lenient.
+npm installs from `npm-shrinkwrap.json` ahead of an adjacent `package-lock.json`, so the gate requires explicit
+shrinkwrap selection; see the [lockfile configuration rules](../core/gate/README.md#configuration-githubsupply-chainjson).
 
 It checks advisories, release age, allowed registry sources and recorded version
 restrictions. CI also checks npm signatures and provenance attestations.
@@ -114,16 +109,10 @@ transitive copies within allowed ranges and existing overrides.
 Major upgrades get separate PRs. Candidates must pass identity checks and add no
 new advisories or malware. Existing vulnerabilities can remain.
 
-A routine may find a young version already locked, for example an early security
-fix. A locked version whose publication date can't be read counts as young.
-npm needs an age exemption to keep it, but that exemption covers the whole
-package name, so bump-it pins that package's copies where it can: npm then cannot
-take another young release. Copies it can't pin are checked after resolution:
-each may stay locked, be removed, or move to an aged version that is not
-deprecated. Any other result fails the routine. Bundled copies follow their
-carrier, direct dependencies outside the plan stay locked, and trusted packages still
-update without the wait. The [scenario rules](requirements.md#35-ci-prs-and-failures)
-give the exact pinning rules.
+A routine may find a young version already locked, for example an early security fix. npm's age exclusion
+covers a whole package name, so keeping that version could let other copies drift to another young release.
+bump-it uses retention pins and checks unpinned results to prevent that. See the
+[exclusion and retention rules](../bump-it/README.md#run) for supported placements and failure conditions.
 
 It avoids deprecated targets. It keeps `@types/node` within the project's lowest
 known supported Node major. Without readable runtime evidence, it stays in the
@@ -143,7 +132,8 @@ The gate runs Gradle to find what the build really resolves. This covers externa
 Maven modules in runtime, compile and test dependencies, annotation processors,
 build tools, plugins, and buildscript and settings classpaths.
 It also covers `buildSrc` and included builds configured by the root build.
-Missing output or unresolved configurations fail. Explicitly ignored ones are not covered.
+Missing output or unresolved configurations fail. `gradle.ignoreConfigurations` tolerates resolution failures
+at named locations; modules they resolve are still scanned.
 A configuration that a plugin adds or makes resolvable while others resolve fails the inventory instead of being left
 out. A possible extension, if a build ever needs it, is resolving such configurations too (until none new appears);
 none of the builds checked so far does (the owner's convention plugins and projects using them).
@@ -215,19 +205,16 @@ The gate reads workflow `uses:` entries, composite actions and local reusable
 workflows. Every new or changed remote use needs a full commit SHA and a comment
 naming the full release tag that points to it. Duplicate steps and YAML aliases
 count too. Advisory and release-age checks use the GitHub release, not the tag's
-date, and trust its age only when the release is immutable: a mutable release's
-tag can be moved to newer code, which would inherit the old release's age. So a
-change to an action without an immutable release fails the gate, and the tools
-don't pick such a version on their own (they leave a note saying why); a person
-updates it, or waits until the action publishes immutable releases. In October
-2026, `actions/checkout`, `actions/upload-artifact` and `actions/download-artifact`
-were among them. Trusted Actions can skip the age wait, but still need valid pins.
+date. Unless the action's owner is listed in `trustedPackages["GitHub Actions"].owners`, the release must be
+immutable for its age to count: a mutable tag can be moved to newer code that inherits an old date. Without an
+immutable release, the gate refuses a new or changed use and the tools skip that version. The owner can wait for
+immutable releases or choose to trust the Actions owner. Trust lets the gate and tools accept versions without
+a release date or immutable release and removes the cooldown detection window: a compromised publisher's release can pass immediately. Pins and the
+other checks still apply; see the [gate's configuration](../core/gate/README.md#configuration-githubsupply-chainjson).
 
-A mutable release in a fixing line has no trusted date, so secure-it and the gate's
-young-fix proof cannot select that line even when it also has an immutable fix.
-The tools report the existing unknown-age problem and skip it; the owner must
-update it manually or wait for trusted age evidence. bump-it's aged-release
-selection can still choose an immutable release independently.
+For an untrusted action, a mutable release in a fixing line has no trusted date, so secure-it and the gate's
+young-fix proof cannot select that line even when it also has an immutable fix. They report the unknown-age
+problem; bump-it can still select an immutable aged release independently.
 
 secure-it selects the lowest eligible security fix and pins its tag's commit.
 bump-it selects the highest eligible aged release, with routine updates together

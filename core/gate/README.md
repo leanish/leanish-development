@@ -81,7 +81,9 @@ A project's own repository advisories are published by whoever controls that rep
 The tools read strict versions as the owner's pins and never plan a move of a strictly pinned coordinate. With `--init-script <file> --define <key>=<value>`, another init script runs first, given that system property: the tools pass [`gradle/supply-chain-reference.init.gradle`](gradle/supply-chain-reference.init.gradle) and a plan, to inventory the base with the plan applied by Gradle (the reference their edits must match), or secure-it's floor-removal script.
 
 - `buildSrc`, included builds and plugin builds (`pluginManagement { includeBuild(...) }`) that Gradle configures from the root build are covered by the same run, under their own location prefix (`buildSrc/:compileClasspath`). Each build also writes a manifest from Gradle's own model (its projects and nested builds), so a project without output, or a nested build the run didn't export, fails the run; such a build has to be listed in `gradle.builds`.
-- A configuration that doesn't resolve fails the run on either side: a hole in the inventory would read as clean. `gradle.ignoreConfigurations` names locations to leave out, explicitly.
+- A configuration that doesn't resolve fails the run on either side: a hole in the inventory would read as clean.
+  `gradle.ignoreConfigurations` tolerates resolution failures at the named locations; any modules they resolve are
+  still scanned. The tools also compare their declarations, constraints and failure text with the planned reference.
 - The inventory names the commit it was made from, and `compare`/`scan` check it matches and covers the builds the tree lists.
 - Base and head each have their own sources: a PR can add a repository's first Gradle build (base needs no inventory) or remove its last one (base's inventory still counts, and what it had shows as fixed).
 - A plugin's injected dependencies show up in its consumers' builds, which run this gate themselves (for example, java-conventions' checkstyle and errorprone dependencies in sqs-codec).
@@ -227,8 +229,8 @@ Ordinary bumps don't qualify, and this applies only to npm: Maven/Gradle and Act
 ## The cooldown: young versions are held, however justified
 
 Passing the release-age rule makes a young version *acceptable*, not *trusted* (why: the
-[security model](../../docs/security-model.md#young-versions-the-cooldown)). So every version a PR adds or changes
-that is younger than `releaseAgeDays` is **held**, whether the rule picked it, a security fix requires it, or a
+[security model](../../docs/security-model.md#young-versions-the-cooldown)). Unless trusted under head's policy,
+every version a PR adds or changes that is younger than `releaseAgeDays` is **held**, whether the rule picked it, a security fix requires it, or a
 `releaseAge` exception names it:
 
 - The `supply-chain` verdict is unchanged: it says whether the change is right.
@@ -283,9 +285,15 @@ Optional; read from head. Unknown fields fail, so a typo can't turn a check off.
 
 - Without `npm.lockfiles`, the gate reads `package-lock.json` if the tree has one; without `gradle.builds`, the root build if the tree has a `settings.gradle(.kts)` or `build.gradle(.kts)`. So an ecosystem in the repository is never skipped for lack of configuration; `"builds": []` turns Gradle off explicitly. Workflows are always read. A tree with none of these fails.
 - Every listed lockfile must exist in head; one base doesn't have yet reads as empty there.
+- A selected `package-lock.json` with an adjacent `npm-shrinkwrap.json` is refused: npm would install from the
+  shrinkwrap. Select that `npm-shrinkwrap.json` explicitly in `npm.lockfiles`; selection never switches automatically.
+  Without explicit `npm.lockfiles`, a root `npm-shrinkwrap.json` is refused whether or not `package-lock.json` exists.
+  Compare, scan and signature verification enforce this; baseline discovery remains lenient.
 - Trusted packages skip only the release-age wait. Trusted Maven packages: exact `groups`, and `pluginIdPrefixes` that only match Gradle plugin markers (`<id>:<id>.gradle.plugin`). Prefixes match at dot boundaries: `com.acme` matches that ID and its descendants, while `com.acme.` matches descendants only; neither matches `com.acmecorp`. Other artifacts in `com.acme.*` groups are not exempt.
 - `trustedPackages` can include third parties as well as your own packages. Trusting a package or Actions owner removes the cooldown's detection window for it: a compromised publisher's release can pass immediately. Trusted Actions also need no immutable release or release date. Publisher identity, advisory, malware, source and pin checks still apply; dependencies do not inherit trust.
-- `ownPackages` is a deprecated alias with the same shape and meaning, accepted without a warning. Use one name only: configuring both is an error. A rename preserves the same trust policy. Repin older gates to a release supporting `trustedPackages` before migrating configuration; older gates reject the new field. 0.11.0 removes the alias: migrate before repinning to it.
+- `ownPackages` is a deprecated alias with the same shape and meaning, accepted without a warning. Use one name only: configuring both is an error. A rename preserves the same trust policy. Before renaming, update gate pins and every installed tool as described in the
+  [migration sequence](../../docs/releasing.md#trustedpackages-migration). Older parsers reject the new field; 0.11.0
+  removes the alias.
 - `repositories`: a package's GitHub source repository, for its repository advisories; it takes precedence over what the manifest or POM names.
 - `compatibleLines`: how many leading numeric segments, after one optional `v` or `V`, make a compatible line for a package (a trailing `*` matches a prefix), where the default (npm's caret range; Maven's first numeric segment, or `0.N` when the first is 0) doesn't fit.
 

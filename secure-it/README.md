@@ -174,8 +174,9 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
      a planned plugin move alone does not authorize extra declarations;
    - the gate's own policy (its config, its exceptions, workflows and actions outside planned pins) is untouched,
      major or not;
-   - no line with `strictly` in its code (not in a string or a comment) changed in a Gradle build, settings or catalog file (floor removals included),
-     and the edit keeps the reference's strict declarations and constraints;
+   - interpreted declarations and constraints match the plan's Gradle reference, including strict pins and floor
+     removals; the [security model](../docs/security-model.md#secure-it-and-bump-it) explains the comparison and its
+     limit for pins Gradle does not interpret;
    - `compare` against the base passes;
    - every move landed at exactly `to` at every planned location (Gradle: declared at exactly `to`);
    - none of the targeted advisories affects what's left, using compare's head findings from the same snapshot;
