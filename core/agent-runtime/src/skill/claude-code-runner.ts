@@ -140,12 +140,19 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
 
   async #run(invocation: SkillInvocation, collector: ClaudeStreamCollector, onSpawn: () => void): Promise<SkillInvocationResult> {
     // The session's saved outputs and the login are found, opened and removed under ~/.claude; a relocated config dir
-    // would move them where none of that reaches.
-    const configDir = [process.env, this.#env, invocation.env ?? {}].map((env) => nonEmpty(env["CLAUDE_CONFIG_DIR"])).find((dir) => dir !== undefined);
-    if (configDir !== undefined) throw new Error(`ClaudeCodeRunner: CLAUDE_CONFIG_DIR ('${configDir}') isn't supported; unset it so the CLI uses ~/.claude`);
+    // would move them where none of that reaches. The refusal names where the variable came from, never its value: a
+    // caller may have mapped a credential to it, and this error is reported before any redaction.
+    const configDirSource = (
+      [["the process environment", process.env], ["the runner's env option", this.#env], ["the invocation's env", invocation.env ?? {}]] as const
+    ).find(([, env]) => nonEmpty(env["CLAUDE_CONFIG_DIR"]) !== undefined)?.[0];
+    if (configDirSource !== undefined) {
+      throw new Error(`ClaudeCodeRunner: CLAUDE_CONFIG_DIR (set in ${configDirSource}) isn't supported; unset it so the CLI uses ~/.claude`);
+    }
     const access = invocation.access ?? "read-only";
     if (access === "write" && this.#confinement === "restricted") {
-      throw new Error("ClaudeCodeRunner: access 'write' needs the 'sandbox' confinement; 'restricted' runs grant no tool that edits or runs commands");
+      throw new Error(
+        "ClaudeCodeRunner: access 'write' isn't available under the 'restricted' confinement, which grants no tool that edits or runs commands; ask for 'read-only' access, or run the write where Claude Code's sandbox is available ('sandbox' confinement)",
+      );
     }
     const workingCopies = invocation.workingCopies.map((wc) => wc.path);
     assertOutsideDenied(workingCopies, this.#readDenied, "working copy");

@@ -343,8 +343,18 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
 
   it("refuses a relocated Claude config dir before spawning", async () => {
     const { bin, record } = await makeStub([result(ANSWER)]);
-    await expect(new ClaudeCodeRunner({ confinement: "sandbox", bin, env: { CLAUDE_CONFIG_DIR: "/elsewhere" } }).run(call())).rejects.toThrowError(/CLAUDE_CONFIG_DIR \('\/elsewhere'\) isn't supported/);
+    await expect(new ClaudeCodeRunner({ confinement: "sandbox", bin, env: { CLAUDE_CONFIG_DIR: "/elsewhere" } }).run(call()))
+      .rejects.toThrowError("CLAUDE_CONFIG_DIR (set in the runner's env option) isn't supported");
     await expect(readFile(record, "utf8")).rejects.toThrowError(/ENOENT/);
+  });
+
+  it("never puts the config dir's value in its refusal, wherever it was set", async () => {
+    const { bin } = await makeStub([result(ANSWER)]);
+    const secret = "synthetic-credential-0123456789";
+    const runner = new ClaudeCodeRunner({ confinement: "sandbox", bin });
+    const error = (await runner.run(call({ env: { CLAUDE_CONFIG_DIR: secret } })).catch((err: Error) => err)) as Error;
+    expect(error.message).toContain("CLAUDE_CONFIG_DIR (set in the invocation's env) isn't supported");
+    expect(error.message).not.toContain(secret);
   });
 
   it("scrubs a failure's reason before cutting it short, so a cut can't leave part of a credential", async () => {
@@ -410,7 +420,7 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     const { bin, record } = await makeStub([result(ANSWER)]);
     const usages: SkillUsage[] = [];
     await expect(new ClaudeCodeRunner({ confinement: "restricted", bin, stagingParentDir }).run(call({ workingCopies: [wc], access: "write", onUsage: (usage) => usages.push(usage) })))
-      .rejects.toThrow("access 'write' needs the 'sandbox' confinement");
+      .rejects.toThrow("access 'write' isn't available under the 'restricted' confinement");
     expect(await readdir(stagingParentDir)).toEqual([]);
     expect(existsSync(record)).toBe(false);
     expect(usages).toEqual([expect.objectContaining({ tokens: expect.objectContaining({ total: 0 }), quota: { status: "not-applicable", reason: "no provider call was made" } })]);
