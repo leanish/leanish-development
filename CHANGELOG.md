@@ -4,6 +4,10 @@
 
 ### Changed
 
+- The reusable gate runs three jobs instead of five: `plan` is gone (each job checks the event itself) and one
+  `inventory` job inventories base, then head, in separate checkouts. Adopters' required check names and the workflow's
+  outputs don't change. This repository's CI drops its `supply-chain` bridge job: its ruleset and publishing require
+  `gate / supply-chain` instead.
 - Comparisons flag release-age, trust or source policy changes with a [plain note](core/gate/README.md#the-cooldown-young-versions-are-held-however-justified).
 - PRs use head's release-age and trusted-package policy, like exceptions. Adding trust or shortening
   `releaseAgeDays` applies to the PR's own versions too: newly trusted versions, or versions old enough under
@@ -25,7 +29,7 @@
   write runs belong to a runner that can write there. It keeps its "access 'write' needs the 'sandbox' confinement"
   opening and never suggests a lesser access, which a caller could take as done.
 - Publishing agent-runtime watches main's `ci` runs still in progress on the release commit, for up to 20 minutes,
-  before requiring its `check` and `supply-chain` checks green; a release created right after the merge no longer
+  before requiring its `check` and `gate / supply-chain` checks green; a release created right after the merge no longer
   fails just because they hadn't finished.
 - Release candidates run the fixture repositories once per coding-agent adapter through
   `core/setup/scripts/fixture-pass.sh`, which cleans and runs the repositories of the owner's installation configs

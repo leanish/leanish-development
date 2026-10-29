@@ -87,7 +87,7 @@ The tools read strict versions as the owner's pins and never plan a move of a st
 - The inventory names the commit it was made from, and `compare`/`scan` check it matches and covers the builds the tree lists.
 - Base and head each have their own sources: a PR can add a repository's first Gradle build (base needs no inventory) or remove its last one (base's inventory still counts, and what it had shows as fixed).
 - A plugin's injected dependencies show up in its consumers' builds, which run this gate themselves (for example, java-conventions' checkstyle and errorprone dependencies in sqs-codec).
-- Gradle runs the build's own code, so a malicious build can alter its own inventory: see the [security model](../../docs/security-model.md#the-ci-gate).
+- Gradle runs the build's own code in one inventory job, so a malicious build can alter both inventories: see the [security model](../../docs/security-model.md#the-ci-gate).
 
 ## GitHub Actions
 
@@ -342,8 +342,9 @@ Other inputs: `java-distribution` (default `temurin`) and `node-version` (defaul
 
 What runs where:
 
-- **On a PR:** two inventory jobs (base and head) run the Gradle builds with a read-only token; the `supply-chain` job compares their output and the lockfiles and workflows read from git, and its result is the verdict. It runs with `if: always()` and fails when an inventory job didn't succeed, so a skipped job never satisfies the required check. The `cooldown` job then reads the verdict's report: red while it holds young versions, and red when the comparison didn't pass (also `if: always()`, so it's never skipped on a PR).
-- **On pushes to the default branch, daily and on `workflow_dispatch`:** the full `scan` of the default branch, with today's advisories. Open PRs aren't rescanned: an advisory published after a PR's last check shows up when it's pushed to again, or in the default branch's scan once it's merged.
+- **On a PR:** one `inventory` job runs the Gradle builds with a read-only token: base first, then head, in separate checkouts. Head is the merge commit GitHub builds; base is its first parent. A base failure skips head. The files `gradle-base.json` and `gradle-head.json` share one artifact; a side with no configured Gradle builds writes no file. The `supply-chain` job compares their output and the lockfiles and workflows read from git, and its result is the verdict. It runs with `if: always()` and fails when the inventory job didn't succeed, so a skipped inventory never satisfies the required verdict. The `cooldown` job then reads the verdict's report: red while it holds young versions, and red when the comparison didn't pass (also `if: always()`, so it's never skipped on a PR).
+- **On pushes to the default branch, daily and on `workflow_dispatch`:** the head inventory only, then the full `scan` of the default branch, with today's advisories. Open PRs aren't rescanned: an advisory published after a PR's last check shows up when it's pushed to again, or in the default branch's scan once it's merged. Both `inventory` and `supply-chain` check the event and ref first: a scan of another branch, or an event the gate doesn't handle, fails.
+- Both inventories share the job's VM and Gradle home (each has its own checkout; daemon reuse and the configuration cache are off), so base's build can leave user-level state, such as local publications, that head's resolution sees.
 
 **GitHub settings**
 
@@ -355,7 +356,7 @@ What runs where:
 
 - **Fork PRs:** their workflow runs from the fork's own files, with a read-only token and no secrets, so their check is only as trustworthy as the PR: review workflow and build changes, require approval for outside contributors' runs, and check the PR against the default branch yourself before merging: nothing re-runs it from trusted files.
 - **Scheduled runs** are best effort ([coverage gaps](../../docs/coverage-gaps.md#limits)).
-- **Gradle builds** can alter their own inventory (see [Gradle builds](#gradle-builds)).
+- **Gradle builds** can alter both inventories in the shared inventory job (see [Gradle builds](#gradle-builds)).
 
 **Updating the pin:** a PR that changes the SHA (and its `# vX.Y.Z` comment); bump-it does it like any other action update.
 

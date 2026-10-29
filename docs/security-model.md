@@ -6,8 +6,7 @@ What can run where, and which credential it can reach.
 
 | Job | Runs code from the checked repository | Token | Writes |
 |---|---|---|---|
-| `plan` | no | `contents: read` | which mode and sides this run has |
-| `inventory` (every run: base and head on PRs, head otherwise) | yes: Gradle runs the build to learn what it resolves | `contents: read` (fork PRs: read-only regardless) | the inventory file, as an artifact |
+| `inventory` (one job: base then head on PRs, head otherwise) | yes: Gradle runs the build to learn what it resolves | `contents: read` (fork PRs: read-only regardless) | both inventory files in one artifact, omitting sides with no Gradle builds |
 | `supply-chain` (the verdict) | no: lockfiles and workflows are read from git objects, the Gradle inventory as data | `contents: read` | its report |
 | `cooldown` (PRs) | no: it reads the verdict's report | `contents: read` | nothing; red while young versions are held |
 
@@ -16,7 +15,9 @@ No job writes anything to the repository or its PRs: the gate needs only `conten
 - **No checkout keeps credentials** (`persist-credentials: false`), so the build can't find a token in `.git/config`.
 - **Repository build commands get no token.** The Gradle wrapper runs with `GITHUB_TOKEN`, `GH_TOKEN` and the Actions runtime tokens removed from its environment. npm signature verification instead uses the clean projects and fixed configuration described below. git only reads the checkout (`show`, `ls-tree`).
 - **The verdict never leaves the job that computes it.** The job's result is the check, so no artifact another job uploads can stand in for a verdict.
-- **What a build can still do:** Gradle runs the build's own code, so a malicious build script or plugin can alter its own inventory (hide a dependency from it). The job split keeps it from touching the comparison and the publishing credentials, not from lying about itself; review build changes.
+- **Event and ref validation** is the unconditional first step of both `inventory` and `supply-chain`: PRs compare; pushes, schedules and manual runs scan only the default branch; unsupported events fail. The verdict runs after every inventory outcome and rejects an unsuccessful inventory job. The PR cooldown likewise runs after every verdict outcome and rejects an unsuccessful comparison.
+- **Inventory state is shared within one job.** Head is the PR merge commit; base is its first parent in a separate checkout. Base is inventoried first; a base failure skips head. Separate checkouts keep ordinary project-local build output apart, and inventory commands disable daemon reuse and the configuration cache. The VM, Gradle home and other user-level state are shared: a base build can leave configuration or local publications that affect head resolution.
+- **What a build can still do:** Gradle runs the build's own code, so a malicious build script or plugin can alter both inventories (hide a dependency or change the baseline). Writing base first does not protect its file from head code. The job split keeps build code from touching the comparison and the publishing credentials, not from lying in the inventories; review build changes.
 - **Fork PRs** run the workflow from the fork's own files, with a read-only token and no secrets: their check is only as trustworthy as the PR, and nothing re-runs it from the default branch's files; see the adoption guide in [`core/gate/README.md`](../core/gate/README.md).
 
 ### npm signature verification

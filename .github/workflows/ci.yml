@@ -15,28 +15,15 @@ permissions:
   contents: read
 
 jobs:
-  # The gate on this repository itself, from the code under review: the same reusable workflow adopters call.
+  # The gate on this repository itself, from the code under review: the same reusable workflow adopters call. Its
+  # ruleset requires `gate / supply-chain` and `gate / cooldown`.
   gate:
     uses: ./.github/workflows/supply-chain.yml
 
-  # Keep the existing required check name; the reusable gate decides its result. A cooldown hold alone doesn't fail
-  # it: `gate / cooldown` reports that (and is required too), so the tests below still run on a held PR.
-  supply-chain:
-    needs: gate
-    if: always()
-    runs-on: ubuntu-26.04
-    steps:
-      - name: Require a successful supply-chain gate
-        env:
-          GATE_RESULT: ${{ needs.gate.result }}
-          COMPARISON_PASSED: ${{ needs.gate.outputs.comparison-passed }}
-          COOLDOWN_HELD: ${{ needs.gate.outputs.cooldown-held }}
-        run: test "$GATE_RESULT" = "success" || { test "$COMPARISON_PASSED" = "true" && test "$COOLDOWN_HELD" = "true"; }
-
-  # !cancelled(): a held PR's failed `gate / cooldown` would otherwise skip the tests, though `supply-chain` passed.
+  # !cancelled(): a held PR's failed `gate / cooldown` would otherwise skip the tests, though `gate / supply-chain` passed.
   check:
-    needs: supply-chain
-    if: ${{ !cancelled() && needs.supply-chain.result == 'success' && (github.event_name == 'pull_request' || github.event_name == 'push') }}
+    needs: gate
+    if: ${{ !cancelled() && needs.gate.outputs.comparison-passed == 'true' && (github.event_name == 'pull_request' || github.event_name == 'push') }}
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
