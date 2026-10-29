@@ -76,8 +76,6 @@ export interface TrustedPackages {
   readonly pluginIdPrefixes: ReadonlyArray<string>;
   /** GitHub owners whose actions and reusable workflows are trusted. */
   readonly actionOwners: ReadonlyArray<string>;
-  /** Set by the stricter policy (`cooldown.ts`): a package is trusted only when this side trusts it too. */
-  readonly alsoTrustedBy?: TrustedPackages;
 }
 
 export const GRADLE_PLUGIN_PORTAL = "https://plugins.gradle.org/m2";
@@ -94,10 +92,6 @@ export const DEFAULT_CONFIG: Config = {
 
 /** Trusted packages skip the release-age wait, and only that. */
 export function isTrustedPackage(trusted: TrustedPackages, pkg: PackageName): boolean {
-  return trustedBy(trusted, pkg) && (trusted.alsoTrustedBy === undefined || isTrustedPackage(trusted.alsoTrustedBy, pkg));
-}
-
-function trustedBy(trusted: TrustedPackages, pkg: PackageName): boolean {
   if (pkg.ecosystem === "npm") return trusted.npmScopes.some((scope) => pkg.name.startsWith(`${scope}/`));
   if (pkg.ecosystem === "GitHub Actions") return trusted.actionOwners.some((owner) => pkg.name.startsWith(`${owner.toLowerCase()}/`));
   const [group, artifact] = pkg.name.split(":");
@@ -115,7 +109,7 @@ export function parseConfig(raw: unknown): Config {
   if (Object.hasOwn(root, "trustedPackages") && Object.hasOwn(root, "ownPackages")) {
     throw new Error(`${where}: trustedPackages and ownPackages cannot both be present`);
   }
-  // Normalize the deprecated alias before the base/head policy intersects the trust lists.
+  // Normalize the deprecated alias to the same trust policy.
   const trustField = Object.hasOwn(root, "ownPackages") ? "ownPackages" : "trustedPackages";
   const trusted = root[trustField] === undefined ? {} : object(root[trustField], `${where}: ${trustField}`, ["npm", "Maven", "GitHub Actions"]);
   const trustedActions =

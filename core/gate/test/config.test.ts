@@ -34,6 +34,17 @@ describe("supply-chain.json", () => {
       pluginIdPrefixes: ["com.acme."], actionOwners: ["leanish", "aws-actions"],
     });
     expect(config).not.toHaveProperty("ownPackages");
+    for (const [ecosystem, name, expected] of [
+      ["npm", "@aws-sdk/client-s3", true],
+      ["npm", "@untrusted/lib", false],
+      ["Maven", "com.acme:lib", true],
+      ["Maven", "com.acme.plugin:com.acme.plugin.gradle.plugin", true],
+      ["Maven", "com.acme.other:lib", false],
+      ["GitHub Actions", "aws-actions/configure-aws-credentials", true],
+      ["GitHub Actions", "untrusted/action", false],
+    ] as const) {
+      expect(isTrustedPackage(config.trustedPackages, { ecosystem, name })).toBe(expected);
+    }
   });
 
   it.each([

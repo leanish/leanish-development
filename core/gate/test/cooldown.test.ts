@@ -5,10 +5,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { main } from "../src/cli.ts";
-import { DEFAULT_CONFIG, isTrustedPackage, parseConfig, type TrustedPackages } from "../src/config.ts";
-import { cooldownOf, heldUntil, strictestPolicy } from "../src/cooldown.ts";
+import { cooldownOf, heldUntil } from "../src/cooldown.ts";
 import { releaseSignals } from "../src/npm-registry.ts";
-import type { PackageName } from "../src/package-version.ts";
 import type { HeldVersion } from "../src/release-age.ts";
 import { runCompare } from "../src/gate.ts";
 import { REPORT_SCHEMA_VERSION } from "../src/report.ts";
@@ -42,66 +40,37 @@ describe("the cooldown in a comparison", () => {
     expect(outcome.cooldown).toEqual({ evaluated: true, releaseAgeDays: 7, held: [] });
   });
 
-  it("isn't loosened by a head config that shortens the wait", async () => {
+  it("uses head's shorter wait in the same PR", async () => {
     const head = { ...files("8.3.3", "8.5.29"), ".github/supply-chain.json": json({ releaseAgeDays: 1 }) };
     const outcome = await runCompare(tree(files()), tree(head, "head"), environment().env);
-    expect(outcome.cooldown.evaluated && outcome.cooldown.held.map((entry) => `${entry.name}@${entry.version}`)).toEqual(["vite@8.3.3", "postcss@8.5.29"]);
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.cooldown).toEqual({ evaluated: true, releaseAgeDays: 1, held: [] });
+    expect(outcome.notes).toEqual(["fixed: vite@8.3.2: GHSA-rq7h-c2jc-7f22"]);
   });
 
-  it("isn't evaluated when base's settings don't parse", async () => {
-    const base = { ...files(), ".github/supply-chain.json": "{" };
+  it("uses head's longer wait", async () => {
+    const base = { ...files(), ".github/supply-chain.json": json({ releaseAgeDays: 1 }) };
     const outcome = await runCompare(tree(base), tree(files("8.3.3", "8.5.29"), "head"), environment().env);
-    expect(outcome.cooldown).toMatchObject({ evaluated: false });
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.cooldown.evaluated && outcome.cooldown.releaseAgeDays).toBe(7);
+    expect(outcome.cooldown.evaluated && outcome.cooldown.held.map((entry) => entry.name)).toEqual(["vite", "postcss"]);
   });
-});
 
-describe("strictestPolicy", () => {
+  it.each(["{", json({ releaseAgeDays: "invalid" }), json({ trustedPackages: null })])("evaluates the cooldown when base's config doesn't parse: %s", async (config) => {
+    const base = { ...files(), ".github/supply-chain.json": config };
+    const outcome = await runCompare(tree(base), tree(files("8.3.3", "8.5.29"), "head"), environment().env);
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.cooldown.evaluated && outcome.cooldown.releaseAgeDays).toBe(7);
+    expect(outcome.cooldown.evaluated && outcome.cooldown.held.map((entry) => entry.name)).toEqual(["vite", "postcss"]);
+  });
+
   it.each([
-    ["ownPackages", "trustedPackages"],
-    ["trustedPackages", "ownPackages"],
-  ])("preserves trust when migrating %s to %s, and intersects changes across the alias", (baseField, headField) => {
-    const trust = {
-      npm: { scopes: ["@leanish", "@aws-sdk"] },
-      Maven: { groups: ["com.acme"], pluginIdPrefixes: ["com.acme."] },
-      "GitHub Actions": { owners: ["leanish", "aws-actions"] },
-    };
-    const packages: ReadonlyArray<PackageName> = [
-      { ecosystem: "npm", name: "@leanish/tool" },
-      { ecosystem: "npm", name: "@aws-sdk/client-s3" },
-      { ecosystem: "Maven", name: "com.acme:lib" },
-      { ecosystem: "Maven", name: "com.acme.plugin:com.acme.plugin.gradle.plugin" },
-      { ecosystem: "GitHub Actions", name: "aws-actions/configure-aws-credentials" },
-      { ecosystem: "npm", name: "@untrusted/lib" },
-      { ecosystem: "Maven", name: "com.acme.other:lib" },
-      { ecosystem: "GitHub Actions", name: "untrusted/action" },
-    ];
-    const base = parseConfig({ [baseField]: trust });
-    const renamed = strictestPolicy(parseConfig({ [headField]: trust }), base);
-    expect(packages.map((pkg) => isTrustedPackage(renamed.trustedPackages, pkg))).toEqual([true, true, true, true, true, false, false, false]);
-    const changed = strictestPolicy(parseConfig({ [headField]: { npm: { scopes: ["@leanish", "@added"] } } }), base);
-    expect(isTrustedPackage(changed.trustedPackages, { ecosystem: "npm", name: "@leanish/tool" })).toBe(true);
-    expect(isTrustedPackage(changed.trustedPackages, { ecosystem: "npm", name: "@added/tool" })).toBe(false);
-    expect(isTrustedPackage(changed.trustedPackages, { ecosystem: "npm", name: "@aws-sdk/client-s3" })).toBe(false);
-  });
-
-  const trusted = (overrides: Partial<TrustedPackages>): TrustedPackages => ({ ...DEFAULT_CONFIG.trustedPackages, ...overrides });
-  const policy = strictestPolicy(
-    { ...DEFAULT_CONFIG, releaseAgeDays: 3, trustedPackages: trusted({ npmScopes: ["@leanish", "@added"], actionOwners: ["Leanish"], pluginIdPrefixes: ["com.acme.tools."] }) },
-    { ...DEFAULT_CONFIG, releaseAgeDays: 10, trustedPackages: trusted({ npmScopes: ["@leanish"], actionOwners: ["leanish"], pluginIdPrefixes: ["com.acme."] }) },
-  );
-  const isTrusted = (pkg: PackageName) => isTrustedPackage(policy.trustedPackages, pkg);
-
-  it("takes the longer wait", () => {
-    expect(policy.releaseAgeDays).toBe(10);
-  });
-
-  it("trusts a package only where both sides trust it, however each side spells it", () => {
-    expect(isTrusted({ ecosystem: "npm", name: "@leanish/tool" })).toBe(true);
-    expect(isTrusted({ ecosystem: "npm", name: "@added/tool" })).toBe(false);
-    expect(isTrusted({ ecosystem: "GitHub Actions", name: "leanish/leanish-development" })).toBe(true);
-    // Overlapping prefixes: both sides trust this plugin marker, though neither lists the other's prefix.
-    expect(isTrusted({ ecosystem: "Maven", name: "com.acme.tools.check:com.acme.tools.check.gradle.plugin" })).toBe(true);
-    expect(isTrusted({ ecosystem: "Maven", name: "com.acme.other:com.acme.other.gradle.plugin" })).toBe(false);
+    ["{", "isn't JSON"],
+    [json({ releaseAgeDays: "invalid" }), "releaseAgeDays must be a nonnegative integer"],
+    [json({ trustedPackages: null }), "trustedPackages must be an object"],
+  ])("rejects head's unparseable config: %s", async (config, message) => {
+    const head = { ...files("8.3.3", "8.5.29"), ".github/supply-chain.json": config };
+    await expect(runCompare(tree(files()), tree(head, "head"), environment().env)).rejects.toThrow(message);
   });
 });
 
@@ -122,7 +91,7 @@ describe("cooldownOf", () => {
     ["an older schema", report({ evaluated: true, releaseAgeDays: 7, held: [] }, { schemaVersion: 1 }), "schemaVersion"],
     ["a failing comparison", report({ evaluated: true, releaseAgeDays: 7, held: [] }, { verdict: "fail" }), "pass"],
     ["no cooldown", report(undefined), "no cooldown"],
-    ["an unevaluated cooldown", report({ evaluated: false, reason: "base broke" }), "base broke"],
+    ["an unevaluated cooldown", report({ evaluated: false, reason: "legacy report" }), "legacy report"],
     ["no held list", report({ evaluated: true, releaseAgeDays: 7 }), "held list"],
     ["a malformed entry", report({ evaluated: true, releaseAgeDays: 7, held: [{ ...held, eligibleAt: "soon" }] }), "ISO instant"],
     ["an unknown justification", report({ evaluated: true, releaseAgeDays: 7, held: [{ ...held, justification: "trusted" }] }), "justification"],

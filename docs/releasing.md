@@ -16,7 +16,8 @@ older gates reject the new field. Keep this repository's `.github/supply-chain.j
 on the deprecated `ownPackages` alias while `released-supply-chain.yml` uses an
 older gate. After the gate repins, migrate this repository, adopters and fixtures
 to `trustedPackages`, removing `ownPackages` rather than keeping both. 0.11.0 removes
-the alias, so every configuration must be migrated before repinning to it.
+the alias, so every configuration must be migrated before repinning to it. Renaming
+the alias preserves trust under head's policy.
 
 1. Start from the latest reviewed main. Keep PAT mode documented; GitHub App mode
    remains deferred and will be an alternative to PAT mode when implemented.

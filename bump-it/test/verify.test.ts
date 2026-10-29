@@ -110,8 +110,8 @@ describe("bump verification", () => {
     const held = { ecosystem: "npm" as const, name: "lib", version: "1.0.1", replaced: ["1.0.0"], published: "2026-10-06T00:00:00.000Z", eligibleAt: "2026-10-13T00:00:00.000Z", justification: "exception" as const };
     vi.mocked(runCompare).mockResolvedValue({ headFindings: [], failures: [], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, group: (id: string) => id, cooldown: { evaluated: true, releaseAgeDays: 7, held: [held] } });
     expect(await verifyPlan(input)).toEqual(["under the release-age wait: npm lib@1.0.1: published 2026-10-06T00:00:00.000Z, held until 2026-10-13T00:00:00.000Z (a release-age exception)"]);
-    vi.mocked(runCompare).mockResolvedValue({ headFindings: [], failures: [], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, group: (id: string) => id, cooldown: { evaluated: false, reason: "base broke" } });
-    expect(await verifyPlan(input)).toEqual(["the cooldown can't be evaluated: base broke"]);
+    vi.mocked(runCompare).mockResolvedValue({ headFindings: [], failures: [], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, group: (id: string) => id, cooldown: { evaluated: false, reason: "legacy report" } });
+    expect(await verifyPlan(input)).toEqual(["the cooldown can't be evaluated: legacy report"]);
   });
   it("preserves tool-computed transitives absent from the explicit moves", async () => {
     const { input, baseFiles, headFiles } = await fixture();

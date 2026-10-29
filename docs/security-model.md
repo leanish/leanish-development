@@ -51,6 +51,10 @@ So the gate holds every young version a PR adds or changes, justified or not: th
 red until the last one turns old enough, and no exception clears it. secure-it keeps such fixes in draft PRs of
 their own. Taking one earlier is a person's explicit decision.
 
+The PR is judged by head's release-age and trusted-package policy, like its exceptions. A person's PR can change
+that policy in the same PR; review those changes in `.github/supply-chain.json`. The tools' policy fence prevents
+their proposals from editing configuration or exceptions, so their head policy stays the same as base's.
+
 The gate also reads a dependency's own repository advisories, which name a fix days before GitHub reviews them into
 its database and OSV imports them. Whoever controls that repository and the package can publish an advisory and a
 "fixed" version together to get a young version proposed early. So such unreviewed advisories detect and rule

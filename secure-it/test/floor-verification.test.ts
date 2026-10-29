@@ -59,8 +59,8 @@ describe("floor-removal verification", () => {
     const held = { ecosystem: "Maven" as const, name: "g:lib", version: "2.1", replaced: ["2.0"], published: "2026-10-06T00:00:00.000Z", eligibleAt: "2026-10-13T00:00:00.000Z", justification: "security-fix" as const };
     vi.mocked(runCompare).mockResolvedValue({ failures: [], headFindings: [], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, group: (id: string) => id, cooldown: { evaluated: true, releaseAgeDays: 7, held: [held] } });
     expect(await verifyPlan(input)).toEqual([expect.stringContaining("a floor removal can't take a version under the release-age wait: Maven g:lib@2.1")]);
-    vi.mocked(runCompare).mockResolvedValue({ failures: [], headFindings: [], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, group: (id: string) => id, cooldown: { evaluated: false, reason: "base broke" } });
-    expect(await verifyPlan(input)).toEqual(["the cooldown can't be evaluated: base broke"]);
+    vi.mocked(runCompare).mockResolvedValue({ failures: [], headFindings: [], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, group: (id: string) => id, cooldown: { evaluated: false, reason: "legacy report" } });
+    expect(await verifyPlan(input)).toEqual(["the cooldown can't be evaluated: legacy report"]);
   });
 
   it("rejects incomplete removal, extra records and compatibility changes before compare", async () => {

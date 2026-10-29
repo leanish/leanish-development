@@ -91,8 +91,9 @@ and verification rules are unchanged.
 
 ## Repository policy
 
-The base repository owns the version and advisory policy. The tools read the same
-files as the gate, documented there:
+The gate judges a PR with head's version and advisory policy. The tools read these
+files from base and preserve configuration and exceptions in their proposals through
+the policy fence, so those policies remain the same in head. The files are documented with the gate:
 
 | File | Reference |
 |---|---|

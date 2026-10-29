@@ -8,16 +8,14 @@
  * stays red while anything is held, so taking it earlier is a person's
  * explicit decision.
  *
- * The policy that judges a PR is the stricter of base's and head's: the
- * longer wait, and trusted packages only where both name them, so a PR can't
- * loosen the cooldown that judges it.
+ * The policy that judges a PR comes from head, like its exceptions.
  */
-import type { Config } from "./config.ts";
 import { isObject } from "./json.ts";
 import type { HeldGroup, HeldTarget, HeldVersion, YoungJustification } from "./release-age.ts";
 import { REPORT_SCHEMA_VERSION } from "./report.ts";
 import type { Ecosystem } from "./versions.ts";
 
+/** Comparisons emit evaluated results; keep the unevaluated variant for existing report consumers. */
 export type CooldownEvaluation =
   | { readonly evaluated: true; readonly releaseAgeDays: number; readonly held: ReadonlyArray<HeldVersion> }
   | { readonly evaluated: false; readonly reason: string };
@@ -26,15 +24,6 @@ export type CooldownEvaluation =
 export interface CooldownVerdict {
   readonly releaseAgeDays: number;
   readonly held: ReadonlyArray<HeldVersion>;
-}
-
-export function strictestPolicy(head: Config, base: Config): Config {
-  return {
-    ...head,
-    releaseAgeDays: Math.max(head.releaseAgeDays, base.releaseAgeDays),
-    // Trusted only where both sides say so: `isTrustedPackage` checks head's lists, then base's.
-    trustedPackages: { ...head.trustedPackages, alsoTrustedBy: base.trustedPackages },
-  };
 }
 
 /** When the last held version turns old enough; undefined when nothing is held. */
