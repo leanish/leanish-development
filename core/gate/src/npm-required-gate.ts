@@ -1,7 +1,7 @@
 /** Reconstruct required-dependency age evidence from actual lockfile placements and registry requirements. */
 import { baseOverrides, directLineConstraints, overrideConstraints } from "./npm-required-overrides.ts";
 import { requiredPeerTargets } from "./npm-required-peers.ts";
-import { type Config, isOwnPackage } from "./config.ts";
+import { type Config, isTrustedPackage } from "./config.ts";
 import { isObject } from "./json.ts";
 import type { Inventory } from "./inventory.ts";
 import type { NpmRegistry } from "./npm-registry.ts";
@@ -37,7 +37,7 @@ export async function gatherRequiredProofs(changes: ReadonlyArray<ChangedVersion
             const previous = trusted[path];
             return isObject(previous) && typeof previous["version"] === "string" ? previous["version"] : undefined;
           },
-          isOwn: (name) => isOwnPackage(config.ownPackages, { ecosystem: "npm", name }),
+          isTrusted: (name) => isTrustedPackage(config.trustedPackages, { ecosystem: "npm", name }),
           verifiedRoot: (path) => verified.get(path),
           registry, days: config.releaseAgeDays, now,
           placement: (parent, key, peer) => requiredPath(packages, parent.path, key, peer),
@@ -74,9 +74,9 @@ export async function verifiedSecurityRoots(changes: ReadonlyArray<ChangedVersio
 }
 
 async function rootProblem(change: ChangedVersion, candidates: Candidates, snapshot: Snapshot, catalog: VersionCatalog, config: Config, now: Date): Promise<string | undefined> {
-  const own = isOwnPackage(config.ownPackages, change.pkg);
-  const rootCatalog = own ? { versions: catalog.versions.bind(catalog), published: async () => new Date(0) } : catalog;
-  return youngFixProblem(change, candidates.byChange.get(versionKey(change.pkg)) ?? new Map(), snapshot, rootCatalog, own ? { ...config, releaseAgeDays: 0 } : config, now);
+  const trusted = isTrustedPackage(config.trustedPackages, change.pkg);
+  const rootCatalog = trusted ? { versions: catalog.versions.bind(catalog), published: async () => new Date(0) } : catalog;
+  return youngFixProblem(change, candidates.byChange.get(versionKey(change.pkg)) ?? new Map(), snapshot, rootCatalog, trusted ? { ...config, releaseAgeDays: 0 } : config, now);
 }
 
 /**

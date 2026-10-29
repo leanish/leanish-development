@@ -1,8 +1,7 @@
 # bump-it
 
 Keeps dependencies fresh with the supply-chain gate's version rule: the highest eligible version at least seven days
-old (or the repository's `releaseAgeDays`), adding no advisory group or malware. Packages in the repository's own npm
-scopes skip the wait (their dependencies don't).
+old (or the repository's `releaseAgeDays`), adding no advisory group or malware. Packages configured in `trustedPackages` skip the wait (their dependencies don't).
 Actions pins and Dockerfile CLIs represented by configured npm manifest/lockfiles use the same rule.
 The tool decides versions, computes npm files and verifies every edit before opening a draft PR. The coding agent
 (Codex or Claude Code) handles Gradle declarations, Actions pins and major migrations. When verification refuses what
@@ -45,7 +44,7 @@ core/tool-runtime/run.sh bump-it review leanish/widget   # every few hours
   [the Gradle wrapper](#gradle-wrapper) below.
 - Before npm resolves a routine or major, code checks incoming and outgoing peer constraints against existing directs.
   - Rule-picked bump targets stay fixed. Required companions are added explicitly at the lowest safe version in their
-    own compatible line that makes the set consistent: aged (own scopes: any age), with no new advisory group, malware
+    own compatible line that makes the set consistent: aged (trusted scopes: any age), with no new advisory group, malware
     or rejected publisher identity. Compatible peers stay at base; a needed companion may move downward within its line.
   - One peer snapshot judges the fixed targets and all companions together. Impossible sets or repository constraints
     that exclude a companion are reported and left out, while unrelated routine moves continue.
@@ -57,7 +56,7 @@ core/tool-runtime/run.sh bump-it review leanish/widget   # every few hours
     coexist within the companions' compatible lines is reported as `blocked` with its reason; bump-it does not
     coordinate several major migrations into one PR.
 - npm resolution runs in an exported scratch copy, under `codex sandbox`, with `--package-lock-only --ignore-scripts`,
-  the release-age window and own-scope exclusions on every install/update.
+  the release-age window and trusted-scope exclusions on every install/update.
   - A package with a young locked base version in any lockfile this unit computes also gets a named npm age exclusion,
     so npm can keep the version already locked; unreadable publish times count as young. Each exclusion is reported.
     Publish-time lookups are cached and shared with target selection: bump-it's targets still require the age.
@@ -73,7 +72,7 @@ core/tool-runtime/run.sh bump-it review leanish/widget   # every few hours
     override), the copy's current version is checked again like any unpinned replacement. The same goes for a pinned
     base version once an updated dependent's range no longer admits it (a refreshed parent asking for a new major).
   - Bundled copies follow their carrier and may change when it moves to an aged target. Young locked directs outside
-    the plan stay at base too. Own packages keep their age exemption, and a configured exclusion alone does not freeze
+    the plan stay at base too. Trusted packages keep their age exemption, and a configured exclusion alone does not freeze
     transitives.
   - The routine resolves after direct updates, then code weighs all transitive candidates within the dependents' ranges
     and existing override constraints on one advisory snapshot. Direct targets and frozen directs are constrained with

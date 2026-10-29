@@ -6,10 +6,10 @@
  *
  * Ported from leanish-development `tools/supply-chain/src/supply-chain.ts`
  * (commit adc2a6f); the advisory evidence now comes from the shared snapshot.
- * Own-package changes are also returned separately as potential security roots,
+ * Trusted-package changes are also returned separately as potential security roots,
  * without introducing a publish-date requirement for their age exemption.
  */
-import { type Config, isOwnPackage } from "./config.ts";
+import { type Config, isTrustedPackage } from "./config.ts";
 import type { Exceptions } from "./exceptions.ts";
 import { changedPackages, fromRegistry, type LockedPackage, NPM_REGISTRY, replacedArtifacts, sourceProblems } from "./npm-lock.ts";
 import { identityBaseline, type NpmRegistry, publishTime } from "./npm-registry.ts";
@@ -28,8 +28,8 @@ export interface NpmChanges {
   readonly problems: ReadonlyArray<string>;
   /** Versions from the npm registry the change adds or changes. */
   readonly changes: ReadonlyArray<ChangedVersion>;
-  /** Own packages can seed required-dependency proofs without needing a publish date of their own. */
-  readonly ownChanges: ReadonlyArray<ChangedVersion>;
+  /** Trusted packages can seed required-dependency proofs without needing a publish date of their own. */
+  readonly trustedChanges: ReadonlyArray<ChangedVersion>;
 }
 
 export async function npmChanges(
@@ -44,7 +44,7 @@ export async function npmChanges(
     );
   }
   const changes: ChangedVersion[] = [];
-  const ownChanges: ChangedVersion[] = [];
+  const trustedChanges: ChangedVersion[] = [];
   const today = context.now.toISOString().slice(0, 10);
   const changed = changedPackages(base, head).filter((pkg) => fromRegistry(pkg, context.config.npm.registries));
   for (const pkg of uniqueVersions(changed.map((locked) => ({ ...locked, ecosystem: "npm" as const })))) {
@@ -53,25 +53,25 @@ export async function npmChanges(
       continue;
     }
     problems.push(...(await context.registry.identityProblems(pkg, identityBaseline(replacedEntries(pkg.name, base, head)), context.exceptions, today)));
-    // Own packages skip only the wait: their identity is checked, their publish time isn't needed.
-    if (isOwnPackage(context.config.ownPackages, pkg)) {
-      ownChanges.push({ pkg: { ecosystem: "npm", name: pkg.name, version: pkg.version }, published: new Date(0), replaced: replacedVersions(pkg.name, base, head) });
+    // Trusted packages skip only the wait: their identity is checked, their publish time isn't needed.
+    if (isTrustedPackage(context.config.trustedPackages, pkg)) {
+      trustedChanges.push({ pkg: { ecosystem: "npm", name: pkg.name, version: pkg.version }, published: new Date(0), replaced: replacedVersions(pkg.name, base, head) });
       continue;
     }
     const published = publishTime(await context.registry.packument(pkg.name), pkg.name, pkg.version);
     changes.push({ pkg: { ecosystem: "npm", name: pkg.name, version: pkg.version }, published, replaced: replacedVersions(pkg.name, base, head) });
   }
-  return { problems, changes, ownChanges };
+  return { problems, changes, trustedChanges };
 }
 
 /**
  * Another allowed registry has no publish time or identity source the gate
- * trusts: an own package still skips only the wait, so its identity needs an
+ * trusts: a trusted package still skips only the wait, so its identity needs an
  * unexpired `identity` exception recording a review; anything else fails.
  */
 function otherRegistryProblems(pkg: LockedPackage, context: NpmChangeContext, today: string): string[] {
   const label = `${pkg.name}@${pkg.version}`;
-  if (!isOwnPackage(context.config.ownPackages, { ecosystem: "npm", name: pkg.name })) {
+  if (!isTrustedPackage(context.config.trustedPackages, { ecosystem: "npm", name: pkg.name })) {
     return [`${label} comes from ${pkg.resolved}, where the gate can't check its release age or publisher identity`];
   }
   const reviewed = context.exceptions.identity.find(

@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { isOwnPackage, parseConfig } from "../src/config.ts";
+import { isTrustedPackage, parseConfig } from "../src/config.ts";
 import { gradleLocated, gradleResolutionProblems, parseGradleInventory, runGradleInventory, strictPins, withoutRepositoryRoot } from "../src/gradle.ts";
 import { MavenCatalog } from "../src/catalogs.ts";
 import { type Config } from "../src/config.ts";
@@ -631,8 +631,8 @@ describe("Maven release age", () => {
     await expect(catalog.versions({ ecosystem: "Maven", name: "com.acme:broken" })).rejects.toThrow("has no <versions>");
   });
 
-  it("fails a version no configured repository has, skips own packages, and fails closed on a missing header", async () => {
-    const config = parseConfig({ ownPackages: { Maven: { groups: ["io.github.leanish"], pluginIdPrefixes: ["io.github.leanish."] } } });
+  it("fails a version no configured repository has, skips trusted packages, and fails closed on a missing header", async () => {
+    const config = parseConfig({ trustedPackages: { Maven: { groups: ["io.github.leanish"], pluginIdPrefixes: ["io.github.leanish."] } } });
     const head = [
       maven("com.acme:internal", "1.0"),
       maven("io.github.leanish:java-conventions", "0.6.3"),
@@ -647,14 +647,14 @@ describe("Maven release age", () => {
     await expect(age([], head, down, { config })).rejects.toThrow("HTTP 503");
   });
 
-  it("matches own Maven packages by exact group, and plugin-id prefixes only on marker coordinates", () => {
-    const own = parseConfig({ ownPackages: { Maven: { groups: ["io.github.leanish"], pluginIdPrefixes: ["io.github.leanish."] } } }).ownPackages;
-    const check = (name: string) => isOwnPackage(own, { ecosystem: "Maven", name });
+  it("matches trusted Maven packages by exact group, and plugin-id prefixes only on marker coordinates", () => {
+    const trusted = parseConfig({ trustedPackages: { Maven: { groups: ["io.github.leanish"], pluginIdPrefixes: ["io.github.leanish."] } } }).trustedPackages;
+    const check = (name: string) => isTrustedPackage(trusted, { ecosystem: "Maven", name });
     expect(check("io.github.leanish:sqs-codec")).toBe(true);
     expect(check("io.github.leanish.java-conventions:io.github.leanish.java-conventions.gradle.plugin")).toBe(true);
     expect(check("io.github.leanish.evil:anything")).toBe(false);
     expect(check("io.github.leanishx:lib")).toBe(false);
-    expect(isOwnPackage(own, { ecosystem: "npm", name: "@leanish/x" })).toBe(false);
+    expect(isTrustedPackage(trusted, { ecosystem: "npm", name: "@leanish/x" })).toBe(false);
   });
 });
 

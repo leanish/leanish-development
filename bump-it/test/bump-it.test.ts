@@ -596,7 +596,7 @@ describe("bump-it run", () => {
         return ["1.0.0", "1.0.1", "2.0.0"];
       },
       manifest: async () => ({}), published: async () => new Date("2026-01-01"), identity: async () => [],
-      line: (_name, version) => version.split(".")[0]!, isOwn: () => false, now: NOW, releaseAgeDays: 7,
+      line: (_name, version) => version.split(".")[0]!, isTrusted: () => false, now: NOW, releaseAgeDays: 7,
     });
     const snapshot = new Snapshot(new Map([...prepared.bases, ...prepared.candidates].map((pkg) => [versionKey(pkg), []])), [], NOW);
     const result = await bumpIt(withPeers(h, { resolve: (moves) => prepared.resolve(moves, snapshot) })).run(h.context);
@@ -656,7 +656,7 @@ describe("bump-it run", () => {
     const lock = { lockfileVersion: 3, packages };
     const prepared = await prepareNpmPeers(new Map([["package-lock.json", lock]]), names.map((name) => ({ ecosystem: "npm" as const, name, version: "5.0.0" })), {
       versions: async () => ["4.1.7", "4.1.11", "5.0.0"], manifest: async (name, version) => manifest(name, version),
-      published: async () => new Date("2026-01-01"), identity: async () => [], line: (_name, version) => version.split(".")[0]!, isOwn: () => false, now: NOW, releaseAgeDays: 7,
+      published: async () => new Date("2026-01-01"), identity: async () => [], line: (_name, version) => version.split(".")[0]!, isTrusted: () => false, now: NOW, releaseAgeDays: 7,
     });
     const snapshot = new Snapshot(new Map([...prepared.bases, ...prepared.candidates].map((pkg) => [versionKey(pkg), []])), [], NOW);
     const h = harness({ bumps: names.map((name) => candidate({ name, from: "4.1.7", minor: undefined, major: { version: "5.0.0", line: "5" },

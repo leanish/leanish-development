@@ -1,6 +1,6 @@
 /**
  * A tool's own configuration, `~/.config/leanish/<tool>/agent.yaml` by
- * default. What's about the repository (release age, own packages,
+ * default. What's about the repository (release age, trusted packages,
  * registries) comes from the repository's `.github/supply-chain.json`
  * instead; this file says where the tool works and how:
  *

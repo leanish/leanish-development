@@ -155,8 +155,11 @@ describe("independently gated security requirements", () => {
     expect(outcome.failures.join()).toContain("child0@1.0.0");
   });
 
-  it("allows an own-package security root while still proving the third-party requirement", async () => {
-    const config = json({ ownPackages: { npm: { scopes: ["@acme"] } } });
+  it.each([
+    ["trustedPackages", "trustedPackages"],
+    ["ownPackages", "trustedPackages"],
+    ["trustedPackages", "ownPackages"],
+  ])("allows a trusted security root across %s → %s while still proving the third-party requirement", async (baseField, headField) => {
     const original = files();
     const head = files("8.3.3", "8.5.29");
     for (const data of [original, head]) {
@@ -167,10 +170,17 @@ describe("independently gated security requirements", () => {
       lock.packages[""].devDependencies = { "@acme/tool": `^${root.version}` };
       data["package.json"] = json(lock.packages[""]);
       data["package-lock.json"] = json(lock);
-      data[".github/supply-chain.json"] = config;
+      data[".github/supply-chain.json"] = json({ [data === original ? baseField : headField]: { npm: { scopes: ["@acme"] } } });
     }
     const env = environment({ docs: { "@acme/tool": vite }, affected: { "@acme/tool@8.3.2": ["GHSA-fixed"] } }).env;
-    expect((await runCompare(tree(original), tree(head, "head"), env)).failures).toEqual([]);
+    const outcome = await runCompare(tree(original), tree(head, "head"), env);
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.cooldown.evaluated && outcome.cooldown.held.map((entry) => entry.name)).toEqual(["postcss"]);
+    // A PR changing only the spelling of its trust policy keeps the same verdict and hold.
+    const renamed = { ...original, ".github/supply-chain.json": head[".github/supply-chain.json"]! };
+    const configOnly = await runCompare(tree(original), tree(renamed, "renamed"), env);
+    expect(configOnly.failures).toEqual([]);
+    expect(configOnly.cooldown).toEqual({ evaluated: true, releaseAgeDays: 7, held: [] });
   });
 
 });

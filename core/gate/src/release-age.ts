@@ -1,7 +1,7 @@
 /**
  * The release-age rule, the same for every ecosystem: a version a change adds
  * or changes must be at least `releaseAgeDays` old, unless
- *   - it's an own package (own packages skip only this wait), or
+ *   - it's a trusted package (trusted packages skip only this wait), or
  *   - it's the security fix the version rule picks (`young-fixes.ts`), or
  *   - it's a carrier version that rule picks for the bundled advisories it
  *     drops (`bundle-fix-proof.ts`), or
@@ -15,7 +15,7 @@
  * justified, is also held by the cooldown (`cooldown.ts`) until it ages.
  */
 import { ageDays, eligibleAt, isUnderWait } from "./age.ts";
-import { type Config, isOwnPackage } from "./config.ts";
+import { type Config, isTrustedPackage } from "./config.ts";
 import type { Exceptions } from "./exceptions.ts";
 import type { BundleFixProof } from "./bundle-fix-proof.ts";
 import { label, type PackageVersion, versionKey } from "./package-version.ts";
@@ -44,9 +44,9 @@ export interface AgeContext {
   readonly bundleFixes?: ReadonlyMap<string, BundleFixProof>;
 }
 
-/** Under the wait and not an own package: what the proof or an exception must justify. */
+/** Under the wait and not a trusted package: what the proof or an exception must justify. */
 export function isYoung(change: ChangedVersion, config: Config, now: Date): boolean {
-  if (isOwnPackage(config.ownPackages, change.pkg)) return false;
+  if (isTrustedPackage(config.trustedPackages, change.pkg)) return false;
   return isUnderWait(change.published, config.releaseAgeDays, now);
 }
 

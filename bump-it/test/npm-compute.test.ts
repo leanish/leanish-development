@@ -27,7 +27,7 @@ async function fixture(script?: (dir: string, args: ReadonlyArray<string>, n: nu
     await script?.(dir, args, calls.length);
     return { code: 0, stdout: "", stderr: "" };
   };
-  const inputs: NpmInputs = { dir, baseLocks: new Map([["package-lock.json", lock()]]), moves: [{ name: "parent", to: "1.1.0", lockfile: "package-lock.json", workspace: ".", declaredAs: "parent", spec: "^1.0.0" }], npm, kind: "routine", window: { days: 7, exclude: ["@own/*", "@other/*"] }, sources: { versions: async () => ["1.0.0", "1.1.0"], published: async () => new Date("2026-09-01"), snapshot: async (base, candidates) => new Snapshot(new Map([...base, ...candidates].map((pkg) => [versionKey(pkg), []])), [], new Date()), identity: async () => [], isOwn: () => false, releaseAgeDays: 7, now: new Date("2026-10-07") } };
+  const inputs: NpmInputs = { dir, baseLocks: new Map([["package-lock.json", lock()]]), moves: [{ name: "parent", to: "1.1.0", lockfile: "package-lock.json", workspace: ".", declaredAs: "parent", spec: "^1.0.0" }], npm, kind: "routine", window: { days: 7, exclude: ["@own/*", "@other/*"] }, sources: { versions: async () => ["1.0.0", "1.1.0"], published: async () => new Date("2026-09-01"), snapshot: async (base, candidates) => new Snapshot(new Map([...base, ...candidates].map((pkg) => [versionKey(pkg), []])), [], new Date()), identity: async () => [], isTrusted: () => false, releaseAgeDays: 7, now: new Date("2026-10-07") } };
   return { dir, inputs, calls };
 }
 describe("exact npm computation", () => {
@@ -296,7 +296,7 @@ describe("exact npm computation", () => {
     const result = await computeNpm({ ...h.inputs, moves: [], kind: "major", baseLocks: new Map([["npm-shrinkwrap.json", lock()]]), npm: async () => ({ code: 0, stdout: "", stderr: "" }) });
     expect(result.files.size).toBe(0);
   });
-  it("requires npm 11.17 only when own scopes need exclusion, with no registry call", async () => {
+  it("requires npm 11.17 only when trusted scopes need exclusion, with no registry call", async () => {
     const fake: NpmCommand = async (_dir, args) => { expect(args).toEqual(["--version"]); return { code: 0, stdout: "11.14.1\n", stderr: "" }; };
     await expect(requireNpmExcludes(fake, ".", ["@own/*"])).rejects.toThrow("11.17.0");
     await requireNpmExcludes(async () => { throw new Error("must not run"); }, ".", []);
@@ -774,11 +774,11 @@ describe("exact npm computation", () => {
     expect(result.changes).toEqual([]);
     expect(versions).not.toHaveBeenCalled();
   });
-  it.each(["configured", "own"])("still refreshes a transitive with only a %s age exemption", async (exemption) => {
+  it.each(["configured", "trusted"])("still refreshes a transitive with only a %s age exemption", async (exemption) => {
     const h = await fixture(async (dir) => { await writeFile(join(dir, "package-lock.json"), json(lock("1.0.0", "1.1.0"))); });
     const result = await computeNpm({ ...h.inputs, moves: [], window: { days: 7, exclude: ["child"] },
-      sources: { ...h.inputs.sources, isOwn: (name) => exemption === "own" && name === "child",
-        published: async () => new Date(exemption === "own" ? "2026-10-06" : "2026-09-01"),
+      sources: { ...h.inputs.sources, isTrusted: (name) => exemption === "trusted" && name === "child",
+        published: async () => new Date(exemption === "trusted" ? "2026-10-06" : "2026-09-01"),
       },
     });
     expect(result.changes).toMatchObject([{ name: "child", from: "1.0.0", to: "1.1.0" }]);

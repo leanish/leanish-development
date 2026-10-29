@@ -124,35 +124,35 @@ describe("deciding a carrier move", () => {
   });
 });
 
-describe("deciding an own carrier's move", () => {
+describe("deciding a trusted carrier's move", () => {
   // The carrier's fix is two days old: young under the default seven-day wait.
-  const OWN = "@own/carrier";
+  const TRUSTED = "@trusted/carrier";
   const releases: Record<string, { published: string; bundles: string[] }> = {
     "1.0.0": { published: OLD, bundles: ["brace@5.0.9"] },
     "1.1.0": { published: "2026-10-08T12:00:00Z", bundles: ["brace@5.0.12"] },
   };
-  const archives = Object.fromEntries(Object.entries(releases).map(([version, release]) => [version, carrierArchive(OWN, version, release.bundles)]));
+  const archives = Object.fromEntries(Object.entries(releases).map(([version, release]) => [version, carrierArchive(TRUSTED, version, release.bundles)]));
   const registry = new NpmRegistry(fakeFetch({
-    [npmPackageUrl(OWN)]: { body: {
+    [npmPackageUrl(TRUSTED)]: { body: {
       time: Object.fromEntries(Object.entries(releases).map(([version, release]) => [version, release.published])),
       versions: Object.fromEntries(Object.keys(releases).map((version) => [version, { dist: { integrity: archives[version]!.integrity } }])),
     } },
   }));
   const context = (config: Config) => ({
-    reader: new BundleReader(serving(Object.fromEntries(Object.entries(archives).map(([version, { bytes }]) => [tarballUrl(OWN, version), bytes])))),
+    reader: new BundleReader(serving(Object.fromEntries(Object.entries(archives).map(([version, { bytes }]) => [tarballUrl(TRUSTED, version), bytes])))),
     registry, catalog: new NpmCatalog(registry), config, now: NOW,
     scan: async (packages: ReadonlyArray<PackageVersion>) => new Snapshot(new Map(packages.map((pkg) => [versionKey(pkg), (pkg.name === "brace" && pkg.version === "5.0.9" ? ["GHSA-brace"] : [])
       .map((id): Advisory => ({ id, ids: [id], source: "osv", malicious: false, summary: undefined, severity: undefined }))])), [], NOW),
   });
-  const { carriers } = splitBundled([finding("brace", "5.0.9", "GHSA-brace", [`node_modules/${OWN}/node_modules/brace`])], [lockfile("package-lock.json", {
-    [`node_modules/${OWN}`]: { version: "1.0.0", resolved: tarballUrl(OWN, "1.0.0"), integrity: archives["1.0.0"]!.integrity },
-    [`node_modules/${OWN}/node_modules/brace`]: { version: "5.0.9", inBundle: true },
+  const { carriers } = splitBundled([finding("brace", "5.0.9", "GHSA-brace", [`node_modules/${TRUSTED}/node_modules/brace`])], [lockfile("package-lock.json", {
+    [`node_modules/${TRUSTED}`]: { version: "1.0.0", resolved: tarballUrl(TRUSTED, "1.0.0"), integrity: archives["1.0.0"]!.integrity },
+    [`node_modules/${TRUSTED}/node_modules/brace`]: { version: "5.0.9", inBundle: true },
   })]);
 
-  it("plans a young own carrier as aged, since the gate never holds an own package", async () => {
+  it("plans a young trusted carrier as aged, since the gate never holds a trusted package", async () => {
     const others = await decideCarrier(carriers[0]!, [], false, context(parseConfig({})));
     expect(others.to).toMatchObject({ version: "1.1.0", aged: false });
-    const own = await decideCarrier(carriers[0]!, [], false, context(parseConfig({ ownPackages: { npm: { scopes: ["@own"] } } })));
-    expect(own.to).toMatchObject({ version: "1.1.0", aged: true });
+    const trusted = await decideCarrier(carriers[0]!, [], false, context(parseConfig({ trustedPackages: { npm: { scopes: ["@trusted"] } } })));
+    expect(trusted.to).toMatchObject({ version: "1.1.0", aged: true });
   });
 });

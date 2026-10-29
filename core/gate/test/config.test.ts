@@ -3,6 +3,37 @@ import { describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.ts";
 
 describe("supply-chain.json", () => {
+  const trustedPackages = {
+    npm: { scopes: ["@leanish", "@aws-sdk"] },
+    Maven: { groups: ["com.acme"], pluginIdPrefixes: ["com.acme."] },
+    "GitHub Actions": { owners: ["leanish", "aws-actions"] },
+  };
+
+  it.each(["trustedPackages", "ownPackages"])("normalizes %s to the same trust policy", (field) => {
+    const config = parseConfig({ [field]: trustedPackages });
+    expect(config.trustedPackages).toEqual({
+      npmScopes: ["@leanish", "@aws-sdk"], mavenGroups: ["com.acme"],
+      pluginIdPrefixes: ["com.acme."], actionOwners: ["leanish", "aws-actions"],
+    });
+    expect(config).not.toHaveProperty("ownPackages");
+  });
+
+  it.each([
+    { trustedPackages, ownPackages: trustedPackages },
+    { trustedPackages: {}, ownPackages: {} },
+    { trustedPackages: null, ownPackages: {} },
+  ])("rejects both field names together, even with matching or empty policies", (raw) => {
+    expect(() => parseConfig(raw)).toThrow("trustedPackages and ownPackages cannot both be present");
+  });
+
+  it.each(["trustedPackages", "ownPackages"])("validates %s without silently ignoring malformed policy", (field) => {
+    expect(() => parseConfig({ [field]: null })).toThrow(`${field} must be an object`);
+    expect(() => parseConfig({ [field]: { owners: [] } })).toThrow(`${field} has unknown field(s): owners`);
+    expect(() => parseConfig({ [field]: { npm: { scopes: ["acme"] } } })).toThrow(`${field}.npm.scopes has acme, not an @scope`);
+    expect(() => parseConfig({ [field]: { Maven: { groups: [""] } } })).toThrow(`${field}.Maven.groups must be a list`);
+    expect(() => parseConfig({ [field]: { "GitHub Actions": { owners: ["aws-actions", "aws-actions"] } } })).toThrow(`${field}["GitHub Actions"].owners has duplicates`);
+  });
+
   it("strips trailing slashes from registries, builds and repositories as before, and a long slash run in linear time", () => {
     const config = parseConfig({
       npm: { registries: ["https://r.example/", "https://r.example///", "https://r.example/a//b/", "https://r.example"] },

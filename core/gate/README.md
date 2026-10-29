@@ -55,7 +55,7 @@ A project's own repository advisories are published by whoever controls that rep
 - **Only a reviewed advisory triggers and justifies:** secure-it plans a fix only for reviewed targets, and only reviewed targets make a young version the rule-picked fix, a young carrier a bundle fix, or a young npm dependency required by one. A version affected only by unreviewed advisories gets no fix: the run reports it, and it waits until a reviewed source lists it.
 - **A veto can steer the choice, even to a young version:** when an unreviewed advisory rules out the version the rule would otherwise take, the rule takes another fixing version, held when it's young. secure-it's plan notes the ten candidates ruled out that way nearest the choice, on either side, carriers included (among the carrier versions the search read), and counts the rest: a sample, not every veto that shaped the choice. A required npm dependency is the exception: its version is set by the requirement, so a veto there refuses the fix instead, and the refusal names each advisory it adds, marked when unreviewed. When no version is left, a refusal (planning's, and since 0.8.2 verification's for a bundled fix's carrier) names the versions unreviewed advisories ruled out, at most ten with three advisories each, and counts the rest.
 - **Malware counts from any source,** and **a `releaseAge` exception** may still name an unreviewed advisory: it's the owner's written override.
-- **Every young version is held** by the [cooldown](#the-cooldown-young-versions-are-held-however-justified), however justified (own packages aside: they skip the wait); taking it early is a person's decision.
+- **Every young version is held** by the [cooldown](#the-cooldown-young-versions-are-held-however-justified), however justified (trusted packages aside: they skip the wait); taking it early is a person's decision.
 
 ## Gradle builds
 
@@ -92,7 +92,7 @@ The tools read strict versions as the owner's pins and never plan a move of a st
 Every `uses:` in `.github/workflows/*.yml`, in `.github/actions/**/action.yml`, in a root `action.yml`, and in every local `./` action a workflow uses (a local reusable workflow, `./.github/workflows/x.yml`, is read as the workflow it is), is an action version, located in the file that uses it. Files are parsed as YAML (comments kept, aliases followed, a file that doesn't parse fails), and every `uses:` of a job or a step counts. A key named `uses` anywhere else (`env`, an input) counts when its value reads as an action, and is otherwise left alone.
 
 - A use resolves to a version when it's pinned to a full commit SHA and its comment names a full release tag (`# v7.0.1`, `# tag=v7.0.1`; a floating `# v7` doesn't say what's pinned) that GitHub says points at that commit, annotated tags dereferenced.
-- **A new or changed `uses:`** must resolve: a tag or branch ref, a missing comment, or a comment whose tag points elsewhere fails. Each occurrence is judged on its own: same file, action (subdirectory included), ref and comment as in base, and no more copies of it than base had, or it's a change (so dropping a comment, using another action of the same repository, or copying an unpinned ref into another workflow or step, a YAML alias included, counts). Its age is its immutable GitHub release's publish time (a tag's own date is whatever its author wrote); a missing or mutable release has no trusted age and fails, own actions aside (`ownPackages["GitHub Actions"].owners`).
+- **A new or changed `uses:`** must resolve: a tag or branch ref, a missing comment, or a comment whose tag points elsewhere fails. Each occurrence is judged on its own: same file, action (subdirectory included), ref and comment as in base, and no more copies of it than base had, or it's a change (so dropping a comment, using another action of the same repository, or copying an unpinned ref into another workflow or step, a YAML alias included, counts). Its age is its immutable GitHub release's publish time (a tag's own date is whatever its author wrote); a missing or mutable release has no trusted age and fails, trusted actions aside (`trustedPackages["GitHub Actions"].owners`).
 - An unchanged `uses:` that doesn't resolve, `docker://` uses, a local action without an `action.yml`, and a local reusable workflow that doesn't exist are coverage gaps: the PR didn't make them worse.
 - A local path that leaves the repository (`uses: ./../x`) fails the read, from a commit and from the working tree alike. In the working tree, so does any file a symbolic link leads outside the repository; a commit reads the link as the path it points to.
 - A young action version can pass by the young-fix rule like any other, its candidates being the repository's releases (every page; past 2,000 releases the listing is incomplete and the rule can't be checked).
@@ -131,14 +131,14 @@ The format is [`dependency-floors.schema.json`](dependency-floors.schema.json) (
 For every version a PR adds or changes:
 
 - **Release age:** published at least `releaseAgeDays` (default 7) ago, unless it is:
-  - an own package;
+  - a trusted package;
   - the security fix the young-fix rule picks, or a carrier version that rule picks for the bundled advisories it drops (below);
   - an npm dependency such a fix provably requires (below);
   - named by a `releaseAge` exception whose advisory, in this run's snapshot, affects a version the PR replaces and not this one (malware advisories don't count).
 
   Passing this way still leaves the version held by the [cooldown](#the-cooldown-young-versions-are-held-however-justified),
-  except for an own package, which the cooldown never holds.
-- **Source:** every locked package comes from an allowed registry (`npm.registries`, default the npm registry) as its own tarball: on the npm registry exactly `<name>/-/<unscoped name>-<version>.tgz`; elsewhere the full name (scope included) as consecutive path segments followed by that same `-/<unscoped name>-<version>.tgz` or by the exact version (GitHub Packages' `download/@scope/name/<version>/…`), so a lockfile can't keep a name and version while fetching another package's archive. The gate checks age and identity only against the npm registry, so a package from another allowed registry fails, unless it's an own package with an unexpired `identity` exception recording that its publish was reviewed (own packages skip only the wait).
+  except for a trusted package, which the cooldown never holds.
+- **Source:** every locked package comes from an allowed registry (`npm.registries`, default the npm registry) as its own tarball: on the npm registry exactly `<name>/-/<unscoped name>-<version>.tgz`; elsewhere the full name (scope included) as consecutive path segments followed by that same `-/<unscoped name>-<version>.tgz` or by the exact version (GitHub Packages' `download/@scope/name/<version>/…`), so a lockfile can't keep a name and version while fetching another package's archive. The gate checks age and identity only against the npm registry, so a package from another allowed registry fails, unless it's a trusted package with an unexpired `identity` exception recording that its publish was reviewed (trusted packages skip only the wait).
 - **Identity:** a version that replaces another fails on a publisher identity break: provenance dropped or from another repository or workflow, provenance from a repository the replaced version doesn't declare, or (without provenance) a publisher who hadn't published the package up to the replaced version. Every provenance statement must name the exact package, version and locked sha512.
 - Bundles the lockfile doesn't fully record fail: every `bundleDependencies` entry, and what it depends on, needs an `inBundle` entry inside the package that ships it.
 
@@ -239,7 +239,7 @@ that is younger than `releaseAgeDays` is **held**, whether the rule picked it, a
 - The separate `cooldown` job stays red while anything is held (and whenever it can't tell: a comparison that didn't
   pass, a missing report, a report for another head). Its log and step summary list each held version and when it
   turns old enough. Require it next to `supply-chain` (see GitHub settings below).
-- The policy that judges a PR is the stricter of base's and head's: the longer `releaseAgeDays`, and own packages
+- The policy that judges a PR is the stricter of base's and head's: the longer `releaseAgeDays`, and trusted packages
   only where both list them. A PR can't loosen the cooldown that judges it; change the policy in a PR of its own
   first. A base whose settings don't parse leaves the cooldown unevaluated (red).
 - Exceptions don't clear a hold. Taking a held version before its time is a person's decision: every other check
@@ -256,7 +256,7 @@ that is younger than `releaseAgeDays` is **held**, whether the rule picked it, a
 
 ## Release age (Maven)
 
-Every Maven version a change adds needs the same wait, own packages aside. Its publish time is the POM's `Last-Modified` in the first configured repository that has it (`maven.repositories`, default Maven Central and the Gradle Plugin Portal, both immutable, so a file's date is its upload; Renovate reads Maven release dates the same way). A version none of them has fails: the gate can't tell its age. A young security fix passes by the rule above, or by a `releaseAge` exception (with `"ecosystem": "Maven"`) checked against the snapshot like npm's. What a version replaces is read per configuration: upgraded at runtime while tests keep the old version, it still replaces the runtime one.
+Every Maven version a change adds needs the same wait, trusted packages aside. Its publish time is the POM's `Last-Modified` in the first configured repository that has it (`maven.repositories`, default Maven Central and the Gradle Plugin Portal, both immutable, so a file's date is its upload; Renovate reads Maven release dates the same way). A version none of them has fails: the gate can't tell its age. A young security fix passes by the rule above, or by a `releaseAge` exception (with `"ecosystem": "Maven"`) checked against the snapshot like npm's. What a version replaces is read per configuration: upgraded at runtime while tests keep the old version, it still replaces the runtime one.
 
 ## Configuration: `.github/supply-chain.json`
 
@@ -268,7 +268,7 @@ Optional; read from head. Unknown fields fail, so a typo can't turn a check off.
   "gradle": { "builds": ["."], "ignoreConfigurations": [] },
   "maven": { "repositories": ["https://repo1.maven.org/maven2", "https://plugins.gradle.org/m2"] },
   "releaseAgeDays": 7,
-  "ownPackages": {
+  "trustedPackages": {
     "npm": { "scopes": ["@acme"] },
     "Maven": { "groups": ["com.acme"], "pluginIdPrefixes": ["com.acme."] },
     "GitHub Actions": { "owners": ["acme"] }
@@ -280,7 +280,9 @@ Optional; read from head. Unknown fields fail, so a typo can't turn a check off.
 
 - Without `npm.lockfiles`, the gate reads `package-lock.json` if the tree has one; without `gradle.builds`, the root build if the tree has a `settings.gradle(.kts)` or `build.gradle(.kts)`. So an ecosystem in the repository is never skipped for lack of configuration; `"builds": []` turns Gradle off explicitly. Workflows are always read. A tree with none of these fails.
 - Every listed lockfile must exist in head; one base doesn't have yet reads as empty there.
-- Own packages skip only the release-age wait. Own Maven packages: exact `groups`, and `pluginIdPrefixes` that only match Gradle plugin markers (`<id>:<id>.gradle.plugin`), so `com.acme.` doesn't exempt every `com.acme.*` group.
+- Trusted packages skip only the release-age wait. Trusted Maven packages: exact `groups`, and `pluginIdPrefixes` that only match Gradle plugin markers (`<id>:<id>.gradle.plugin`), so `com.acme.` doesn't exempt every `com.acme.*` group.
+- `trustedPackages` can include third parties as well as your own packages. Trusting a package or Actions owner removes the cooldown's detection window for it: a compromised publisher's release can pass immediately. Trusted Actions also need no immutable release or release date. Publisher identity, advisory, malware, source and pin checks still apply; dependencies do not inherit trust.
+- `ownPackages` is a deprecated alias with the same shape and meaning, accepted without a warning. Use one name only: configuring both is an error. A rename preserves the stricter base/head policy. Repin older gates to a release supporting `trustedPackages` before migrating configuration; older gates reject the new field.
 - `repositories`: a package's GitHub source repository, for its repository advisories; it takes precedence over what the manifest or POM names.
 - `compatibleLines`: how many leading numeric segments, after one optional `v` or `V`, make a compatible line for a package (a trailing `*` matches a prefix), where the default (npm's caret range; Maven's first numeric segment, or `0.N` when the first is 0) doesn't fit.
 
@@ -355,8 +357,8 @@ What runs where:
 
 - **Candidates:** every version above it the registry lists, in any line, scanned in a second snapshot together with the version itself.
 - **Targets:** the version's failing advisory groups (an excepted one stays as it is), as that second snapshot groups them (a candidate can link aliases). A target no listed version fixes is reported as `unfixable` and left: fixing A and leaving B is allowed.
-- **The choice:** the rule's first line, lowest aged fix, else lowest fix; a choice outside the version's own line is flagged `major`, for the agent to adapt the code. Own packages skip the wait.
-- **Malware:** the nearest clean version at least `releaseAgeDays` old (own packages: any age): newer in its line first, then older in its line (a downgrade), then a newer line.
+- **The choice:** the rule's first line, lowest aged fix, else lowest fix; a choice outside the version's own line is flagged `major`, for the agent to adapt the code. Trusted packages skip the wait.
+- **Malware:** the nearest clean version at least `releaseAgeDays` old (trusted packages: any age): newer in its line first, then older in its line (a downgrade), then a newer line.
 - **Bundled copies:** a failing copy a carrier's tarball ships isn't moved itself: its advisories become targets of a move of its carrier, chosen by the carrier rule above (one entry per carrier version, with `carries` listing each bundled package, its versions before and after, and its advisories; the carrier's own failing advisories join the same move). The carrier's locked archive must match what each lockfile records, or the entry says why there's no choice.
 - **Blockers:** an npm choice whose publisher identity `compare` would reject keeps the rule's version and lists the break: it needs a reviewed `identity` exception.
 - **No choice:** each entry says why (no version fixes, an older fix's publish time is unknown, the registry can't list the versions).
@@ -364,7 +366,7 @@ What runs where:
 
 In an October 2026 example on sqs-codec, it picked Guava 33.7.2-jre for 33.5.0-jre and 33.7.1-jre, and snappy-java 1.1.10.10 (then young, the lowest that fixed all seven advisories) for 1.1.10.8.
 
-**`--rule bump`** gives, for every directly declared dependency, the highest version at least `releaseAgeDays` old (own packages: any age) that adds no advisory group, no malware and, on npm, no publisher identity break:
+**`--rule bump`** gives, for every directly declared dependency, the highest version at least `releaseAgeDays` old (trusted packages: any age) that adds no advisory group, no malware and, on npm, no publisher identity break:
 
 - **Lines:** in its own line (`minor`: minors and patches, one PR together) and in the highest newer line that has one (`major`: a PR of its own; lines are tried from the highest down). It weighs a line's ten newest versions old enough, and says so when all of them are out.
 - **Direct dependencies:** the npm dependencies the root and the workspaces of every checked lockfile declare (each with the copy Node resolves for it, walking up from the workspace; `npm:` aliases under their target's name, with the key and range to edit in `declarations`); every `uses:` pinned to a release; and the Gradle dependencies declared with a version where the repository's Gradle sources name them. Recorded floors aren't raised, Gradle transitives are never bumped, and the rest are listed in `notes`, as not moved automatically.

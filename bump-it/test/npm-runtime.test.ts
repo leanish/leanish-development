@@ -87,7 +87,7 @@ async function fixture(npmVersion: string) {
 }
 
 describe("sandboxed computation on base", () => {
-  it("protects a young base version on a major without any own-scope exclusions", async () => {
+  it("protects a young base version on a major without any trusted-scope exclusions", async () => {
     const h = await fixture("11.20.0");
     const result = await computeOnBase(h.context, h.unit, h.base, h.env, undefined);
     const calls = vi.mocked(runSandboxed).mock.calls.map(([, args]) => args.command);

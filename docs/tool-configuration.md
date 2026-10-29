@@ -96,7 +96,7 @@ files as the gate, documented there:
 
 | File | Reference |
 |---|---|
-| `.github/supply-chain.json` | [Gate configuration](../core/gate/README.md#configuration-githubsupply-chainjson): lockfiles/builds, allowed registries, `releaseAgeDays`, own packages, repository mappings and compatible lines. |
+| `.github/supply-chain.json` | [Gate configuration](../core/gate/README.md#configuration-githubsupply-chainjson): lockfiles/builds, allowed registries, `releaseAgeDays`, trusted packages, repository mappings and compatible lines. |
 | `.github/supply-chain-exceptions.json` | [Exceptions](../core/gate/README.md#exceptions-githubsupply-chain-exceptionsjson): narrowly scoped vulnerability, release-age and reviewed identity exceptions. Malware cannot be excepted. |
 | `.github/dependency-floors.json` | [Floors](../core/gate/README.md#floors-githubdependency-floorsjson): recorded security/compatibility constraints and npm overrides. |
 

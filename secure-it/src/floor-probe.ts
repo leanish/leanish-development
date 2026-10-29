@@ -84,7 +84,7 @@ async function unlockedNpm(context: ToolRunContext, root: string, lock: string, 
   const npm = async (_dir: string, args: ReadonlyArray<string>) => runSandboxed(context.isolation, {
     workingCopy: { ...context.workingCopy, path: cwd }, command: ["npm", ...args],
   }, run);
-  await requireNpmExcludes(npm, cwd, context.releaseAgeExclude, "own-package exclusions in an unlocked floor proof");
+  await requireNpmExcludes(npm, cwd, context.releaseAgeExclude, "trusted-package exclusions in an unlocked floor proof");
   const result = await npm(cwd, ["install", "--package-lock-only", "--ignore-scripts", "--audit=false", "--fund=false",
     `--min-release-age=${context.releaseAgeDays}`, ...context.releaseAgeExclude.map((name) => `--min-release-age-exclude=${name}`)]);
   if (result.code !== 0) throw new Error(`unlocked npm resolution failed: ${result.stderr.trim() || result.stdout.trim()}`);

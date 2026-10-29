@@ -4,7 +4,7 @@ import { IdentityCheck } from "@leanish/gate/candidates";
 import { type GateEnvironment, type GradleInputs, readSettings, snapshotOptions, treeSources, versionCatalogs } from "@leanish/gate/gate";
 import { readInventory } from "@leanish/gate/inventory";
 import { NpmRegistry } from "@leanish/gate/npm-registry";
-import { isOwnPackage } from "@leanish/gate/config";
+import { isTrustedPackage } from "@leanish/gate/config";
 import { takeSnapshot } from "@leanish/gate/take-snapshot";
 import type { Tree } from "@leanish/gate/tree";
 import type { ToolRunContext } from "@leanish/tool-runtime/command";
@@ -31,7 +31,7 @@ export async function targetSources(base: Tree, env: GateEnvironment, gradle: Gr
     published: (name, version) => catalog.published({ ecosystem: "npm", name, version }),
     snapshot: (packages, candidates) => takeSnapshot(packages, snapshotOptions(config, env, actions), candidates),
     identity: (name, from, to) => identity.problems({ ecosystem: "npm", name, version: from }, to),
-    isOwn: (name) => isOwnPackage(config.ownPackages, { ecosystem: "npm", name }),
+    isTrusted: (name) => isTrustedPackage(config.trustedPackages, { ecosystem: "npm", name }),
     releaseAgeDays: config.releaseAgeDays,
     now,
   };

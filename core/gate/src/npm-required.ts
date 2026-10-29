@@ -37,7 +37,7 @@ export interface RequiredInputs {
   readonly placement: (parent: RequiredNode, key: string, peer: boolean, optional: boolean) => string | undefined;
   /** Additional applicable ranges, read by the caller from registry parents or repository declarations/overrides. */
   readonly constraints?: (path: string, name: string) => Promise<ReadonlyArray<string>>;
-  readonly isOwn?: (name: string) => boolean;
+  readonly isTrusted?: (name: string) => boolean;
   readonly installed?: (path: string) => string | undefined;
   /**
    * The verified security fix at a path, from a snapshot taken before the proof (never from `installed`, which hypothetical
@@ -91,7 +91,7 @@ export async function requiredClosure(root: RequiredNode, inputs: RequiredInputs
       const requires = `${node.name}@${node.version} requires ${edge.key} ${edge.spec}`;
       const reason = fix !== undefined ? `${requires}; ${exempt ? "young" : "aged"} ${spec.name}@${version} is the verified security fix there`
         : exempt ? `${requires}; no version satisfying ${ranges.join(" & ")} is at least ${inputs.days} days old; ${spec.name}@${version} is the lowest satisfying version`
-          : `${requires}; ${inputs.isOwn?.(spec.name) ? "own-package" : "aged"} ${spec.name}@${version} anchors its required-dependency proof`;
+          : `${requires}; ${inputs.isTrusted?.(spec.name) ? "trusted-package" : "aged"} ${spec.name}@${version} anchors its required-dependency proof`;
       const target = { ...child, parent: node, key: edge.key, range: edge.spec, reason, exempt };
       const before = targets.length;
       inputs.selected?.(target);
@@ -120,7 +120,7 @@ export function requirementSpec(key: string, spec: string): { name: string; rang
 
 /** Another verified security fix the requirement accepts: young (exempt) or aged like any choice, never re-picked. */
 async function verifiedFix(name: string, version: string, inputs: RequiredInputs): Promise<{ version: string; exempt: boolean }> {
-  if (inputs.isOwn?.(name)) return { version, exempt: false };
+  if (inputs.isTrusted?.(name)) return { version, exempt: false };
   const published = publishTime(await inputs.registry.packument(name), name, version);
   return { version, exempt: isUnderWait(published, inputs.days, inputs.now) };
 }
@@ -137,7 +137,7 @@ async function lowestRequired(name: string, ranges: ReadonlyArray<string>, input
   }).map(([version]) => version).sort(semver.compare);
   if (candidates.length === 0) throw new Error(`${name}: no stable non-deprecated version satisfies ${ranges.join(" & ")}`);
   if (candidates.length > (inputs.limits ?? REQUIRED_LIMITS).versions) throw new Error(`${name}: required-dependency version bound reached`);
-  if (inputs.isOwn?.(name)) return { version: installed !== undefined && candidates.includes(installed) ? installed : candidates[0]!, exempt: false };
+  if (inputs.isTrusted?.(name)) return { version: installed !== undefined && candidates.includes(installed) ? installed : candidates[0]!, exempt: false };
   // Check every date: an unknown one cannot establish that no aged satisfying version exists.
   const dates = candidates.map((version) => publishTime(doc, name, version));
   const aged = candidates.filter((_, index) => hasAged(dates[index]!, inputs.days, inputs.now));

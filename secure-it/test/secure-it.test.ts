@@ -624,7 +624,7 @@ describe("secure-it run", () => {
     expect(old.workspace.publications).toEqual([]);
   });
 
-  it("passes a young target exclusion while preserving own scopes and the sandbox's age", async () => {
+  it("passes a young target exclusion while preserving trusted scopes and the sandbox's age", async () => {
     const h = harness();
     const gate = await h.deps.gate(h.context);
     const deps = { ...h.deps, gate: async () => ({ ...gate, fetch: async () => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => ({ time: { "8.3.3": "2026-10-06T00:00:00Z" }, versions: {} }), text: async () => "" }) }) };
@@ -643,7 +643,7 @@ describe("secure-it run", () => {
     expect(context.releaseAgeExclude).toEqual(["@leanish/*"]);
   });
 
-  it("needs no newer npm when targets and base copies are aged and there are no own scopes", async () => {
+  it("needs no newer npm when targets and base copies are aged and there are no trusted scopes", async () => {
     const h = harness();
     const gate = await h.deps.gate(h.context);
     const deps = { ...h.deps, gate: async () => ({ ...gate, fetch: async () => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => ({ time: { "8.3.3": "2026-09-01T00:00:00Z", "8.3.1": "2026-09-01T00:00:00Z", "1.0.0": "2026-09-01T00:00:00Z" }, versions: {} }), text: async () => "" }) }),

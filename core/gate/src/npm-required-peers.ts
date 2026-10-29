@@ -2,7 +2,7 @@
 import semver from "semver";
 
 import { hasAged } from "./age.ts";
-import { type Config, isOwnPackage } from "./config.ts";
+import { type Config, isTrustedPackage } from "./config.ts";
 import { isObject } from "./json.ts";
 import { directDependencies, type DirectDependency } from "./npm-lock.ts";
 import { type NpmRegistry, publishTime } from "./npm-registry.ts";
@@ -30,8 +30,8 @@ export async function requiredPeerTargets(root: RequiredNode, basePackages: Reco
   const agedVersions = new Map<string, ReadonlySet<string>>();
   for (const node of group) {
     const versions = [...viable.get(node.direct.path)!].sort(semver.compare);
-    const own = isOwnPackage(config.ownPackages, { ecosystem: "npm", name: node.direct.name });
-    const aged = own ? versions : versions.filter((version) => hasAged(publishTime(node.doc, node.direct.name, version), config.releaseAgeDays, now));
+    const trusted = isTrustedPackage(config.trustedPackages, { ecosystem: "npm", name: node.direct.name });
+    const aged = trusted ? versions : versions.filter((version) => hasAged(publishTime(node.doc, node.direct.name, version), config.releaseAgeDays, now));
     agedVersions.set(node.direct.path, new Set(aged));
     // Order complete assignments by package name, then aged before young and lowest first.
     // Preserve an eligible aged locked version to avoid an unnecessary change.
@@ -43,10 +43,10 @@ export async function requiredPeerTargets(root: RequiredNode, basePackages: Reco
     const { direct } = node;
     const version = selected.get(direct.path)!;
     const young = !agedVersions.get(direct.path)!.has(version);
-    const own = isOwnPackage(config.ownPackages, { ecosystem: "npm", name: direct.name });
+    const trusted = isTrustedPackage(config.trustedPackages, { ecosystem: "npm", name: direct.name });
     return { exempt: young, name: direct.name, version, path: direct.path, parent: root, key: direct.declaredAs, range: direct.spec,
       reason: young ? `${root.name}@${root.version} requires a compatible ${direct.name} peer consumer; no version compatible with the selected peer set is at least ${config.releaseAgeDays} days old; ${direct.name}@${version} is the lowest satisfying version`
-        : `${root.name}@${root.version} requires a compatible ${direct.name} peer consumer; ${own ? "own-package" : "aged"} ${direct.name}@${version} anchors its required-dependency proof` };
+        : `${root.name}@${root.version} requires a compatible ${direct.name} peer consumer; ${trusted ? "trusted-package" : "aged"} ${direct.name}@${version} anchors its required-dependency proof` };
   });
 }
 

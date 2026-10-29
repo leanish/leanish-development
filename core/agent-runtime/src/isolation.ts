@@ -2,7 +2,7 @@
 // `SENSITIVE_HOME_PATHS`) at c6282df; see PROVENANCE.md.
 // Local changes: every input is explicit (the host's config) instead of `AGENT_RUNTIME_*` variables; the agent's
 // commands get the given commit identity, if any, instead of reading the developer's global git identity; the release
-// age is the repository's, not a fixed 7, with its own npm scopes excluded from it; the resolved login source and its
+// age is the repository's, not a fixed 7, with its trusted npm scopes excluded from it; the resolved login source and its
 // canonical path (when present) stay unreadable; the result is an agent-neutral policy that each runner gets through
 // its own adapter (`codexRunnerOptions`, `claudeCodeRunnerOptions`), and the login home is absolute.
 import { existsSync, realpathSync } from "node:fs";
@@ -62,7 +62,7 @@ export interface IsolationSettings {
   readonly commandPath: ReadonlyArray<string>;
   /** The repository's release age, given to npm as `min-release-age`. */
   readonly releaseAgeDays: number;
-  /** npm package patterns exempt from it (the repository's own scopes, `@scope/*`), given to npm as `min-release-age-exclude`. */
+  /** npm package patterns exempt from it (the repository's trusted scopes, `@scope/*`), given to npm as `min-release-age-exclude`. */
   readonly releaseAgeExclude: ReadonlyArray<string>;
   /** Where the build tools' caches go instead of `~/.gradle` and the like. */
   readonly buildCacheRoot: string;
@@ -118,7 +118,7 @@ export interface Machine {
  *     credential helper, such as Homebrew's `osxkeychain`, would ask the
  *     Keychain; the agent can name a helper itself with `-c`, so the denied
  *     `Library/Keychains` is what keeps those credentials out): the commit identity when given, npm's
- *     `ignore-scripts`, the repository's `min-release-age` and its own
+ *     `ignore-scripts`, the repository's `min-release-age` and its trusted
  *     packages' `min-release-age-exclude` (npm 11.17 or later reads it);
  *   - put `commandPath` (the guards) first on the PATH of the agent's
  *     commands — only theirs: the tool's own clone and push keep the real

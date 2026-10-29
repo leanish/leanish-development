@@ -16,7 +16,7 @@
  *     no advisory group of its own (`fixes` in young-fixes.ts).
  * The rule is the security rule: ascending from the current version, the
  * first compatible line with a fixing version; in it, the lowest fixing
- * version at least `releaseAgeDays` old, else the lowest (own packages: the
+ * version at least `releaseAgeDays` old, else the lowest (trusted packages: the
  * lowest, whatever its age). Leaving malware is the malware rule instead: the
  * nearest clean version at least `releaseAgeDays` old, newer in its line
  * first, then older in its line, then newer lines.
@@ -68,8 +68,8 @@ export interface CarrierSearch {
   readonly malicious: boolean;
   /** Candidate versions, ascending (`movesFrom`, `any` direction for malware). */
   readonly versions: ReadonlyArray<string>;
-  /** Own packages skip the wait. */
-  readonly ownPackage: boolean;
+  /** Trusted packages skip the wait. */
+  readonly trustedPackage: boolean;
 }
 
 export interface CarrierServices {
@@ -116,7 +116,7 @@ async function fixTargets(search: CarrierSearch, services: CarrierServices, stat
   for (let at = 0; at < search.versions.length; at++) {
     const version = search.versions[at]!;
     if (first !== undefined && line(version) !== line(first)) break;
-    if (first !== undefined && !search.ownPackage) {
+    if (first !== undefined && !search.trustedPackage) {
       // Past the first fix only an aged version can still win, so a young one's bundle isn't read.
       const age = await ageOf(search, services, version);
       if (age === undefined) return incomplete(`the publish time of ${search.carrier}@${version} is unknown, so an older fix in its line can't be ruled out`);
@@ -129,7 +129,7 @@ async function fixTargets(search: CarrierSearch, services: CarrierServices, stat
     if (!verdict.fixes) continue;
     if (first === undefined) {
       first = version;
-      if (search.ownPackage) return state.chosen(version, line(version), false);
+      if (search.trustedPackage) return state.chosen(version, line(version), false);
       const age = await ageOf(search, services, version);
       if (age === undefined) return incomplete(`the publish time of ${search.carrier}@${version} is unknown`);
       if (age >= services.config.releaseAgeDays) return state.chosen(version, line(version), true);
@@ -148,16 +148,16 @@ async function leaveMalware(search: CarrierSearch, services: CarrierServices, st
   const newer = search.versions.filter((version) => isAbove(version, search.from));
   const order = [...newer.filter(sameLine), ...search.versions.filter((version) => !isAbove(version, search.from) && sameLine(version)).reverse(), ...newer.filter((version) => !sameLine(version))];
   for (const version of order) {
-    if (!search.ownPackage) {
+    if (!search.trustedPackage) {
       const age = await ageOf(search, services, version);
       if (age === undefined) return incomplete(`the publish time of ${search.carrier}@${version} is unknown`);
       if (age < services.config.releaseAgeDays) continue;
     }
     const verdict = await state.fixes(version, [version]);
     if (verdict.kind === "incomplete") return verdict;
-    if (verdict.fixes) return state.chosen(version, line(version), !search.ownPackage, order);
+    if (verdict.fixes) return state.chosen(version, line(version), !search.trustedPackage, order);
   }
-  return { kind: "none", reason: `no clean ${search.carrier} version${search.ownPackage ? "" : ` at least ${services.config.releaseAgeDays} days old`} to leave the malicious bundle of ${search.from} for`, vetoed: [] };
+  return { kind: "none", reason: `no clean ${search.carrier} version${search.trustedPackage ? "" : ` at least ${services.config.releaseAgeDays} days old`} to leave the malicious bundle of ${search.from} for`, vetoed: [] };
 }
 
 /** Reads bundles in batches and judges versions on one snapshot extended with each batch. */

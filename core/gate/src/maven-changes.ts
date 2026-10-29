@@ -5,7 +5,7 @@
  * Portal by default, both immutable, so a file's date is its upload. A
  * version none of them has fails: the gate can't tell its age.
  */
-import { type Config, isOwnPackage } from "./config.ts";
+import { type Config, isTrustedPackage } from "./config.ts";
 import type { Located } from "./findings.ts";
 import type { Fetch } from "./http.ts";
 import { label, type PackageVersion, uniqueVersions } from "./package-version.ts";
@@ -95,7 +95,7 @@ export async function mavenChanges(
   const problems: string[] = [];
   const changes: ChangedVersion[] = [];
   for (const pkg of changed) {
-    if (isOwnPackage(context.config.ownPackages, pkg)) continue;
+    if (isTrustedPackage(context.config.trustedPackages, pkg)) continue;
     const published = await context.dates.published(pkg);
     if (published === undefined) {
       problems.push(`${label(pkg)} isn't in ${context.config.maven.repositories.join(" or ")}, so the gate can't check its release age`);

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { main } from "../src/cli.ts";
-import { DEFAULT_CONFIG, isOwnPackage, type OwnPackages } from "../src/config.ts";
+import { DEFAULT_CONFIG, isTrustedPackage, parseConfig, type TrustedPackages } from "../src/config.ts";
 import { cooldownOf, heldUntil, strictestPolicy } from "../src/cooldown.ts";
 import { releaseSignals } from "../src/npm-registry.ts";
 import type { PackageName } from "../src/package-version.ts";
@@ -56,24 +56,52 @@ describe("the cooldown in a comparison", () => {
 });
 
 describe("strictestPolicy", () => {
-  const own = (overrides: Partial<OwnPackages>): OwnPackages => ({ ...DEFAULT_CONFIG.ownPackages, ...overrides });
+  it.each([
+    ["ownPackages", "trustedPackages"],
+    ["trustedPackages", "ownPackages"],
+  ])("preserves trust when migrating %s to %s, and intersects changes across the alias", (baseField, headField) => {
+    const trust = {
+      npm: { scopes: ["@leanish", "@aws-sdk"] },
+      Maven: { groups: ["com.acme"], pluginIdPrefixes: ["com.acme."] },
+      "GitHub Actions": { owners: ["leanish", "aws-actions"] },
+    };
+    const packages: ReadonlyArray<PackageName> = [
+      { ecosystem: "npm", name: "@leanish/tool" },
+      { ecosystem: "npm", name: "@aws-sdk/client-s3" },
+      { ecosystem: "Maven", name: "com.acme:lib" },
+      { ecosystem: "Maven", name: "com.acme.plugin:com.acme.plugin.gradle.plugin" },
+      { ecosystem: "GitHub Actions", name: "aws-actions/configure-aws-credentials" },
+      { ecosystem: "npm", name: "@untrusted/lib" },
+      { ecosystem: "Maven", name: "com.acme.other:lib" },
+      { ecosystem: "GitHub Actions", name: "untrusted/action" },
+    ];
+    const base = parseConfig({ [baseField]: trust });
+    const renamed = strictestPolicy(parseConfig({ [headField]: trust }), base);
+    expect(packages.map((pkg) => isTrustedPackage(renamed.trustedPackages, pkg))).toEqual([true, true, true, true, true, false, false, false]);
+    const changed = strictestPolicy(parseConfig({ [headField]: { npm: { scopes: ["@leanish", "@added"] } } }), base);
+    expect(isTrustedPackage(changed.trustedPackages, { ecosystem: "npm", name: "@leanish/tool" })).toBe(true);
+    expect(isTrustedPackage(changed.trustedPackages, { ecosystem: "npm", name: "@added/tool" })).toBe(false);
+    expect(isTrustedPackage(changed.trustedPackages, { ecosystem: "npm", name: "@aws-sdk/client-s3" })).toBe(false);
+  });
+
+  const trusted = (overrides: Partial<TrustedPackages>): TrustedPackages => ({ ...DEFAULT_CONFIG.trustedPackages, ...overrides });
   const policy = strictestPolicy(
-    { ...DEFAULT_CONFIG, releaseAgeDays: 3, ownPackages: own({ npmScopes: ["@leanish", "@added"], actionOwners: ["Leanish"], pluginIdPrefixes: ["com.acme.tools."] }) },
-    { ...DEFAULT_CONFIG, releaseAgeDays: 10, ownPackages: own({ npmScopes: ["@leanish"], actionOwners: ["leanish"], pluginIdPrefixes: ["com.acme."] }) },
+    { ...DEFAULT_CONFIG, releaseAgeDays: 3, trustedPackages: trusted({ npmScopes: ["@leanish", "@added"], actionOwners: ["Leanish"], pluginIdPrefixes: ["com.acme.tools."] }) },
+    { ...DEFAULT_CONFIG, releaseAgeDays: 10, trustedPackages: trusted({ npmScopes: ["@leanish"], actionOwners: ["leanish"], pluginIdPrefixes: ["com.acme."] }) },
   );
-  const isOwn = (pkg: PackageName) => isOwnPackage(policy.ownPackages, pkg);
+  const isTrusted = (pkg: PackageName) => isTrustedPackage(policy.trustedPackages, pkg);
 
   it("takes the longer wait", () => {
     expect(policy.releaseAgeDays).toBe(10);
   });
 
-  it("owns a package only where both sides own it, however each side spells it", () => {
-    expect(isOwn({ ecosystem: "npm", name: "@leanish/tool" })).toBe(true);
-    expect(isOwn({ ecosystem: "npm", name: "@added/tool" })).toBe(false);
-    expect(isOwn({ ecosystem: "GitHub Actions", name: "leanish/leanish-development" })).toBe(true);
-    // Overlapping prefixes: both sides own this plugin marker, though neither lists the other's prefix.
-    expect(isOwn({ ecosystem: "Maven", name: "com.acme.tools.check:com.acme.tools.check.gradle.plugin" })).toBe(true);
-    expect(isOwn({ ecosystem: "Maven", name: "com.acme.other:com.acme.other.gradle.plugin" })).toBe(false);
+  it("trusts a package only where both sides trust it, however each side spells it", () => {
+    expect(isTrusted({ ecosystem: "npm", name: "@leanish/tool" })).toBe(true);
+    expect(isTrusted({ ecosystem: "npm", name: "@added/tool" })).toBe(false);
+    expect(isTrusted({ ecosystem: "GitHub Actions", name: "leanish/leanish-development" })).toBe(true);
+    // Overlapping prefixes: both sides trust this plugin marker, though neither lists the other's prefix.
+    expect(isTrusted({ ecosystem: "Maven", name: "com.acme.tools.check:com.acme.tools.check.gradle.plugin" })).toBe(true);
+    expect(isTrusted({ ecosystem: "Maven", name: "com.acme.other:com.acme.other.gradle.plugin" })).toBe(false);
   });
 });
 
