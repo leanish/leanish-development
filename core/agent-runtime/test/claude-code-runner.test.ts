@@ -7,7 +7,7 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/pro
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { ClaudeCodeRunner, claudeSettings, DENIED_TOOLS, RESTRICTED_TOOLS, restrictedClaudeSettings, scrubProxyCredentials } from "../src/skill/claude-code-runner.ts";
 import { SkillLoader } from "../src/skill/skill-loader.ts";
@@ -341,10 +341,38 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     expect(() => new ClaudeCodeRunner({ confinement: "sandbox", readDenied: ["/work/private"] })).not.toThrow();
   });
 
-  it("refuses a relocated Claude config dir before spawning", async () => {
-    const { bin, record } = await makeStub([result(ANSWER)]);
-    await expect(new ClaudeCodeRunner({ confinement: "sandbox", bin, env: { CLAUDE_CONFIG_DIR: "/elsewhere" } }).run(call())).rejects.toThrowError(/CLAUDE_CONFIG_DIR \('\/elsewhere'\) isn't supported/);
-    await expect(readFile(record, "utf8")).rejects.toThrowError(/ENOENT/);
+  describe("a relocated Claude config dir", () => {
+    // The process environment is checked first: a CLAUDE_CONFIG_DIR exported where the tests run mustn't decide them.
+    afterEach(() => vi.unstubAllEnvs());
+
+    it("is refused before spawning", async () => {
+      vi.stubEnv("CLAUDE_CONFIG_DIR", "");
+      const { bin, record } = await makeStub([result(ANSWER)]);
+      await expect(new ClaudeCodeRunner({ confinement: "sandbox", bin, env: { CLAUDE_CONFIG_DIR: "/elsewhere" } }).run(call()))
+        .rejects.toThrowError("CLAUDE_CONFIG_DIR (set in the runner's env option) isn't supported");
+      await expect(readFile(record, "utf8")).rejects.toThrowError(/ENOENT/);
+    });
+
+    it.each([
+      ["the process environment", { process: true }],
+      ["the runner's env option", { runner: true }],
+      ["the invocation's env", { invocation: true }],
+    ] as const)("never puts its value in the refusal when set in %s", async (source, where) => {
+      const secret = "synthetic-credential-0123456789";
+      vi.stubEnv("CLAUDE_CONFIG_DIR", "process" in where ? secret : "");
+      const { bin } = await makeStub([result(ANSWER)]);
+      const runner = new ClaudeCodeRunner({ confinement: "sandbox", bin, ...("runner" in where ? { env: { CLAUDE_CONFIG_DIR: secret } } : {}) });
+      const invocation = call("invocation" in where ? { env: { CLAUDE_CONFIG_DIR: secret } } : {});
+      const error = (await runner.run(invocation).catch((err: Error) => err)) as Error;
+      expect(error.message).toContain(`CLAUDE_CONFIG_DIR (set in ${source}) isn't supported`);
+      expect(error.message).not.toContain(secret);
+    });
+
+    it("lets an empty value through, as unset", async () => {
+      vi.stubEnv("CLAUDE_CONFIG_DIR", "");
+      const { bin } = await makeStub([result(ANSWER)]);
+      await expect(new ClaudeCodeRunner({ confinement: "sandbox", bin, env: { CLAUDE_CONFIG_DIR: "" } }).run(call())).resolves.toBeDefined();
+    });
   });
 
   it("scrubs a failure's reason before cutting it short, so a cut can't leave part of a credential", async () => {
@@ -410,7 +438,7 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     const { bin, record } = await makeStub([result(ANSWER)]);
     const usages: SkillUsage[] = [];
     await expect(new ClaudeCodeRunner({ confinement: "restricted", bin, stagingParentDir }).run(call({ workingCopies: [wc], access: "write", onUsage: (usage) => usages.push(usage) })))
-      .rejects.toThrow("access 'write' needs the 'sandbox' confinement");
+      .rejects.toThrow("access 'write' needs the 'sandbox' confinement, which only a host with Claude Code's sandbox has");
     expect(await readdir(stagingParentDir)).toEqual([]);
     expect(existsSync(record)).toBe(false);
     expect(usages).toEqual([expect.objectContaining({ tokens: expect.objectContaining({ total: 0 }), quota: { status: "not-applicable", reason: "no provider call was made" } })]);
