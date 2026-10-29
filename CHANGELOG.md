@@ -19,7 +19,7 @@
 
 - `ownPackages` remains accepted as an alias for `trustedPackages`, without warnings; configuring both is an error.
   Repin older gates before migrating configuration, including this repository and the adopter fixtures. The alias
-  will be removed in a later minor release after migration; see docs/releasing.md.
+  is removed in 0.11.0, so migrate before repinning to it; see docs/releasing.md.
 
 ## 0.9.1 - 2026-10-28
 
