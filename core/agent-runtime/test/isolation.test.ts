@@ -60,7 +60,7 @@ describe("isolationPolicy", () => {
     expect(anonymous.readDenied).toEqual(named.readDenied);
   });
 
-  it("reuses $CODEX_HOME's login and the repository's release age, its own scopes exempt", () => {
+  it("reuses $CODEX_HOME's login and the repository's release age, its trusted scopes exempt", () => {
     const options = isolationPolicy({ ...SETTINGS, releaseAgeDays: 3, releaseAgeExclude: ["@leanish/*", "@acme/*"], commandPath: [] }, { home: HOME, env: { CODEX_HOME: "/opt/codex" }, exists: () => false });
     expect(options.loginHome).toBe("/opt/codex");
     expect(options.readDenied).toContain("/opt/codex/auth.json");

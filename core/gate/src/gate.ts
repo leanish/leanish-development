@@ -5,7 +5,7 @@
  *   - `scan` (the default branch, on push and daily): every finding in one
  *     tree fails unless excepted.
  * Config and exceptions come from head: they're part of what would land;
- * the release-age wait and own packages are the stricter of base's and
+ * the release-age wait and trusted packages are the stricter of base's and
  * head's (`cooldown.ts`), so a PR can't loosen what judges it.
  * Gradle inventories come in as data, made by whoever ran the build; actions
  * are read from the workflows and resolved with GitHub.
@@ -194,13 +194,13 @@ export async function runCompare(base: Tree, head: Tree, env: GateEnvironment, g
     ...resolutionFailures(headInventory, config, undefined),
   ];
   const changes: ChangedVersion[] = [];
-  const ownRoots: ChangedVersion[] = [];
+  const trustedRoots: ChangedVersion[] = [];
   for (const lockfile of headInventory.npm) {
     const before = baseInventory.npm.find((candidate) => candidate.path === lockfile.path)?.packages ?? [];
     const npm = await npmChanges(before, lockfile.packages, { registry, exceptions, config, now });
     problems.push(...npm.problems.map((problem) => prefixed(headInventory, lockfile.path, problem)));
     changes.push(...npm.changes);
-    ownRoots.push(...npm.ownChanges);
+    trustedRoots.push(...npm.trustedChanges);
   }
   const maven = await mavenChanges(baseLocated, headLocated, { config, dates });
   problems.push(...maven.problems);
@@ -210,7 +210,7 @@ export async function runCompare(base: Tree, head: Tree, env: GateEnvironment, g
   changes.push(...actions.changes);
   // The young versions' snapshot covers every package too: the findings below are read from it.
   const youngVersions = await reviewYoungVersions({
-    base, head, baseInventory, headInventory, packages: [...baseLocated, ...headLocated], changes: mergeChanges(changes), ownRoots,
+    base, head, baseInventory, headInventory, packages: [...baseLocated, ...headLocated], changes: mergeChanges(changes), trustedRoots,
     config, exceptions, now, catalogs, registry, reader: bundleReader(env),
     scan: (packages, candidates) => takeSnapshot(packages, snapshotOptions(config, env, github), candidates),
   });

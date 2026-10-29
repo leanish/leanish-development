@@ -11,6 +11,13 @@ release candidate is run for real and reviewed first, so the release ships what
 was reviewed. Each release lists its changes in [the CHANGELOG](../CHANGELOG.md);
 unreleased changes collect under its "Unreleased" heading.
 
+For the `trustedPackages` migration, repin the gate before renaming configuration:
+older gates reject the new field. Keep this repository's `.github/supply-chain.json`
+on the deprecated `ownPackages` alias while `released-supply-chain.yml` uses an
+older gate. After the gate repins, migrate this repository, adopters and fixtures
+to `trustedPackages`, removing `ownPackages` rather than keeping both. Alias removal
+belongs in a later minor release, after migration.
+
 1. Start from the latest reviewed main. Keep PAT mode documented; GitHub App mode
    remains deferred and will be an alternative to PAT mode when implemented.
 2. Tag the candidate commit on main with a lightweight `v<version>-rc.<n>` tag

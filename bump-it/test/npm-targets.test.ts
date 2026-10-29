@@ -14,7 +14,7 @@ function inputs(spec = "^1", overrides: unknown = {}): TargetInputs {
   return { nodeRuntime: { major: undefined, sources: [] }, graph: graph("1.2.0", spec), base: graph("1.0.0"), baseVersions: new Map([["child", ["1.0.0"]], ["parent", ["1.0.0"]]]), overrides: repositoryOverrides(overrides), direct: new Map([["node_modules/parent", "1.0.0"]]) };
 }
 function sources(findings: Record<string, Advisory[]> = {}): TargetSources {
-  return { now: NOW, releaseAgeDays: 7, isOwn: () => false, versions: async () => ["1.0.0", "1.1.0", "1.2.0", "1.3.0"], published: async () => new Date("2026-09-01"), identity: async () => [], snapshot: async (base, candidates) => new Snapshot(new Map([...base, ...candidates].map((pkg) => [versionKey(pkg), findings[pkg.version] ?? []])), [], NOW) };
+  return { now: NOW, releaseAgeDays: 7, isTrusted: () => false, versions: async () => ["1.0.0", "1.1.0", "1.2.0", "1.3.0"], published: async () => new Date("2026-09-01"), identity: async () => [], snapshot: async (base, candidates) => new Snapshot(new Map([...base, ...candidates].map((pkg) => [versionKey(pkg), findings[pkg.version] ?? []])), [], NOW) };
 }
 const advisory = (id: string, malicious = false): Advisory => ({ id, ids: [id], malicious, source: "osv", summary: undefined, severity: undefined });
 /** `id` as only the project's own repository advisories publish it. */
@@ -51,10 +51,10 @@ describe("code-decided transitive targets", () => {
     expect(child(await decideTargets(inputs(), s))).toMatchObject({ target: "1.1.0" });
     expect(child(await decideTargets(inputs(), { ...sources(), identity: async () => ["break"] }))).toMatchObject({ target: "1.0.0" });
   });
-  it("own packages skip age alone, not malware", async () => {
+  it("trusted packages skip age alone, not malware", async () => {
     const young = { ...sources({ "1.3.0": [advisory("MAL-1", true)] }), published: async () => NOW };
     expect(child(await decideTargets(inputs(), young))).toMatchObject({ target: "1.0.0" });
-    expect(child(await decideTargets(inputs(), { ...young, isOwn: () => true }))).toMatchObject({ target: "1.2.0" });
+    expect(child(await decideTargets(inputs(), { ...young, isTrusted: () => true }))).toMatchObject({ target: "1.2.0" });
   });
   it("has no ten-version cap", async () => {
     const versions = Array.from({ length: 15 }, (_, minor) => `1.${minor}.0`);

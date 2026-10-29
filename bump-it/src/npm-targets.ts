@@ -21,7 +21,7 @@ export interface TargetSources {
   snapshot(packages: ReadonlyArray<PackageVersion>, candidates: ReadonlyArray<PackageVersion>): Promise<Snapshot>;
   /** What `compare` would reject about `to` replacing `from` (publisher identity). */
   identity(name: string, from: string, to: string): Promise<ReadonlyArray<string>>;
-  readonly isOwn: (name: string) => boolean;
+  readonly isTrusted: (name: string) => boolean;
   readonly releaseAgeDays: number;
   readonly now: Date;
 }
@@ -157,9 +157,9 @@ async function candidatesOf(
     .filter((version) => baseVersion === undefined || semver.gte(version, baseVersion))
     .sort(semver.rcompare);
   const candidates: string[] = [];
-  const own = sources.isOwn(copy.name);
+  const trusted = sources.isTrusted(copy.name);
   for (const version of inRange) {
-    if (own) {
+    if (trusted) {
       candidates.push(version);
       continue;
     }

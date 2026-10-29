@@ -33,7 +33,7 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
 3. **Plans the change** (`plan.ts`), for each version and location.
    - For npm, code reads locked and candidate manifests to find direct peer constraints in either direction.
      Rule-picked security targets stay fixed. A direct that must move with them gets the lowest safe version in its
-     own compatible line that makes the connected set consistent: aged (own scopes: any age, or the proved
+     own compatible line that makes the connected set consistent: aged (trusted scopes: any age, or the proved
      required-dependency exception in step 5), adding no advisory group or malware, and passing the gate's publisher
      identity check. Unchanged compatible peers stay at base; a companion may move downward within its line when
      necessary.
@@ -224,7 +224,7 @@ run report and the PR's plan notes. Incomplete inventories or advisory coverage 
 
 - **npm:** an exported scratch copy loses the selected override versions and both adjacent lock formats
   (`package-lock.json` and `npm-shrinkwrap.json`). Sandboxed `npm install --package-lock-only --ignore-scripts`
-  resolves under the configured release-age window and own-scope exclusions. Locked young base versions receive no
+  resolves under the configured release-age window and trusted-scope exclusions. Locked young base versions receive no
   special exemption in this unlocked proof. The tool writes the successful joint result's exact manifest and
   lockfile bytes; npm-only removal uses no agent.
 - **Gradle:** a trusted init script removes only the selected exact advisory-bearing declarations from the selected

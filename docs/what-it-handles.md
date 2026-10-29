@@ -28,8 +28,9 @@ present. Exceptions cannot allow malware. This is advisory-based detection,
 not a scan of package contents for unknown malicious code.
 
 New or changed versions normally need to be **at least seven days old**.
-The wait is configurable. Packages explicitly configured as your own skip the
-wait, but keep the other checks. Their dependencies do not inherit that exemption.
+The wait is configurable. Packages explicitly listed in `trustedPackages`, including third parties, skip the
+wait, but keep the other checks. This removes the cooldown detection window: a compromised
+publisher's release can pass immediately. Their dependencies do not inherit that exemption.
 A PR cannot shorten its own wait or declare its new dependencies exempt.
 
 A proven security fix can pass the version rule before seven days. Its separate
@@ -39,7 +40,7 @@ Some missing coverage is instead reported as a gap: **a passing PR can have gaps
 
 secure-it keeps all malware repairs in one PR, before other work. It seeks the nearest
 clean version past the wait: newer in the current line, then older, then a newer line.
-Own packages skip the wait. A blocked repair postpones other fixes.
+Trusted packages skip the wait. A blocked repair postpones other fixes.
 
 ## npm
 
@@ -120,7 +121,7 @@ package name, so bump-it pins that package's copies where it can: npm then canno
 take another young release. Copies it can't pin are checked after resolution:
 each may stay locked, be removed, or move to an aged version that is not
 deprecated. Any other result fails the routine. Bundled copies follow their
-carrier, direct dependencies outside the plan stay locked, and own packages still
+carrier, direct dependencies outside the plan stay locked, and trusted packages still
 update without the wait. The [scenario rules](requirements.md#35-ci-prs-and-failures)
 give the exact pinning rules.
 
@@ -220,7 +221,7 @@ change to an action without an immutable release fails the gate, and the tools
 don't pick such a version on their own (they leave a note saying why); a person
 updates it, or waits until the action publishes immutable releases. In October
 2026, `actions/checkout`, `actions/upload-artifact` and `actions/download-artifact`
-were among them. Own Actions can skip the age wait, but still need valid pins.
+were among them. Trusted Actions can skip the age wait, but still need valid pins.
 
 A mutable release in a fixing line has no trusted date, so secure-it and the gate's
 young-fix proof cannot select that line even when it also has an immutable fix.
@@ -345,7 +346,7 @@ BeanUtils. It can go after that dependency is removed or naturally resolves safe
   bounds. Unsupported nested placements or conflicts can block a PR. Complex
   overrides and exact pins can prevent bump-it refreshes. It reports skipped copies.
 - npm identity and age checks use the public npm registry. Other allowed registries
-  need the documented own-package/identity exception route. CI signature checking
+  need the documented trusted-package/identity exception route. CI signature checking
   does not use private registry credentials or repository proxy settings.
   Git dependencies, URL dependencies and external file dependencies are refused;
   validated internal workspace links are supported.
@@ -374,7 +375,7 @@ BeanUtils. It can go after that dependency is removed or naturally resolves safe
   proof. Coordinated major migrations are not automated. bump-it caps new major PRs
   at three per run by default; deferred ones get priority later.
 - Maven versions absent from configured repositories cannot establish release age,
-  except for configured own packages. Missing dates are not guessed.
+  except for configured trusted packages. Missing dates are not guessed.
 
 ### Operating limits
 

@@ -15,7 +15,7 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 
 - **An action with no immutable release, newly used (gate)**: under the normal configuration, a new or additional
   occurrence of a third-party action whose selected version has no immutable release fails the gate, even where the
-  repository already uses it (existing uses don't authorize more copies; `ownPackages` are exempt). In 0.9.1 this held
+  repository already uses it (existing uses don't authorize more copies; `trustedPackages` are exempt). In 0.9.1 this held
   for the versions of `actions/checkout`, `actions/upload-artifact` and `actions/download-artifact` then current. An
   adopter adding a workflow with them is blocked until it does without (`publish-agent-runtime.yml` fetches with plain
   `git` and hands its tarball over through job outputs for this reason). By design for now.
@@ -45,7 +45,7 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 - **Removing a configuration's only declared floor (secure-it)**: when the floor is the configuration's only
   dependency of its own, removing it lets its default dependencies apply (checkstyle's tool version, for instance),
   which exact declaration preservation refuses; the removal fails visibly. Pre-existing in 0.7.1.
-- **A young own-only npm carrier is refused late (secure-it)**: when a carrier's bundle fixes nothing reviewed (its
+- **A young npm carrier fixing only its own advisories is refused late (secure-it)**: when a carrier's bundle fixes nothing reviewed (its
   bundled findings are only in the project's repository advisories), secure-it may still pick a young carrier version
   for the carrier's own advisories that the ordinary young-fix rule refuses. Unless another justification applies (a
   required-dependency proof or a valid release-age exception), verification refuses it before anything is published,
@@ -110,8 +110,8 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 
 These apply to versions a PR adds or changes, in `compare`; unchanged versions and the full `scan` don't get them.
 
-- **Packages from another npm registry**: age and identity are checked against the npm registry only, so they fail, or (own packages) need a reviewed `identity` exception.
-- **Maven versions outside Maven Central and the Gradle Plugin Portal**: their release age can't be checked, so they fail unless their repository is listed in `maven.repositories`. Own Maven packages skip the age check.
+- **Packages from another npm registry**: age and identity are checked against the npm registry only, so they fail, or (trusted packages) need a reviewed `identity` exception.
+- **Maven versions outside Maven Central and the Gradle Plugin Portal**: their release age can't be checked, so they fail unless their repository is listed in `maven.repositories`. Trusted Maven packages skip the age check.
 
 ## Automated test coverage
 

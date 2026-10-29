@@ -1,5 +1,5 @@
 /** Prove forced young npm requirements before install; every required target remains exact and independently gated. */
-import { type Config, isOwnPackage } from "@leanish/gate/config";
+import { type Config, isTrustedPackage } from "@leanish/gate/config";
 import type { Exceptions } from "@leanish/gate/exceptions";
 import { type Evidence, inherits } from "@leanish/gate/findings";
 import type { Snapshot } from "@leanish/gate/snapshot";
@@ -90,7 +90,7 @@ async function collectRequirements(base: Tree, plan: ChangePlan, locks: Readonly
             const actual = packages[path];
             return isObject(actual) && typeof actual["version"] === "string" ? actual["version"] : undefined;
           },
-          isOwn: (name) => isOwnPackage(config.ownPackages, { ecosystem: "npm", name }),
+          isTrusted: (name) => isTrustedPackage(config.trustedPackages, { ecosystem: "npm", name }),
           verifiedRoot: (path) => verified.get(path),
           registry, days: config.releaseAgeDays, now,
           placement: (parent, key, peer, optional) => {

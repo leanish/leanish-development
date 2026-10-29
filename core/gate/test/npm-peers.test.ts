@@ -33,7 +33,7 @@ function fixture(options: { outward?: boolean; future?: boolean } = {}) {
     published: vi.fn(async () => OLD),
     identity: vi.fn(async () => []),
     line: (_name, version) => version.split(".")[0]!,
-    isOwn: () => false,
+    isTrusted: () => false,
     now: NOW,
     releaseAgeDays: 7,
   };
@@ -109,12 +109,12 @@ describe("direct npm peer sets", () => {
     expect(refused.blocked).toEqual([{ moves: [move], reason: expect.stringContaining(`${UI}@4.1.7 requires peer vitest 4.1.7, not 4.1.11`) }]);
   });
 
-  it("lets only own packages skip the companion age requirement, and does not give young companions the security exemption", async () => {
+  it("lets only trusted packages skip the companion age requirement, and does not give young companions the security exemption", async () => {
     const h = fixture();
     h.sources.published = vi.fn(async () => YOUNG);
     const peers = await prepareNpmPeers(h.locks, [seed], h.sources);
     expect((await peers.resolve([move], snapshot(peers))).blocked[0]?.reason).toContain("no safe aged compatible direct-peer set");
-    h.sources.isOwn = (name) => name.startsWith("@vitest/");
+    h.sources.isTrusted = (name) => name.startsWith("@vitest/");
     const result = await peers.resolve([move], snapshot(peers));
     expect(result.blocked).toEqual([]);
     // Young, but own: the gate never holds them, so neither does planning.

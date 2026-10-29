@@ -93,7 +93,7 @@ export async function verifyPlan(inputs: VerifyInputs): Promise<string[]> {
   return [...compared.failures.map((failure) => `compare: ${failure}`), ...cooldownProblems(compared.cooldown)];
 }
 
-/** bump-it never takes a version under the wait (own packages aside), so anything the cooldown holds is a mistake. */
+/** bump-it never takes a version under the wait (trusted packages aside), so anything the cooldown holds is a mistake. */
 function cooldownProblems(cooldown: CooldownEvaluation): string[] {
   if (!cooldown.evaluated) return [`the cooldown can't be evaluated: ${cooldown.reason}`];
   return heldLines(cooldown.held).map((line) => `under the release-age wait: ${line}`);

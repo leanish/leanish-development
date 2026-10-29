@@ -335,16 +335,16 @@ describe("release age", () => {
     ]);
   });
 
-  it("uses the configured wait and lets own packages skip it", async () => {
+  it("uses the configured wait and lets trusted packages skip it", async () => {
     const fetch = fake({ times: { young: { "2.0.0": "2026-10-02T00:00:00Z" }, "@acme/own": { "1.0.0": "2026-10-04T11:00:00Z" } } });
     const head = pkgs({ young: "2.0.0", "@acme/own": "1.0.0" });
-    const config = parseConfig({ releaseAgeDays: 2, ownPackages: { npm: { scopes: ["@acme"] } } });
+    const config = parseConfig({ releaseAgeDays: 2, trustedPackages: { npm: { scopes: ["@acme"] } } });
     expect(await changes([], head, fetch, { config })).toEqual([]);
   });
 
-  it("doesn't need an own package's publish time", async () => {
+  it("doesn't need a trusted package's publish time", async () => {
     const odd = registry({ time: { "1.0.0": "not a date" }, versions: { "1.0.0": { _npmUser: { name: "m" }, dist: {} } } });
-    const config = parseConfig({ ownPackages: { npm: { scopes: ["@acme"] } } });
+    const config = parseConfig({ trustedPackages: { npm: { scopes: ["@acme"] } } });
     expect(await changes([], pkgs({ "@acme/own": "1.0.0" }), odd, { config })).toEqual([]);
   });
 
@@ -361,20 +361,20 @@ describe("release age", () => {
     ]);
   });
 
-  it("fails a package from another allowed registry, and needs a reviewed identity exception even for an own one", async () => {
+  it("fails a package from another allowed registry, and needs a reviewed identity exception even for a trusted one", async () => {
     const head = pkgs({}, { "node_modules/@acme/x": { version: "1.0.0", resolved: "https://npm.acme.dev/@acme/x/-/x-1.0.0.tgz" } });
     const registries = ["https://registry.npmjs.org", "https://npm.acme.dev"];
     expect(await changes([], head, fake({}), { config: parseConfig({ npm: { registries } }) })).toEqual([
       "@acme/x@1.0.0 comes from https://npm.acme.dev/@acme/x/-/x-1.0.0.tgz, where the gate can't check its release age or publisher identity",
     ]);
-    const own = parseConfig({ npm: { registries }, ownPackages: { npm: { scopes: ["@acme"] } } });
-    expect(await changes([], head, fake({}), { config: own })).toEqual([
+    const trusted = parseConfig({ npm: { registries }, trustedPackages: { npm: { scopes: ["@acme"] } } });
+    expect(await changes([], head, fake({}), { config: trusted })).toEqual([
       "@acme/x@1.0.0 comes from https://npm.acme.dev/@acme/x/-/x-1.0.0.tgz, where the gate can't check its publisher identity; an identity exception records the review",
     ]);
     const reviewed = (expires: string) =>
       parseExceptions({ identity: [{ package: "@acme/x", version: "1.0.0", reason: "our CI published it", expires }] });
-    expect(await changes([], head, fake({}), { config: own, exceptions: reviewed("2026-10-04") })).toEqual([]);
-    expect(await changes([], head, fake({}), { config: own, exceptions: reviewed("2026-10-03") })).toHaveLength(1);
+    expect(await changes([], head, fake({}), { config: trusted, exceptions: reviewed("2026-10-04") })).toEqual([]);
+    expect(await changes([], head, fake({}), { config: trusted, exceptions: reviewed("2026-10-03") })).toHaveLength(1);
   });
 
   describe("security exception", () => {
@@ -716,7 +716,7 @@ describe("config", () => {
     expect(parseConfig({})).toEqual(DEFAULT_CONFIG);
     expect(() => parseConfig({ npm: { lockfile: "x" } })).toThrow("npm has unknown field(s): lockfile");
     expect(() => parseConfig({ releaseAgeDays: -1 })).toThrow("nonnegative integer");
-    expect(() => parseConfig({ ownPackages: { npm: { scopes: ["leanish"] } } })).toThrow("not an @scope");
+    expect(() => parseConfig({ trustedPackages: { npm: { scopes: ["leanish"] } } })).toThrow("not an @scope");
     expect(() => parseConfig({ repositories: { "snappy-java": "xerial/snappy-java" } })).toThrow("isn't <ecosystem>:<package>");
     expect(() => parseConfig({ repositories: { "npm:lib": "../.." } })).toThrow("must map to owner/repo");
     expect(parseConfig({ repositories: { "Maven:org.xerial.snappy:snappy-java": "xerial/snappy-java" } }).repositories).toEqual(

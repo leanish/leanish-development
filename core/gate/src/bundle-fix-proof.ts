@@ -16,8 +16,9 @@
  *
  * At least one target must be a reviewed bundled advisory. The targets also
  * include the carrier's own reviewed groups R has and V doesn't, so a version
- * fixing both is proved as the combined choice secure-it makes. Own-only fixes
- * need the ordinary young-fix proof or an explicit release-age exception.
+ * fixing both is proved as the combined choice secure-it makes. Fixes of only
+ * the carrier's advisories need the ordinary young-fix proof or an explicit
+ * release-age exception.
  * Every head copy of V must be such an occurrence and pass: a copy elsewhere
  * has no evidence of its own.
  *
@@ -27,7 +28,7 @@
 import { candidateVersions, groupsOf, reviewedGroups, targetsOf, type VersionCatalog, vetoNote } from "./young-fixes.ts";
 import { chooseCarrier, describe, removedTargets, registryIntegrity } from "./carrier-fixes.ts";
 import type { Config } from "./config.ts";
-import { isOwnPackage } from "./config.ts";
+import { isTrustedPackage } from "./config.ts";
 import type { Inventory } from "./inventory.ts";
 import { type BundleReader, bundleMismatches } from "./npm-bundles.ts";
 import type { NpmRegistry } from "./npm-registry.ts";
@@ -149,7 +150,7 @@ async function occurrenceProof(pkg: PackageVersion, occurrence: Occurrence, inpu
     own,
     malicious: false,
     versions: candidateVersions(config, pkg, occurrence.from, pkg.version, [...listed, pkg.version]),
-    ownPackage: isOwnPackage(config.ownPackages, pkg),
+    trustedPackage: isTrustedPackage(config.trustedPackages, pkg),
   }, {
     bundles: async (version) => reader.read(pkg.name, version, await registryIntegrity(registry, pkg.name, version)),
     scan: inputs.scan,

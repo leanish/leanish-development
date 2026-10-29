@@ -11,10 +11,10 @@
  * fixes is reported as unfixable and left (fixing A and leaving B is allowed).
  * The choice: the first compatible line, from the version's own upward, with a
  * version that fixes every fixable target and adds no advisory group; in it,
- * the lowest such version at least `releaseAgeDays` old, else the lowest (own
+ * the lowest such version at least `releaseAgeDays` old, else the lowest (trusted
  * packages skip the wait). A choice outside the version's own line is a
  * `major` move: the code may need adapting. A malicious version moves to the
- * nearest clean version at least `releaseAgeDays` old (own packages: any
+ * nearest clean version at least `releaseAgeDays` old (trusted packages: any
  * age): newer in its line first, then older in its line (a downgrade), then
  * newer lines. An npm choice whose publisher identity `compare` would reject
  * keeps that as a blocker: a reviewed `identity` exception is the way through.
@@ -24,7 +24,7 @@
 import { actionGaps } from "./actions-changes.ts";
 import { hasAged } from "./age.ts";
 import { type CarriedPackage, type CarrierContext, type CarrierDecision, type CarrierGroup, decideCarrier, splitBundled } from "./carrier-candidates.ts";
-import { type Config, isOwnPackage } from "./config.ts";
+import { type Config, isTrustedPackage } from "./config.ts";
 import { type Exceptions, unexcusedProblem } from "./exceptions.ts";
 import { type Finding, findingKey, findingsOf, type Located } from "./findings.ts";
 import type { Floor } from "./floors.ts";
@@ -58,7 +58,7 @@ export interface SecurityMove {
   /** The compatible line it's in. */
   readonly line: string;
   /**
-   * Whether the gate leaves it unheld (not `isYoung`): at least `releaseAgeDays` old, or an own package, which never
+   * Whether the gate leaves it unheld (not `isYoung`): at least `releaseAgeDays` old, or a trusted package, which never
    * waits. False for the lowest fix when no fix in its line is that old yet.
    */
   readonly aged: boolean;
@@ -379,7 +379,7 @@ async function chooseMove(
 ): Promise<SecurityFix> {
   const { snapshot, catalog, config, now } = context;
   const name: PackageName = { ecosystem: pkg.ecosystem, name: pkg.name };
-  const own = isOwnPackage(config.ownPackages, name);
+  const trusted = isTrustedPackage(config.trustedPackages, name);
   const line = (version: string) => compatibleLine(config, name, version);
   const fixable = targets.filter((target) => moves.some((version) => fixes(snapshot, name, pkg.version, [target], version)));
   const unfixable = targets.filter((target) => !fixable.includes(target));
@@ -411,8 +411,8 @@ async function chooseMove(
     const order = preferred(fixing);
     // The same order over every candidate, vetoed ones included: where each veto sits relative to the choice.
     const tried = preferred(moves);
-    // Own packages skip the wait here too; the version must still be clean.
-    if (own && order.length > 0) return move(order[0]!, true, tried);
+    // Trusted packages skip the wait here too; the version must still be clean.
+    if (trusted && order.length > 0) return move(order[0]!, true, tried);
     for (const version of order) {
       if (await isAged({ ...name, version }, catalog, config, now)) return move(version, true, tried);
     }
@@ -422,8 +422,8 @@ async function chooseMove(
   const refused = (why: string, named: ReadonlyArray<string>) => none(`${why}${vetoNote(vetoesOf(snapshot, name, pkg.version, named, moves))}`);
   if (fixable.length === 0) return refused(`no version above ${pkg.version} fixes ${targets.join(", ")}`, targets);
   if (fixing.length === 0) return refused(`no single version above ${pkg.version} fixes all of ${fixable.join(", ")}, though each has a fix`, fixable);
-  if (own) {
-    // Own packages skip the wait: the lowest fix in the first line that has one.
+  if (trusted) {
+    // Trusted packages skip the wait: the lowest fix in the first line that has one.
     const first = line(fixing[0]!);
     return move(fixing.find((version) => line(version) === first)!, true);
   }
@@ -559,7 +559,7 @@ interface Pending {
  * Where bump-it can move each directly declared dependency: in its own line,
  * and in the highest newer line that has an acceptable version (lines are
  * tried from the highest down), the highest version at least `releaseAgeDays`
- * old (own packages skip the wait) that adds no advisory group, no malware
+ * old (trusted packages skip the wait) that adds no advisory group, no malware
  * and, on npm, no publisher identity break (one that can't be decided leaves
  * the dependency without moves, as a problem). Each round of lines is judged on
  * one snapshot of the current versions and every version weighed in it.
@@ -688,7 +688,7 @@ export async function bumpCandidates(head: Tree, env: GateEnvironment, gradle: G
  * bump skips: without it they'd just never be picked, with nothing saying why.
  */
 export async function untrustedActionReleases(pkg: Direct, newer: ReadonlyArray<string>, catalog: VersionCatalog, config: Config): Promise<string[]> {
-  if (pkg.ecosystem !== "GitHub Actions" || isOwnPackage(config.ownPackages, pkg)) return [];
+  if (pkg.ecosystem !== "GitHub Actions" || isTrustedPackage(config.trustedPackages, pkg)) return [];
   const undated: string[] = [];
   for (const version of newer) {
     if (await catalog.published({ ...pkg, version }) === undefined) undated.push(version);
@@ -722,7 +722,7 @@ async function preparePeers(head: Tree, state: ScanState, registry: NpmRegistry,
     // bump planning keeps checking each source version on its own.
     identity: (name, from, to, replaced) => identity.problems({ ecosystem: "npm", name, version: from }, to, security ? replaced : undefined),
     line: (name, version) => compatibleLine(config, { ecosystem: "npm", name }, version),
-    isOwn: (name) => isOwnPackage(config.ownPackages, { ecosystem: "npm", name }),
+    isTrusted: (name) => isTrustedPackage(config.trustedPackages, { ecosystem: "npm", name }),
     now,
     releaseAgeDays: config.releaseAgeDays,
   });
@@ -780,7 +780,7 @@ async function pending(
   return versions.length === 0 ? [] : [{ pkg, line, versions }];
 }
 
-/** Up to `BUMP_DEPTH` versions of `newestFirst` old enough (own packages: any age), newest first. */
+/** Up to `BUMP_DEPTH` versions of `newestFirst` old enough (trusted packages: any age), newest first. */
 async function newestAged(
   pkg: PackageVersion,
   newestFirst: ReadonlyArray<string>,
@@ -788,7 +788,7 @@ async function newestAged(
   config: Config,
   now: Date,
 ): Promise<string[]> {
-  if (isOwnPackage(config.ownPackages, pkg)) return newestFirst.slice(0, BUMP_DEPTH);
+  if (isTrustedPackage(config.trustedPackages, pkg)) return newestFirst.slice(0, BUMP_DEPTH);
   const aged: string[] = [];
   for (const version of newestFirst) {
     if (aged.length === BUMP_DEPTH) break;

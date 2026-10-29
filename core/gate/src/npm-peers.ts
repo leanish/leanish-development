@@ -47,7 +47,7 @@ export interface PeerSources {
    */
   identity(name: string, from: string, to: string, replaced?: ReadonlyArray<string>): Promise<ReadonlyArray<string>>;
   line(name: string, version: string): string;
-  isOwn(name: string): boolean;
+  isTrusted(name: string): boolean;
   readonly now: Date;
   readonly releaseAgeDays: number;
 }
@@ -362,9 +362,9 @@ function consistent(nodes: ReadonlyArray<Node>, chosen: ReadonlyMap<string, stri
   return true;
 }
 
-/** Own packages never wait; an unknown publish time can't decide whether any other package has aged. */
+/** Trusted packages never wait; an unknown publish time can't decide whether any other package has aged. */
 async function isAged(name: string, version: string, sources: PeerSources): Promise<boolean> {
-  if (sources.isOwn(name)) return true;
+  if (sources.isTrusted(name)) return true;
   const published = await sources.published(name, version);
   if (published === undefined) throw new Error("the publish time is unknown");
   return hasAged(published, sources.releaseAgeDays, sources.now);

@@ -4,8 +4,22 @@
 
 ### Changed
 
+- The release-age exemption is named `trustedPackages`, with the same npm scopes, Maven groups/plugin ID prefixes
+  and GitHub Actions owners. It can include third parties as well as the repository's own packages. Trust removes
+  the cooldown detection window (and Actions' immutable-release requirement); identity, advisory, malware, source
+  and pin checks still apply. The stricter base/head policy preserves trust across a configuration rename.
+  Run/report reason texts now say "trusted" instead of "own", including "trusted-package" and "configured
+  trusted-package exclusions".
+- Trusted Gradle plugin ID prefixes now match at dot boundaries: `com.acme` matches that ID and its descendants,
+  and `com.acme.` matches descendants only; neither trusts `com.acmecorp`. Only plugin marker coordinates match.
 - The gate strips a Gradle build path's trailing slash without a regular expression, clearing a CodeQL false
   positive; the results are unchanged.
+
+### Deprecated
+
+- `ownPackages` remains accepted as an alias for `trustedPackages`, without warnings; configuring both is an error.
+  Repin older gates before migrating configuration, including this repository and the adopter fixtures. The alias
+  will be removed in a later minor release after migration; see docs/releasing.md.
 
 ## 0.9.1 - 2026-10-28
 

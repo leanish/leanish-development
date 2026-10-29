@@ -67,7 +67,7 @@ async function materializeLock(inputs: MaterializationInputs, locks: ReadonlyMap
   const root = dirname(lockfile);
   const cwd = join(dir, root);
   await validateLock(cwd, lockfile);
-  await requireNpmExcludes(npm, cwd, exclude, "young security targets, young locked base versions or own scopes");
+  await requireNpmExcludes(npm, cwd, exclude, "young security targets, young locked base versions or trusted scopes");
   const graph = new NpmGraph(lock);
   const texts = await manifestTexts(graph, base, root);
   const plannedTargets = planDeclarations(graph, moves, locks, lock, texts);

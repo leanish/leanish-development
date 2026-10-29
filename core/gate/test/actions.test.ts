@@ -205,18 +205,18 @@ describe("resolving uses", () => {
     expect(actionGaps(tree, resolutions)).toEqual(gaps);
   });
 
-  it("fails a changed action without a published release, unless it's an own action", async () => {
-    const own = { name: "acme/tools", path: undefined, ref: CHECKOUT_SHA, comment: "v1.0.0", file: "ci.yml" };
+  it("fails a changed action without a published release, unless it's a trusted action", async () => {
+    const trusted = { name: "acme/tools", path: undefined, ref: CHECKOUT_SHA, comment: "v1.0.0", file: "ci.yml" };
     const gh = github({
       [`${API}/repos/acme/tools/git/ref/tags/v1.0.0`]: { body: { object: { type: "commit", sha: CHECKOUT_SHA } } },
     });
-    const head: ActionsInventory = { uses: [own], docker: [], files: ["ci.yml"], gaps: [] };
+    const head: ActionsInventory = { uses: [trusted], docker: [], files: ["ci.yml"], gaps: [] };
     const none: ActionsInventory = { uses: [], docker: [], files: [], gaps: [] };
     const resolutions = await resolveUses([head], gh);
     expect((await actionChanges(none, head, resolutions, gh, parseConfig({}))).problems).toEqual([
       "acme/tools@3d3c42e5aac5ba805825da76410c181273ba90b1 (ci.yml): acme/tools has no immutable GitHub release for v1.0.0, so the gate can't trust its age",
     ]);
-    const config = parseConfig({ ownPackages: { "GitHub Actions": { owners: ["acme"] } } });
+    const config = parseConfig({ trustedPackages: { "GitHub Actions": { owners: ["acme"] } } });
     expect(await actionChanges(none, head, resolutions, gh, config)).toEqual({ problems: [], gaps: [], changes: [] });
   });
 });

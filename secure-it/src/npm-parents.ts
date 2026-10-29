@@ -7,7 +7,7 @@
  *
  * For each excluding dependent P (not bundled: a bundled parent can't move on
  * its own), the candidates are P's versions in its own compatible line, above
- * its current one, at least `releaseAgeDays` old (own packages: any age), that
+ * its current one, at least `releaseAgeDays` old (trusted packages: any age), that
  * require with ranges admitting them as many as possible of the copies P must
  * admit (at least one), and still admit every copy whose target P's range
  * admits today. Of those, the one admitting the most (the lowest of those that
@@ -24,7 +24,7 @@ import { hasAged } from "@leanish/gate/age";
 import { ActionsGitHub } from "@leanish/gate/actions-github";
 import { IdentityCheck } from "@leanish/gate/candidates";
 import { NpmCatalog } from "@leanish/gate/catalogs";
-import { type Config, isOwnPackage } from "@leanish/gate/config";
+import { type Config, isTrustedPackage } from "@leanish/gate/config";
 import type { Exceptions } from "@leanish/gate/exceptions";
 import { type GateEnvironment, snapshotOptions } from "@leanish/gate/gate";
 import { npmLocation } from "@leanish/gate/inventory";
@@ -253,7 +253,7 @@ class ParentSearch {
     const listed = await this.#catalog.versions(parent);
     if (listed === undefined) return `the registry doesn't list ${dependent.name}'s versions`;
     const line = (version: string) => compatibleLine(config, parent, version);
-    const own = isOwnPackage(config.ownPackages, parent);
+    const trusted = isTrustedPackage(config.trustedPackages, parent);
     const now = env.now();
     const doc = await this.#registry.packument(dependent.name);
     const packages = lockedEntries(lockfiles, lockfile);
@@ -267,7 +267,7 @@ class ParentSearch {
     const dropped = new Set<string>();
     const admissible = new Set<string>();
     for (const version of versions) {
-      if (!own && pinned === undefined) {
+      if (!trusted && pinned === undefined) {
         const published = await this.#catalog.published({ ...parent, version });
         if (!hasAged(published, config.releaseAgeDays, now)) continue;
       }

@@ -177,7 +177,7 @@ function blockingVite(reason: string, undecided: boolean): NpmPeerPlanner {
 const PEER_UNDECIDED = "no safe aged compatible direct-peer set for vite@8.3.3: @vitejs/plugin@2.0.1: attestation lookup failed with HTTP 503; no eligible compatible combination satisfies all peer ranges";
 
 describe("secure-it run", () => {
-  it("doesn't publish an own-only young carrier as a bundle fix when a repository-only finding preserves carrier identity", async () => {
+  it("doesn't publish a young carrier fixing only its own advisories as a bundle fix when a repository-only finding preserves carrier identity", async () => {
     const versions = ["1.0.0", "1.0.1", "1.0.2"];
     const brace = (version: string) => version === "1.0.1" ? "5.0.12" : "5.0.9";
     const tarball = (version: string) => `https://registry.npmjs.org/carrier/-/carrier-${version}.tgz`;
@@ -624,7 +624,7 @@ describe("secure-it run", () => {
     expect(old.workspace.publications).toEqual([]);
   });
 
-  it("passes a young target exclusion while preserving own scopes and the sandbox's age", async () => {
+  it("passes a young target exclusion while preserving trusted scopes and the sandbox's age", async () => {
     const h = harness();
     const gate = await h.deps.gate(h.context);
     const deps = { ...h.deps, gate: async () => ({ ...gate, fetch: async () => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => ({ time: { "8.3.3": "2026-10-06T00:00:00Z" }, versions: {} }), text: async () => "" }) }) };
@@ -643,7 +643,7 @@ describe("secure-it run", () => {
     expect(context.releaseAgeExclude).toEqual(["@leanish/*"]);
   });
 
-  it("needs no newer npm when targets and base copies are aged and there are no own scopes", async () => {
+  it("needs no newer npm when targets and base copies are aged and there are no trusted scopes", async () => {
     const h = harness();
     const gate = await h.deps.gate(h.context);
     const deps = { ...h.deps, gate: async () => ({ ...gate, fetch: async () => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => ({ time: { "8.3.3": "2026-09-01T00:00:00Z", "8.3.1": "2026-09-01T00:00:00Z", "1.0.0": "2026-09-01T00:00:00Z" }, versions: {} }), text: async () => "" }) }),

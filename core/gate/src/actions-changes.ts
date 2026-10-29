@@ -6,7 +6,7 @@
  *   - its age is its GitHub release's publish time (a tag's own date is
  *     whatever its author wrote), trusted only from an immutable release (a
  *     mutable one's tag can be moved to newer code, which would inherit the
- *     release's age); no immutable release fails, own actions aside (they
+ *     release's age); no immutable release fails, trusted actions aside (they
  *     skip only the wait);
  *   - unchanged uses that aren't pinned or verified, `docker://` uses and
  *     local actions without metadata are coverage gaps: the PR didn't make
@@ -16,7 +16,7 @@
  */
 import type { ActionsGitHub } from "./actions-github.ts";
 import { type ActionsInventory, type ActionUse, isFullTag, occurrenceKey, type Resolution, resolutionKey, resolveUse } from "./actions-inventory.ts";
-import { type Config, isOwnPackage } from "./config.ts";
+import { type Config, isTrustedPackage } from "./config.ts";
 import type { Located } from "./findings.ts";
 import { mapLimited } from "./http.ts";
 import type { PackageName, PackageVersion } from "./package-version.ts";
@@ -96,7 +96,7 @@ export async function actionChanges(
     }
     if (!changed) continue;
     const pkg: PackageVersion = { ecosystem: "GitHub Actions", name: use.name, version: resolution.version };
-    if (isOwnPackage(config.ownPackages, pkg) || changes.has(`${pkg.name}@${pkg.version}`)) continue;
+    if (isTrustedPackage(config.trustedPackages, pkg) || changes.has(`${pkg.name}@${pkg.version}`)) continue;
     const published = await github.releasePublished(use.name, resolution.version);
     if (published === undefined) {
       problems.push(`${label}: ${use.name} has no immutable GitHub release for ${resolution.version}, so the gate can't trust its age`);

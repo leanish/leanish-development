@@ -21,7 +21,7 @@ const postcss = { time: { "8.5.28": old, "8.5.29": young, "8.5.30": young }, ver
 function registry(docs: Record<string, unknown> = {}) {
   return new NpmRegistry(fakeFetch(Object.fromEntries(Object.entries({ vite: baseDoc, postcss, ...docs }).map(([name, body]) => [`https://registry.npmjs.org/${encodeURIComponent(name)}`, { body }]))));
 }
-const inputs = (reg = registry()) => ({ registry: reg, days: 7, now: NOW, placement: (_parent: unknown, key: string) => `node_modules/${key}` });
+const inputs = (reg = registry()) => ({ registry: reg, days: 7, now: NOW, isTrusted: () => false, placement: (_parent: unknown, key: string) => `node_modules/${key}` });
 const config = parseConfig({});
 const advisory: Advisory = { id: "GHSA-fixed", ids: ["GHSA-fixed"], malicious: false, source: "osv", summary: undefined, severity: undefined };
 
@@ -55,8 +55,8 @@ describe("npm security-required release age", () => {
       expect(proof).toMatchObject({ targets: [], problems: [] });
     });
 
-    it("is never young when it's an own package", async () => {
-      const proof = await requiredClosure(root, at("8.5.30", { isOwn: (name) => name === "postcss", registry: registry({ postcss: { ...postcss, time: {} } }) }));
+    it("is never young when it's a trusted package", async () => {
+      const proof = await requiredClosure(root, at("8.5.30", { isTrusted: (name) => name === "postcss", registry: registry({ postcss: { ...postcss, time: {} } }) }));
       expect(proof).toMatchObject({ targets: [], problems: [] });
     });
 
@@ -91,10 +91,10 @@ describe("npm security-required release age", () => {
     expect(proof.problems.join()).toContain("unreadable candidate manifest");
   });
 
-  it("does not require an own dependency's publish time to honor its existing age exemption", async () => {
+  it("does not require a trusted dependency's publish time to honor its existing age exemption", async () => {
     const reg = registry({ vite: { ...baseDoc, versions: { ...baseDoc.versions, "8.3.3": { dependencies: { "@own/lib": "^1" } } } },
       "@own/lib": { time: {}, versions: { "1.0.0": {} } } });
-    const proof = await requiredClosure(root, { ...inputs(reg), isOwn: (name) => name.startsWith("@own/") });
+    const proof = await requiredClosure(root, { ...inputs(reg), isTrusted: (name) => name.startsWith("@own/") });
     expect(proof.problems).toEqual([]);
     expect(proof.targets).toEqual([]);
   });

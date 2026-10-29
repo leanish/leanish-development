@@ -39,8 +39,8 @@ describe("selectWork", () => {
     expect((await coupledWork([{ ...vitest, malicious: true }, other], stuck)).units).toEqual([]);
   });
 
-  it("keeps an own fix and the own companion it requires out of held work, young as they are", async () => {
-    // Both are own packages, so the gate never holds them: their moves are planned as aged (npm-peers' `isAged`).
+  it("keeps a trusted fix and the trusted companion it requires out of held work, young as they are", async () => {
+    // Both are trusted packages, so the gate never holds them: their moves are planned as aged (npm-peers' `isAged`).
     const core = fix({ name: "@own/core", from: "1.0.0", to: { version: "1.0.1", line: "1", aged: true, major: false, blockers: [] } });
     const ui = { name: "@own/ui", from: "1.0.0", to: "1.0.1", locations: ["node_modules/@own/ui"], line: "1", aged: true, declarations: [] };
     const selected = await coupledWork([core], { resolve: async () => ({ additions: [ui], blocked: [], sets: [["@own/core", "@own/ui"]] }) });

@@ -9,7 +9,7 @@
  * what each lockfile records.
  */
 import { type CarriedTarget, chooseCarrier, registryIntegrity } from "./carrier-fixes.ts";
-import { type Config, isOwnPackage } from "./config.ts";
+import { type Config, isTrustedPackage } from "./config.ts";
 import type { Finding } from "./findings.ts";
 import { type NpmLockfile, npmLocation } from "./inventory.ts";
 import { type BundleReader, bundleMismatches } from "./npm-bundles.ts";
@@ -160,7 +160,7 @@ export async function decideCarrier(group: CarrierGroup, own: ReadonlyArray<stri
     own: fixable,
     malicious,
     versions,
-    ownPackage: isOwnPackage(context.config.ownPackages, pkg),
+    trustedPackage: isTrustedPackage(context.config.trustedPackages, pkg),
   }, {
     bundles: async (version) => context.reader.read(group.name, version, await registryIntegrity(context.registry, group.name, version)),
     scan: context.scan,
@@ -178,7 +178,7 @@ export async function decideCarrier(group: CarrierGroup, own: ReadonlyArray<stri
     carries: carries((name) => [...new Set(choice.bundle.packages.filter((entry) => entry.name === name).map((entry) => entry.version))].sort()),
     unfixable,
     // An own carrier never waits, so the gate never holds it, whatever its age (`aged` is the gate's view, as in candidates.ts).
-    to: { version: choice.version, line: choice.line, aged: choice.aged || isOwnPackage(context.config.ownPackages, pkg), major: line(choice.version) !== line(group.version), blockers: [] },
+    to: { version: choice.version, line: choice.line, aged: choice.aged || isTrustedPackage(context.config.trustedPackages, pkg), major: line(choice.version) !== line(group.version), blockers: [] },
     problem: undefined,
     ...vetoFields(choice),
   };

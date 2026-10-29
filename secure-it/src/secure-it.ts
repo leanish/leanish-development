@@ -206,7 +206,7 @@ async function prepareNpmFiles(execution: Execution, plan: ChangePlan, base: Tre
   const window = await npmWindowFor(plan, context.releaseAgeDays, context.releaseAgeExclude, context.now, env.fetch, await lockfilesOf(base));
   for (const detail of window.notes) context.logger.warn("secure-it: npm release-age exclusion", { detail });
   if (plan.moves.some((move) => move.ecosystem === "npm")) {
-    await requireNpmExcludes((_dir, args) => deps.npm(context, args), context.workingCopy.path, window.exclude, "young security targets or proved requirements, unreadable or young locked base versions, or own-package exclusions");
+    await requireNpmExcludes((_dir, args) => deps.npm(context, args), context.workingCopy.path, window.exclude, "young security targets or proved requirements, unreadable or young locked base versions, or trusted-package exclusions");
   }
   let files = await deps.materializeNpm(context, base, plan, window.exclude);
   if (reconcileFloors) files = reconcileNpmFloors(files, await deps.trees.working(context.workingCopy).read(FLOORS_FILE));

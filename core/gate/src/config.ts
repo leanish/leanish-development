@@ -8,7 +8,7 @@
  *     "gradle": { "builds": ["."], "ignoreConfigurations": [] },
  *     "maven": { "repositories": ["https://repo1.maven.org/maven2", "https://plugins.gradle.org/m2"] },
  *     "releaseAgeDays": 7,
- *     "ownPackages": {
+ *     "trustedPackages": {
  *       "npm": { "scopes": ["@acme"] },
  *       "Maven": { "groups": ["com.acme"], "pluginIdPrefixes": ["com.acme."] },
  *       "GitHub Actions": { "owners": ["acme"] }
@@ -55,7 +55,8 @@ export interface Config {
   };
   /** The wait before a new version is taken, in days. */
   readonly releaseAgeDays: number;
-  readonly ownPackages: OwnPackages;
+  /** Packages that skip the release-age wait; their other checks still apply. */
+  readonly trustedPackages: TrustedPackages;
   /** `packageKey` → `owner/repo`, where the source repository can't be found automatically. */
   readonly repositories: ReadonlyMap<string, string>;
   /**
@@ -66,17 +67,17 @@ export interface Config {
   readonly compatibleLines: ReadonlyArray<readonly [pattern: string, segments: number]>;
 }
 
-export interface OwnPackages {
+export interface TrustedPackages {
   /** npm scopes, with the `@`. */
   readonly npmScopes: ReadonlyArray<string>;
   /** Exact Maven groups. */
   readonly mavenGroups: ReadonlyArray<string>;
-  /** Gradle plugin id prefixes; they match plugin marker coordinates `<id>:<id>.gradle.plugin` only. */
+  /** Gradle plugin id prefixes at dot boundaries, marker coordinates `<id>:<id>.gradle.plugin` only; a trailing dot matches descendants only. */
   readonly pluginIdPrefixes: ReadonlyArray<string>;
-  /** GitHub owners whose actions and reusable workflows are own. */
+  /** GitHub owners whose actions and reusable workflows are trusted. */
   readonly actionOwners: ReadonlyArray<string>;
-  /** Set by the stricter policy (`cooldown.ts`): a package is own only when this side owns it too. */
-  readonly alsoOwnedBy?: OwnPackages;
+  /** Set by the stricter policy (`cooldown.ts`): a package is trusted only when this side trusts it too. */
+  readonly alsoTrustedBy?: TrustedPackages;
 }
 
 export const GRADLE_PLUGIN_PORTAL = "https://plugins.gradle.org/m2";
@@ -86,42 +87,48 @@ export const DEFAULT_CONFIG: Config = {
   gradle: { builds: undefined, ignoreConfigurations: [] },
   maven: { repositories: [MAVEN_CENTRAL, GRADLE_PLUGIN_PORTAL] },
   releaseAgeDays: 7,
-  ownPackages: { npmScopes: [], mavenGroups: [], pluginIdPrefixes: [], actionOwners: [] },
+  trustedPackages: { npmScopes: [], mavenGroups: [], pluginIdPrefixes: [], actionOwners: [] },
   repositories: new Map(),
   compatibleLines: [],
 };
 
-/** Own packages skip the release-age wait, and only that. */
-export function isOwnPackage(own: OwnPackages, pkg: PackageName): boolean {
-  return ownedBy(own, pkg) && (own.alsoOwnedBy === undefined || isOwnPackage(own.alsoOwnedBy, pkg));
+/** Trusted packages skip the release-age wait, and only that. */
+export function isTrustedPackage(trusted: TrustedPackages, pkg: PackageName): boolean {
+  return trustedBy(trusted, pkg) && (trusted.alsoTrustedBy === undefined || isTrustedPackage(trusted.alsoTrustedBy, pkg));
 }
 
-function ownedBy(own: OwnPackages, pkg: PackageName): boolean {
-  if (pkg.ecosystem === "npm") return own.npmScopes.some((scope) => pkg.name.startsWith(`${scope}/`));
-  if (pkg.ecosystem === "GitHub Actions") return own.actionOwners.some((owner) => pkg.name.startsWith(`${owner.toLowerCase()}/`));
+function trustedBy(trusted: TrustedPackages, pkg: PackageName): boolean {
+  if (pkg.ecosystem === "npm") return trusted.npmScopes.some((scope) => pkg.name.startsWith(`${scope}/`));
+  if (pkg.ecosystem === "GitHub Actions") return trusted.actionOwners.some((owner) => pkg.name.startsWith(`${owner.toLowerCase()}/`));
   const [group, artifact] = pkg.name.split(":");
-  if (own.mavenGroups.includes(group!)) return true;
-  return own.pluginIdPrefixes.some((prefix) => group!.startsWith(prefix) && artifact === `${group}.gradle.plugin`);
+  if (trusted.mavenGroups.includes(group!)) return true;
+  if (artifact !== `${group}.gradle.plugin`) return false;
+  return trusted.pluginIdPrefixes.some((prefix) => group === prefix || group!.startsWith(prefix.endsWith(".") ? prefix : `${prefix}.`));
 }
 
 export function parseConfig(raw: unknown): Config {
   const where = "supply-chain.json";
-  const root = object(raw, where, ["npm", "gradle", "maven", "releaseAgeDays", "ownPackages", "repositories", "compatibleLines"]);
+  const root = object(raw, where, ["npm", "gradle", "maven", "releaseAgeDays", "trustedPackages", "ownPackages", "repositories", "compatibleLines"]);
   const npm = root["npm"] === undefined ? {} : object(root["npm"], `${where}: npm`, ["lockfiles", "registries"]);
   const gradle = root["gradle"] === undefined ? {} : object(root["gradle"], `${where}: gradle`, ["builds", "ignoreConfigurations"]);
   const maven = root["maven"] === undefined ? {} : object(root["maven"], `${where}: maven`, ["repositories"]);
-  const own = root["ownPackages"] === undefined ? {} : object(root["ownPackages"], `${where}: ownPackages`, ["npm", "Maven", "GitHub Actions"]);
-  const ownActions =
-    own["GitHub Actions"] === undefined ? {} : object(own["GitHub Actions"], `${where}: ownPackages["GitHub Actions"]`, ["owners"]);
-  const ownNpm = own["npm"] === undefined ? {} : object(own["npm"], `${where}: ownPackages.npm`, ["scopes"]);
-  const ownMaven = own["Maven"] === undefined ? {} : object(own["Maven"], `${where}: ownPackages.Maven`, ["groups", "pluginIdPrefixes"]);
+  if (Object.hasOwn(root, "trustedPackages") && Object.hasOwn(root, "ownPackages")) {
+    throw new Error(`${where}: trustedPackages and ownPackages cannot both be present`);
+  }
+  // Normalize the deprecated alias before the base/head policy intersects the trust lists.
+  const trustField = Object.hasOwn(root, "ownPackages") ? "ownPackages" : "trustedPackages";
+  const trusted = root[trustField] === undefined ? {} : object(root[trustField], `${where}: ${trustField}`, ["npm", "Maven", "GitHub Actions"]);
+  const trustedActions =
+    trusted["GitHub Actions"] === undefined ? {} : object(trusted["GitHub Actions"], `${where}: ${trustField}["GitHub Actions"]`, ["owners"]);
+  const trustedNpm = trusted["npm"] === undefined ? {} : object(trusted["npm"], `${where}: ${trustField}.npm`, ["scopes"]);
+  const trustedMaven = trusted["Maven"] === undefined ? {} : object(trusted["Maven"], `${where}: ${trustField}.Maven`, ["groups", "pluginIdPrefixes"]);
   const releaseAgeDays = root["releaseAgeDays"] ?? DEFAULT_CONFIG.releaseAgeDays;
   if (typeof releaseAgeDays !== "number" || !Number.isInteger(releaseAgeDays) || releaseAgeDays < 0) {
     throw new Error(`${where}: releaseAgeDays must be a nonnegative integer`);
   }
-  const scopes = strings(ownNpm["scopes"], `${where}: ownPackages.npm.scopes`) ?? [];
+  const scopes = strings(trustedNpm["scopes"], `${where}: ${trustField}.npm.scopes`) ?? [];
   for (const scope of scopes) {
-    if (!/^@[a-z0-9][\w.-]*$/i.test(scope)) throw new Error(`${where}: ownPackages.npm.scopes has ${scope}, not an @scope`);
+    if (!/^@[a-z0-9][\w.-]*$/i.test(scope)) throw new Error(`${where}: ${trustField}.npm.scopes has ${scope}, not an @scope`);
   }
   // `(?<!\/)` below: starting only at the run's first slash, a long run isn't rescanned from each slash.
   return {
@@ -144,11 +151,11 @@ export function parseConfig(raw: unknown): Config {
       ),
     },
     releaseAgeDays,
-    ownPackages: {
+    trustedPackages: {
       npmScopes: scopes,
-      mavenGroups: strings(ownMaven["groups"], `${where}: ownPackages.Maven.groups`) ?? [],
-      pluginIdPrefixes: strings(ownMaven["pluginIdPrefixes"], `${where}: ownPackages.Maven.pluginIdPrefixes`) ?? [],
-      actionOwners: strings(ownActions["owners"], `${where}: ownPackages["GitHub Actions"].owners`) ?? [],
+      mavenGroups: strings(trustedMaven["groups"], `${where}: ${trustField}.Maven.groups`) ?? [],
+      pluginIdPrefixes: strings(trustedMaven["pluginIdPrefixes"], `${where}: ${trustField}.Maven.pluginIdPrefixes`) ?? [],
+      actionOwners: strings(trustedActions["owners"], `${where}: ${trustField}["GitHub Actions"].owners`) ?? [],
     },
     repositories: repositories(root["repositories"], `${where}: repositories`),
     compatibleLines: compatibleLines(root["compatibleLines"], `${where}: compatibleLines`),

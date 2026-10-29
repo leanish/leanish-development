@@ -83,7 +83,7 @@ const FROM = bundle("brace@5.0.9", "minimatch@10.2.5");
 function search(versions: string[], overrides: Partial<CarrierSearch> = {}): CarrierSearch {
   return {
     carrier: "cdk", from: "2.9.0", fromBundle: FROM, carried: [{ name: "brace", advisory: "GHSA-brace" }], own: [],
-    malicious: false, versions, ownPackage: false, ...overrides,
+    malicious: false, versions, trustedPackage: false, ...overrides,
   };
 }
 
@@ -163,9 +163,9 @@ describe("choosing a carrier version", () => {
     expect(await chooseCarrier(search(["2.10.0"]), services)).toMatchObject({ kind: "incomplete" });
   });
 
-  it("lets own packages take the lowest fix whatever its age", async () => {
+  it("lets trusted packages take the lowest fix whatever its age", async () => {
     const { services } = setup({ "2.10.0": { days: 0, bundle: fixed }, "2.11.0": { days: 30, bundle: fixed } });
-    expect(await chooseCarrier(search(["2.10.0", "2.11.0"], { ownPackage: true }), services)).toMatchObject({ version: "2.10.0", aged: false });
+    expect(await chooseCarrier(search(["2.10.0", "2.11.0"], { trustedPackage: true }), services)).toMatchObject({ version: "2.10.0", aged: false });
   });
 
   it("judges on one snapshot covering every bundle read so far", async () => {

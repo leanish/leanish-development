@@ -27,8 +27,8 @@ export interface YoungVersionInputs {
   readonly packages: ReadonlyArray<PackageVersion>;
   /** What head adds or changes, one entry per version (with every version it replaces). */
   readonly changes: ReadonlyArray<ChangedVersion>;
-  /** Changes of own packages, never young themselves, that can still be the root of a required-dependency proof. */
-  readonly ownRoots: ReadonlyArray<ChangedVersion>;
+  /** Changes of trusted packages, never young themselves, that can still be the root of a required-dependency proof. */
+  readonly trustedRoots: ReadonlyArray<ChangedVersion>;
   readonly config: Config;
   readonly exceptions: Exceptions;
   readonly now: Date;
@@ -52,7 +52,7 @@ export interface YoungVersionReview {
 export async function reviewYoungVersions(inputs: YoungVersionInputs): Promise<YoungVersionReview> {
   const { config, now, catalogs } = inputs;
   const young = inputs.changes.filter((change) => isYoung(change, config, now));
-  const rootChanges = [...inputs.changes, ...inputs.ownRoots].filter((change) => change.pkg.ecosystem === "npm" && change.replaced.length > 0);
+  const rootChanges = [...inputs.changes, ...inputs.trustedRoots].filter((change) => change.pkg.ecosystem === "npm" && change.replaced.length > 0);
   const youngNpm = young.some((change) => change.pkg.ecosystem === "npm");
   // A young npm version may be a required dependency of a security root, so the roots' candidates are needed too.
   const candidates = await gatherCandidates([...young, ...youngNpm ? rootChanges.filter((change) => !young.includes(change)) : []], catalogs, config);

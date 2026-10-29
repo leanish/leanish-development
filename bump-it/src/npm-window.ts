@@ -29,14 +29,14 @@ export async function npmWindowFor(baseVersions: ReadonlyMap<string, ReadonlyArr
   const notes = excluded.map((entry) => entry.note);
   const reasons: string[] = [];
   if (window.exclude.length > 0) {
-    reasons.push("configured own-package exclusions");
+    reasons.push("configured trusted-package exclusions");
   }
   if (notes.length > 0) {
     reasons.push("young or unreadable locked versions");
   }
   return {
     window: { ...window, exclude: [...new Set([...window.exclude, ...excluded.map((entry) => entry.name)])].sort() },
-    lockedNames: new Set(excluded.map((entry) => entry.name).filter((name) => !sources.isOwn(name))),
+    lockedNames: new Set(excluded.map((entry) => entry.name).filter((name) => !sources.isTrusted(name))),
     sources: cached,
     notes,
     reason: reasons.join(" and "),

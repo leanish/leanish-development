@@ -35,7 +35,7 @@ describe("secure-it npm window", () => {
     expect(result.notes).toContainEqual(expect.stringContaining("unreadable: npm's window excludes its locked 0.1.0 because its publish time could not be read"));
     expect(source.calls).toHaveLength(3);
   });
-  it("exempts young targets only, retains own scopes, and reads each package once", async () => {
+  it("exempts young targets only, retains trusted scopes, and reads each package once", async () => {
     const source = registry({ "1.2.2": "2026-09-30T12:00:01Z", "1.2.1": "2026-09-30T12:00:00Z" });
     const result = await npmWindowFor(plan(["source-map-js", "1.2.2"], ["source-map-js", "1.2.2"], ["old", "1.2.1"]), 7, ["@own/*"], NOW, source.fetch);
     expect(result.exclude).toEqual(["@own/*", "source-map-js"]);

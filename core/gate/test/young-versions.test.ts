@@ -28,7 +28,7 @@ async function review(changes: Parameters<typeof reviewYoungVersions>[0]["change
   const scans: Array<{ packages: ReadonlyArray<PackageVersion>; candidates: ReadonlyArray<PackageVersion> }> = [];
   const packages: PackageVersion[] = [{ ecosystem: "Maven", name: "g:a", version: "1.0.1" }];
   const result = await reviewYoungVersions({
-    base: tree, head: tree, baseInventory: inventory, headInventory: inventory, packages, changes, ownRoots: [],
+    base: tree, head: tree, baseInventory: inventory, headInventory: inventory, packages, changes, trustedRoots: [],
     config: parseConfig({}), exceptions: NO_EXCEPTIONS, now: NOW, catalogs: { npm: catalog, Maven: catalog, "GitHub Actions": catalog },
     registry: new NpmRegistry(offline), reader: new BundleReader(offline),
     scan: async (scanned, candidates = []) => {

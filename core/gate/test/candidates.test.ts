@@ -224,7 +224,7 @@ describe("securityCandidates", () => {
     expect(moves(none.fixes)).toEqual([["evil@1.0.1", undefined, "no clean version of evil at least 7 days old to leave the malicious 1.0.1 for"]]);
   });
 
-  it("lets own packages skip the wait, and leaves excepted findings alone", async () => {
+  it("lets trusted packages skip the wait, and leaves excepted findings alone", async () => {
     const affected = { "@acme/lib@1.0.0": ["GHSA-a"], "other@1.0.0": ["GHSA-x"] };
     const registry = { "@acme/lib": { "1.0.0": OLD, "1.0.1": YESTERDAY, "1.0.2": OLD }, other: { "1.0.0": OLD, "1.0.1": OLD } };
     const exceptions = {
@@ -233,13 +233,13 @@ describe("securityCandidates", () => {
     const head = await tree(
       { "@acme/lib": "1.0.0", other: "1.0.0" },
       {
-        ".github/supply-chain.json": JSON.stringify({ ownPackages: { npm: { scopes: ["@acme"] } } }),
+        ".github/supply-chain.json": JSON.stringify({ trustedPackages: { npm: { scopes: ["@acme"] } } }),
         ".github/supply-chain-exceptions.json": JSON.stringify(exceptions),
       },
     );
     const found = await securityCandidates(head, environment(affected, registry));
     expect(moves(found.fixes)).toEqual([["@acme/lib@1.0.0", "1.0.1", undefined]]);
-    // 1.0.1 is a day old, but an own package never waits: nothing holds it.
+    // 1.0.1 is a day old, but a trusted package never waits: nothing holds it.
     expect(found.fixes.find((fix) => fix.name === "@acme/lib")?.to?.aged).toBe(true);
   });
 
@@ -372,18 +372,18 @@ describe("securityCandidates and repository-only advisories", () => {
     expect(fix?.vetoesLeftOut).toBeUndefined();
   });
 
-  it("records the veto on an own package's move too", async () => {
-    // An aged 1.0.3 too: the rule would take it for anyone else; an own package takes the lowest fix, 1.0.2.
+  it("records the veto on a trusted package's move too", async () => {
+    // An aged 1.0.3 too: the rule would take it for anyone else; a trusted package takes the lowest fix, 1.0.2.
     const registry = { "@leanish/lib": { "1.0.0": OLD, "1.0.1": YESTERDAY, "1.0.2": YESTERDAY, "1.0.3": OLD } };
     const env = environment({ "@leanish/lib@1.0.0": ["GHSA-a"] }, registry);
     const advisories = [{ ghsa_id: "GHSA-b", state: "published", vulnerabilities: [{ package: { ecosystem: "npm", name: "@leanish/lib" }, vulnerable_version_range: ">= 1.0.1, < 1.0.2" }] }];
-    const own = { ...env, fetch: async (url: string, init?: Parameters<typeof env.fetch>[1]) => {
+    const trusted = { ...env, fetch: async (url: string, init?: Parameters<typeof env.fetch>[1]) => {
       if (/^https:\/\/registry\.npmjs\.org\/%40leanish%2Flib\/[^/]+$/.test(url)) return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ repository: "github:leanish/lib" }), text: async () => "" };
       if (url === "https://api.github.com/repos/leanish/lib/security-advisories?state=published&per_page=100") return { ok: true, status: 200, headers: { get: () => null }, json: async () => advisories, text: async () => "" };
       return env.fetch(url, init);
     } };
-    const head = await tree({ "@leanish/lib": "1.0.0" }, { ".github/supply-chain.json": JSON.stringify({ ownPackages: { npm: { scopes: ["@leanish"] } } }) });
-    const [fix] = (await securityCandidates(head, own)).fixes;
+    const head = await tree({ "@leanish/lib": "1.0.0" }, { ".github/supply-chain.json": JSON.stringify({ trustedPackages: { npm: { scopes: ["@leanish"] } } }) });
+    const [fix] = (await securityCandidates(head, trusted)).fixes;
     expect(fix).toMatchObject({ to: { version: "1.0.2" }, vetoed: [{ version: "1.0.1", advisories: ["GHSA-b"] }] });
   });
 });
@@ -402,12 +402,12 @@ describe("securityCandidates, regressions", () => {
     expect(found.fixes[0]?.severity).toBe("CRITICAL");
   });
 
-  it("lets an own package leave malware for a clean version however young", async () => {
+  it("lets a trusted package leave malware for a clean version however young", async () => {
     const affected = { "@acme/lib@1.0.1": ["MAL-2026-2"] };
     const registry = { "@acme/lib": { "1.0.1": OLD, "1.0.2": YESTERDAY } };
-    const head = await tree({ "@acme/lib": "1.0.1" }, { ".github/supply-chain.json": JSON.stringify({ ownPackages: { npm: { scopes: ["@acme"] } } }) });
+    const head = await tree({ "@acme/lib": "1.0.1" }, { ".github/supply-chain.json": JSON.stringify({ trustedPackages: { npm: { scopes: ["@acme"] } } }) });
     const found = await securityCandidates(head, environment(affected, registry));
-    // The gate never holds an own package (it never waits), so its young fix isn't planned as held either.
+    // The gate never holds a trusted package (it never waits), so its young fix isn't planned as held either.
     expect(found.fixes[0]).toMatchObject({ malicious: true, to: { version: "1.0.2", aged: true } });
   });
 
@@ -713,11 +713,11 @@ describe("bumpCandidates", () => {
     }
   });
 
-  it("reads workspaces' own copies, lets own packages skip the wait, and ignores non-registry specs", async () => {
+  it("reads workspaces' own copies, lets trusted packages skip the wait, and ignores non-registry specs", async () => {
     const registry = { "@acme/kit": { "1.0.0": OLD, "1.0.1": YESTERDAY }, shared: { "2.0.0": OLD, "2.1.0": OLD } };
     const head = await tree(
       { "@acme/kit": "1.0.0", shared: "2.1.0" },
-      { ".github/supply-chain.json": JSON.stringify({ ownPackages: { npm: { scopes: ["@acme"] } } }) },
+      { ".github/supply-chain.json": JSON.stringify({ trustedPackages: { npm: { scopes: ["@acme"] } } }) },
       { name: "app", workspaces: ["tools/x"], dependencies: { "@acme/kit": "^1.0.0", local: "file:../local" } },
       {
         "tools/x": { name: "x", dependencies: { shared: "^2.0.0", gh: "github:owner/repo" } },
@@ -954,10 +954,10 @@ describe("actions without a trusted age", () => {
     ]);
   });
 
-  it("says nothing for npm, own actions, or when every newer release is dated", async () => {
+  it("says nothing for npm, trusted actions, or when every newer release is dated", async () => {
     expect(await untrustedActionReleases({ ...checkout, ecosystem: "npm" }, ["v7.0.2"], catalog, parseConfig({}))).toEqual([]);
-    const own = parseConfig({ ownPackages: { "GitHub Actions": { owners: ["actions"] } } });
-    expect(await untrustedActionReleases(checkout, ["v7.0.2"], catalog, own)).toEqual([]);
+    const trusted = parseConfig({ trustedPackages: { "GitHub Actions": { owners: ["actions"] } } });
+    expect(await untrustedActionReleases(checkout, ["v7.0.2"], catalog, trusted)).toEqual([]);
     expect(await untrustedActionReleases(checkout, ["v7.2.0"], catalog, parseConfig({}))).toEqual([]);
   });
 });

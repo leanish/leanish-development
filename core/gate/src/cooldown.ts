@@ -9,7 +9,7 @@
  * explicit decision.
  *
  * The policy that judges a PR is the stricter of base's and head's: the
- * longer wait, and own packages only where both name them, so a PR can't
+ * longer wait, and trusted packages only where both name them, so a PR can't
  * loosen the cooldown that judges it.
  */
 import type { Config } from "./config.ts";
@@ -32,8 +32,8 @@ export function strictestPolicy(head: Config, base: Config): Config {
   return {
     ...head,
     releaseAgeDays: Math.max(head.releaseAgeDays, base.releaseAgeDays),
-    // Own only where both sides say so: `isOwnPackage` checks head's lists, then base's.
-    ownPackages: { ...head.ownPackages, alsoOwnedBy: base.ownPackages },
+    // Trusted only where both sides say so: `isTrustedPackage` checks head's lists, then base's.
+    trustedPackages: { ...head.trustedPackages, alsoTrustedBy: base.trustedPackages },
   };
 }
 
