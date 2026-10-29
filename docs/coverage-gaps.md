@@ -17,9 +17,10 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   owner is listed in `trustedPackages["GitHub Actions"].owners`. Existing uses do not authorize more copies.
   The gate documents the [scope and risks of trusting an owner](../core/gate/README.md#configuration-githubsupply-chainjson).
   This repository trusts `actions` and `aws-actions`; adopters choose their own policy.
-- **Publishing races the release's CI**: `publish-agent-runtime.yml` requires the tag's commit to have its `check` and
-  `supply-chain` checks green, so a GitHub release created while they still run fails before packing (nothing
-  publishes) and isn't retried when they pass. Create the release once they're green, or re-run the run's failed jobs.
+- **Publishing waits for the release's CI only so long**: `publish-agent-runtime.yml` requires the tag's commit to have
+  its `check` and `supply-chain` checks green, watching main's `ci` runs still in progress on it for up to 20 minutes.
+  A run that outlasts that, or one that doesn't exist yet when the publish lists them, fails it before packing (nothing
+  publishes), and it isn't retried when they pass: re-run the publish run's failed jobs once they're green.
 - **A repository advisory range read too wide**: an AND range written upper bound first (`< 2.0.0, >= 1.0.0`) reads
   as every version, so versions outside it count as affected; nothing reports it.
 - **GitHub source repository matching stays as in v0.5.2**: a repository URL whose host only ends in `github.com`

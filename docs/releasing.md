@@ -27,13 +27,22 @@ unreleased changes collect under its "Unreleased" heading.
      repositories: `gate`, `batch`, `test-run` and `schedule` refuse anything
      else. After the stable release, move the acceptance task to the release
      (`schedule ... --release v<version>`) or delete it.
-   - Before the fixture runs, with the tools idle, delete every tool branch on the
-     owner's fixture repositories so the runs start clean (GitHub closes their PRs
-     with them): `node core/setup/src/cli.ts fixture-cleanup --bump-it-config <path>
-     --secure-it-config <path>` (the two fixture configs) lists the branches; rerun
-     it with `--apply` to delete them. Don't start the runs while a branch is
-     reported blocked. Record the previous candidate's run evidence before
-     cleaning: closed PRs stay readable, their branches don't.
+   - Run the owner's fixture repositories once per coding-agent adapter, Claude
+     Code first and then Codex, with the tools idle and nothing else writing
+     their configs:
+     `bash core/setup/scripts/fixture-pass.sh --release v<version>-rc.<n> --owner
+     <owner> --agent claude-code|codex --model <model> --effort <effort> --out
+     <directory>` (the output directory outside the repository). The owner's
+     installation configs must list only the fixture repositories. Each pass
+     first deletes every tool branch on those repositories so it starts clean
+     (GitHub closes their PRs with them; `fixture-cleanup` run on the same
+     configs without `--apply` lists them), stopping if a branch is reported
+     blocked, then runs secure-it and bump-it with `batch`. For the pass it
+     switches the `agent:` section of those configs to the requested agent and
+     restores them on any exit, so the regular configs stay as they are; it
+     writes nothing to Git. Record each pass's evidence (its PRs and their CI)
+     before starting the next one or cleaning: closed PRs stay readable, their
+     branches don't.
    - Run the tools for real from a checkout of the candidate, as the
      [adoption guide](adopting-tools.md) describes, on adopting repositories
      where the release's changes apply, including the owner's fixture
@@ -93,8 +102,9 @@ unreleased changes collect under its "Unreleased" heading.
    reviewed.
    Squash-merge the release PR and create a lightweight `v<version>` tag at
    **its exact merge commit**. Once that commit's `check` and `supply-chain` checks
-   are green (publishing requires them; a release created earlier fails before
-   packing, and its run's failed jobs can be re-run), create the matching GitHub
+   are green (publishing requires them: it waits up to 20 minutes for `ci` runs
+   still in progress, and otherwise fails before packing, and its run's failed
+   jobs can be re-run), create the matching GitHub
    release with the fixes and a link to `CHANGELOG.md`, as java-conventions does. Do not move an
    existing tag; publishing `@leanish/agent-runtime` is a separate step (below).
 6. When the reusable workflow or gate code changes, resolve the tag's full commit
@@ -144,7 +154,8 @@ adds provenance (it does for a public repository like this one).
    stable `v<major>.<minor>.<patch>` release. It requires the `npm`
    environment to have a required reviewer, the tag's commit on main with its
    `check` and `supply-chain` checks green (`cooldown` runs on pull requests
-   only), and npm 11.5.1 or later. It runs `npm ci`, packs the package
+   only; main's `ci` runs still in progress on that commit are watched to the
+   end first, for up to 20 minutes), and npm 11.5.1 or later. It runs `npm ci`, packs the package
    (`npm run pack -w @leanish/agent-runtime`), checks the tarball's name and
    version against the tag, installs it in an empty project and imports every
    export, and records its sha512 integrity. It has no publishing permission.
