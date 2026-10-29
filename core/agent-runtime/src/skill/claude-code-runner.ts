@@ -1,5 +1,6 @@
 // Copied from leanish/leanish-development core/runtime/src/skill/claude-code-runner.ts at c6282df; see PROVENANCE.md.
-// Local changes: write access in Claude Code's sandbox, usage and failure reasons from its stream-json events.
+// Local changes: write access in Claude Code's sandbox, usage and failure reasons from its stream-json events, and
+// refusals that never echo CLAUDE_CONFIG_DIR's value.
 import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, rmdir, writeFile } from "node:fs/promises";
@@ -151,7 +152,8 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
     const access = invocation.access ?? "read-only";
     if (access === "write" && this.#confinement === "restricted") {
       throw new Error(
-        "ClaudeCodeRunner: access 'write' isn't available under the 'restricted' confinement, which grants no tool that edits or runs commands; ask for 'read-only' access, or run the write where Claude Code's sandbox is available ('sandbox' confinement)",
+        // Never advise a lesser access here: a caller acting on the text would record a write that never happened.
+        "ClaudeCodeRunner: access 'write' needs the 'sandbox' confinement, which only a host with Claude Code's sandbox has; this runner is 'restricted' and grants no tool that edits or runs commands, so give write runs to a runner that can write here",
       );
     }
     const workingCopies = invocation.workingCopies.map((wc) => wc.path);

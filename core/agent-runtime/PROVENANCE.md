@@ -2,9 +2,9 @@
 
 This package is the shared core of the coding-agent runtime. secure-it and bump-it use it here, and
 [leanish/leanish-development-incubator](https://github.com/leanish/leanish-development-incubator)'s `core/runtime`
-(`@leanish/runtime`, private) is to consume it instead of its own copies, keeping only its framework and adapters on top.
-**That adoption is planned, not done:** the incubator still has its copies, so until they are removed, **a fix in one
-copy is replicated by hand in the other**; the incubator's README lists the copied files from its side. Where the two sides' needs
+(`@leanish/runtime`, private) consumes it from npm instead of its own copies, keeping only its framework and adapters on
+top (adopted with 0.9.1, in leanish-development-incubator#44): a fix here reaches the incubator when it moves to the
+release that has it, with nothing to replicate by hand. Where the two sides' needs
 differ, the shared module takes an explicit option instead of picking one side (`createGitHubClient`'s `headChecks`,
 an optional `commitIdentity` in `isolationPolicy`, the run report's host fields).
 

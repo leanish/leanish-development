@@ -14,8 +14,10 @@
   and `com.acme.` matches descendants only; neither trusts `com.acmecorp`. Only plugin marker coordinates match.
 - The gate strips a Gradle build path's trailing slash without a regular expression, clearing a CodeQL false
   positive; the results are unchanged.
-- agent-runtime's Claude Code runner refuses a `write` run under the `restricted` confinement with a message that
-  suggests `read-only` access first, instead of only a confinement a host without Claude Code's sandbox can't use.
+- agent-runtime's Claude Code runner still refuses a `write` run under the `restricted` confinement before staging
+  anything; its message now says only a host with Claude Code's sandbox has the `sandbox` confinement, and that
+  write runs belong to a runner that can write there. It keeps its "access 'write' needs the 'sandbox' confinement"
+  opening and never suggests a lesser access, which a caller could take as done.
 
 ### Fixed
 
