@@ -234,7 +234,7 @@ export async function runCompare(base: Tree, head: Tree, env: GateEnvironment, g
     cooldown: { evaluated: true, releaseAgeDays: config.releaseAgeDays, held: [...youngVersions.held] },
     failures: [...verdict.failures, ...problems, ...floorCheck.failures],
     warnings: verdict.warnings,
-    notes: [...verdict.notes, ...floorCheck.notes, ...youngVersions.notes, ...await agePolicyNotes(base, config, configText)],
+    notes: [...new Set([...verdict.notes, ...snapshot.notes, ...floorCheck.notes, ...youngVersions.notes, ...await agePolicyNotes(base, config, configText)])],
     gaps: [...snapshot.gaps, ...actions.gaps],
     osvScannerVersion: version,
     configText,
@@ -293,7 +293,7 @@ export async function runScan(head: Tree, env: GateEnvironment, gradle: GradleIn
   return {
     failures: [...verdict.failures, ...bundleFailures(inventory), ...npmSources, ...resolutionFailures(inventory, config, undefined), ...floorCheck.failures],
     warnings: [],
-    notes: [...verdict.notes, ...floorCheck.notes],
+    notes: [...verdict.notes, ...snapshot.notes, ...floorCheck.notes],
     gaps: [...snapshot.gaps, ...actionGaps(inventory.actions, resolutions)],
     osvScannerVersion: version,
     configText,

@@ -95,7 +95,7 @@ interface Harness {
   readonly journal: MemoryJournal;
 }
 
-function harness(options: { prs?: GitHubPullRequest[]; fixes?: SecurityFix[]; answer?: unknown; problems?: string[]; baseSha?: string; files?: Record<string, string>; links?: string[] } = {}): Harness {
+function harness(options: { prs?: GitHubPullRequest[]; fixes?: SecurityFix[]; candidateNotes?: string[]; answer?: unknown; problems?: string[]; baseSha?: string; files?: Record<string, string>; links?: string[] } = {}): Harness {
   const github = new FakeGitHub(...(options.prs ?? []));
   const workspace = new InMemoryWorkspace();
   const workingCopy: WorkingCopy = { projectId: REPO, path: "/synthetic/leanish/widget", branch: "main", headSha: options.baseSha ?? BASE_SHA, gitDir: "/synthetic/.git" };
@@ -132,7 +132,7 @@ function harness(options: { prs?: GitHubPullRequest[]; fixes?: SecurityFix[]; an
     gradle: () => ({ ofCommit: async () => undefined, ofWorkingTree: async () => undefined }),
     trees: { commit: async (_wc, sha) => tree(sha, options.files), working: () => tree("worktree", options.files) },
     npm: async () => ({ code: 0, stdout: "11.20.0\n", stderr: "" }),
-    candidates: async () => ({ fixes: options.fixes ?? [vite()], incomplete: [], gaps: [], osvScannerVersion: "2.6.0" }),
+    candidates: async () => ({ fixes: options.fixes ?? [vite()], incomplete: [], gaps: [], notes: options.candidateNotes ?? [], osvScannerVersion: "2.6.0" }),
     verify: async () => options.problems ?? [],
     snapshot: async () => SNAPSHOT,
     candidateTree: async () => SNAPSHOT_TREE,
@@ -515,6 +515,13 @@ describe("secure-it run", () => {
     expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "published" });
     expect(h.github.prs.get(42)?.headRef).toBe("secure-it/2026-10-07-security-2");
     expect(h.github.prs.get(7)?.headSha).toBe("9".repeat(40));
+  });
+
+  it("reports reconciliation notes when the reviewed ranges leave nothing to fix", async () => {
+    const notes = ["GHSA-netty: its reviewed ranges clear this version; the reviewed ranges apply"];
+    const h = harness({ fixes: [], candidateNotes: notes });
+    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "nothing-to-fix", notes });
+    expect(h.agentCalls).toEqual([]);
   });
 
   it("publishes nothing when verification fails, the agent can't apply, nothing is fixable, or the inventory is incomplete", async () => {

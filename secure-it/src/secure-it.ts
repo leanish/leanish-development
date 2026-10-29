@@ -266,7 +266,7 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   // check that failed: reported as an error, so the run reads as one that broke, while the other units still go on.
   // Spread last in every result, so no unit's own keys can replace it.
   const undecided = undecidedProblems(found.fixes);
-  const report = { gaps: found.gaps.length };
+  const report = { gaps: found.gaps.length, ...((found.notes?.length ?? 0) === 0 ? {} : { notes: found.notes }) };
   if (found.incomplete.length > 0) return { ...report, outcome: "incomplete", incomplete: found.incomplete, ...errorsOf(undecided) };
   const planned = await withParentsPlanned(found, base, env, inventories);
   const selection = await coupledWork(planned.fixes, planned.peers);
@@ -314,7 +314,10 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
     }
   }
   if (results.length === 0) return { ...report, outcome: "nothing-to-fix", waiting, blocked: selection.blocked, units: [], ...errors };
-  return { ...report, ...(results.length === 1 ? results[0]! : { outcome: "completed" }), waiting, blocked: selection.blocked, units: results, ...errors };
+  const outcome = results.length === 1 ? results[0]! : { outcome: "completed" };
+  const unitNotes = Array.isArray(outcome["notes"]) ? outcome["notes"] : [];
+  const notes = [...new Set([...(found.notes ?? []), ...unitNotes])];
+  return { ...report, ...outcome, ...(notes.length === 0 ? {} : { notes }), waiting, blocked: selection.blocked, units: results, ...errors };
 }
 
 /** Why each fix that can't be decided (`SecurityFix.undecided`: its publisher identity, a carrier's reads) has no move. */
