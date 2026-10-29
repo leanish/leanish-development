@@ -885,14 +885,14 @@ describe("secure-it run", () => {
     ["can't apply", "cannot-apply", [], "retry could not apply: no room"],
     ["throws", "throw", [], "retry failed: agent crashed"],
     ["leaves problems", "applied", ["vite at node_modules/vite is 8.3.2, not 8.3.3"], "vite at node_modules/vite is 8.3.2, not 8.3.3"],
-    ["can't evaluate the cooldown", "applied", "unevaluated", "the cooldown can't be evaluated: base's settings don't parse"],
+    ["can't evaluate the cooldown", "applied", "unevaluated", "the cooldown can't be evaluated: legacy report"],
   ] as const)("keeps why asking again stopped when the reduced attempt %s", async (_case, reduced, reducedProblems, problem) => {
     const refusal = "compare: new: left-pad@1.0.1: GHSA-new has no exception";
     const h = harness({ fixes: [vite(), leftPad()] });
     const deps = { ...h.deps, verify: async (input: VerifyInputs) => {
       if (input.plan.packages.includes("npm|left-pad")) return [refusal];
       if (reducedProblems !== "unevaluated") return [...reducedProblems];
-      input.cooldown?.({ evaluated: false, reason: "base's settings don't parse" });
+      input.cooldown?.({ evaluated: false, reason: "legacy report" });
       return [];
     } };
     let calls = 0;
@@ -1549,10 +1549,10 @@ describe("the cooldown hold", () => {
   it("doesn't publish when the comparison couldn't evaluate the cooldown", async () => {
     const h = harness();
     const verify = async (inputs: VerifyInputs) => {
-      inputs.cooldown?.({ evaluated: false, reason: "base's settings don't parse" });
+      inputs.cooldown?.({ evaluated: false, reason: "legacy report" });
       return [];
     };
-    expect(await secureIt({ ...h.deps, verify }).run(h.context)).toMatchObject({ outcome: "verification-failed", problems: ["the cooldown can't be evaluated: base's settings don't parse"] });
+    expect(await secureIt({ ...h.deps, verify }).run(h.context)).toMatchObject({ outcome: "verification-failed", problems: ["the cooldown can't be evaluated: legacy report"] });
     expect(h.github.prs.size).toBe(0);
   });
 

@@ -239,9 +239,12 @@ that is younger than `releaseAgeDays` is **held**, whether the rule picked it, a
 - The separate `cooldown` job stays red while anything is held (and whenever it can't tell: a comparison that didn't
   pass, a missing report, a report for another head). Its log and step summary list each held version and when it
   turns old enough. Require it next to `supply-chain` (see GitHub settings below).
-- The policy that judges a PR is the stricter of base's and head's: the longer `releaseAgeDays`, and trusted packages
-  only where both list them. A PR can't loosen the cooldown that judges it; change the policy in a PR of its own
-  first. A base whose settings don't parse leaves the cooldown unevaluated (red).
+- The policy that judges a PR comes from head, like its exceptions. Adding trust or shortening `releaseAgeDays`
+  applies to the PR's own versions too: newly trusted versions, or versions old enough under the shorter wait,
+  are not held. If `.github/supply-chain.json` is absent from head, including when the PR deletes it, the defaults
+  apply. Review policy changes in that file's diff. The tools' policy fence prevents their proposals from editing
+  it. In the gate's comparison, unparseable base settings do not block cooldown evaluation; the tools still
+  require parseable base settings.
 - Exceptions don't clear a hold. Taking a held version before its time is a person's decision: every other check
   green, the reason written on the PR, then an admin merge past the red `cooldown` check. Where nothing enforces
   the check (no ruleset, e.g. a private repository on the free plan), the same: a merge with the reason written.
@@ -282,7 +285,7 @@ Optional; read from head. Unknown fields fail, so a typo can't turn a check off.
 - Every listed lockfile must exist in head; one base doesn't have yet reads as empty there.
 - Trusted packages skip only the release-age wait. Trusted Maven packages: exact `groups`, and `pluginIdPrefixes` that only match Gradle plugin markers (`<id>:<id>.gradle.plugin`). Prefixes match at dot boundaries: `com.acme` matches that ID and its descendants, while `com.acme.` matches descendants only; neither matches `com.acmecorp`. Other artifacts in `com.acme.*` groups are not exempt.
 - `trustedPackages` can include third parties as well as your own packages. Trusting a package or Actions owner removes the cooldown's detection window for it: a compromised publisher's release can pass immediately. Trusted Actions also need no immutable release or release date. Publisher identity, advisory, malware, source and pin checks still apply; dependencies do not inherit trust.
-- `ownPackages` is a deprecated alias with the same shape and meaning, accepted without a warning. Use one name only: configuring both is an error. A rename preserves the stricter base/head policy. Repin older gates to a release supporting `trustedPackages` before migrating configuration; older gates reject the new field. 0.11.0 removes the alias: migrate before repinning to it.
+- `ownPackages` is a deprecated alias with the same shape and meaning, accepted without a warning. Use one name only: configuring both is an error. A rename preserves the same trust policy. Repin older gates to a release supporting `trustedPackages` before migrating configuration; older gates reject the new field. 0.11.0 removes the alias: migrate before repinning to it.
 - `repositories`: a package's GitHub source repository, for its repository advisories; it takes precedence over what the manifest or POM names.
 - `compatibleLines`: how many leading numeric segments, after one optional `v` or `V`, make a compatible line for a package (a trailing `*` matches a prefix), where the default (npm's caret range; Maven's first numeric segment, or `0.N` when the first is 0) doesn't fit.
 

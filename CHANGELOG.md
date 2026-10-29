@@ -4,10 +4,14 @@
 
 ### Changed
 
+- PRs use head's release-age and trusted-package policy, like exceptions. Adding trust or shortening
+  `releaseAgeDays` applies to the PR's own versions too: newly trusted versions, or versions old enough under
+  the shorter wait, are not held. In the gate's comparison, unparseable base settings no longer prevent cooldown
+  evaluation. The tools still require parseable base settings and cannot edit the gate's policy.
 - The release-age exemption is named `trustedPackages`, with the same npm scopes, Maven groups/plugin ID prefixes
   and GitHub Actions owners. It can include third parties as well as the repository's own packages. Trust removes
   the cooldown detection window (and Actions' immutable-release requirement); identity, advisory, malware, source
-  and pin checks still apply. The stricter base/head policy preserves trust across a configuration rename.
+  and pin checks still apply. Renaming the configuration field preserves trust.
   Run/report reason texts now say "trusted" instead of "own", including "trusted-package" and "configured
   trusted-package exclusions".
 - Trusted Gradle plugin ID prefixes now match at dot boundaries: `com.acme` matches that ID and its descendants,
