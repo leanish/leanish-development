@@ -46,7 +46,10 @@ describe("the cooldown in a comparison", () => {
     const outcome = await runCompare(tree(files()), tree(head, "head"), environment().env);
     expect(outcome.failures).toEqual([]);
     expect(outcome.cooldown).toEqual({ evaluated: true, releaseAgeDays: 1, held: [] });
-    expect(outcome.notes).toEqual(["fixed: vite@8.3.2: GHSA-rq7h-c2jc-7f22"]);
+    expect(outcome.notes).toEqual([
+      "fixed: vite@8.3.2: GHSA-rq7h-c2jc-7f22",
+      "This PR changes the release-age, trust or source policy in .github/supply-chain.json; head's policy applies to this comparison.",
+    ]);
   });
 
   it("uses head's longer wait", async () => {
