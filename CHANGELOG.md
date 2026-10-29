@@ -4,6 +4,9 @@
 
 ### Changed
 
+- Comparisons note changes to the PR's release-age, trust or source policy (`maven.repositories`, including order,
+  and `npm.registries`), including configuration deletion, and note when base's policy cannot be parsed. The note
+  appears in the step summary even when no versions are held.
 - PRs use head's release-age and trusted-package policy, like exceptions. Adding trust or shortening
   `releaseAgeDays` applies to the PR's own versions too: newly trusted versions, or versions old enough under
   the shorter wait, are not held. In the gate's comparison, unparseable base settings no longer prevent cooldown
@@ -27,6 +30,9 @@
 
 ### Fixed
 
+- bump-it checks every npmjs-resolved version a major induces that is absent from base and not at a checked direct
+  target, except bundled copies. This includes newly declared root/workspace dependencies, peers or not; a
+  declaration alone no longer exempts them from the deprecation check.
 - agent-runtime's Claude Code runner no longer puts `CLAUDE_CONFIG_DIR`'s value in its refusal: it names where the
   variable was set instead. A credential mapped to that name could otherwise reach the error before any redaction.
 

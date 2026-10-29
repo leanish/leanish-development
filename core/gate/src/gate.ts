@@ -157,6 +157,28 @@ export interface GradleInputs {
   readonly head?: GradleInventory | undefined;
 }
 
+/** Base's config is read only to explain policy changes; head still judges the comparison. */
+async function agePolicyNotes(base: Tree, config: Config, configText: string | undefined): Promise<ReadonlyArray<string>> {
+  try {
+    const beforeText = await base.read(CONFIG_PATH);
+    const before = beforeText === undefined ? DEFAULT_CONFIG : parseConfig(parseJson(beforeText, CONFIG_PATH));
+    const trust = (policy: Config) => JSON.stringify([
+      policy.trustedPackages.npmScopes,
+      policy.trustedPackages.mavenGroups,
+      policy.trustedPackages.pluginIdPrefixes,
+      policy.trustedPackages.actionOwners.map((owner) => owner.toLowerCase()),
+    ].map((values) => [...new Set(values)].sort()));
+    // Maven uses the first repository with the POM; npm's allowed registries are a set.
+    const sources = (policy: Config) => JSON.stringify([policy.maven.repositories, [...new Set(policy.npm.registries)].sort()]);
+    if (before.releaseAgeDays === config.releaseAgeDays && trust(before) === trust(config)
+      && sources(before) === sources(config)
+      && !(beforeText !== undefined && configText === undefined)) return [];
+    return ["This PR changes the release-age, trust or source policy in .github/supply-chain.json; head's policy applies to this comparison."];
+  } catch {
+    return ["The comparison couldn't tell whether the release-age, trust or source policy changed because base's .github/supply-chain.json couldn't be read or parsed; head's policy applies."];
+  }
+}
+
 export async function runCompare(base: Tree, head: Tree, env: GateEnvironment, gradle: GradleInputs = {}): Promise<CompareOutcome> {
   const version = await osvScannerVersion({ binary: env.osvScanner, run: env.run });
   const { config, configText, exceptions, floors } = await readSettings(head);
@@ -212,7 +234,7 @@ export async function runCompare(base: Tree, head: Tree, env: GateEnvironment, g
     cooldown: { evaluated: true, releaseAgeDays: config.releaseAgeDays, held: [...youngVersions.held] },
     failures: [...verdict.failures, ...problems, ...floorCheck.failures],
     warnings: verdict.warnings,
-    notes: [...verdict.notes, ...floorCheck.notes, ...youngVersions.notes],
+    notes: [...verdict.notes, ...floorCheck.notes, ...youngVersions.notes, ...await agePolicyNotes(base, config, configText)],
     gaps: [...snapshot.gaps, ...actions.gaps],
     osvScannerVersion: version,
     configText,
