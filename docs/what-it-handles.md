@@ -307,7 +307,7 @@ BeanUtils. It can go after that dependency is removed or naturally resolves safe
   local Actions. Every report lists its reported gaps; the limits go unmentioned.
 - Yarn and pnpm lockfiles are not read. Dockerfile CLIs are covered only through
   configured npm manifests and locks.
-- A build or plugin can hide dependencies from its own inventory ([security
+- A build or plugin can alter both inventories in the shared inventory job ([security
   model](security-model.md#the-ci-gate)). Review build and workflow changes, especially on forks.
 - The local tools reuse a repository's advisory listing for
   [up to an hour](tool-configuration.md#github-api-usage-and-advisory-cache), so an

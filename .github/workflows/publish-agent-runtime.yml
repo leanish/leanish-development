@@ -109,8 +109,8 @@ jobs:
           # The release commit is a squash merge on main, so main's CI ran on it. Several workflows can have a job with
           # the same name (one skipped on a push), so each check needs a success from GitHub Actions and no failure.
           # `cooldown` isn't one: it runs on pull requests only.
-          for check in check supply-chain; do
-            conclusions=$(gh api "repos/$REPO/commits/$sha/check-runs?check_name=$check&app_id=$ACTIONS_APP_ID" --jq '[.check_runs[].conclusion]')
+          for check in check 'gate / supply-chain'; do
+            conclusions=$(gh api --method GET "repos/$REPO/commits/$sha/check-runs" -f "check_name=$check" -f "app_id=$ACTIONS_APP_ID" --jq '[.check_runs[].conclusion]')
             verdict=$(jq -r 'if any(. == "success") and all(. == "success" or . == "skipped" or . == "neutral") then "success" else tostring end' <<<"$conclusions")
             if [ "$verdict" != "success" ]; then echo "::error::check '$check' on $sha: $verdict"; exit 1; fi
           done

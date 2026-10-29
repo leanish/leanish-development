@@ -12,7 +12,7 @@ name: supply-chain
 #                       `scan` of the default branch: every finding fails unless excepted. Open PRs aren't rescanned:
 #                       a PR is checked when it's opened, pushed to, reopened or retargeted.
 #
-# Only the inventory jobs run the repository's own code (Gradle runs the build); they get a read-only token and their
+# Only the inventory job runs the repository's own code (Gradle runs the build); it gets a read-only token and its
 # output is data to the jobs that compare. Credentials that publish never share a job with PR code, and no tool the
 # gate runs gets them in its environment.
 
@@ -41,45 +41,43 @@ permissions:
   contents: read
 
 jobs:
-  plan:
+  # Runs the build's own code: read-only, and its only output is the inventory artifact.
+  # Base runs first in a separate checkout; a base failure skips head. Both share the VM and Gradle home.
+  inventory:
     runs-on: ubuntu-26.04
-    outputs:
-      mode: ${{ steps.mode.outputs.mode }}
-      sides: ${{ steps.mode.outputs.sides }}
     steps:
-      - id: mode
+      - &validate-event
+        name: Validate the event and ref
         env:
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
           DEFAULT_REF: refs/heads/${{ github.event.repository.default_branch }}
         run: |
           case "$EVENT" in
-            pull_request) mode=compare; sides='["base","head"]' ;;
+            pull_request) ;;
             push|schedule|workflow_dispatch)
               if [ "$REF" != "$DEFAULT_REF" ]; then echo "::error::supply-chain scans the default branch only"; exit 1; fi
-              mode=scan; sides='["head"]' ;;
+              ;;
             *) echo "::error::supply-chain doesn't handle $EVENT events"; exit 1 ;;
           esac
-          { echo "mode=$mode"; echo "sides=$sides"; } >> "$GITHUB_OUTPUT"
-
-  # Runs the build's own code: read-only, and its only output is the inventory file.
-  inventory:
-    needs: plan
-    runs-on: ubuntu-26.04
-    strategy:
-      fail-fast: false
-      matrix:
-        side: ${{ fromJSON(needs.plan.outputs.sides) }}
-    steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           path: repo
           fetch-depth: 2
           persist-credentials: false
+      - name: Check out the PR merge commit for base
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: base
+          fetch-depth: 2
+          persist-credentials: false
       - name: Move to the base the PR builds on
-        if: matrix.side == 'base'
-        working-directory: repo
+        if: github.event_name == 'pull_request'
+        working-directory: base
         # The checked-out merge commit's first parent.
         run: git checkout --quiet --detach HEAD^1
       - &tool-checkout
@@ -103,29 +101,35 @@ jobs:
         with:
           distribution: ${{ inputs.java-distribution }}
           java-version: ${{ inputs.java-version }}
-      - name: Inventory the Gradle builds
-        run: node tool/core/gate/src/cli.ts gradle-inventory --repo repo --out "$RUNNER_TEMP/gradle-${{ matrix.side }}.json"
+      - name: Inventory the base Gradle builds
+        if: github.event_name == 'pull_request'
+        run: node tool/core/gate/src/cli.ts gradle-inventory --repo base --out "$RUNNER_TEMP/gradle-base.json"
+      - name: Inventory the head Gradle builds
+        run: node tool/core/gate/src/cli.ts gradle-inventory --repo repo --out "$RUNNER_TEMP/gradle-head.json"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: gradle-${{ matrix.side }}
-          path: ${{ runner.temp }}/gradle-${{ matrix.side }}.json
+          name: gradle-inventories
+          path: |
+            ${{ runner.temp }}/gradle-base.json
+            ${{ runner.temp }}/gradle-head.json
           if-no-files-found: ignore
           retention-days: 7
 
   # The verdict. Required by the adopting repository's ruleset; runs no code from the repository it checks.
   supply-chain:
-    needs: [plan, inventory]
-    if: always() && needs.plan.result == 'success'
+    needs: inventory
+    if: always()
     runs-on: ubuntu-26.04
     outputs:
       passed: ${{ steps.passed.outputs.passed }}
     steps:
+      - *validate-event
       - name: Require the inventories
         env:
           INVENTORY: ${{ needs.inventory.result }}
         run: |
           if [ "$INVENTORY" != "success" ]; then
-            echo "::error::the inventory jobs ended with '$INVENTORY': the gate can't compare without them"
+            echo "::error::the inventory job ended with '$INVENTORY': the gate can't compare without it"
             exit 1
           fi
       - name: Check out the repository
@@ -146,7 +150,7 @@ jobs:
           merge-multiple: true
       - name: Gate dependency changes and findings
         env:
-          MODE: ${{ needs.plan.outputs.mode }}
+          MODE: ${{ github.event_name == 'pull_request' && 'compare' || 'scan' }}
           GITHUB_TOKEN: ${{ github.token }}
           SUPPLY_CHAIN_COMMIT: ${{ job.workflow_sha }}
           INVENTORIES: ${{ runner.temp }}/inventories
@@ -177,7 +181,7 @@ jobs:
   # report is missing or for another head): never green without an evaluation. Remediation tools read its two steps
   # by name: a failed "Hold the young versions" after a successful "Evaluate the cooldown" means waiting, not broken.
   cooldown:
-    needs: [plan, supply-chain]
+    needs: supply-chain
     if: always() && github.event_name == 'pull_request'
     runs-on: ubuntu-26.04
     outputs:
@@ -185,11 +189,10 @@ jobs:
     steps:
       - name: Require a passing comparison
         env:
-          PLAN: ${{ needs.plan.result }}
           COMPARISON: ${{ needs.supply-chain.result }}
         run: |
-          if [ "$PLAN" != "success" ] || [ "$COMPARISON" != "success" ]; then
-            echo "::error title=supply-chain cooldown not evaluated::the comparison ended with '$COMPARISON' (plan '$PLAN'), so the cooldown can't be evaluated"
+          if [ "$COMPARISON" != "success" ]; then
+            echo "::error title=supply-chain cooldown not evaluated::the comparison ended with '$COMPARISON', so the cooldown can't be evaluated"
             exit 1
           fi
       - *tool-checkout

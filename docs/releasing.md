@@ -48,7 +48,9 @@ unreleased changes collect under its "Unreleased" heading.
      where the release's changes apply, including the owner's fixture
      repositories (never in regular passes; only a candidate pass opts them in).
      A candidate's tool code doesn't change those repositories' gate pins: when
-     the candidate changes the gate, get its CI evidence from runs pinned to it.
+     the candidate changes the gate, get its CI evidence from runs pinned to it:
+     a PR (compare) and a default-branch push (scan) through Actions, not only
+     the CLI.
    - Review the candidate in three steps, each only if the one before found no
      blocker; a blocker is fixed in a new candidate, which starts again at the
      first step:
@@ -101,7 +103,7 @@ unreleased changes collect under its "Unreleased" heading.
    including commits main gained meanwhile, needs a new candidate, run and
    reviewed.
    Squash-merge the release PR and create a lightweight `v<version>` tag at
-   **its exact merge commit**. Once that commit's `check` and `supply-chain` checks
+   **its exact merge commit**. Once that commit's `check` and `gate / supply-chain` checks
    are green (publishing requires them: it waits up to 20 minutes for `ci` runs
    still in progress, and otherwise fails before packing, and its run's failed
    jobs can be re-run), create the matching GitHub
@@ -153,7 +155,7 @@ adds provenance (it does for a public repository like this one).
 1. `prepare` skips prereleases (candidates never publish) and accepts only a
    stable `v<major>.<minor>.<patch>` release. It requires the `npm`
    environment to have a required reviewer, the tag's commit on main with its
-   `check` and `supply-chain` checks green (`cooldown` runs on pull requests
+   `check` and `gate / supply-chain` checks green (`cooldown` runs on pull requests
    only; main's `ci` runs still in progress on that commit are watched to the
    end first, for up to 20 minutes), and npm 11.5.1 or later. It runs `npm ci`, packs the package
    (`npm run pack -w @leanish/agent-runtime`), checks the tarball's name and

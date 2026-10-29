@@ -30,7 +30,7 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   The gate documents the [scope and risks of trusting an owner](../core/gate/README.md#configuration-githubsupply-chainjson).
   This repository trusts `actions` and `aws-actions`; adopters choose their own policy.
 - **Publishing waits for the release's CI only so long**: `publish-agent-runtime.yml` requires the tag's commit to have
-  its `check` and `supply-chain` checks green, watching main's `ci` runs still in progress on it for up to 20 minutes.
+  its `check` and `gate / supply-chain` checks green, watching main's `ci` runs still in progress on it for up to 20 minutes.
   A run that outlasts that, or one that doesn't exist yet when the publish lists them, fails it before packing (nothing
   publishes), and it isn't retried when they pass: re-run the publish run's failed jobs once they're green.
 - **A repository advisory range read too wide**: an AND range written upper bound first (`< 2.0.0, >= 1.0.0`) reads
@@ -44,7 +44,7 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 - **Operating-system packages** in container images: no scanner here reads them (Trivy or similar, later). Dockerfile CLIs are covered only through configured npm manifests and locks.
 - **Code copied into a package without its own manifest**: npm bundles are read package by package (each bundled `node_modules/<name>/package.json`); JavaScript vendored into a package's own files isn't a package anywhere, so its advisories can't match.
 - **Shaded Java dependencies**: classes a library copies (and usually relocates) into its own jar aren't a module in the Gradle inventory, only the jar that ships them is; an advisory on the shaded library doesn't match it, and the only fix is another version of the shading artifact.
-- **What a Gradle build hides from its own inventory** (see the [security model](security-model.md)), and dependencies that aren't external modules: the inventory exports module coordinates only, so local files and JARs aren't covered.
+- **What a Gradle build hides or changes in either inventory** in the shared inventory job (see the [security model](security-model.md)), and dependencies that aren't external modules: the inventory exports module coordinates only, so local files and JARs aren't covered.
 - **Advisories behind a `strictly(...)` pin**: the tools never move the owner's strict versions, so secure-it reports a fix that needs one as blocked, and the default branch's scan keeps failing until the owner moves the pin.
 - **Strict pins Gradle doesn't resolve, by deliberate choice**: verification relies on Gradle's inventory and the planned reference comparison ([what it compares](security-model.md#secure-it-and-bump-it)), and doesn't parse source files or unused catalog entries separately. A pin in an inactive branch, an unused catalog entry, any code Gradle doesn't interpret for the inventoried configuration, or a build the inventory doesn't run (left out of `gradle.builds`, or not discovered) isn't checked. The owner chose this scope: the agent's instructions still forbid moving any strict pin, and the PR diff lets the owner review the ones Gradle didn't see.
 - **Gradle metadata outside the reference comparison**: declaration `because(...)` reasons and resolved graph edges are exported but not compared with the planned reference; secure-it checks floor reasons separately. Local files, artifacts, attributes and capabilities are outside the exported module/version comparison.
@@ -120,8 +120,12 @@ are included, peers or not; bundled copies are exempt.
 ## Automated test coverage
 
 - **Reusable workflow required-check guards**: [gate-workflow.test.ts](../core/gate/test/gate-workflow.test.ts)
-  tests the inventory and comparison guards, job conditions and cooldown report handling;
-  [required-check.test.ts](../core/gate/test/required-check.test.ts) tests this repository's required-check bridge.
+  executes both jobs' event/ref validator and the inventory/comparison failure guards; it checks sequential inventory
+  wiring, required-job conditions, cooldown report handling and this repository's downstream `check` condition.
+  [publish-workflow.test.ts](../core/gate/test/publish-workflow.test.ts) executes the publisher's check-selection step
+  with mocked commands, checking the `check` and `gate / supply-chain` query arguments. These tests do not emulate
+  Actions scheduling or run both Gradle inventories together on a runner; candidate-pinned PR and default-branch
+  scan runs provide that evidence.
 
 ## Gradle wrapper updates
 
