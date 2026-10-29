@@ -4,6 +4,8 @@
 
 ### Changed
 
+- Comparisons note changes to the PR's release-age or trust policy, including configuration deletion, and note when
+  base's policy cannot be parsed. The note appears in the step summary even when no versions are held.
 - PRs use head's release-age and trusted-package policy, like exceptions. Adding trust or shortening
   `releaseAgeDays` applies to the PR's own versions too: newly trusted versions, or versions old enough under
   the shorter wait, are not held. In the gate's comparison, unparseable base settings no longer prevent cooldown
@@ -25,6 +27,8 @@
 
 ### Fixed
 
+- bump-it checks newly installed root/workspace peers for deprecation when a major induces them; a declaration alone
+  no longer exempts them from the check.
 - agent-runtime's Claude Code runner no longer puts `CLAUDE_CONFIG_DIR`'s value in its refusal: it names where the
   variable was set instead. A credential mapped to that name could otherwise reach the error before any redaction.
 

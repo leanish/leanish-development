@@ -220,7 +220,10 @@ async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions
       () => npm("install"), () => npm("install"));
   }
 
-  if (inputs.kind !== "routine") await assertNoNewDeprecated(new NpmGraph(JSON.parse(await readFile(at(lockName), "utf8"))), baseVersions, lockfile, inputs.sources);
+  if (inputs.kind !== "routine") {
+    const graph = new NpmGraph(JSON.parse(await readFile(at(lockName), "utf8")));
+    await assertNoNewDeprecated(graph, directTargets(graph, plannedDirect, baseDirect), baseVersions, lockfile, inputs.sources);
+  }
 
   const files = new Map<string, string>();
   for (const [path, text] of planned) {
@@ -340,13 +343,13 @@ function rememberAccepted(graph: NpmGraph, retained: ReadonlyMap<string, Copy>, 
 /**
  * A major keeps the graph npm induces, but none of its new versions may be deprecated: each version a transitive copy
  * takes that base didn't have must be in the registry's non-deprecated catalog, which unreadable data can't show.
- * Direct copies are the unit's own, chosen with their checks; bundled copies follow their carrier; a copy from git, a
+ * Only copies at checked direct targets are exempt; a newly installed root/workspace peer is not a checked target.
+ * Bundled copies follow their carrier; a copy from git, a
  * tarball or another registry has no npm catalog to ask, and the gate's source rules judge it.
  */
-async function assertNoNewDeprecated(graph: NpmGraph, baseVersions: ReadonlyMap<string, ReadonlyArray<string>>, lockfile: string, sources: TargetSources): Promise<void> {
-  const declared = new Set(graph.declaredEdges().flatMap((edge) => (edge.to === undefined ? [] : [edge.to])));
+async function assertNoNewDeprecated(graph: NpmGraph, direct: ReadonlyMap<string, string>, baseVersions: ReadonlyMap<string, ReadonlyArray<string>>, lockfile: string, sources: TargetSources): Promise<void> {
   for (const copy of graph.copies()) {
-    if (copy.bundled || declared.has(copy.path) || baseVersions.get(copy.name)?.includes(copy.version)) continue;
+    if (copy.bundled || direct.get(copy.path) === copy.version || baseVersions.get(copy.name)?.includes(copy.version)) continue;
     const resolved = (graph.packages[copy.path] as { resolved?: unknown } | undefined)?.resolved;
     if (typeof resolved !== "string" || !resolved.startsWith(`${NPM_REGISTRY}/`)) continue;
     const listed = await sources.versions(copy.name).catch(() => undefined);

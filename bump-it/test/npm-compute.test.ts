@@ -7,6 +7,7 @@ import { versionKey } from "@leanish/gate/package-version";
 import { type Advisory, Snapshot } from "@leanish/gate/snapshot";
 import { computeNpm, MAX_PASSES, type NpmCommand, type NpmInputs } from "../src/npm-compute.ts";
 import { requireNpmExcludes } from "../src/npm-runtime.ts";
+import type { TargetSources } from "../src/npm-targets.ts";
 
 const dirs: string[] = [];
 afterEach(async () => { for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true }); });
@@ -222,6 +223,42 @@ describe("exact npm computation", () => {
     await expect(major(async (name) => name === "child" ? undefined : ["1.0.0", "2.0.0"])).rejects.toThrow("can't be read to rule out deprecation");
     await expect(major(async (name) => name === "child" ? ["1.0.0", "1.5.0"] : ["1.0.0", "2.0.0"])).resolves.toBeDefined();
     await expect(major(async (name) => name === "child" ? undefined : ["1.0.0", "2.0.0"], "git+ssh://git@github.com/acme/child.git#abc")).resolves.toBeDefined();
+  });
+  it.each(["root", "workspace"])("checks a new optional %s peer induced by a major", async (placement) => {
+    const peer = { peerDependencies: { child: "^1" }, peerDependenciesMeta: { child: { optional: true } } };
+    const root = { ...manifest, ...(placement === "root" ? peer : { workspaces: ["ws"] }) };
+    const base = { packages: {
+      "": root,
+      ...(placement === "workspace" ? { ws: { name: "ws", ...peer }, "node_modules/ws": { link: true, resolved: "ws" } } : {}),
+      "node_modules/parent": { version: "1.0.0" },
+      "node_modules/frozen": { version: "1.0.0", resolved: "https://registry.npmjs.org/frozen/-/frozen-1.0.0.tgz" },
+    } };
+    const h = await fixture(async (dir) => {
+      await writeFile(join(dir, "package-lock.json"), json({ packages: {
+        ...base.packages,
+        "node_modules/parent": { version: "2.0.0", resolved: "https://registry.npmjs.org/parent/-/parent-2.0.0.tgz", dependencies: { child: "^1" } },
+        "node_modules/child": { version: "1.5.0", resolved: "https://registry.npmjs.org/child/-/child-1.5.0.tgz" },
+      } }));
+    });
+    await writeFile(join(h.dir, "package.json"), json(root));
+    if (placement === "workspace") {
+      await mkdir(join(h.dir, "ws"));
+      await writeFile(join(h.dir, "ws/package.json"), json(base.packages.ws));
+    }
+    const major = async (versions: TargetSources["versions"]) => {
+      await writeFile(join(h.dir, "package.json"), json(root));
+      await writeFile(join(h.dir, "package-lock.json"), json(base));
+      return computeNpm({
+        ...h.inputs, kind: "major", baseLocks: new Map([["package-lock.json", base]]),
+        moves: h.inputs.moves.map((move) => ({ ...move, to: "2.0.0" })), sources: { ...h.inputs.sources, versions },
+      });
+    };
+    await expect(major(async () => ["1.0.0", "2.0.0"])).rejects.toThrow("the major brings child@1.5.0, which is deprecated");
+    await expect(major(async () => undefined)).rejects.toThrow("can't be read to rule out deprecation");
+    await expect(major(async () => { throw new Error("registry unavailable"); })).rejects.toThrow("can't be read to rule out deprecation");
+    const versions = vi.fn(async () => ["1.5.0"]);
+    await expect(major(versions)).resolves.toBeDefined();
+    expect(versions.mock.calls).toEqual([["child"]]);
   });
   it("fails after MAX_PASSES when npm keeps undoing the exact targets", async () => {
     const h = await fixture(async (dir) => { await writeFile(join(dir, "package-lock.json"), json(lock())); });

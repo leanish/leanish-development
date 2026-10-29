@@ -102,7 +102,6 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   publish, a later one can still run in the same run and is computed in its turn. Its undecided sets block its moves
   and reach `errors`, and protect subsequent units' PRs, but PRs already handled aren't rechecked and may already have
   been rewritten. This accepted limit keeps execution order and the cap on actual new publications. New in 0.9.1.
-- **Optional root peers and the npm deprecation check (bump-it)**: a transitive version a major brings is exempt when the root declares the package, including as an optional peer it never installed, so a deprecated or unreadable version of it isn't refused. Pre-existing in 0.6.0; not fixed in 0.8.0.
 - **npm aliases without a version** (`"compat": "npm:lib"`): the inventory reads them, but neither tool can rewrite them, so an update fails visibly and a person makes it.
 - **Scheduled runs are best effort**: GitHub may delay or skip them, and disables them after 60 days without activity in a public repository. Nothing else watches that the scheduled scan still runs.
 
