@@ -88,6 +88,8 @@ jobs:
 
       - name: Require the tag's commit on main, with its checks green
         id: commit
+        # Bounds the wait for main's CI below; a run that outlasts it fails here and nothing publishes.
+        timeout-minutes: 20
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -96,6 +98,14 @@ jobs:
         run: |
           sha=$(git rev-parse "refs/tags/$TAG^{commit}")
           git merge-base --is-ancestor "$sha" refs/remotes/origin/main || { echo "::error::$TAG ($sha) isn't on main"; exit 1; }
+          # A release created right after the merge can arrive while main's CI on that commit still runs: watch those
+          # runs to the end (they're judged below, not here) instead of failing on checks that haven't finished. Only
+          # ci.yml's: it runs both checks judged below, and another workflow's run must not hold the publish back.
+          pending=$(gh run list --repo "$REPO" --workflow ci.yml --commit "$sha" --event push --limit 100 --json databaseId,status --jq '.[] | select(.status != "completed") | .databaseId')
+          for run in $pending; do
+            echo "waiting for run $run on $sha"
+            gh run watch "$run" --repo "$REPO" --interval 30 > /dev/null
+          done
           # The release commit is a squash merge on main, so main's CI ran on it. Several workflows can have a job with
           # the same name (one skipped on a push), so each check needs a success from GitHub Actions and no failure.
           # `cooldown` isn't one: it runs on pull requests only.
