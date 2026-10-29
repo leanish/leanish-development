@@ -90,7 +90,7 @@ describe("the reusable workflow's fail-closed guards", () => {
     return result;
   }
 
-  it("runs the required jobs even when their prerequisites fail", () => {
+  it("wires the comparison's plan condition, cooldown's always condition and unconditional guards", () => {
     expect(comparison.needs).toEqual(["plan", "inventory"]);
     expect(comparison.if).toBe("always() && needs.plan.result == 'success'");
     expect(cooldown.needs).toEqual(["plan", "supply-chain"]);
@@ -122,6 +122,7 @@ describe("the reusable workflow's fail-closed guards", () => {
   it.each([
     ["success", "failure"], ["success", "cancelled"], ["success", "skipped"], ["success", ""],
     ["failure", "success"], ["cancelled", "success"], ["skipped", "success"], ["", "success"],
+    ["failure", "skipped"],
   ])("fails cooldown when plan is %s and comparison is %s", (plan, comparison) => {
     expect(run(comparisonGuard, { PLAN: plan, COMPARISON: comparison }).status).toBe(1);
   });

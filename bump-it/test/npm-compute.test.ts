@@ -260,6 +260,27 @@ describe("exact npm computation", () => {
     await expect(major(versions)).resolves.toBeDefined();
     expect(versions.mock.calls).toEqual([["child"]]);
   });
+  it.each([
+    { catalog: "deprecated", versions: ["1.0.0"], error: "which is deprecated" },
+    { catalog: "unreadable", versions: undefined, error: "can't be read to rule out deprecation" },
+    { catalog: "eligible", versions: ["1.5.0"], error: undefined },
+  ])("checks a newly declared non-peer dependency with an $catalog catalog", async ({ versions, error }) => {
+    const h = await fixture(async (dir) => {
+      const computed = lock("2.0.0", "1.5.0");
+      // The computed graph adds a direct declaration that neither the plan nor base targeted.
+      await writeFile(join(dir, "package-lock.json"), json({ packages: {
+        ...computed.packages,
+        "": { ...manifest, dependencies: { ...manifest.dependencies, child: "^1" } },
+        "node_modules/child": { version: "1.5.0", resolved: "https://registry.npmjs.org/child/-/child-1.5.0.tgz" },
+      } }));
+    });
+    const result = computeNpm({
+      ...h.inputs, kind: "major", moves: h.inputs.moves.map((move) => ({ ...move, to: "2.0.0" })),
+      sources: { ...h.inputs.sources, versions: async (name) => name === "child" ? versions : ["1.0.0", "2.0.0"] },
+    });
+    if (error === undefined) await expect(result).resolves.toBeDefined();
+    else await expect(result).rejects.toThrow(error);
+  });
   it("fails after MAX_PASSES when npm keeps undoing the exact targets", async () => {
     const h = await fixture(async (dir) => { await writeFile(join(dir, "package-lock.json"), json(lock())); });
     await expect(computeNpm(h.inputs)).rejects.toThrow(`after ${MAX_PASSES} passes`);

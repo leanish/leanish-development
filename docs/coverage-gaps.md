@@ -103,6 +103,7 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   and reach `errors`, and protect subsequent units' PRs, but PRs already handled aren't rechecked and may already have
   been rewritten. This accepted limit keeps execution order and the cap on actual new publications. New in 0.9.1.
 - **npm aliases without a version** (`"compat": "npm:lib"`): the inventory reads them, but neither tool can rewrite them, so an update fails visibly and a person makes it.
+- **Induced versions from npm mirrors (bump-it)**: a major's induced-version deprecation check skips copies whose lockfile `resolved` URL is outside `https://registry.npmjs.org/`, including mirrors; the gate's source rules still apply. Pre-existing.
 - **Scheduled runs are best effort**: GitHub may delay or skip them, and disables them after 60 days without activity in a public repository. Nothing else watches that the scheduled scan still runs.
 
 ## Checks that fail rather than leave a gap
@@ -111,6 +112,10 @@ These apply to versions a PR adds or changes, in `compare`; unchanged versions a
 
 - **Packages from another npm registry**: age and identity are checked against the npm registry only, so they fail, or (trusted packages) need a reviewed `identity` exception.
 - **Maven versions outside Maven Central and the Gradle Plugin Portal**: their release age can't be checked, so they fail unless their repository is listed in `maven.repositories`. Trusted Maven packages skip the age check.
+
+bump-it's major computation refuses every npmjs-resolved version absent from base and not at a checked direct target
+unless its registry catalog can be read and lists it as non-deprecated. Newly declared root/workspace dependencies
+are included, peers or not; bundled copies are exempt.
 
 ## Automated test coverage
 

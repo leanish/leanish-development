@@ -168,11 +168,14 @@ async function agePolicyNotes(base: Tree, config: Config, configText: string | u
       policy.trustedPackages.pluginIdPrefixes,
       policy.trustedPackages.actionOwners.map((owner) => owner.toLowerCase()),
     ].map((values) => [...new Set(values)].sort()));
+    // Maven uses the first repository with the POM; npm's allowed registries are a set.
+    const sources = (policy: Config) => JSON.stringify([policy.maven.repositories, [...new Set(policy.npm.registries)].sort()]);
     if (before.releaseAgeDays === config.releaseAgeDays && trust(before) === trust(config)
+      && sources(before) === sources(config)
       && !(beforeText !== undefined && configText === undefined)) return [];
-    return ["This PR changes the release-age policy in .github/supply-chain.json; head's policy applies to this comparison."];
+    return ["This PR changes the release-age, trust or source policy in .github/supply-chain.json; head's policy applies to this comparison."];
   } catch {
-    return ["The comparison couldn't tell whether the release-age policy changed because base's .github/supply-chain.json couldn't be read or parsed; head's policy applies."];
+    return ["The comparison couldn't tell whether the release-age, trust or source policy changed because base's .github/supply-chain.json couldn't be read or parsed; head's policy applies."];
   }
 }
 

@@ -4,8 +4,8 @@ import { runCompare } from "../src/gate.ts";
 import { markdownSummary, REPORT_SCHEMA_VERSION } from "../src/report.ts";
 import { environment, files, json, tree } from "./required-fixture.ts";
 
-const changed = "This PR changes the release-age policy in .github/supply-chain.json; head's policy applies to this comparison.";
-const unknown = "The comparison couldn't tell whether the release-age policy changed because base's .github/supply-chain.json couldn't be read or parsed; head's policy applies.";
+const changed = "This PR changes the release-age, trust or source policy in .github/supply-chain.json; head's policy applies to this comparison.";
+const unknown = "The comparison couldn't tell whether the release-age, trust or source policy changed because base's .github/supply-chain.json couldn't be read or parsed; head's policy applies.";
 
 async function compare(base: string | undefined, head: string | undefined) {
   const configured = (config: string | undefined) => ({ ...files(), ...(config === undefined ? {} : { ".github/supply-chain.json": config }) });
@@ -34,8 +34,29 @@ describe("a note about changes to the policy judging the PR", () => {
   it("gives one note for several changes, including replacement of trust", async () => {
     expect((await compare(
       json({ releaseAgeDays: 1, trustedPackages: { npm: { scopes: ["@old"] } } }),
-      json({ releaseAgeDays: 14, trustedPackages: { npm: { scopes: ["@new"] } } }),
+      json({ releaseAgeDays: 14, trustedPackages: { npm: { scopes: ["@new"] } },
+        maven: { repositories: ["https://mirror.example/maven"] },
+        npm: { registries: ["https://registry.npmjs.org", "https://mirror.example/npm"] } }),
     )).notes).toEqual([changed]);
+  });
+
+  it.each([
+    { kind: "Maven", policy: { maven: { repositories: ["https://repo1.maven.org/maven2", "https://mirror.example/maven"] } } },
+    { kind: "npm", policy: { npm: { registries: ["https://registry.npmjs.org", "https://mirror.example/npm"] } } },
+  ])("notes added or removed $kind repositories even when nothing is held", async ({ policy }) => {
+    const configured = json(policy);
+    for (const [base, head] of [["{}", configured], [configured, "{}"]]) {
+      const outcome = await compare(base, head);
+      expect(outcome.failures).toEqual([]);
+      expect(outcome.cooldown).toEqual({ evaluated: true, releaseAgeDays: 7, held: [] });
+      expect(outcome.notes).toEqual([changed]);
+    }
+  });
+
+  it("notes a reordered Maven repository list because lookup order determines the publish date", async () => {
+    const repositories = ["https://repo1.maven.org/maven2", "https://mirror.example/maven"];
+    const outcome = await compare(json({ maven: { repositories } }), json({ maven: { repositories: [...repositories].reverse() } }));
+    expect(outcome.notes).toEqual([changed]);
   });
 
   it("notes deletion even when the file specified only defaults", async () => {
@@ -53,9 +74,12 @@ describe("a note about changes to the policy judging the PR", () => {
     [undefined, undefined],
     [undefined, "{}"],
     ["{}", json({ releaseAgeDays: 7, npm: { registries: ["https://registry.npmjs.org"] } })],
+    ["{}", json({ maven: { repositories: ["https://repo1.maven.org/maven2/", "https://plugins.gradle.org/m2/"] } })],
+    [json({ npm: { registries: ["https://registry.npmjs.org", "https://mirror.example/npm"] } }),
+      json({ npm: { registries: ["https://mirror.example/npm/", "https://registry.npmjs.org/"] } })],
     [json({ ownPackages: { npm: { scopes: ["@b", "@a"] }, "GitHub Actions": { owners: ["ACME"] } } }),
       json({ trustedPackages: { "GitHub Actions": { owners: ["acme"] }, npm: { scopes: ["@a", "@b"] } } })],
-  ])("omits the note for equivalent age policies (%s -> %s)", async (base, head) => {
+  ])("omits the note for equivalent policies (%s -> %s)", async (base, head) => {
     expect((await compare(base, head)).notes).toEqual([]);
   });
 

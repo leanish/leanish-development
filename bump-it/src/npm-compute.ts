@@ -341,11 +341,11 @@ function rememberAccepted(graph: NpmGraph, retained: ReadonlyMap<string, Copy>, 
 }
 
 /**
- * A major keeps the graph npm induces, but none of its new versions may be deprecated: each version a transitive copy
- * takes that base didn't have must be in the registry's non-deprecated catalog, which unreadable data can't show.
- * Only copies at checked direct targets are exempt; a newly installed root/workspace peer is not a checked target.
- * Bundled copies follow their carrier; a copy from git, a
- * tarball or another registry has no npm catalog to ask, and the gate's source rules judge it.
+ * A major keeps the graph npm induces. Every npmjs-resolved version absent from base and not at a checked direct
+ * target must be in the registry's non-deprecated catalog, which unreadable data can't show. This includes newly
+ * declared root/workspace dependencies, peers or not: a declaration alone is not a checked target.
+ * Bundled copies follow their carrier; other sources (including npm mirrors) skip this catalog check and are
+ * judged by the gate's source rules.
  */
 async function assertNoNewDeprecated(graph: NpmGraph, direct: ReadonlyMap<string, string>, baseVersions: ReadonlyMap<string, ReadonlyArray<string>>, lockfile: string, sources: TargetSources): Promise<void> {
   for (const copy of graph.copies()) {

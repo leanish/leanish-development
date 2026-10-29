@@ -48,7 +48,7 @@ describe("the cooldown in a comparison", () => {
     expect(outcome.cooldown).toEqual({ evaluated: true, releaseAgeDays: 1, held: [] });
     expect(outcome.notes).toEqual([
       "fixed: vite@8.3.2: GHSA-rq7h-c2jc-7f22",
-      "This PR changes the release-age policy in .github/supply-chain.json; head's policy applies to this comparison.",
+      "This PR changes the release-age, trust or source policy in .github/supply-chain.json; head's policy applies to this comparison.",
     ]);
   });
 
