@@ -16,8 +16,9 @@
  *
  * At least one target must be a reviewed bundled advisory. The targets also
  * include the carrier's own reviewed groups R has and V doesn't, so a version
- * fixing both is proved as the combined choice secure-it makes. Own-only fixes
- * need the ordinary young-fix proof or an explicit release-age exception.
+ * fixing both is proved as the combined choice secure-it makes. Fixes of only
+ * the carrier's advisories need the ordinary young-fix proof or an explicit
+ * release-age exception.
  * Every head copy of V must be such an occurrence and pass: a copy elsewhere
  * has no evidence of its own.
  *

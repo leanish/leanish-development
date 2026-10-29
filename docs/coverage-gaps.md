@@ -45,7 +45,7 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 - **Removing a configuration's only declared floor (secure-it)**: when the floor is the configuration's only
   dependency of its own, removing it lets its default dependencies apply (checkstyle's tool version, for instance),
   which exact declaration preservation refuses; the removal fails visibly. Pre-existing in 0.7.1.
-- **A young own-only npm carrier is refused late (secure-it)**: when a carrier's bundle fixes nothing reviewed (its
+- **A young npm carrier fixing only its own advisories is refused late (secure-it)**: when a carrier's bundle fixes nothing reviewed (its
   bundled findings are only in the project's repository advisories), secure-it may still pick a young carrier version
   for the carrier's own advisories that the ordinary young-fix rule refuses. Unless another justification applies (a
   required-dependency proof or a valid release-age exception), verification refuses it before anything is published,

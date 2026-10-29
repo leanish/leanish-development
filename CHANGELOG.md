@@ -8,6 +8,10 @@
   and GitHub Actions owners. It can include third parties as well as the repository's own packages. Trust removes
   the cooldown detection window (and Actions' immutable-release requirement); identity, advisory, malware, source
   and pin checks still apply. The stricter base/head policy preserves trust across a configuration rename.
+  Run/report reason texts now say "trusted" instead of "own", including "trusted-package" and "configured
+  trusted-package exclusions".
+- Trusted Gradle plugin ID prefixes now match at dot boundaries: `com.acme` matches that ID and its descendants,
+  and `com.acme.` matches descendants only; neither trusts `com.acmecorp`. Only plugin marker coordinates match.
 - The gate strips a Gradle build path's trailing slash without a regular expression, clearing a CodeQL false
   positive; the results are unchanged.
 

@@ -177,7 +177,7 @@ function blockingVite(reason: string, undecided: boolean): NpmPeerPlanner {
 const PEER_UNDECIDED = "no safe aged compatible direct-peer set for vite@8.3.3: @vitejs/plugin@2.0.1: attestation lookup failed with HTTP 503; no eligible compatible combination satisfies all peer ranges";
 
 describe("secure-it run", () => {
-  it("doesn't publish an own-only young carrier as a bundle fix when a repository-only finding preserves carrier identity", async () => {
+  it("doesn't publish a young carrier fixing only its own advisories as a bundle fix when a repository-only finding preserves carrier identity", async () => {
     const versions = ["1.0.0", "1.0.1", "1.0.2"];
     const brace = (version: string) => version === "1.0.1" ? "5.0.12" : "5.0.9";
     const tarball = (version: string) => `https://registry.npmjs.org/carrier/-/carrier-${version}.tgz`;

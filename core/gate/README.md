@@ -174,7 +174,7 @@ head copy of V:
 - **Targets:** the bundled package + reviewed advisory groups R's bundle has and V's doesn't (wherever in the bundle a
   package sits: a package that moved inside the bundle still counts), plus R's own reviewed advisories V no longer has.
   At least one reviewed bundled target is required. The carrier's own targets join the combined choice but cannot
-  justify a bundle fix alone: an own-only fix needs the ordinary young-fix proof or an explicit `releaseAge` exception.
+  justify a bundle fix alone: a fix of only the carrier's advisories needs the ordinary young-fix proof or an explicit `releaseAge` exception.
   Malware isn't a target; unreviewed advisories still rule candidates out.
 - **The rule:** the young-fix rule above, applied to the carrier: a candidate fixes when its bundle has none of the
   targets anywhere, adds no package + advisory group pair R's bundle lacked, holds no malware, and the carrier version
@@ -280,7 +280,7 @@ Optional; read from head. Unknown fields fail, so a typo can't turn a check off.
 
 - Without `npm.lockfiles`, the gate reads `package-lock.json` if the tree has one; without `gradle.builds`, the root build if the tree has a `settings.gradle(.kts)` or `build.gradle(.kts)`. So an ecosystem in the repository is never skipped for lack of configuration; `"builds": []` turns Gradle off explicitly. Workflows are always read. A tree with none of these fails.
 - Every listed lockfile must exist in head; one base doesn't have yet reads as empty there.
-- Trusted packages skip only the release-age wait. Trusted Maven packages: exact `groups`, and `pluginIdPrefixes` that only match Gradle plugin markers (`<id>:<id>.gradle.plugin`), so `com.acme.` doesn't exempt every `com.acme.*` group.
+- Trusted packages skip only the release-age wait. Trusted Maven packages: exact `groups`, and `pluginIdPrefixes` that only match Gradle plugin markers (`<id>:<id>.gradle.plugin`). Prefixes match at dot boundaries: `com.acme` matches that ID and its descendants, while `com.acme.` matches descendants only; neither matches `com.acmecorp`. Other artifacts in `com.acme.*` groups are not exempt.
 - `trustedPackages` can include third parties as well as your own packages. Trusting a package or Actions owner removes the cooldown's detection window for it: a compromised publisher's release can pass immediately. Trusted Actions also need no immutable release or release date. Publisher identity, advisory, malware, source and pin checks still apply; dependencies do not inherit trust.
 - `ownPackages` is a deprecated alias with the same shape and meaning, accepted without a warning. Use one name only: configuring both is an error. A rename preserves the stricter base/head policy. Repin older gates to a release supporting `trustedPackages` before migrating configuration; older gates reject the new field.
 - `repositories`: a package's GitHub source repository, for its repository advisories; it takes precedence over what the manifest or POM names.

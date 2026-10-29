@@ -196,7 +196,7 @@ describe("a young carrier proved as a bundled fix", () => {
     expect(ageFailures(outcome.failures)).toEqual([expect.stringContaining("fixes no reviewed bundled advisory affecting 1.0.0")]);
   });
 
-  it("doesn't justify an own-only fix by ruling out the ordinary rule's aged choice on its bundle", async () => {
+  it("doesn't justify a fix of only the carrier's advisories by ruling out the ordinary rule's aged choice on its bundle", async () => {
     const outcome = await compare({
       "1.0.0": { published: OLD, bundles: VULNERABLE },
       "1.0.1": { published: daysAgo(30), bundles: FIXED },
