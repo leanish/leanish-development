@@ -8,8 +8,9 @@
  * ones too, and its bundle is read from its locked archive and must match
  * what each lockfile records.
  */
+import { ignoredIntroductions } from "./ignored-versions.ts";
 import { type CarriedTarget, chooseCarrier, registryIntegrity } from "./carrier-fixes.ts";
-import { type Config, isTrustedPackage } from "./config.ts";
+import { type Config, ignoredVersionReason, isTrustedPackage } from "./config.ts";
 import type { Finding } from "./findings.ts";
 import { type NpmLockfile, npmLocation } from "./inventory.ts";
 import { type BundleReader, bundleMismatches } from "./npm-bundles.ts";
@@ -121,6 +122,8 @@ export interface CarrierDecision {
   readonly vetoed?: ReadonlyArray<Veto>;
   /** How many more such versions the search read, when there were more than `vetoed` shows. */
   readonly vetoesLeftOut?: number;
+  /** Fixing candidates discarded by tool policy, when another target is selected. */
+  readonly notes?: ReadonlyArray<string>;
 }
 
 /** The carrier move for `group`, fixing `own` (its own failing advisory groups) too. */
@@ -152,6 +155,7 @@ export async function decideCarrier(group: CarrierGroup, own: ReadonlyArray<stri
   if (!malicious && carriedTargets.length === 0 && fixable.length === 0) {
     return { ...none(`no version of ${group.name} fixes ${own.length === 0 ? "anything reviewed" : own.join(", ")}`), unfixable };
   }
+  const discarded = new Set<string>();
   const choice = await chooseCarrier({
     carrier: group.name,
     from: group.version,
@@ -167,9 +171,17 @@ export async function decideCarrier(group: CarrierGroup, own: ReadonlyArray<stri
     catalog: context.catalog,
     config: context.config,
     now: context.now,
+    accepts: (version, bundle) => {
+      const reason = ignoredVersionReason(context.config, { ...pkg, version });
+      const located = (packages: typeof bundle.packages) => packages.map((entry) => ({ ecosystem: "npm" as const, name: entry.name, version: entry.version, locations: [entry.path] }));
+      const introduced = ignoredIntroductions(context.config, located(fromBundle.packages), located(bundle.packages));
+      if (reason === undefined && introduced.length === 0) return true;
+      discarded.add(`a fix exists but is ignored by policy: ${pkg.name}@${version}: ${reason ?? introduced.join("; ")}`);
+      return false;
+    },
   });
   // The vetoes go last, after the reason: a retry attributes the refusal without them (`withoutVetoNote`).
-  if (choice.kind === "none") return { ...none(`${choice.reason}${vetoNote(choice.vetoed)}`), unfixable };
+  if (choice.kind === "none") return { ...none(`${choice.reason}${discarded.size === 0 ? "" : `; ${[...discarded].join("; ")}`}${vetoNote(choice.vetoed)}`), unfixable };
   if (choice.kind !== "chosen") return { ...unread(choice.reason), unfixable };
   const line = (version: string) => compatibleLine(context.config, pkg, version);
   return {
@@ -181,5 +193,6 @@ export async function decideCarrier(group: CarrierGroup, own: ReadonlyArray<stri
     to: { version: choice.version, line: choice.line, aged: choice.aged || isTrustedPackage(context.config.trustedPackages, pkg), major: line(choice.version) !== line(group.version), blockers: [] },
     problem: undefined,
     ...vetoFields(choice),
+    ...(discarded.size === 0 ? {} : { notes: [...discarded] }),
   };
 }

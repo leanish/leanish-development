@@ -375,3 +375,13 @@ describe("bump verification", () => {
     expect(await verifyPlan({ ...input, plan: corrupted })).toMatchObject([expect.stringContaining("don't match the plan"), expect.stringContaining("don't match the plan")]);
   });
 });
+
+it("refuses ignored actual resolutions before compare, including unplanned transitives", async () => {
+  const { input, baseFiles, headFiles } = await fixture();
+  const config = JSON.stringify({ ignoredVersions: [{ package: "npm:other", versions: ["1.0.0"], reason: "broken" }] });
+  const valid = (text: string) => JSON.stringify({ ...JSON.parse(text), lockfileVersion: 3 });
+  const base = { ...baseFiles, ".github/supply-chain.json": config, "package-lock.json": valid(lock("1.0.0", "0.9.0")) };
+  const head = { ...headFiles, ".github/supply-chain.json": config, "package-lock.json": valid(headFiles["package-lock.json"]!) };
+  expect(await verifyPlan({ ...input, base: tree("base", base), head: tree("head", head) })).toEqual([expect.stringContaining("ignored version introduced: npm:other@1.0.0")]);
+  expect(runCompare).not.toHaveBeenCalled();
+});

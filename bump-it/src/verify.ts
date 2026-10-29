@@ -6,6 +6,7 @@ import { type CooldownEvaluation, heldLines } from "@leanish/gate/cooldown";
 import { type GateEnvironment, type GradleInputs, readSettings, runCompare, type Settings, treeSources } from "@leanish/gate/gate";
 import type { GradleInventory } from "@leanish/gate/gradle";
 import type { Tree } from "@leanish/gate/tree";
+import { ignoredVersionProblems } from "@leanish/tool-runtime/ignored-version-checks";
 import { actionsOutsidePlan, declaredAt, directChangesOutside, directVersions, FLOORS_FILE, isDependencyFile, policyFence, preservedMavenFloorProblems } from "@leanish/tool-runtime/edit-checks";
 
 import type { WrapperFile } from "./wrapper-generation.ts";
@@ -49,6 +50,8 @@ export async function verifyPlan(inputs: VerifyInputs): Promise<string[]> {
   if (fenced.length > 0) {
     return fenced;
   }
+  const ignoredVersions = await ignoredVersionProblems(base, head, gradle);
+  if (ignoredVersions.length > 0) return ignoredVersions;
   const problems = await npmProblems(inputs);
   const wrapperMoves = plan.moves.filter((move) => move.mechanism === "gradle-wrapper");
   if (wrapperMoves.length > 0) {

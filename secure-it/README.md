@@ -10,6 +10,8 @@ core/tool-runtime/run.sh secure-it run leanish/sqs-codec      # daily: batch fix
 core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours: look after its PRs
 ```
 
+The repository's [`ignoredVersions`](../core/gate/README.md#configuration-githubsupply-chainjson) policy skips exact npm, Maven and Actions versions when selecting fixes, carriers, parents, required dependencies and peers. Discarded fixing candidates are reported as “a fix exists but is ignored by policy”. Verification refuses the whole unit when its actual resolution introduces an ignored version (transitives included); unchanged copies may stay. That refusal allows no override, feedback attempt or reduced-batch retry. A young alternative can still fail the gate when its security rule requires an ignored fix; the refusal remains visible until the alternative ages or an explicit exception covers it. See [limits](../docs/coverage-gaps.md#limits).
+
 ## What a run does
 
 1. **Finds what fails.** It runs `candidates --rule security` on the default branch's head. The Gradle inventory runs

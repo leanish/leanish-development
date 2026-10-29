@@ -1,5 +1,5 @@
 /** Prove forced young npm requirements before install; every required target remains exact and independently gated. */
-import { type Config, isTrustedPackage } from "@leanish/gate/config";
+import { type Config, ignoredVersionReason, isTrustedPackage } from "@leanish/gate/config";
 import type { Exceptions } from "@leanish/gate/exceptions";
 import { type Evidence, inherits } from "@leanish/gate/findings";
 import type { Snapshot } from "@leanish/gate/snapshot";
@@ -90,6 +90,7 @@ async function collectRequirements(base: Tree, plan: ChangePlan, locks: Readonly
             const actual = packages[path];
             return isObject(actual) && typeof actual["version"] === "string" ? actual["version"] : undefined;
           },
+          isIgnored: (name, version) => ignoredVersionReason(config, { ecosystem: "npm", name, version }) !== undefined,
           isTrusted: (name) => isTrustedPackage(config.trustedPackages, { ecosystem: "npm", name }),
           verifiedRoot: (path) => verified.get(path),
           registry, days: config.releaseAgeDays, now,
@@ -100,7 +101,7 @@ async function collectRequirements(base: Tree, plan: ChangePlan, locks: Readonly
             return `node_modules/${key}`;
           },
           bundled: (path) => isObject(packages[path]) && packages[path]["inBundle"] === true,
-          incoming: (node) => requiredPeerTargets(node, original, packages, registry, config, now, fixed),
+          incoming: (node) => requiredPeerTargets(node, original, packages, registry, config, now, fixed, undefined, (name, version) => ignoredVersionReason(config, { ecosystem: "npm", name, version }) !== undefined),
           selected: (target) => { packages[target.path] = { ...(isObject(packages[target.path]) ? packages[target.path] as Record<string, unknown> : {}), name: target.name, version: target.version }; },
           constraints: async (path, name) => [
             ...await registryConstraints(packages, registry, path, name, overrides),

@@ -47,6 +47,7 @@
     "./gradle": "./src/gradle.ts",
     "./gradle-sources": "./src/gradle-sources.ts",
     "./http": "./src/http.ts",
+    "./ignored-versions": "./src/ignored-versions.ts",
     "./inventory": "./src/inventory.ts",
     "./json": "./src/json.ts",
     "./node-runtime": "./src/node-runtime.ts",

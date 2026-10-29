@@ -22,6 +22,16 @@ afterEach(async () => {
 });
 
 describe("security-required npm planning and exact materialization", () => {
+  it("skips an ignored required version and leaves the gate's refusal of a young alternative visible", async () => {
+    const config = { ignoredVersions: [{ package: "npm:postcss", versions: ["8.5.29"], reason: "broken" }] };
+    const configured = (source: Record<string, string>) => tree({ ...source, ".github/supply-chain.json": json(config) });
+    const { env } = environment();
+    const computed = await requiredNpmPlan(configured(files()), plan, env);
+    expect(computed.requiredNpm).toMatchObject([{ name: "postcss", version: "8.5.30" }]);
+    const verdict = await runCompare(configured(files()), configured(files("8.3.3", "8.5.30")), env);
+    expect(verdict.failures.join()).toContain("8.5.30");
+  });
+
   it("plans a shared young requirement for a security batch that the gate proves independently", async () => {
     const batch = securityBatch();
     const h = environment(batch);

@@ -37,6 +37,8 @@ export interface RequiredInputs {
   readonly placement: (parent: RequiredNode, key: string, peer: boolean, optional: boolean) => string | undefined;
   /** Additional applicable ranges, read by the caller from registry parents or repository declarations/overrides. */
   readonly constraints?: (path: string, name: string) => Promise<ReadonlyArray<string>>;
+  /** Tool-only candidate policy; gate proofs leave this absent. */
+  readonly isIgnored?: (name: string, version: string) => boolean;
   readonly isTrusted?: (name: string) => boolean;
   readonly installed?: (path: string) => string | undefined;
   /**
@@ -120,6 +122,7 @@ export function requirementSpec(key: string, spec: string): { name: string; rang
 
 /** Another verified security fix the requirement accepts: young (exempt) or aged like any choice, never re-picked. */
 async function verifiedFix(name: string, version: string, inputs: RequiredInputs): Promise<{ version: string; exempt: boolean }> {
+  if (inputs.isIgnored?.(name, version)) throw new Error(`${name}@${version}: ignored by policy`);
   if (inputs.isTrusted?.(name)) return { version, exempt: false };
   const published = publishTime(await inputs.registry.packument(name), name, version);
   return { version, exempt: isUnderWait(published, inputs.days, inputs.now) };
@@ -129,6 +132,7 @@ async function lowestRequired(name: string, ranges: ReadonlyArray<string>, input
   if (ranges.some((range) => semver.validRange(range) === null)) throw new Error(`${name}: unreadable applicable requirement`);
   const doc = await inputs.registry.packument(name);
   const candidates = Object.entries(doc.versions).filter(([version, manifest]) => {
+    if (version !== installed && inputs.isIgnored?.(name, version)) return false;
     if (semver.valid(version) === null || semver.prerelease(version) !== null || !ranges.every((range) => semver.satisfies(version, range))) return false;
     if (!isObject(manifest)) throw new Error(`${name}@${version}: unreadable candidate manifest`);
     const deprecated = manifest["deprecated"];

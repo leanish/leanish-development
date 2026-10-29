@@ -26,6 +26,13 @@ const config = parseConfig({});
 const advisory: Advisory = { id: "GHSA-fixed", ids: ["GHSA-fixed"], malicious: false, source: "osv", summary: undefined, severity: undefined };
 
 describe("npm security-required release age", () => {
+  it("tools skip an ignored lowest requirement while gate proofs keep the complete listing", async () => {
+    const proof = await requiredClosure(root, { ...inputs(), isIgnored: (_name, version) => version === "8.5.29" });
+    expect(proof.problems).toEqual([]);
+    expect(proof.targets[0]?.version).toBe("8.5.30");
+    expect((await requiredClosure(root, inputs())).targets[0]?.version).toBe("8.5.29");
+  });
+
   it("2026-10-09 Vite/PostCSS: pins only the lowest satisfying young version when no aged version satisfies", async () => {
     const proof = await requiredClosure(root, inputs());
     expect(proof.problems).toEqual([]);

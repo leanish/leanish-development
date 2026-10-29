@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { securityCandidates } from "../src/candidates.ts";
+import { bumpCandidates, securityCandidates } from "../src/candidates.ts";
 import { runCompare } from "../src/gate.ts";
 import { parseConfig } from "../src/config.ts";
 import { NpmRegistry } from "../src/npm-registry.ts";
@@ -31,6 +31,28 @@ function fixture(outward = false) {
 }
 
 describe("young security peer companions", () => {
+  it.each(["security", "bump"])("%s direct-peer selection skips ignored companions", async (rule) => {
+    const h = fixture();
+    for (const doc of Object.values(h.docs)) for (const version of Object.keys(doc.time)) doc.time[version] = OLD;
+    const config = { ignoredVersions: [UI, COVERAGE].map((name) => ({ package: `npm:${name}`, versions: ["4.1.11"], reason: "broken" })) };
+    const base = tree({ ...h.base, ".github/supply-chain.json": json(config) });
+    const env = environment({ docs: h.docs, affected: { "vitest@4.1.7": [FIXED] } }).env;
+    const choices = await (rule === "security" ? securityCandidates : bumpCandidates)(base, env);
+    const peers = await choices.npmPeers!.resolve([{ name: "vitest", from: "4.1.7", to: "4.1.11", locations: ["node_modules/vitest"] }]);
+    expect(peers.blocked).toEqual([]);
+    expect(peers.additions.map((move) => [move.name, move.to])).toEqual([[COVERAGE, "4.1.12"], [UI, "4.1.12"]]);
+  });
+
+  it("tools skip ignored peer consumers without changing the gate's peer proof", async () => {
+    const h = fixture();
+    const packages = JSON.parse(h.base["package-lock.json"]!).packages;
+    const root = { name: "vitest", version: "4.1.11", path: "node_modules/vitest" };
+    const peers = await requiredPeerTargets(root, packages, packages, new NpmRegistry(h.env.fetch), parseConfig({}), NOW, new Set(), undefined, (_name, version) => version === "4.1.11");
+    expect(peers.map((peer) => peer.version)).toEqual(["4.1.12", "4.1.12"]);
+    const gate = await requiredPeerTargets(root, packages, packages, new NpmRegistry(h.env.fetch), parseConfig({}), NOW);
+    expect(gate.map((peer) => peer.version)).toEqual(["4.1.11", "4.1.11"]);
+  });
+
   it.each([true, false])("plans and independently verifies the lowest forced direct peer set (outgoing peers: %s)", async (outward) => {
     const h = fixture(outward);
     const choices = await securityCandidates(tree(h.base), h.env);

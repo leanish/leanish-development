@@ -24,7 +24,7 @@ import { hasAged } from "@leanish/gate/age";
 import { ActionsGitHub } from "@leanish/gate/actions-github";
 import { IdentityCheck } from "@leanish/gate/candidates";
 import { NpmCatalog } from "@leanish/gate/catalogs";
-import { type Config, isTrustedPackage } from "@leanish/gate/config";
+import { type Config, ignoredVersionReason, isTrustedPackage } from "@leanish/gate/config";
 import type { Exceptions } from "@leanish/gate/exceptions";
 import { type GateEnvironment, snapshotOptions } from "@leanish/gate/gate";
 import { npmLocation } from "@leanish/gate/inventory";
@@ -267,6 +267,7 @@ class ParentSearch {
     const dropped = new Set<string>();
     const admissible = new Set<string>();
     for (const version of versions) {
+      if (ignoredVersionReason(config, { ...parent, version }) !== undefined) continue;
       if (!trusted && pinned === undefined) {
         const published = await this.#catalog.published({ ...parent, version });
         if (!hasAged(published, config.releaseAgeDays, now)) continue;

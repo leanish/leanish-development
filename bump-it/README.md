@@ -6,12 +6,14 @@ Actions pins and Dockerfile CLIs represented by configured npm manifest/lockfile
 The tool decides versions, computes npm files and verifies every edit before opening a draft PR. The coding agent
 (Codex or Claude Code) handles Gradle declarations, Actions pins and major migrations. When verification refuses what
 the agent wrote, the agent is asked once more, from the base, with the refusal (`rejected`); a second refusal fails the
-unit. A pass the tool wrote alone isn't retried.
+unit. A pass the tool wrote alone isn't retried. An ignored-version refusal is final and never retried.
 
 ```bash
 core/tool-runtime/run.sh bump-it run leanish/widget      # weekly
 core/tool-runtime/run.sh bump-it review leanish/widget   # every few hours
 ```
+
+The repository's [`ignoredVersions`](../core/gate/README.md#configuration-githubsupply-chainjson) policy skips exact npm, Maven and Actions versions during selection, including transitive and peer choices. Run notes name ignored newer versions. Verification refuses the whole unit if its actual resolution introduces an ignored version, including transitive fallout; unchanged copies may stay. No override or automatic retry bypasses this refusal. The Gradle wrapper is not covered by this policy in this cut.
 
 ## Run
 

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- `ignoredVersions` in repository policy: exact npm, Maven and Actions versions with a required reason. Tools skip them across fix, bump, carrier, parent, required-dependency and peer selection, report discarded candidates, and refuse units whose resolution introduces them without automatic retries. Unchanged copies may stay; the gate validates the policy without banning manual adoption. Gradle wrapper versions remain outside this policy.
+
 ### Changed
 
 - The release-age exemption is named `trustedPackages`, with the same npm scopes, Maven groups/plugin ID prefixes

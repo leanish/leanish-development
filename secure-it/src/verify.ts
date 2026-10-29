@@ -33,6 +33,7 @@
  *      the same way as in the plan's reference;
  *   5. only dependency files changed, unless a move is a major.
  */
+import { ignoredVersionProblems } from "@leanish/tool-runtime/ignored-version-checks";
 import { computedNpmProblems } from "@leanish/tool-runtime/npm-file-checks";
 import { registryIntegrity } from "@leanish/gate/carrier-fixes";
 import { type BundleReader, bundleMismatches } from "@leanish/gate/npm-bundles";
@@ -90,6 +91,8 @@ export async function verifyPlan(inputs: VerifyInputs): Promise<string[]> {
   const pins = pinsOf(plan);
   const fenced = await policyFence(inputs.changedFiles, pins, base, head);
   if (fenced.length > 0) return fenced;
+  const ignoredVersions = await ignoredVersionProblems(base, head, gradle);
+  if (ignoredVersions.length > 0) return ignoredVersions;
   const npm = await computedNpmProblems(inputs.npmFiles, head, plan.moves.some((move) => move.major), base, inputs.changedFiles);
   if (npm.length > 0) return npm;
   const floors = await preservedFloors(plan, base, head, gradle);

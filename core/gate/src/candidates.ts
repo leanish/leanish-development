@@ -24,7 +24,7 @@
 import { actionGaps } from "./actions-changes.ts";
 import { hasAged } from "./age.ts";
 import { type CarriedPackage, type CarrierContext, type CarrierDecision, type CarrierGroup, decideCarrier, splitBundled } from "./carrier-candidates.ts";
-import { type Config, isTrustedPackage } from "./config.ts";
+import { type Config, ignoredVersionReason, selectableVersions, isTrustedPackage } from "./config.ts";
 import { type Exceptions, unexcusedProblem } from "./exceptions.ts";
 import { type Finding, findingKey, findingsOf, type Located } from "./findings.ts";
 import type { Floor } from "./floors.ts";
@@ -302,6 +302,7 @@ async function carrierFix(group: CarrierGroup, own: FailingVersion | undefined, 
     problem: decision.problem,
     ...(decision.undecided === true ? { undecided: true as const } : {}),
     carries: decision.carries,
+    ...(decision.notes === undefined ? {} : { notes: decision.notes }),
     ...(decision.vetoed === undefined ? {} : { vetoed: decision.vetoed }),
     ...(decision.vetoesLeftOut === undefined ? {} : { vetoesLeftOut: decision.vetoesLeftOut }),
   };
@@ -383,6 +384,10 @@ async function chooseMove(
   const line = (version: string) => compatibleLine(config, name, version);
   const fixable = targets.filter((target) => moves.some((version) => fixes(snapshot, name, pkg.version, [target], version)));
   const unfixable = targets.filter((target) => !fixable.includes(target));
+  const fixingAll = moves.filter((version) => fixes(snapshot, name, pkg.version, fixable, version));
+  const ignored = (malicious || fixable.length > 0 ? fixingAll : []).filter((version) => ignoredVersionReason(config, { ...name, version }) !== undefined);
+  const ignoredNotes = ignored.map((version) => `a fix exists but is ignored by policy: ${name.name}@${version}: ${ignoredVersionReason(config, { ...name, version })}`);
+  const fixing = selectableVersions(config, name, fixingAll)!;
   // Every choice below skips what unreviewed advisories alone rule out: recorded on whichever move it makes, the ones
   // nearest it in `order`, the order the choice ranks the candidates in.
   const vetoes = vetoesOf(snapshot, name, pkg.version, fixable, moves);
@@ -392,10 +397,11 @@ async function chooseMove(
     unfixable,
     to: { version, line: line(version), aged, major: line(version) !== line(pkg.version), blockers: [] },
     problem: undefined,
+    ...(ignoredNotes.length === 0 ? {} : { notes: ignoredNotes }),
     ...vetoFields(nearestVetoes(vetoes, order, version)),
   });
-  const none = (why: string): SecurityFix => ({ ...base, unfixable, to: undefined, problem: why });
-  const fixing = moves.filter((version) => fixes(snapshot, name, pkg.version, fixable, version));
+  const none = (why: string): SecurityFix => ({ ...base, unfixable, to: undefined, problem: [why, ...ignoredNotes].join("; ") });
+
   if (malicious) {
     const scheme = versionScheme(pkg.ecosystem);
     const sameLine = (version: string) => line(version) === line(pkg.version);
@@ -597,7 +603,12 @@ export async function bumpCandidates(head: Tree, env: GateEnvironment, gradle: G
     }
     const allowed = pkg.ecosystem === "npm" && pkg.name === "@types/node"
       ? await nodeVersionsFor(head, pkg, listed, problems.get(versionKey(pkg))!) : listed;
-    const newer = movesFrom(pkg, pkg.version, allowed);
+    const allNewer = movesFrom(pkg, pkg.version, allowed);
+    for (const version of allNewer) {
+      const reason = ignoredVersionReason(config, { ...pkg, version });
+      if (reason !== undefined) notes.push(`${pkg.name}@${version}: ignored newer version by policy: ${reason}`);
+    }
+    const newer = selectableVersions(config, pkg, allNewer)!;
     newerOf.set(versionKey(pkg), newer);
     problems.get(versionKey(pkg))!.push(...(await untrustedActionReleases(pkg, newer, catalogs[pkg.ecosystem], config)));
     const line = (version: string) => compatibleLine(config, pkg, version);
@@ -715,7 +726,7 @@ async function preparePeers(head: Tree, state: ScanState, registry: NpmRegistry,
   return prepareNpmPeers(locks, seeds, {
     ...(security ? { requiredYoung: (_name: string, _from: string, lockfile: string, path: string, anchors: ReadonlyArray<PeerMove>) =>
       forcedPeerVersion(locks, lockfile, path, anchors, registry, config, now) } : {}),
-    versions: (name) => catalog.versions({ ecosystem: "npm", name }),
+    versions: async (name) => selectableVersions(config, { ecosystem: "npm", name }, await catalog.versions({ ecosystem: "npm", name })),
     manifest: async (name, version) => (await registry.packument(name)).versions[version],
     published: (name, version) => catalog.published({ ecosystem: "npm", name, version }),
     // A security unit's moves are judged against every copy they replace together, as `withUnitIdentity` judged them;
@@ -742,7 +753,7 @@ async function forcedPeerVersion(locks: ReadonlyMap<string, unknown>, lockfile: 
     return [{ name: anchor.name, version: anchor.to, path: key }];
   }));
   for (const root of roots) {
-    const required = await requiredPeerTargets(root, original, chosen, registry, config, now, new Set(roots.map((root) => root.path)));
+    const required = await requiredPeerTargets(root, original, chosen, registry, config, now, new Set(roots.map((root) => root.path)), undefined, (name, version) => ignoredVersionReason(config, { ecosystem: "npm", name, version }) !== undefined);
     const target = required.find((target) => target.path === path);
     if (target !== undefined) return target.version;
   }

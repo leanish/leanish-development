@@ -13,6 +13,7 @@
  *       "Maven": { "groups": ["com.acme"], "pluginIdPrefixes": ["com.acme."] },
  *       "GitHub Actions": { "owners": ["acme"] }
  *     },
+ *     "ignoredVersions": [{ "package": "npm:some-package", "versions": ["1.2.3"], "reason": "upstream regression" }],
  *     "repositories": { "npm:some-package": "owner/repo" },
  *     "compatibleLines": { "Maven:org.springframework.boot:*": 2 }
  *   }
@@ -20,8 +21,8 @@
 import { isObject } from "./json.ts";
 import { NPM_REGISTRY } from "./npm-lock.ts";
 import { isDotSegment, MAVEN_CENTRAL } from "./source-repos.ts";
-import { packageKey, type PackageName } from "./package-version.ts";
-import { ECOSYSTEMS, type Ecosystem } from "./versions.ts";
+import { packageKey, type PackageName, type PackageVersion } from "./package-version.ts";
+import { ECOSYSTEMS, type Ecosystem, isSemVer } from "./versions.ts";
 
 export interface Config {
   readonly npm: {
@@ -57,6 +58,8 @@ export interface Config {
   readonly releaseAgeDays: number;
   /** Packages that skip the release-age wait; their other checks still apply. */
   readonly trustedPackages: TrustedPackages;
+  /** Exact versions the local tools must not select; the gate only validates this policy. */
+  readonly ignoredVersions: ReadonlyArray<IgnoredVersions>;
   /** `packageKey` → `owner/repo`, where the source repository can't be found automatically. */
   readonly repositories: ReadonlyMap<string, string>;
   /**
@@ -65,6 +68,12 @@ export interface Config {
    * rule (npm's caret range, Maven's first segment) doesn't fit.
    */
   readonly compatibleLines: ReadonlyArray<readonly [pattern: string, segments: number]>;
+}
+
+export interface IgnoredVersions {
+  readonly package: string;
+  readonly versions: ReadonlyArray<string>;
+  readonly reason: string;
 }
 
 export interface TrustedPackages {
@@ -88,6 +97,7 @@ export const DEFAULT_CONFIG: Config = {
   maven: { repositories: [MAVEN_CENTRAL, GRADLE_PLUGIN_PORTAL] },
   releaseAgeDays: 7,
   trustedPackages: { npmScopes: [], mavenGroups: [], pluginIdPrefixes: [], actionOwners: [] },
+  ignoredVersions: [],
   repositories: new Map(),
   compatibleLines: [],
 };
@@ -107,7 +117,7 @@ function trustedBy(trusted: TrustedPackages, pkg: PackageName): boolean {
 
 export function parseConfig(raw: unknown): Config {
   const where = "supply-chain.json";
-  const root = object(raw, where, ["npm", "gradle", "maven", "releaseAgeDays", "trustedPackages", "ownPackages", "repositories", "compatibleLines"]);
+  const root = object(raw, where, ["npm", "gradle", "maven", "releaseAgeDays", "trustedPackages", "ownPackages", "ignoredVersions", "repositories", "compatibleLines"]);
   const npm = root["npm"] === undefined ? {} : object(root["npm"], `${where}: npm`, ["lockfiles", "registries"]);
   const gradle = root["gradle"] === undefined ? {} : object(root["gradle"], `${where}: gradle`, ["builds", "ignoreConfigurations"]);
   const maven = root["maven"] === undefined ? {} : object(root["maven"], `${where}: maven`, ["repositories"]);
@@ -156,6 +166,7 @@ export function parseConfig(raw: unknown): Config {
       pluginIdPrefixes: strings(trustedMaven["pluginIdPrefixes"], `${where}: ${trustField}.Maven.pluginIdPrefixes`) ?? [],
       actionOwners: strings(trustedActions["owners"], `${where}: ${trustField}["GitHub Actions"].owners`) ?? [],
     },
+    ignoredVersions: ignoredVersions(root["ignoredVersions"], `${where}: ignoredVersions`),
     repositories: repositories(root["repositories"], `${where}: repositories`),
     compatibleLines: compatibleLines(root["compatibleLines"], `${where}: compatibleLines`),
   };
@@ -208,4 +219,35 @@ function repositories(value: unknown, where: string): Map<string, string> {
     result.set(packageKey({ ecosystem, name }), repo);
   }
   return result;
+}
+
+/** Exact string matching: aliases, ranges and equivalent version spellings are never expanded. */
+export function ignoredVersionReason(config: Pick<Config, "ignoredVersions">, pkg: PackageVersion): string | undefined {
+  return config.ignoredVersions.find((entry) => entry.package === `${pkg.ecosystem}:${pkg.name}` && entry.versions.includes(pkg.version))?.reason;
+}
+
+/** Tool selection only; never filter catalogs or publisher history with this helper. */
+export function selectableVersions(config: Config, pkg: PackageName, versions: ReadonlyArray<string> | undefined): ReadonlyArray<string> | undefined {
+  return versions?.filter((version) => ignoredVersionReason(config, { ...pkg, version }) === undefined);
+}
+
+function ignoredVersions(value: unknown, where: string): IgnoredVersions[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new Error(`${where} must be a list`);
+  return value.map((raw, index) => {
+    const at = `${where}[${index}]`;
+    const entry = object(raw, at, ["package", "versions", "reason"]);
+    const pkg = entry["package"];
+    if (typeof pkg !== "string" || !/^(?:npm:(?:@[\w.-]+\/)?[\w.-]+|Maven:[\w.-]+:[\w.-]+|GitHub Actions:[\w.-]+\/[\w.-]+)$/.test(pkg)) {
+      throw new Error(`${at}: package must be an exact npm, Maven or GitHub Actions package`);
+    }
+    const versions = strings(entry["versions"], `${at}: versions`);
+    if (versions === undefined || versions.length === 0 || versions.some((version) => {
+      if (!pkg.startsWith("Maven:")) return !isSemVer(version);
+      return !/^[0-9A-Za-z][0-9A-Za-z._+-]*$/.test(version) || /(?:^|[.-])[xX](?:$|[.-])/.test(version) || /^(?:LATEST|RELEASE)$/i.test(version);
+    })) throw new Error(`${at}: versions must contain exact versions, without ranges or wildcards`);
+    const reason = entry["reason"];
+    if (typeof reason !== "string" || reason.trim() === "") throw new Error(`${at}: reason must be nonempty`);
+    return { package: pkg.startsWith("GitHub Actions:") ? pkg.toLowerCase().replace("github actions:", "GitHub Actions:") : pkg, versions, reason };
+  });
 }

@@ -13,6 +13,9 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 
 ## Limits
 
+- **Ignored fixes and young alternatives**: tools skip `ignoredVersions`, but gate catalogs and the young-fix rule stay complete. The gate may refuse a young alternative because its rule requires an ignored fix (including a required dependency or peer). This refusal remains visible until the alternative ages or an explicit exception covers it; the tools neither override policy nor automatically retry the unit. The gate does not reject installed or manually added versions merely because they are ignored.
+- **Ignored Gradle wrapper versions**: `ignoredVersions` covers the gate's npm, Maven and GitHub Actions ecosystems. The wrapper remains a separate bump-it-only ecosystem and is left out of this cut to keep the configuration contract small.
+
 - **An action with no immutable release, newly used (gate)**: under the normal configuration, a new or additional
   occurrence of a third-party action whose selected version has no immutable release fails the gate, even where the
   repository already uses it (existing uses don't authorize more copies; `trustedPackages` are exempt). In 0.9.1 this held

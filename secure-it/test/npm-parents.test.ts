@@ -467,3 +467,9 @@ describe("npm parents, what they must keep admitting", () => {
     expect(fixes.find((fix) => fix.name === "x")!.parents?.map((parent) => parent.to)).toEqual(["2.1.0"]);
   });
 });
+
+it("skips ignored npm parents when lifting a dependency's range", async () => {
+  const fixes = await withParents([brace()], { lockfiles: lockfiles(), env: environment({ parent: PARENT }), exceptions: NO_EXCEPTIONS,
+    config: parseConfig({ ignoredVersions: [{ package: "npm:parent", versions: ["1.2.0"], reason: "broken" }] }) });
+  expect(fixes.find((fix) => fix.name === "parent")?.to?.version).toBe("1.3.0");
+});

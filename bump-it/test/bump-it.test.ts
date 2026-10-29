@@ -828,6 +828,17 @@ describe("bump-it run", () => {
     const refused = harness({ refuse: true });
     expect(await bumpIt(refused.deps).run(refused.context)).toMatchObject({ units: [{ outcome: "published" }, { outcome: "failed" }] });
   });
+  it("never retries or publishes a unit that resolves an ignored version", async () => {
+    const h = harness();
+    let attempts = 0;
+    const deps = { ...h.deps, verify: async () => { attempts++; return ["ignored version introduced: npm:lib@2.0.0 at node_modules/lib: broken"]; } };
+    const result = await bumpIt(deps).run(h.context);
+    expect(result).toMatchObject({ units: [{ outcome: "failed" }, { outcome: "failed" }] });
+    expect(attempts).toBe(2);
+    expect(h.agentCalls).toHaveLength(1);
+    expect(h.workspace.publications).toEqual([]);
+  });
+
   it("asks the agent once more with a refusal, and never retries what the tool wrote alone", async () => {
     const h = harness();
     const attempts = new Map<string, number>();

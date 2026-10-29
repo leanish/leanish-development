@@ -26,7 +26,7 @@
 import { hasAged } from "@leanish/gate/age";
 import { ActionsGitHub } from "@leanish/gate/actions-github";
 import type { CarriedPackage } from "@leanish/gate/carrier-candidates";
-import type { Config } from "@leanish/gate/config";
+import { type Config, ignoredVersionReason } from "@leanish/gate/config";
 import { severityRank } from "@leanish/gate/candidates";
 import { type GateEnvironment, snapshotOptions, versionCatalogs } from "@leanish/gate/gate";
 import { type GradleConfiguration, type GradleInventory, gradleLocation, pinnedAmong, strictPinNote, strictPins } from "@leanish/gate/gradle";
@@ -149,6 +149,7 @@ async function tryRoot(fix: FixWork, floored: ReadonlyArray<string>, root: strin
   const scheme = versionScheme("Maven");
   const aged: string[] = [];
   for (const version of movesFrom(parent, from, listed, "above")) {
+    if (ignoredVersionReason(config, { ...parent, version }) !== undefined) continue;
     if (line(version) !== line(from) || (floor !== undefined && scheme.compare(version, floor) < 0)) continue;
     const published = await catalogs.Maven.published({ ...parent, version });
     if (hasAged(published, config.releaseAgeDays, env.now())) aged.push(version);

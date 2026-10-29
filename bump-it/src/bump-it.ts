@@ -1,6 +1,7 @@
 /** One routine PR and each major apart, with independent computation and verified publication. */
 import { fileURLToPath } from "node:url";
 
+import { hasIgnoredVersionRefusal } from "@leanish/gate/ignored-versions";
 import type { GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
 import type { BumpCandidate } from "@leanish/gate/candidates";
 import type { ToolHandlers, ToolRunContext } from "@leanish/tool-runtime/command";
@@ -310,7 +311,7 @@ async function applyVerified(execution: Execution, computed: Computed): Promise<
     await verify(execution, computed, first.toolWritten);
     return { content: first.content };
   } catch (error) {
-    if (!(error instanceof VerificationRejected) || first.toolWritten !== undefined) throw error;
+    if (!(error instanceof VerificationRejected) || first.toolWritten !== undefined || hasIgnoredVersionRefusal(error.problems)) throw error;
     execution.context.logger.warn("bump-it: asking the agent again with the verification's refusal", { problems: error.problems });
     const after = `asked again after ${error.message}`;
     let again;

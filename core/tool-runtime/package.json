@@ -32,6 +32,7 @@
     "./edit-checks": "./src/edit-checks.ts",
     "./git-copies": "./src/git-copies.ts",
     "./gradle-reference": "./src/gradle-reference.ts",
+    "./ignored-version-checks": "./src/ignored-version-checks.ts",
     "./inventories": "./src/inventories.ts",
     "./journal": "./src/journal.ts",
     "./local-files": "./src/local-files.ts",

@@ -604,3 +604,11 @@ describe("an npm override landed through npm update, then verified", () => {
     }
   });
 });
+
+it("refuses an ignored transitive resolution even when the gate permits it", async () => {
+  const config = JSON.stringify({ ignoredVersions: [{ package: "npm:other", versions: ["1.0.1"], reason: "broken" }] });
+  const base = tree("base", { ".github/supply-chain.json": config, "package-lock.json": lock({ lib: "^1.0.0" }, { lib: "1.0.0", other: "1.0.0" }) });
+  const head = tree("head", { ".github/supply-chain.json": config, "package-lock.json": lock({ lib: "^1.0.1" }, { lib: "1.0.1", other: "1.0.1" }) });
+  const problems = await verifyPlan({ plan: PLAN, base, head, env: environment({}), gradle: {}, reference: undefined, changedFiles: ["package-lock.json"] });
+  expect(problems).toEqual([expect.stringContaining("ignored version introduced: npm:other@1.0.1")]);
+});

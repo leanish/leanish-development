@@ -273,6 +273,7 @@ Optional; read from head. Unknown fields fail, so a typo can't turn a check off.
     "Maven": { "groups": ["com.acme"], "pluginIdPrefixes": ["com.acme."] },
     "GitHub Actions": { "owners": ["acme"] }
   },
+  "ignoredVersions": [{ "package": "npm:some-package", "versions": ["1.2.3"], "reason": "upstream regression" }],
   "repositories": { "npm:some-package": "owner/repo", "Maven:group:artifact": "owner/repo" },
   "compatibleLines": { "Maven:org.springframework.boot:*": 2 }
 }
@@ -283,6 +284,7 @@ Optional; read from head. Unknown fields fail, so a typo can't turn a check off.
 - Trusted packages skip only the release-age wait. Trusted Maven packages: exact `groups`, and `pluginIdPrefixes` that only match Gradle plugin markers (`<id>:<id>.gradle.plugin`), so `com.acme.` doesn't exempt every `com.acme.*` group.
 - `trustedPackages` can include third parties as well as your own packages. Trusting a package or Actions owner removes the cooldown's detection window for it: a compromised publisher's release can pass immediately. Trusted Actions also need no immutable release or release date. Publisher identity, advisory, malware, source and pin checks still apply; dependencies do not inherit trust.
 - `ownPackages` is a deprecated alias with the same shape and meaning, accepted without a warning. Use one name only: configuring both is an error. A rename preserves the stricter base/head policy. Repin older gates to a release supporting `trustedPackages` before migrating configuration; older gates reject the new field.
+- `ignoredVersions`: exact packages (`npm:name`, `Maven:group:artifact`, `GitHub Actions:owner/repo`) and exact version strings the tools skip. Each entry requires a nonempty `versions` list and nonempty `reason`; ranges, wildcards, expiry and unknown fields fail validation. Actions owners/repositories are case insensitive; version spellings (including `v`) match exactly. The gate validates the policy but never rejects a version merely because it is ignored: people may still add it. Catalogs and publisher history remain complete. The Gradle wrapper is outside this policy in this cut: it is a bump-it-only ecosystem, not a gate ecosystem.
 - `repositories`: a package's GitHub source repository, for its repository advisories; it takes precedence over what the manifest or POM names.
 - `compatibleLines`: how many leading numeric segments, after one optional `v` or `V`, make a compatible line for a package (a trailing `*` matches a prefix), where the default (npm's caret range; Maven's first numeric segment, or `0.N` when the first is 0) doesn't fit.
 

@@ -18,12 +18,12 @@ interface PeerNode {
   readonly manifests: ReadonlyMap<string, Record<string, unknown>>;
 }
 
-export async function requiredPeerTargets(root: RequiredNode, basePackages: Record<string, unknown>, chosenPackages: Record<string, unknown>, registry: NpmRegistry, config: Config, now: Date, fixed: ReadonlySet<string> = new Set(), limits: PeerLimits = REQUIRED_PEER_LIMITS): Promise<RequiredTarget[]> {
+export async function requiredPeerTargets(root: RequiredNode, basePackages: Record<string, unknown>, chosenPackages: Record<string, unknown>, registry: NpmRegistry, config: Config, now: Date, fixed: ReadonlySet<string> = new Set(), limits: PeerLimits = REQUIRED_PEER_LIMITS, isIgnored?: (name: string, version: string) => boolean): Promise<RequiredTarget[]> {
   const rootManifest = (await registry.packument(root.name)).versions[root.version];
   if (!isObject(rootManifest)) throw new Error(`no manifest for required peer root ${root.name}@${root.version}`);
   const packages = { ...chosenPackages, [root.path]: root };
   const nodes = await peerNodes(basePackages, registry, root, fixed);
-  const group = await connectedPeers(nodes, root, rootManifest, packages, config, limits);
+  const group = await connectedPeers(nodes, root, rootManifest, packages, config, limits, isIgnored);
   if (group.length === 0) return [];
   const viable = viableVersions(group, root, rootManifest, packages, limits);
   const allowed = new Map<string, string[]>();
@@ -64,7 +64,7 @@ async function peerNodes(base: Record<string, unknown>, registry: NpmRegistry, r
   return nodes;
 }
 
-async function connectedPeers(nodes: ReadonlyArray<PeerNode>, root: RequiredNode, manifest: Record<string, unknown>, packages: Record<string, unknown>, config: Config, limits: PeerLimits): Promise<PeerNode[]> {
+async function connectedPeers(nodes: ReadonlyArray<PeerNode>, root: RequiredNode, manifest: Record<string, unknown>, packages: Record<string, unknown>, config: Config, limits: PeerLimits, isIgnored: ((name: string, version: string) => boolean) | undefined): Promise<PeerNode[]> {
   const active = new Map<string, PeerNode>();
   for (const node of nodes) {
     const outgoing = peerRanges(manifest).find(([key]) => requiredPath(packages, root.path, key, true) === node.direct.path);
@@ -74,7 +74,7 @@ async function connectedPeers(nodes: ReadonlyArray<PeerNode>, root: RequiredNode
   for (;;) {
     if (active.size > limits.nodes) throw new Error("required peer node bound reached");
     for (const [path, node] of active) {
-      if (node.manifests.size === 0) active.set(path, { ...node, manifests: candidateManifests(node, config, limits) });
+      if (node.manifests.size === 0) active.set(path, { ...node, manifests: candidateManifests(node, config, limits, isIgnored) });
     }
     const size = active.size;
     for (const node of nodes) {
@@ -93,12 +93,13 @@ async function connectedPeers(nodes: ReadonlyArray<PeerNode>, root: RequiredNode
   }
 }
 
-function candidateManifests(node: PeerNode, config: Config, limits: PeerLimits): ReadonlyMap<string, Record<string, unknown>> {
+function candidateManifests(node: PeerNode, config: Config, limits: PeerLimits, isIgnored: ((name: string, version: string) => boolean) | undefined): ReadonlyMap<string, Record<string, unknown>> {
   const pkg = { ecosystem: "npm" as const, name: node.direct.name };
   const line = compatibleLine(config, pkg, node.direct.version);
   const result = new Map<string, Record<string, unknown>>();
   for (const version of Object.keys(node.doc.versions).filter((version) => semver.valid(version) !== null).sort(semver.compare)) {
     if (semver.valid(version) === null || semver.prerelease(version) !== null || compatibleLine(config, pkg, version) !== line) continue;
+    if (version !== node.direct.version && isIgnored?.(pkg.name, version)) continue;
     const manifest = node.doc.versions[version];
     if (!isObject(manifest)) throw new Error(`${pkg.name}@${version}: unreadable peer candidate manifest`);
     const deprecated = manifest["deprecated"];

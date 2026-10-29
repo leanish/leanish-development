@@ -96,7 +96,7 @@ files as the gate, documented there:
 
 | File | Reference |
 |---|---|
-| `.github/supply-chain.json` | [Gate configuration](../core/gate/README.md#configuration-githubsupply-chainjson): lockfiles/builds, allowed registries, `releaseAgeDays`, trusted packages, repository mappings and compatible lines. |
+| `.github/supply-chain.json` | [Gate configuration](../core/gate/README.md#configuration-githubsupply-chainjson): lockfiles/builds, allowed registries, `releaseAgeDays`, trusted packages, ignored versions, repository mappings and compatible lines. |
 | `.github/supply-chain-exceptions.json` | [Exceptions](../core/gate/README.md#exceptions-githubsupply-chain-exceptionsjson): narrowly scoped vulnerability, release-age and reviewed identity exceptions. Malware cannot be excepted. |
 | `.github/dependency-floors.json` | [Floors](../core/gate/README.md#floors-githubdependency-floorsjson): recorded security/compatibility constraints and npm overrides. |
 
@@ -104,6 +104,18 @@ The tools preserve this policy and its exceptions. bump-it never raises floors;
 secure-it removes only the exact security floors in a jointly verified
 [floor-removal plan](../secure-it/README.md#removing-redundant-security-floors).
 Compatibility floors stay.
+
+`ignoredVersions` in `.github/supply-chain.json` is a tool selection policy, not a gate denylist:
+
+```json
+{
+  "ignoredVersions": [
+    { "package": "npm:some-package", "versions": ["1.2.3"], "reason": "upstream regression" }
+  ]
+}
+```
+
+Use exact `npm:name`, `Maven:group:artifact` or `GitHub Actions:owner/repo` packages and exact version strings; no ranges, wildcards or expiry. The reason is required. The tools also verify actual transitive resolutions and refuse a unit introducing an ignored version, without automatic retries; inherited unchanged copies are allowed. Catalogs remain complete and the gate permits manual adoption. The Gradle wrapper is outside this policy for now. A young alternative may still be refused by the gate's unchanged security rule; see [limits](coverage-gaps.md#limits).
 
 ## Optional price table
 

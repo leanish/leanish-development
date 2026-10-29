@@ -79,6 +79,8 @@ export interface CarrierServices {
   readonly catalog: VersionCatalog;
   readonly config: Config;
   readonly now: Date;
+  /** Tool selection only; gate proofs leave this absent. Called only on a fixing candidate. */
+  readonly accepts?: (version: string, bundle: CompleteBundle) => boolean;
 }
 
 export type CarrierChoice =
@@ -182,7 +184,7 @@ class SearchState {
     }
     const bundle = this.#bundles.get(version)!;
     if (!bundle.complete) return incomplete(`${this.#search.carrier}@${version}'s bundle can't be read: ${bundle.reason}`);
-    return { kind: "judged", fixes: carrierFixes(this.#search, version, bundle, this.#snapshot!) };
+    return { kind: "judged", fixes: carrierFixes(this.#search, version, bundle, this.#snapshot!) && (this.#services.accepts?.(version, bundle) ?? true) };
   }
 
   /** How many snapshots the search has taken. */

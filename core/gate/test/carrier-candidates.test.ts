@@ -98,6 +98,14 @@ describe("deciding a carrier move", () => {
     return carriers[0]!;
   };
 
+  it.each(["npm:carrier", "npm:brace"])("skips a fixing carrier that introduces ignored %s and reports the fix", async (pkg) => {
+    const ctx = context();
+    const config = parseConfig({ ignoredVersions: [{ package: pkg, versions: [pkg === "npm:carrier" ? "1.1.0" : "5.0.12"], reason: "broken" }] });
+    const decision = await decideCarrier(group("5.0.9"), [], false, { ...ctx, config });
+    expect(decision.to).toBeUndefined();
+    expect(decision.problem).toContain("a fix exists but is ignored by policy");
+  });
+
   it("picks the carrier version whose bundle drops the target, and says what it ships", async () => {
     // Identity is judged by the caller, against every copy the unit replaces (`withUnitIdentity` in candidates.ts).
     expect(await decideCarrier(group("5.0.9"), [], false, context())).toEqual({

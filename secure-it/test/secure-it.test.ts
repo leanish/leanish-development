@@ -816,6 +816,21 @@ describe("secure-it run", () => {
     expect(h.agentCalls.map((call) => (call.input["moves"] as Array<{ name: string }>).map((move) => move.name).sort())).toEqual([["g:lib", "vite"]]);
   });
 
+  it("shows ignored-fix evidence in the run output when policy leaves no move", async () => {
+    const problem = "a fix exists but is ignored by policy: vite@8.3.3: broken";
+    const h = harness({ fixes: [vite({ to: undefined, problem })] });
+    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "nothing-to-fix", waiting: [expect.stringContaining(problem)] });
+    expect(h.agentCalls).toEqual([]);
+  });
+
+  it("refuses an ignored resolution without feedback or a reduced-batch retry", async () => {
+    const refusal = "ignored version introduced: npm:vite@8.3.3 at node_modules/vite: broken";
+    const h = harness({ fixes: [vite()], problems: [refusal] });
+    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "verification-failed", problems: [refusal] });
+    expect(h.agentCalls).toHaveLength(1);
+    expect(h.workspace.publications).toEqual([]);
+  });
+
   it("asks the agent again with the refusal and publishes the second attempt when it passes", async () => {
     const h = harness({ fixes: [vite()] });
     let attempts = 0;

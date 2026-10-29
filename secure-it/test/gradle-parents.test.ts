@@ -311,3 +311,11 @@ describe("Gradle parents, regressions", () => {
     expect(fixes[0]?.notes).toEqual([expect.stringContaining("no declared dependency brings it")]);
   });
 });
+
+it("skips ignored Maven parents before running Gradle probes", async () => {
+  const probes: string[] = [];
+  const fixes = await withGradleParents([okio()], { base: BASE, gradle: inventory("4.9.3"), named: (group) => group === "com.squareup.okhttp3", inventories: references(probes), env: environment(),
+    config: parseConfig({ ignoredVersions: [{ package: `Maven:${OKHTTP}`, versions: ["4.10.0", "4.12.0"], reason: "broken" }] }) });
+  expect(probes).toEqual(["4.11.0"]);
+  expect(fixes.map((fix) => fix.name)).toEqual([OKIO]);
+});
