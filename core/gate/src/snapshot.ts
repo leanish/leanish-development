@@ -34,13 +34,16 @@ export class Snapshot {
   /** Per package (`ecosystem|name`), per alias group: the ids its own advisories name, whichever version they affect. */
   private readonly packageAliases: ReadonlyMap<string, ReadonlyMap<string, ReadonlyArray<string>>>;
   readonly gaps: ReadonlyArray<string>;
+  /** Nonblocking reconciliation decisions, separate from missing coverage. */
+  readonly notes: ReadonlyArray<string>;
   readonly takenAt: Date;
 
-  constructor(affecting: ReadonlyMap<string, ReadonlyArray<Advisory>>, gaps: ReadonlyArray<string>, takenAt: Date) {
+  constructor(affecting: ReadonlyMap<string, ReadonlyArray<Advisory>>, gaps: ReadonlyArray<string>, takenAt: Date, notes: ReadonlyArray<string> = [], aliasMetadata: ReadonlyMap<string, ReadonlyArray<Pick<Advisory, "id" | "ids">>> = new Map()) {
     this.affecting = affecting;
-    this.groups = aliasGroups([...affecting.values()].flat());
+    // Aliases survive a finding's removal, without contributing severity, malware or affected-version evidence.
+    this.groups = aliasGroups([...affecting.values(), ...aliasMetadata.values()].flat());
     const byPackage = new Map<string, Map<string, Set<string>>>();
-    for (const [key, advisories] of affecting) {
+    for (const [key, advisories] of [...affecting, ...aliasMetadata]) {
       const pkg = key.slice(0, key.lastIndexOf("|"));
       const groups = byPackage.get(pkg) ?? new Map<string, Set<string>>();
       for (const advisory of advisories) {
@@ -52,6 +55,7 @@ export class Snapshot {
     }
     this.packageAliases = new Map([...byPackage].map(([pkg, groups]) => [pkg, new Map([...groups].map(([group, ids]) => [group, [...ids].sort()]))]));
     this.gaps = gaps;
+    this.notes = notes;
     this.takenAt = takenAt;
   }
 
@@ -86,7 +90,7 @@ export class Snapshot {
  * group's smallest GHSA id, else its smallest id, so the choice doesn't depend
  * on order.
  */
-export function aliasGroups(advisories: ReadonlyArray<Advisory>): Map<string, string> {
+export function aliasGroups(advisories: ReadonlyArray<Pick<Advisory, "ids">>): Map<string, string> {
   const parent = new Map<string, string>();
   const find = (id: string): string => {
     let root = id;

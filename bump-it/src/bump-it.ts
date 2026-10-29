@@ -77,7 +77,7 @@ async function run(context: ToolRunContext, deps: BumpItDeps): Promise<Readonly<
   const gradle = await execution.inventories.ofCommit(base);
   const found = await deps.candidates(base, execution.env, { head: gradle });
   if (found.incomplete.length > 0) {
-    return { outcome: "incomplete", incomplete: found.incomplete };
+    return { outcome: "incomplete", incomplete: found.incomplete, ...(found.notes.length === 0 ? {} : { notes: found.notes }) };
   }
   const wrapper = await execution.wrapper.candidates(base);
   const own = await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base);

@@ -4,43 +4,28 @@
  * global database and OSV, each read fresh after the comparison and recorded
  * as that source says, disagreements included.
  *
- * Informative only. Nothing here feeds the snapshot or the verdict, and a
+ * Held evidence is informative only; the shared record reader also serves the snapshot. A
  * lookup that fails is recorded as incomplete evidence, never as "absent". An
  * id is looked up once per source; aliases a response names are followed, up
  * to a budget, so a repository advisory's CVE finds the OSV record that only
  * knows the CVE.
  */
+import { AdvisoryRecords, advisoryRecord, type EvidenceRecord, type RangeVerdict } from "./advisory-records.ts";
 import { githubRefusal, type Fetch } from "./http.ts";
 import { isObject } from "./json.ts";
 import type { PackageName, PackageVersion } from "./package-version.ts";
 import type { HeldGroup, HeldTarget, HeldVersion } from "./release-age.ts";
-import { affects, MAX_ADVISORY_PAGES, namesPackage, nextLink, parseRepositoryEntry, type RepositoryAdvisory } from "./repository-advisories.ts";
+import { MAX_ADVISORY_PAGES, nextLink, parseRepositoryEntry, type RepositoryAdvisory } from "./repository-advisories.ts";
 import { sourceRepository, type SourceRepoOptions } from "./source-repos.ts";
-import { type Ecosystem, versionScheme } from "./versions.ts";
+import type { Ecosystem } from "./versions.ts";
+
+export type { EvidenceRecord, RangeVerdict } from "./advisory-records.ts";
 
 const GITHUB_API = "https://api.github.com";
-const OSV_API = "https://api.osv.dev/v1";
 /** Id lookups per advisory group and source, aliases included. */
 const LOOKUP_BUDGET = 16;
 
 export type EvidenceSource = "repository" | "github" | "osv";
-
-/** Whether a record's ranges put a version among the affected ones; `unknown` when they can't say. */
-export type RangeVerdict = "affected" | "not-affected" | "unknown";
-
-export interface EvidenceRecord {
-  readonly id: string;
-  readonly aliases: ReadonlyArray<string>;
-  readonly withdrawn: boolean;
-  /** GitHub's database only: whether GitHub reviewed it. */
-  readonly reviewed?: boolean;
-  /** Whether it names the target package at all; the rest says nothing about the package when it doesn't. */
-  readonly namesPackage: boolean;
-  /** The fixed versions it declares for the package (patched versions, or OSV's `fixed` events). */
-  readonly declaredFixes: ReadonlyArray<string>;
-  /** Version → its verdict, for the replaced versions of its group and the target's proposed ones. */
-  readonly verdicts: Readonly<Record<string, RangeVerdict>>;
-}
 
 export interface SourceEvidence {
   readonly source: EvidenceSource;
@@ -190,22 +175,20 @@ class SourceLookup {
 /** The fetches, each made once per evidence run. */
 class Lookups {
   readonly #options: EvidenceOptions;
-  readonly #github = new Map<string, Promise<unknown>>();
-  readonly #osv = new Map<string, Promise<unknown>>();
+  readonly #records: AdvisoryRecords;
   readonly #repositories = new Map<string, Promise<ReadonlyArray<RepositoryEntry> | undefined>>();
 
   constructor(options: EvidenceOptions) {
     this.#options = options;
+    this.#records = new AdvisoryRecords(options);
   }
 
-  async github(id: string, pkg: PackageName, versions: ReadonlyArray<string>): Promise<EvidenceRecord | undefined> {
-    const raw = await once(this.#github, id, () => this.#json(`${GITHUB_API}/advisories/${encodeURIComponent(id)}`, this.#githubHeaders(), `GitHub advisory ${id}`));
-    return raw === undefined ? undefined : githubRecord(raw, id, pkg, versions);
+  github(id: string, pkg: PackageName, versions: ReadonlyArray<string>): Promise<EvidenceRecord | undefined> {
+    return this.#records.github(id, pkg, versions);
   }
 
-  async osv(id: string, pkg: PackageName, versions: ReadonlyArray<string>): Promise<EvidenceRecord | undefined> {
-    const raw = await once(this.#osv, id, () => this.#json(`${OSV_API}/vulns/${encodeURIComponent(id)}`, {}, `OSV record ${id}`));
-    return raw === undefined ? undefined : osvRecord(raw, id, pkg, versions);
+  osv(id: string, pkg: PackageName, versions: ReadonlyArray<string>): Promise<EvidenceRecord | undefined> {
+    return this.#records.osv(id, pkg, versions);
   }
 
   async repositoryOf(pkg: PackageVersion, options: SourceRepoOptions): Promise<RepositoryRead> {
@@ -249,14 +232,6 @@ class Lookups {
     if (this.#options.token !== undefined) headers["authorization"] = `Bearer ${this.#options.token}`;
     return headers;
   }
-
-  /** The JSON at `url`; undefined on 404. */
-  async #json(url: string, headers: Record<string, string>, what: string): Promise<unknown> {
-    const response = await this.#options.fetch(url, { headers });
-    if (response.status === 404) return undefined;
-    if (!response.ok) throw new Error(`${what} failed with HTTP ${response.status}`);
-    return response.json();
-  }
 }
 
 function once<T>(cache: Map<string, Promise<T>>, key: string, load: () => Promise<T>): Promise<T> {
@@ -271,152 +246,6 @@ function once<T>(cache: Map<string, Promise<T>>, key: string, load: () => Promis
 function repositoryRecord(entry: RepositoryEntry, pkg: PackageName, versions: ReadonlyArray<string>): EvidenceRecord {
   const { advisory } = entry;
   return advisoryRecord(advisory.ghsaId, advisory.cveId === undefined ? [] : [advisory.cveId], entry.withdrawn, undefined, advisory, pkg, versions);
-}
-
-function githubRecord(raw: unknown, id: string, pkg: PackageName, versions: ReadonlyArray<string>): EvidenceRecord {
-  if (!isObject(raw) || typeof raw["ghsa_id"] !== "string") throw new Error(`GitHub advisory ${id} has no ghsa_id`);
-  const identifiers = Array.isArray(raw["identifiers"]) ? raw["identifiers"] : [];
-  const aliases = [
-    ...(typeof raw["cve_id"] === "string" ? [raw["cve_id"]] : []),
-    ...identifiers.flatMap((entry: unknown) => (isObject(entry) && typeof entry["value"] === "string" ? [entry["value"]] : [])),
-  ].filter((alias) => alias !== raw["ghsa_id"]);
-  const vulnerabilities = (Array.isArray(raw["vulnerabilities"]) ? raw["vulnerabilities"] : []).flatMap((entry: unknown) => {
-    const found = isObject(entry) ? entry["package"] : undefined;
-    if (!isObject(found) || typeof found["ecosystem"] !== "string" || typeof found["name"] !== "string") return [];
-    const first = (entry as Record<string, unknown>)["first_patched_version"];
-    // Older responses wrap the version as `{ identifier }`.
-    const patched = typeof first === "string" ? first : isObject(first) && typeof first["identifier"] === "string" ? first["identifier"] : undefined;
-    const range = (entry as Record<string, unknown>)["vulnerable_version_range"];
-    return [{ ecosystem: found["ecosystem"], name: found["name"], range: typeof range === "string" ? range : undefined, patched }];
-  });
-  const withdrawn = typeof raw["withdrawn_at"] === "string";
-  // GitHub reviews malware records too; only `unreviewed` ones are its unchecked imports.
-  return advisoryRecord(raw["ghsa_id"], [...new Set(aliases)], withdrawn, raw["type"] === "reviewed" || raw["type"] === "malware", { vulnerabilities }, pkg, versions);
-}
-
-function advisoryRecord(
-  id: string, aliases: ReadonlyArray<string>, withdrawn: boolean, reviewed: boolean | undefined,
-  advisory: Pick<RepositoryAdvisory, "vulnerabilities">, pkg: PackageName, versions: ReadonlyArray<string>,
-): EvidenceRecord {
-  const mine = advisory.vulnerabilities.filter((vulnerability) => namesPackage(vulnerability, pkg));
-  const verdicts: Record<string, RangeVerdict> = {};
-  for (const version of versions) {
-    const verdict = mine.length === 0 ? undefined : affects({ vulnerabilities: mine }, { ...pkg, version });
-    verdicts[version] = verdict === undefined ? "unknown" : verdict ? "affected" : "not-affected";
-  }
-  return {
-    id, aliases, withdrawn, ...(reviewed === undefined ? {} : { reviewed }), namesPackage: mine.length > 0,
-    declaredFixes: [...new Set(mine.flatMap((vulnerability) => (vulnerability.patched === undefined ? [] : [vulnerability.patched.trim()])))],
-    verdicts,
-  };
-}
-
-/** OSV's ecosystem names for ours. */
-const OSV_ECOSYSTEMS: Readonly<Record<Ecosystem, string>> = { npm: "npm", Maven: "Maven", "GitHub Actions": "GitHub Actions" };
-
-function osvRecord(raw: unknown, id: string, pkg: PackageName, versions: ReadonlyArray<string>): EvidenceRecord {
-  if (!isObject(raw) || typeof raw["id"] !== "string") throw new Error(`OSV record ${id} has no id`);
-  const aliases = Array.isArray(raw["aliases"]) ? raw["aliases"].filter((alias): alias is string => typeof alias === "string") : [];
-  const mine = (Array.isArray(raw["affected"]) ? raw["affected"] : []).filter((entry: unknown) => {
-    const found = isObject(entry) ? entry["package"] : undefined;
-    return isObject(found) && found["ecosystem"] === OSV_ECOSYSTEMS[pkg.ecosystem] && typeof found["name"] === "string"
-      && (found["name"] === pkg.name || (pkg.ecosystem === "GitHub Actions" && found["name"].toLowerCase() === pkg.name));
-  }) as Record<string, unknown>[];
-  const verdicts: Record<string, RangeVerdict> = {};
-  for (const version of versions) verdicts[version] = mine.length === 0 ? "unknown" : osvVerdict(mine, pkg.ecosystem, version);
-  const fixes = mine.flatMap((entry) => rangesOf(entry).flatMap((range) => (range.events ?? []).flatMap((event) => (typeof event["fixed"] === "string" ? [event["fixed"]] : []))));
-  return { id: raw["id"], aliases, withdrawn: typeof raw["withdrawn"] === "string", namesPackage: mine.length > 0, declaredFixes: [...new Set(fixes)], verdicts };
-}
-
-interface OsvRange {
-  readonly type: unknown;
-  /** Undefined when the range can't be read: it never counts as "not affected". */
-  readonly events: ReadonlyArray<Record<string, unknown>> | undefined;
-}
-
-function rangesOf(entry: Record<string, unknown>): OsvRange[] {
-  const ranges = entry["ranges"];
-  if (ranges === undefined) return [];
-  if (!Array.isArray(ranges)) return [{ type: undefined, events: undefined }];
-  return ranges.map((range: unknown): OsvRange => {
-    if (!isObject(range) || !Array.isArray(range["events"]) || !readableEvents(range["events"])) return { type: undefined, events: undefined };
-    return { type: range["type"], events: range["events"] as Record<string, unknown>[] };
-  });
-}
-
-const EVENT_KINDS = new Set(["introduced", "fixed", "last_affected", "limit"]);
-
-/** Events a range can be judged by: each one bound with a string version, and at least one `introduced`. */
-function readableEvents(events: ReadonlyArray<unknown>): boolean {
-  const readable = events.every((event) => {
-    if (!isObject(event)) return false;
-    const keys = Object.keys(event);
-    return keys.length === 1 && EVENT_KINDS.has(keys[0]!) && typeof event[keys[0]!] === "string";
-  });
-  return readable && events.some((event) => typeof (event as Record<string, unknown>)["introduced"] === "string");
-}
-
-/**
- * OSV's affected-version rule over one package's entries: an explicit `versions` list, or `ECOSYSTEM`/`SEMVER`
- * ranges, each judged on its own (`rangeVerdict`). A range of another type, one that can't be read or carries a
- * `limit`, an entry with neither ranges nor versions, or a range that can't tell makes a "not affected" answer
- * unknown.
- */
-function osvVerdict(entries: ReadonlyArray<Record<string, unknown>>, ecosystem: Ecosystem, version: string): RangeVerdict {
-  const scheme = versionScheme(ecosystem);
-  const compare = (a: string, b: string): number | undefined => {
-    try {
-      return scheme.compare(a, b);
-    } catch {
-      return undefined;
-    }
-  };
-  let unknown = false;
-  for (const entry of entries) {
-    const listed = entry["versions"];
-    if (Array.isArray(listed) && listed.includes(version)) return "affected";
-    const ranges = rangesOf(entry);
-    if (ranges.length === 0 && !Array.isArray(listed)) unknown = true;
-    for (const range of ranges) {
-      if ((range.type !== "ECOSYSTEM" && range.type !== "SEMVER") || range.events === undefined || range.events.some((event) => event["limit"] !== undefined)) {
-        unknown = true;
-        continue;
-      }
-      const verdict = rangeVerdict(compare, range.events, version);
-      if (verdict === "affected") return "affected";
-      if (verdict === "unknown") unknown = true;
-    }
-  }
-  return unknown ? "unknown" : "not-affected";
-}
-
-/**
- * One range as OSV evaluates it, whatever the events' order: `introduced` makes a version affected, `fixed`
- * (exclusive) or `last_affected` (inclusive) makes it not, so the highest event the version has reached decides
- * (`introduced: "0"` is reached by every version). Reaching none means not affected. A version that doesn't compare,
- * or a start and an end at that same highest version, is unknown.
- */
-function rangeVerdict(compare: (a: string, b: string) => number | undefined, events: ReadonlyArray<Record<string, unknown>>, version: string): RangeVerdict {
-  let highest: { readonly at: string; readonly starts: boolean; readonly ends: boolean } | undefined;
-  for (const event of events) {
-    const introduced = typeof event["introduced"] === "string" ? event["introduced"] : undefined;
-    const fixed = typeof event["fixed"] === "string" ? event["fixed"] : undefined;
-    const last = typeof event["last_affected"] === "string" ? event["last_affected"] : undefined;
-    const at = introduced ?? fixed ?? last;
-    if (at === undefined) continue;
-    const origin = introduced === "0";
-    const past = origin ? 1 : compare(version, at);
-    if (past === undefined) return "unknown";
-    // A `last_affected` is reached only once the version is past it; the others at it.
-    if (last !== undefined ? past <= 0 : past < 0) continue;
-    const order = highest === undefined ? 1 : origin ? -1 : highest.at === "0" && highest.starts ? 1 : compare(at, highest.at);
-    if (order === undefined) return "unknown";
-    if (order > 0) highest = { at, starts: introduced !== undefined, ends: introduced === undefined };
-    else if (order === 0) highest = { at: highest!.at, starts: highest!.starts || introduced !== undefined, ends: highest!.ends || introduced === undefined };
-  }
-  if (highest === undefined) return "not-affected";
-  if (highest.starts && highest.ends) return "unknown";
-  return highest.starts ? "affected" : "not-affected";
 }
 
 const SOURCES: ReadonlySet<string> = new Set<EvidenceSource>(["repository", "github", "osv"]);

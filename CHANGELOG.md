@@ -27,6 +27,13 @@
 
 ### Fixed
 
+- Repository advisories with broader ranges than their reviewed records no longer fail versions the reviewed
+  ranges clear. The gate confirms the full package, ecosystem and version against non-withdrawn reviewed records
+  across every known and discovered alias, including other versions' evidence for that package. Affected, unknown,
+  withdrawn, malformed or mismatched records keep the finding. OSV `SEMVER` ranges use SemVer ordering even for
+  Maven packages. Alias links survive drops, preserving inheritance, exceptions and fix targets. Drops, scan
+  disagreements and withdrawals are notes in both gate and planning reports, including auxiliary candidate-archive
+  scans; failed lookups keep the finding with a gap per package and group. Malware is always kept.
 - bump-it checks every npmjs-resolved version a major induces that is absent from base and not at a checked direct
   target, except bundled copies. This includes newly declared root/workspace dependencies, peers or not; a
   declaration alone no longer exempts them from the deprecation check.

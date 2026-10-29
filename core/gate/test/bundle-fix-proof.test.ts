@@ -161,6 +161,27 @@ describe("a young carrier proved as a bundled fix", () => {
     ]);
   });
 
+  it("reports reconciliation notes from a dependency found only in an alternative candidate's archive", async () => {
+    const id = "GHSA-surprise-reconciled";
+    const outcome = await compare({
+      "1.0.0": { published: OLD, bundles: VULNERABLE },
+      "1.0.5": { published: daysAgo(30), bundles: [...VULNERABLE, "surprise@1.0.0"] },
+      "1.1.0": { published: daysAgo(1), bundles: FIXED },
+    }, "1.0.0", "1.1.0", { routes: {
+      "https://registry.npmjs.org/surprise/1.0.0": { body: { repository: "github:acme/surprise" } },
+      "https://api.github.com/repos/acme/surprise/security-advisories?state=published&per_page=100": { body: [
+        { ghsa_id: id, state: "published", vulnerabilities: [{ package: { ecosystem: "npm", name: "surprise" }, vulnerable_version_range: "<2.0.0" }] },
+      ] },
+      [`https://api.osv.dev/v1/vulns/${id}`]: { body: { id, affected: [{ package: { ecosystem: "npm", name: "surprise" }, versions: ["0.9.0"] }] } },
+    } });
+    expect(ageFailures(outcome.failures)).toEqual([]);
+    expect(outcome.headFindings.some((finding) => finding.name === "surprise")).toBe(false);
+    expect(outcome.notes.filter((note) => note.includes(id))).toEqual([
+      `${id} (acme/surprise) for surprise@1.0.0: its reviewed ranges clear this version; the reviewed ranges apply`,
+    ]);
+    expect(outcome.cooldown).toMatchObject({ evaluated: true, held: [expect.objectContaining({ justification: "bundle-fix" })] });
+  });
+
   it("isn't when the only advisory its bundle drops is one the bundled package's own repository alone publishes", async () => {
     const routes = {
       "https://registry.npmjs.org/brace/5.0.9": { body: { repository: "github:acme/brace" } },

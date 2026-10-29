@@ -112,6 +112,8 @@ export interface SecurityCandidates {
   /** What makes the inventory incomplete (a configuration that didn't resolve, an unrecorded bundle): the list can't be trusted to be whole. */
   readonly incomplete: ReadonlyArray<string>;
   readonly gaps: ReadonlyArray<string>;
+  /** Nonblocking snapshot reconciliation decisions, including when there are no fixes. */
+  readonly notes?: ReadonlyArray<string>;
   readonly osvScannerVersion: string;
 }
 
@@ -162,9 +164,14 @@ export async function securityCandidates(head: Tree, env: GateEnvironment, gradl
   const catalogs = versionCatalogs(config, env, state.github, registry);
   const identity = new IdentityCheck(registry, state.inventory.npm, exceptions, today);
   // Carriers are decided first, on snapshots of their own: their choices then join the peer closure and its snapshot.
+  const carrierNotes = new Set<string>();
   const carrierContext: CarrierContext = {
     reader: bundleReader(env), registry, catalog: catalogs.npm, config, now,
-    scan: (packages) => takeSnapshot(packages, snapshotOptions(config, env, state.github)),
+    scan: async (packages) => {
+      const snapshot = await takeSnapshot(packages, snapshotOptions(config, env, state.github));
+      for (const note of snapshot.notes) carrierNotes.add(note);
+      return snapshot;
+    },
   };
   const carried: SecurityFix[] = [];
   for (const group of carriers) {
@@ -224,6 +231,7 @@ export async function securityCandidates(head: Tree, env: GateEnvironment, gradl
     },
     incomplete: inventoryProblems(state.inventory, config),
     gaps: [...state.snapshot.gaps, ...snapshot.gaps, ...actionGaps(state.inventory.actions, state.resolutions)],
+    notes: [...new Set([...state.snapshot.notes, ...carrierNotes, ...snapshot.notes])],
     osvScannerVersion: state.osvScannerVersion,
   };
 }
@@ -540,7 +548,7 @@ export interface BumpCandidates {
   readonly incomplete: ReadonlyArray<string>;
   readonly gaps: ReadonlyArray<string>;
   readonly osvScannerVersion: string;
-  /** Declared dependencies left out because no supported declaration of them was found in their build's sources. */
+  /** Snapshot reconciliation decisions and declared dependencies without supported declarations in their build sources. */
   readonly notes: ReadonlyArray<string>;
 }
 
@@ -679,7 +687,7 @@ export async function bumpCandidates(head: Tree, env: GateEnvironment, gradle: G
     incomplete: inventoryProblems(state.inventory, config),
     gaps: [...state.snapshot.gaps, ...snapshots.flatMap((snapshot) => snapshot.gaps), ...(peerSnapshot?.gaps ?? []), ...actionGaps(state.inventory.actions, state.resolutions)],
     osvScannerVersion: state.osvScannerVersion,
-    notes,
+    notes: [...new Set([...notes, ...state.snapshot.notes, ...snapshots.flatMap((snapshot) => snapshot.notes), ...(peerSnapshot?.notes ?? [])])],
   };
 }
 

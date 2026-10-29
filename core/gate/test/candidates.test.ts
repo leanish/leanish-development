@@ -779,6 +779,38 @@ describe("securityCandidates, bundled copies", () => {
   const registry: Registry = { carrier: { "1.0.0": OLD, "1.1.0": OLD }, brace: { "5.0.9": OLD, "5.0.12": OLD } };
   const withArchives = (env: GateEnvironment): GateEnvironment => ({ ...env, fetchArchive: serving({ [carrierTarball("1.0.0")]: archives["1.0.0"].bytes, [carrierTarball("1.1.0")]: archives["1.1.0"].bytes }) });
 
+  it("propagates reconciliation notes for a dependency discovered only in a candidate carrier archive", async () => {
+    const candidate = archive([
+      { path: "package/package.json", body: manifest("carrier", "1.1.0", { bundleDependencies: ["brace", "surprise"] }) },
+      { path: "package/node_modules/brace/package.json", body: manifest("brace", "5.0.12") },
+      { path: "package/node_modules/surprise/package.json", body: manifest("surprise", "1.0.0") },
+    ]);
+    const scans: string[][] = [];
+    const env = environment({ "brace@5.0.9": ["GHSA-brace"] }, registry, scans, {
+      ...carrierManifests, "carrier@1.1.0": { dist: { integrity: candidate.integrity } },
+    });
+    const id = "GHSA-surprise-reconciled";
+    const routes = {
+      "https://registry.npmjs.org/surprise/1.0.0": { body: { repository: "github:acme/surprise" } },
+      "https://api.github.com/repos/acme/surprise/security-advisories?state=published&per_page=100": { body: [
+        { ghsa_id: id, state: "published", vulnerabilities: [{ package: { ecosystem: "npm", name: "surprise" }, vulnerable_version_range: "<2.0.0" }] },
+      ] },
+      [`https://api.osv.dev/v1/vulns/${id}`]: { body: { id, affected: [{ package: { ecosystem: "npm", name: "surprise" }, versions: ["0.9.0"] }] } },
+    };
+    const fetch = fakeFetch(routes);
+    const found = await securityCandidates(await head(), { ...env,
+      fetch: (url, init) => url in routes ? fetch(url, init) : env.fetch(url, init),
+      fetchArchive: serving({ [carrierTarball("1.0.0")]: archives["1.0.0"].bytes, [carrierTarball("1.1.0")]: candidate.bytes }),
+    });
+    expect(moves(found.fixes)).toEqual([["carrier@1.0.0", "1.1.0", undefined]]);
+    expect(scans[0]).not.toContain("surprise@1.0.0");
+    expect(scans.some((scan) => scan.includes("surprise@1.0.0"))).toBe(true);
+    expect(scans.at(-1)).not.toContain("surprise@1.0.0");
+    expect(found.notes?.filter((note) => note.includes(id))).toEqual([
+      `${id} (acme/surprise) for surprise@1.0.0: its reviewed ranges clear this version; the reviewed ranges apply`,
+    ]);
+  });
+
   it("moves the carrier for a bundled copy, and fixes the same package's own copy apart", async () => {
     const found = await securityCandidates(await head(true), withArchives(environment({ "brace@5.0.9": ["GHSA-brace"] }, registry, [], carrierManifests)));
     expect(moves(found.fixes)).toEqual([["brace@5.0.9", "5.0.12", undefined], ["carrier@1.0.0", "1.1.0", undefined]]);

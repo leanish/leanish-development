@@ -44,7 +44,7 @@ export interface YoungVersionReview {
   readonly problems: ReadonlyArray<string>;
   /** Every young version, justified or not, with its justification. */
   readonly held: ReadonlyArray<HeldVersion>;
-  /** What required-dependency proofs exempted, and why. */
+  /** What required-dependency proofs exempted, and reconciliation notes from auxiliary bundle scans. */
   readonly notes: ReadonlyArray<string>;
   readonly snapshot: Snapshot;
 }
@@ -58,10 +58,15 @@ export async function reviewYoungVersions(inputs: YoungVersionInputs): Promise<Y
   const candidates = await gatherCandidates([...young, ...youngNpm ? rootChanges.filter((change) => !young.includes(change)) : []], catalogs, config);
   const snapshot = await inputs.scan(inputs.packages, candidates.versions);
   // A young carrier is proved on snapshots of its own, over the bundles it reads.
+  const bundleNotes = new Set<string>();
   const bundleFixes = youngNpm
     ? await bundleFixProofs(young, {
       base: inputs.baseInventory, head: inputs.headInventory, reader: inputs.reader, registry: inputs.registry, catalog: catalogs.npm, config, now,
-      scan: (packages) => inputs.scan(packages),
+      scan: async (packages) => {
+        const auxiliary = await inputs.scan(packages);
+        for (const note of auxiliary.notes) bundleNotes.add(note);
+        return auxiliary;
+      },
     })
     : new Map<string, BundleFixProof>();
   const securityRoots = youngNpm ? await verifiedSecurityRoots(rootChanges, candidates, snapshot, catalogs.npm, config, now) : [];
@@ -70,5 +75,5 @@ export async function reviewYoungVersions(inputs: YoungVersionInputs): Promise<Y
   const age = await reviewReleaseAge(young, {
     snapshot, exceptions: inputs.exceptions, config, now, catalogs, candidates: candidates.byChange, required: proved.versions, bundleFixes,
   });
-  return { problems: [...proved.problems, ...age.problems], held: age.held, notes: proved.notes, snapshot };
+  return { problems: [...proved.problems, ...age.problems], held: age.held, notes: [...new Set([...proved.notes, ...bundleNotes])], snapshot };
 }
