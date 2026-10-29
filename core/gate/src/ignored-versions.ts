@@ -1,22 +1,25 @@
-/** Tool policy checks on exact copies; CI deliberately does not call these. */
+/** Tool policy checks on exact versions and their copy counts; CI deliberately does not call these. */
 import { type Config, ignoredVersionReason } from "./config.ts";
 import type { Located } from "./findings.ts";
 import { versionKey } from "./package-version.ts";
 
 export const IGNORED_VERSION_REFUSAL = "ignored version introduced:";
 
-/** A refusal is final for the unit: neither an agent retry nor a reduced batch may bypass it. */
+/** Recognize a tool refusal, never a marker quoted inside a policy reason or another diagnostic. */
 export function hasIgnoredVersionRefusal(problems: ReadonlyArray<string>): boolean {
-  return problems.some((problem) => problem.includes(IGNORED_VERSION_REFUSAL));
+  return problems.some((problem) => problem.startsWith(IGNORED_VERSION_REFUSAL));
 }
 
-/** Existing copies may stay; a new location counts even when another location already has that version. */
+/** Count versions across locations: hoisting may move copies, but cannot add another ignored copy. */
 export function ignoredIntroductions(config: Config, before: ReadonlyArray<Located>, after: ReadonlyArray<Located>): string[] {
-  const inherited = new Set(before.flatMap((pkg) => pkg.locations.map((location) => JSON.stringify([versionKey(pkg), location]))));
+  const inherited = new Map<string, number>();
+  for (const pkg of before) inherited.set(versionKey(pkg), (inherited.get(versionKey(pkg)) ?? 0) + pkg.locations.length);
   return after.flatMap((pkg) => {
     const reason = ignoredVersionReason(config, pkg);
     if (reason === undefined) return [];
-    return pkg.locations.filter((location) => !inherited.has(JSON.stringify([versionKey(pkg), location])))
-      .map((location) => `${IGNORED_VERSION_REFUSAL} ${pkg.ecosystem}:${pkg.name}@${pkg.version} at ${location}: ${reason}`);
+    const key = versionKey(pkg);
+    const count = inherited.get(key) ?? 0;
+    inherited.set(key, Math.max(0, count - pkg.locations.length));
+    return pkg.locations.slice(count).map((location) => `${IGNORED_VERSION_REFUSAL} ${pkg.ecosystem}:${pkg.name}@${pkg.version} at ${location}: ${reason}`);
   });
 }

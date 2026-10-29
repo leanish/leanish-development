@@ -115,7 +115,7 @@ Compatibility floors stay.
 }
 ```
 
-Use exact `npm:name`, `Maven:group:artifact` or `GitHub Actions:owner/repo` packages and exact version strings; no ranges, wildcards or expiry. The reason is required. The tools also verify actual transitive resolutions and refuse a unit introducing an ignored version, without automatic retries; inherited unchanged copies are allowed. Catalogs remain complete and the gate permits manual adoption. The Gradle wrapper is outside this policy for now. A young alternative may still be refused by the gate's unchanged security rule; see [limits](coverage-gaps.md#limits).
+Use exact `npm:name`, `Maven:group:artifact` or `GitHub Actions:owner/repo` packages and exact version strings; no ranges, wildcards or expiry. The reason is required. npm versions omit a leading `v`; Maven versions are literal; Actions match the comment tag as written (`v1.0.1` differs from `1.0.1`). The tools verify actual transitive resolutions: npm/Maven versions may be relocated or hoisted if their copy count does not increase, while Actions retain exact occurrence checks. No policy override or agent feedback bypasses a refusal. secure-it may retry a routine once without named groups and their coupled companions, reporting omissions in `leftOut`; bump-it refuses that unit and continues others. When ignores block all eligible clean malware fixes, secure-it reports `MALWARE REMAINS` with the policy entry and reason for explicit policy review. Catalogs remain complete and the gate permits manual adoption. The Gradle wrapper is outside this policy for now. A young alternative may still be refused by the gate's unchanged security rule; see [limits](coverage-gaps.md#limits).
 
 ## Optional price table
 

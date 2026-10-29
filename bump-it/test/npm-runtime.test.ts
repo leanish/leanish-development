@@ -113,14 +113,15 @@ describe("sandboxed computation on base", () => {
 });
 
 it("filters ignored npm transitive candidates without removing their manifest history", async () => {
-  const config = JSON.stringify({ ignoredVersions: [{ package: "npm:child", versions: ["1.2.0"], reason: "broken" }] });
+  const config = JSON.stringify({ ignoredVersions: [{ package: "npm:child", versions: ["0.9.0", "1.0.0", "1.2.0"], reason: "broken" }] });
   const base: Tree = { id: "base", read: async (path) => path === ".github/supply-chain.json" ? config : path === "package-lock.json" ? JSON.stringify(lock()) : undefined, list: async () => [] };
   const env: GateEnvironment = { now: () => NOW, osvScanner: "unused", githubToken: undefined, run: async () => { throw new Error("unexpected run"); }, fetch: fakeFetch({
-    "https://registry.npmjs.org/child": { body: { versions: { "1.0.0": {}, "1.1.0": {}, "1.2.0": {} }, time: { "1.2.0": "2026-09-01T00:00:00Z" } } },
+    "https://registry.npmjs.org/child": { body: { versions: { "0.9.0": {}, "1.0.0": {}, "1.1.0": {}, "1.2.0": {} }, time: { "1.2.0": "2026-09-01T00:00:00Z" } } },
   }) };
   const notes: string[] = [];
   const sources = await targetSources(base, env, undefined, (note) => notes.push(note));
-  expect(await sources.versions("child")).toEqual(["1.0.0", "1.1.0"]);
-  expect(notes).toEqual(["child@1.2.0: ignored candidate by policy: broken"]);
+  expect(await sources.versions("child")).toEqual(["1.1.0"]);
+  expect(notes).toEqual(["child@0.9.0: ignored candidate by policy: broken", "child@1.0.0: ignored candidate by policy: broken", "child@1.2.0: ignored candidate by policy: broken"]);
+  expect(sources.ignoredReason?.("child", "1.2.0")).toBe("broken");
   expect(await sources.published("child", "1.2.0")).toEqual(new Date("2026-09-01T00:00:00Z"));
 });

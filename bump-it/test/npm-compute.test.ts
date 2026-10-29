@@ -214,10 +214,11 @@ describe("exact npm computation", () => {
       const base = lock("2.0.0", "1.5.0");
       return { ...base, packages: { ...base.packages, "node_modules/child": { version: "1.5.0", resolved } } };
     };
-    const major = async (versions: (name: string) => Promise<ReadonlyArray<string> | undefined>, resolved = "https://registry.npmjs.org/child/-/child-1.5.0.tgz") => {
+    const major = async (versions: (name: string) => Promise<ReadonlyArray<string> | undefined>, resolved = "https://registry.npmjs.org/child/-/child-1.5.0.tgz", ignoredReason?: NpmInputs["sources"]["ignoredReason"]) => {
       const h = await fixture(async (dir) => { await writeFile(join(dir, "package-lock.json"), json(registryLock(resolved))); });
-      return computeNpm({ ...h.inputs, kind: "major", moves: h.inputs.moves.map((move) => ({ ...move, to: "2.0.0" })), sources: { ...h.inputs.sources, versions } });
+      return computeNpm({ ...h.inputs, kind: "major", moves: h.inputs.moves.map((move) => ({ ...move, to: "2.0.0" })), sources: { ...h.inputs.sources, versions, ignoredReason } });
     };
+    await expect(major(async () => ["1.0.0"], undefined, (name) => name === "child" ? "upstream regression" : undefined)).rejects.toThrow("ignored version introduced: npm:child@1.5.0 at package-lock.json:node_modules/child: upstream regression");
     await expect(major(async (name) => name === "child" ? ["1.0.0"] : ["1.0.0", "2.0.0"])).rejects.toThrow("the major brings child@1.5.0, which is deprecated");
     await expect(major(async (name) => name === "child" ? undefined : ["1.0.0", "2.0.0"])).rejects.toThrow("can't be read to rule out deprecation");
     await expect(major(async (name) => name === "child" ? ["1.0.0", "1.5.0"] : ["1.0.0", "2.0.0"])).resolves.toBeDefined();
@@ -562,11 +563,13 @@ describe("exact npm computation", () => {
     expect(h.calls.map((args) => args[0])).toEqual(later ? ["install", "update", "install", "install", "install"] : ["install", "update", "install"]);
   });
   it.each([
-    { stage: "initial resolution", deprecated: false },
-    { stage: "later pin pass", deprecated: false },
-    { stage: "initial resolution", deprecated: true },
-    { stage: "later pin pass", deprecated: true },
-  ])("checks aged drift of an unpinnable young peer alongside an unrelated update ($stage, deprecated=$deprecated)", async ({ stage, deprecated }) => {
+    { stage: "initial resolution", deprecated: false, ignored: false },
+    { stage: "later pin pass", deprecated: false, ignored: false },
+    { stage: "initial resolution", deprecated: true, ignored: false },
+    { stage: "later pin pass", deprecated: true, ignored: false },
+    { stage: "initial resolution", deprecated: false, ignored: true },
+    { stage: "later pin pass", deprecated: false, ignored: true },
+  ])("checks aged drift of an unpinnable young peer alongside an unrelated update ($stage, deprecated=$deprecated, ignored=$ignored)", async ({ stage, deprecated, ignored }) => {
     const h = await fixture();
     const path = "node_modules/parent/node_modules/held";
     const base = { ...lock(), packages: { ...lock().packages,
@@ -597,12 +600,15 @@ describe("exact npm computation", () => {
     };
     const computed = computeNpm({ ...h.inputs, npm, moves: [], baseLocks: new Map([["package-lock.json", base]]),
       sources: { ...h.inputs.sources, now: new Date("2026-10-07T12:00:00Z"), published,
-        versions: async (name) => name === "held" ? catalog.versions({ ecosystem: "npm", name })
+        ignoredReason: (name, version) => ignored && name === "held" && version === "1.1.0" ? "upstream regression" : undefined,
+        versions: async (name) => name === "held" ? ignored ? ["1.0.1"] : catalog.versions({ ecosystem: "npm", name })
           : name === "child" ? ["1.0.0", "1.0.1", "1.1.0", "1.2.0"] : ["1.0.0"],
       },
     });
-    if (deprecated) {
-      await expect(computed).rejects.toThrow(`held at ${path} is 1.1.0, not its locked 1.0.1; cannot pin this copy and its replacement is young, deprecated or unreadable`);
+    if (deprecated || ignored) {
+      await expect(computed).rejects.toThrow(ignored
+        ? `ignored version introduced: npm:held@1.1.0 at package-lock.json:${path}: upstream regression`
+        : `held at ${path} is 1.1.0, not its locked 1.0.1; cannot pin this copy and its replacement is young, deprecated or unreadable`);
       expect(h.calls.map((args) => args[0])).toEqual(stage === "initial resolution"
         ? ["install", "update", "install"] : ["install", "update", "install", "install", "install"]);
       return;

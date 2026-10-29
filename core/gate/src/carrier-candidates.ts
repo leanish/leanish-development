@@ -176,13 +176,16 @@ export async function decideCarrier(group: CarrierGroup, own: ReadonlyArray<stri
       const located = (packages: typeof bundle.packages) => packages.map((entry) => ({ ecosystem: "npm" as const, name: entry.name, version: entry.version, locations: [entry.path] }));
       const introduced = ignoredIntroductions(context.config, located(fromBundle.packages), located(bundle.packages));
       if (reason === undefined && introduced.length === 0) return true;
-      discarded.add(`a fix exists but is ignored by policy: ${pkg.name}@${version}: ${reason ?? introduced.join("; ")}`);
+      discarded.add(`a fix exists but is ignored by policy: ${pkg.name}@${version}: ${reason === undefined ? introduced.join("; ") : `ignoredVersions entry npm:${pkg.name}: ${reason}`}`);
       return false;
     },
   });
   // The vetoes go last, after the reason: a retry attributes the refusal without them (`withoutVetoNote`).
+  if (choice.kind === "none" && malicious && discarded.size > 0) {
+    return { ...none(`MALWARE REMAINS: ${group.name}@${group.version} or its bundle; ignoredVersions blocks the eligible clean fixes; explicit policy review is required; ${[...discarded].join("; ")}`), unfixable };
+  }
   if (choice.kind === "none") return { ...none(`${choice.reason}${discarded.size === 0 ? "" : `; ${[...discarded].join("; ")}`}${vetoNote(choice.vetoed)}`), unfixable };
-  if (choice.kind !== "chosen") return { ...unread(choice.reason), unfixable };
+  if (choice.kind !== "chosen") return { ...unread(choice.reason), unfixable, ...(discarded.size === 0 ? {} : { notes: [...discarded] }) };
   const line = (version: string) => compatibleLine(context.config, pkg, version);
   return {
     from: group.version,

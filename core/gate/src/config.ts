@@ -243,6 +243,7 @@ function ignoredVersions(value: unknown, where: string): IgnoredVersions[] {
       throw new Error(`${at}: package must be an exact npm, Maven or GitHub Actions package`);
     }
     const versions = strings(entry["versions"], `${at}: versions`);
+    if (pkg.startsWith("npm:") && versions?.some((version) => version.startsWith("v"))) throw new Error(`${at}: npm versions must omit a leading v`);
     if (versions === undefined || versions.length === 0 || versions.some((version) => {
       if (!pkg.startsWith("Maven:")) return !isSemVer(version);
       return !/^[0-9A-Za-z][0-9A-Za-z._+-]*$/.test(version) || /(?:^|[.-])[xX](?:$|[.-])/.test(version) || /^(?:LATEST|RELEASE)$/i.test(version);

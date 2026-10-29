@@ -422,6 +422,11 @@ async function chooseMove(
     for (const version of order) {
       if (await isAged({ ...name, version }, catalog, config, now)) return move(version, true, tried);
     }
+    const blocked: string[] = [];
+    for (const version of preferred(ignored)) {
+      if (trusted || await isAged({ ...name, version }, catalog, config, now)) blocked.push(`${version}: ${ignoredVersionReason(config, { ...name, version })}`);
+    }
+    if (blocked.length > 0) return none(`MALWARE REMAINS: ${pkg.name}@${pkg.version}; ignoredVersions entry ${pkg.ecosystem}:${pkg.name} blocks the eligible clean fixes (${blocked.join("; ")}); explicit policy review is required`);
     return none(`no clean version of ${pkg.name} at least ${config.releaseAgeDays} days old to leave the malicious ${pkg.version} for`);
   }
   // A refusal names what unreviewed advisories alone ruled out, judged against the targets it names.
@@ -606,7 +611,7 @@ export async function bumpCandidates(head: Tree, env: GateEnvironment, gradle: G
     const allNewer = movesFrom(pkg, pkg.version, allowed);
     for (const version of allNewer) {
       const reason = ignoredVersionReason(config, { ...pkg, version });
-      if (reason !== undefined) notes.push(`${pkg.name}@${version}: ignored newer version by policy: ${reason}`);
+      if (reason !== undefined) notes.push(`${pkg.name}@${version}: ignored candidate by policy: ${reason}`);
     }
     const newer = selectableVersions(config, pkg, allNewer)!;
     newerOf.set(versionKey(pkg), newer);

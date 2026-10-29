@@ -1,7 +1,7 @@
 /**
  * Compute exact npm files in a sandboxed scratch copy, pin targets, then restore planned manifests.
  * npm's age exclusions include young or unreadable locked base versions, reported in notes;
- * routines pin those names' non-bundled locked copies where supported; unpinned replacements must be aged and not deprecated.
+ * routines pin those names' non-bundled locked copies where supported; unpinned replacements must be aged, non-deprecated and allowed by tool policy.
  * Any exclusions require npm >= 11.17.0.
  * Routine and major-induced Node types must fit the base tree's lowest supported runtime.
  */
@@ -10,6 +10,7 @@ import { basename, dirname, join } from "node:path";
 
 import semver from "semver";
 
+import { IGNORED_VERSION_REFUSAL } from "@leanish/gate/ignored-versions";
 import type { NpmDeclaration } from "@leanish/gate/candidates";
 import { type NodeRuntime, nodeRuntime, nodeTypeProblem, nodeTypeVersions } from "@leanish/gate/node-runtime";
 import { NPM_REGISTRY } from "@leanish/gate/npm-lock";
@@ -338,8 +339,9 @@ function rememberAccepted(graph: NpmGraph, retained: ReadonlyMap<string, Copy>, 
 }
 
 /**
- * A major keeps the graph npm induces, but none of its new versions may be deprecated: each version a transitive copy
- * takes that base didn't have must be in the registry's non-deprecated catalog, which unreadable data can't show.
+ * A major keeps the graph npm induces, but its new versions must be allowed by tool policy and non-deprecated. Each
+ * version a transitive copy takes that base did not have must be in the allowed non-deprecated listing; unreadable data
+ * cannot establish that.
  * Direct copies are the unit's own, chosen with their checks; bundled copies follow their carrier; a copy from git, a
  * tarball or another registry has no npm catalog to ask, and the gate's source rules judge it.
  */
@@ -349,6 +351,8 @@ async function assertNoNewDeprecated(graph: NpmGraph, baseVersions: ReadonlyMap<
     if (copy.bundled || declared.has(copy.path) || baseVersions.get(copy.name)?.includes(copy.version)) continue;
     const resolved = (graph.packages[copy.path] as { resolved?: unknown } | undefined)?.resolved;
     if (typeof resolved !== "string" || !resolved.startsWith(`${NPM_REGISTRY}/`)) continue;
+    const reason = sources.ignoredReason?.(copy.name, copy.version);
+    if (reason !== undefined) throw new Error(`${IGNORED_VERSION_REFUSAL} npm:${copy.name}@${copy.version} at ${lockfile}:${copy.path}: ${reason}`);
     const listed = await sources.versions(copy.name).catch(() => undefined);
     if (listed === undefined) throw new Error(`${lockfile}: the major brings ${copy.name}@${copy.version}, whose registry catalog can't be read to rule out deprecation`);
     if (!listed.includes(copy.version)) throw new Error(`${lockfile}: the major brings ${copy.name}@${copy.version}, which is deprecated`);
@@ -363,10 +367,12 @@ async function assertUnpinnedRetention(graph: NpmGraph, retained: ReadonlyMap<st
       continue;
     }
     if (graph.nameAt(path) === previous.name && current.version !== undefined) {
+      const reason = sources.ignoredReason?.(previous.name, current.version);
+      if (reason !== undefined) throw new Error(`${IGNORED_VERSION_REFUSAL} npm:${previous.name}@${current.version} at ${lockfile}:${path}: ${reason}`);
       try {
         const published = await sources.published(previous.name, current.version);
         // Retained targets bypass candidate selection. Check its catalog too:
-        // npm's name exemption cannot authorize a new deprecated version.
+        // npm's name exemption cannot authorize a new deprecated or ignored version.
         if (meetsReleaseAge(published, sources) && (await sources.versions(previous.name))?.includes(current.version)) continue;
       } catch {
         // Unreadable age or catalog data cannot justify drift under a name exemption.

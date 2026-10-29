@@ -36,6 +36,7 @@ export async function targetSources(base: Tree, env: GateEnvironment, gradle: Gr
       }
       return selectableVersions(config, pkg, listed);
     },
+    ignoredReason: (name, version) => ignoredVersionReason(config, { ecosystem: "npm", name, version }),
     published: (name, version) => catalog.published({ ecosystem: "npm", name, version }),
     snapshot: (packages, candidates) => takeSnapshot(packages, snapshotOptions(config, env, actions), candidates),
     identity: (name, from, to) => identity.problems({ ecosystem: "npm", name, version: from }, to),
@@ -65,7 +66,7 @@ export async function computeOnBase(context: ToolRunContext, unit: Unit, base: T
       window: { days: context.releaseAgeDays, exclude: context.releaseAgeExclude },
       sources,
     });
-    return { ...result, notes: [...new Set([...result.notes, ...ignored])] };
+    return { ...result, notes: [...new Set([...result.notes, ...ignored])].sort() };
   } finally {
     await scratch.remove();
   }

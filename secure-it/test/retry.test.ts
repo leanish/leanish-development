@@ -15,6 +15,14 @@ function plan(...moves: PlannedMove[]): ChangePlan {
 }
 
 describe("batch retry", () => {
+  it("attributes an ignored refusal only to its ecosystem and subject, never names in its reason", () => {
+    const problem = "ignored version introduced: npm:lib@1.0.1 at node_modules/lib: see other@1.0.1";
+    const original = plan(move("lib"), { ...move("lib"), ecosystem: "Maven" }, move("other"));
+    const retry = retryWithoutNamed(original, [problem]);
+    expect(retry.plan?.packages).toEqual(["Maven|lib", "npm|other"]);
+    expect(retry.leftOut).toEqual([{ moves: [original.moves[0]], problems: [problem] }]);
+  });
+
   it("omits a direct-peer set together and persists the reason for its companion too", () => {
     const original = { ...plan(move("vitest"), move("@vitest/ui"), move("other")), coupled: [["npm|vitest", "npm|@vitest/ui", "npm|unchanged"]] };
     const retry = retryWithoutNamed(original, ["vitest at node_modules/vitest is gone, not 1.0.1"]);

@@ -88,7 +88,7 @@ export async function requiredClosure(root: RequiredNode, inputs: RequiredInputs
       if (ranges.some((range) => semver.validRange(range) === null)) throw new Error(`${spec.name}: unreadable applicable requirement`);
       const verified = inputs.verifiedRoot?.(path);
       const fix = verified !== undefined && verified.name === spec.name && ranges.every((range) => semver.satisfies(verified.version, range)) ? verified.version : undefined;
-      const { version, exempt } = fix !== undefined ? await verifiedFix(spec.name, fix, inputs) : await lowestRequired(spec.name, ranges, inputs, inputs.installed?.(path));
+      const { version, exempt } = fix !== undefined ? await verifiedFix(spec.name, fix, inputs, inputs.installed?.(path)) : await lowestRequired(spec.name, ranges, inputs, inputs.installed?.(path));
       const child = { name: spec.name, version, path };
       const requires = `${node.name}@${node.version} requires ${edge.key} ${edge.spec}`;
       const reason = fix !== undefined ? `${requires}; ${exempt ? "young" : "aged"} ${spec.name}@${version} is the verified security fix there`
@@ -121,8 +121,8 @@ export function requirementSpec(key: string, spec: string): { name: string; rang
 }
 
 /** Another verified security fix the requirement accepts: young (exempt) or aged like any choice, never re-picked. */
-async function verifiedFix(name: string, version: string, inputs: RequiredInputs): Promise<{ version: string; exempt: boolean }> {
-  if (inputs.isIgnored?.(name, version)) throw new Error(`${name}@${version}: ignored by policy`);
+async function verifiedFix(name: string, version: string, inputs: RequiredInputs, installed: string | undefined): Promise<{ version: string; exempt: boolean }> {
+  if (version !== installed && inputs.isIgnored?.(name, version)) throw new Error(`${name}@${version}: ignored by policy`);
   if (inputs.isTrusted(name)) return { version, exempt: false };
   const published = publishTime(await inputs.registry.packument(name), name, version);
   return { version, exempt: isUnderWait(published, inputs.days, inputs.now) };
@@ -131,15 +131,20 @@ async function verifiedFix(name: string, version: string, inputs: RequiredInputs
 async function lowestRequired(name: string, ranges: ReadonlyArray<string>, inputs: RequiredInputs, installed: string | undefined): Promise<{ version: string; exempt: boolean }> {
   if (ranges.some((range) => semver.validRange(range) === null)) throw new Error(`${name}: unreadable applicable requirement`);
   const doc = await inputs.registry.packument(name);
+  const ignored: string[] = [];
   const candidates = Object.entries(doc.versions).filter(([version, manifest]) => {
-    if (version !== installed && inputs.isIgnored?.(name, version)) return false;
     if (semver.valid(version) === null || semver.prerelease(version) !== null || !ranges.every((range) => semver.satisfies(version, range))) return false;
     if (!isObject(manifest)) throw new Error(`${name}@${version}: unreadable candidate manifest`);
     const deprecated = manifest["deprecated"];
     if (deprecated !== undefined && typeof deprecated !== "string") throw new Error(`${name}@${version}: unreadable deprecation metadata`);
-    return deprecated === undefined || deprecated === "";
+    if (deprecated !== undefined && deprecated !== "") return false;
+    if (version !== installed && inputs.isIgnored?.(name, version)) { ignored.push(version); return false; }
+    return true;
   }).map(([version]) => version).sort(semver.compare);
-  if (candidates.length === 0) throw new Error(`${name}: no stable non-deprecated version satisfies ${ranges.join(" & ")}`);
+  if (candidates.length === 0) {
+    if (ignored.length > 0) throw new Error(`${name}: ignore policy leaves no stable non-deprecated version satisfying ${ranges.join(" & ")}; ignored: ${ignored.sort(semver.compare).join(", ")}`);
+    throw new Error(`${name}: no stable non-deprecated version satisfies ${ranges.join(" & ")}`);
+  }
   if (candidates.length > (inputs.limits ?? REQUIRED_LIMITS).versions) throw new Error(`${name}: required-dependency version bound reached`);
   if (inputs.isTrusted(name)) return { version: installed !== undefined && candidates.includes(installed) ? installed : candidates[0]!, exempt: false };
   // Check every date: an unknown one cannot establish that no aged satisfying version exists.

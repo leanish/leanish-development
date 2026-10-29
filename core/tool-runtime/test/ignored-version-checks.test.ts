@@ -23,7 +23,15 @@ describe("ignored resolution verification", () => {
     expect(await ignoredVersionProblems(changed, base, {})).toEqual([expect.stringContaining("ignored version introduced:")]);
   });
 
-  it("does not inherit copies across lockfiles", async () => {
+  it("allows hoisting an existing ignored copy, but not increasing its count", async () => {
+    const base = tree({ "package-lock.json": lock({ "node_modules/parent/node_modules/lib": { version: "1.0.1" } }) });
+    const moved = tree({ "package-lock.json": lock({ "node_modules/lib": { version: "1.0.1" } }) });
+    expect(await ignoredVersionProblems(base, moved, {})).toEqual([]);
+    const added = tree({ "package-lock.json": lock({ "node_modules/lib": { version: "1.0.1" }, "node_modules/alias": { name: "lib", version: "1.0.1" } }) });
+    expect(await ignoredVersionProblems(base, added, {})).toEqual([expect.stringContaining("ignored version introduced:")]);
+  });
+
+  it("refuses additional copies in another lockfile", async () => {
     const base = tree({ "package-lock.json": lock({ "node_modules/lib": { version: "1.0.1" } }) });
     const head = tree({ "package-lock.json": lock({ "node_modules/lib": { version: "1.0.1" } }), "other/package-lock.json": lock({ "node_modules/lib": { version: "1.0.1" } }) });
     // Explicitly configure the second lockfile, as an adopter must.
@@ -38,12 +46,27 @@ describe("ignored resolution verification", () => {
     expect(await ignoredVersionProblems(source, source, { base: inventory(false), head: inventory(true) })).toEqual([expect.stringContaining(":testRuntimeClasspath")]);
   });
 
+  it("allows a Maven copy to move between configurations without increasing its count", async () => {
+    const source = tree({ "build.gradle.kts": "" });
+    const inventory = (id: string): GradleInventory => ({ schemaVersion: 3, tree: "worktree", builds: [{ build: ".", configurations: [{ id, kind: "project", resolved: [{ group: "g", name: "lib", version: "1.0.1" }], declared: [], unresolved: [], error: undefined }] }] });
+    expect(await ignoredVersionProblems(source, source, { base: inventory(":oldClasspath"), head: inventory(":runtimeClasspath") })).toEqual([]);
+  });
+
+  it("checks literal v-prefixed Maven resolutions without normalization", async () => {
+    const source: Tree = { ...tree({ "build.gradle.kts": "" }), read: async (path) => path === ".github/supply-chain.json"
+      ? JSON.stringify({ ignoredVersions: [{ package: "Maven:g:lib", versions: ["v1.0.1"], reason: "broken" }] })
+      : path === "build.gradle.kts" ? "" : undefined };
+    const inventory = (version: string): GradleInventory => ({ schemaVersion: 3, tree: "worktree", builds: [{ build: ".", configurations: [{ id: ":runtimeClasspath", kind: "project", resolved: [{ group: "g", name: "lib", version }], declared: [], unresolved: [], error: undefined }] }] });
+    expect(await ignoredVersionProblems(source, source, { base: inventory("v1.0.0"), head: inventory("v1.0.1") })).toEqual([expect.stringContaining("Maven:g:lib@v1.0.1")]);
+  });
+
   it("counts action occurrences and detects changed refs, files and subpaths", async () => {
     const use = `      - uses: acme/tool@${"a".repeat(40)} # v1.0.1\n`;
     const workflow = (steps: string) => `jobs:\n  test:\n    steps:\n${steps}`;
     const path = ".github/workflows/ci.yml";
     const base = tree({ [path]: workflow(use) });
     expect(await ignoredVersionProblems(base, base, {})).toEqual([]);
+    expect(await ignoredVersionProblems(tree({}), tree({ [path]: workflow(use.replace(" # v1.0.1", "")) }), {})).toEqual([]);
     const variants: Record<string, string>[] = [
       { [path]: workflow(use + use) },
       { [path]: workflow(use.replace("a".repeat(40), "b".repeat(40))) },

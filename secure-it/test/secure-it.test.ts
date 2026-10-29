@@ -823,12 +823,31 @@ describe("secure-it run", () => {
     expect(h.agentCalls).toEqual([]);
   });
 
-  it("refuses an ignored resolution without feedback or a reduced-batch retry", async () => {
+  it("refuses a sole ignored group without feedback or an empty retry", async () => {
     const refusal = "ignored version introduced: npm:vite@8.3.3 at node_modules/vite: broken";
     const h = harness({ fixes: [vite()], problems: [refusal] });
     expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "verification-failed", problems: [refusal] });
     expect(h.agentCalls).toHaveLength(1);
     expect(h.workspace.publications).toEqual([]);
+  });
+
+  it("drops an ignored group once and publishes the remaining routine without feedback", async () => {
+    const refusal = "ignored version introduced: npm:left-pad@1.0.1 at node_modules/left-pad: broken; reason also mentions vite@8.3.3";
+    const h = harness({ fixes: [vite(), leftPad()] });
+    const verified: string[][] = [];
+    const materialized: string[][] = [];
+    const deps = { ...h.deps,
+      materializeNpm: async (_context: ToolRunContext, _base: Tree, plan: ChangePlan) => { materialized.push([...plan.packages]); return new Map<string, string>(); },
+      verify: async (input: VerifyInputs) => {
+        verified.push([...input.plan.packages]);
+        return input.plan.packages.includes("npm|left-pad") ? [refusal] : [];
+      },
+    };
+    expect(await secureIt(deps).run(h.context)).toMatchObject({ outcome: "published", packages: ["npm|vite"], leftOut: [{ moves: [{ name: "left-pad" }], problems: [refusal] }] });
+    expect(verified).toEqual([["npm|left-pad", "npm|vite"], ["npm|vite"]]);
+    expect(materialized.at(-1)).toEqual(["npm|vite"]);
+    expect(h.agentCalls.map((call) => call.input["rejected"])).toEqual([undefined, undefined]);
+    expect(h.workspace.publications).toHaveLength(1);
   });
 
   it("asks the agent again with the refusal and publishes the second attempt when it passes", async () => {

@@ -1,4 +1,5 @@
 /** Attribute verification messages conservatively; a routine may drop named package groups once. */
+import { IGNORED_VERSION_REFUSAL } from "@leanish/gate/ignored-versions";
 import { withoutVetoNote } from "@leanish/gate/young-fixes";
 
 import type { ChangePlan, OmittedMoves, PlannedMove } from "./plan.ts";
@@ -73,6 +74,8 @@ const concerns = (moves: ReadonlyArray<PlannedMove>, name: string) =>
 
 function namesMove(problem: string, move: PlannedMove): boolean {
   // A refusal's veto note names versions and advisories, never the move that failed: it's left out.
+  // The policy reason is untrusted attribution text: only the structured subject names this refusal's group.
+  if (problem.startsWith(IGNORED_VERSION_REFUSAL)) return problem.startsWith(`${IGNORED_VERSION_REFUSAL} ${move.ecosystem}:${move.name}@`);
   const text = withoutVetoNote(problem);
   const name = move.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   // Version-labelled gate findings and named landing/declaration failures, not package substrings in filenames.

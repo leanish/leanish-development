@@ -82,11 +82,11 @@ describe("deciding a carrier move", () => {
     } },
   }));
   /** `repoOnly` adds, per `name@version`, advisories only the project's repository publishes. */
-  const context = (repoOnly: Record<string, string[]> = {}) => ({
+  const context = (repoOnly: Record<string, string[]> = {}, malicious = false) => ({
     reader: new BundleReader(serving(Object.fromEntries(Object.entries(archives).map(([version, { bytes }]) => [tarball("carrier", version), bytes])))),
     registry, catalog: new NpmCatalog(registry), config: parseConfig({}), now: NOW,
     scan: async (packages: ReadonlyArray<PackageVersion>) => new Snapshot(new Map(packages.map((pkg) => [versionKey(pkg), [
-      ...(pkg.name === "brace" && pkg.version === "5.0.9" ? ["GHSA-brace"] : []).map((id): Advisory => ({ id, ids: [id], source: "osv", malicious: false, summary: undefined, severity: undefined })),
+      ...(pkg.name === "brace" && pkg.version === "5.0.9" ? ["GHSA-brace"] : []).map((id): Advisory => ({ id, ids: [id], source: "osv", malicious, summary: undefined, severity: undefined })),
       ...(repoOnly[`${pkg.name}@${pkg.version}`] ?? []).map((id): Advisory => ({ id, ids: [id], source: "repository", malicious: false, summary: undefined, severity: undefined })),
     ]])), [], NOW),
   });
@@ -104,6 +104,15 @@ describe("deciding a carrier move", () => {
     const decision = await decideCarrier(group("5.0.9"), [], false, { ...ctx, config });
     expect(decision.to).toBeUndefined();
     expect(decision.problem).toContain("a fix exists but is ignored by policy");
+  });
+
+  it.each(["npm:carrier", "npm:brace"])("prominently reports policy-blocked malware cleanup in %s", async (pkg) => {
+    const config = parseConfig({ ignoredVersions: [{ package: pkg, versions: [pkg === "npm:carrier" ? "1.1.0" : "5.0.12"], reason: "upstream regression" }] });
+    const decision = await decideCarrier({ ...group("5.0.9"), malicious: true }, [], true, { ...context({}, true), config });
+    expect(decision.to).toBeUndefined();
+    expect(decision.problem).toContain("MALWARE REMAINS:");
+    expect(decision.problem).toContain(pkg);
+    expect(decision.problem).toContain("upstream regression");
   });
 
   it("picks the carrier version whose bundle drops the target, and says what it ships", async () => {

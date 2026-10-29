@@ -13,8 +13,10 @@ import { isExactOverride, type RepositoryOverrides } from "./npm-overrides.ts";
 
 /** What deciding reads from outside: the registry, the advisory snapshot and the identity check. */
 export interface TargetSources {
-  /** Every non-deprecated version the catalog lists; undefined when it can't list them. */
+  /** Non-deprecated versions allowed by tool policy; undefined when the catalog cannot list them. */
   versions(name: string): Promise<ReadonlyArray<string> | undefined>;
+  /** Why tool policy excludes an exact version, independently of its age or deprecation. */
+  readonly ignoredReason?: (name: string, version: string) => string | undefined;
   /** When a version was published; undefined when the registry can't say. */
   published(name: string, version: string): Promise<Date | undefined>;
   /** One snapshot over `packages` and `candidates`. */

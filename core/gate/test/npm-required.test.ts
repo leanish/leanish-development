@@ -33,6 +33,13 @@ describe("npm security-required release age", () => {
     expect((await requiredClosure(root, inputs())).targets[0]?.version).toBe("8.5.29");
   });
 
+  it("reports the ignore policy when it excludes every satisfying candidate", async () => {
+    const proof = await requiredClosure(root, { ...inputs(), isIgnored: () => true });
+    expect(proof.problems.join()).toContain("ignore policy leaves no stable non-deprecated version satisfying ^8.5.29");
+    expect(proof.problems.join()).toContain("8.5.29, 8.5.30");
+    expect(proof.problems.join()).not.toContain("8.5.28");
+  });
+
   it("2026-10-09 Vite/PostCSS: pins only the lowest satisfying young version when no aged version satisfies", async () => {
     const proof = await requiredClosure(root, inputs());
     expect(proof.problems).toEqual([]);
@@ -48,6 +55,12 @@ describe("npm security-required release age", () => {
   describe("another verified security fix at the requirement's path", () => {
     const at = (version: string, extra: Partial<RequiredInputs> = {}) =>
       ({ ...inputs(), verifiedRoot: (path: string) => path === "node_modules/postcss" ? { name: "postcss", version } : undefined, installed: () => "8.5.28", ...extra });
+
+    it.each([true, false])("an ignored verified fix may only stay when already installed: %s", async (installed) => {
+      const proof = await requiredClosure(root, at("8.5.30", { isIgnored: () => true, installed: () => installed ? "8.5.30" : "8.5.28" }));
+      if (installed) expect(proof).toMatchObject({ problems: [], targets: [{ name: "postcss", version: "8.5.30" }] });
+      else expect(proof.problems.join()).toContain("postcss@8.5.30: ignored by policy");
+    });
 
     // `installed` says 8.5.28 throughout, as after a hypothetical choice: the snapshot decides, never the proof's state.
     it("is chosen, not re-picked, when it satisfies the requirement", async () => {

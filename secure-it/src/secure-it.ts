@@ -801,12 +801,11 @@ async function verifyWithRetry(execution: Execution, base: PlanBase, plan: Chang
   };
   const first = await verifyEdit(context, deps, plan, env, inventories, base.tree, base.gradle, execution.npmFiles, heard);
   if (first.length === 0) return withCooldown(env, base.tree, { plan, content, problems: first, named: [], leftOut: plan.leftOut ?? [] }, cooldown);
-  if (hasIgnoredVersionRefusal(first)) return { plan, content, problems: first, named: [], leftOut: plan.leftOut ?? [] };
   let problems = first;
   let rejected: Pick<VerifiedBatch, "rejected"> = {};
   // Why the feedback attempt never reached a verification; the reduction then works from the first refusal.
   let unverified: string | undefined;
-  if (options.retryRejected === true) {
+  if (options.retryRejected === true && !hasIgnoredVersionRefusal(first)) {
     context.logger.warn("secure-it: asking the agent again with the verification's refusal", { problems });
     rejected = { rejected: first };
     try {
@@ -836,7 +835,6 @@ async function verifyWithRetry(execution: Execution, base: PlanBase, plan: Chang
   // A failed outcome keeps what stopped the attempt with the refusal; a passing one is never touched.
   const noted = (batch: VerifiedBatch): VerifiedBatch =>
     unverified === undefined || batch.problems.length === 0 ? batch : { ...batch, problems: [...batch.problems, `asked again with that refusal, ${unverified}`] };
-  if (hasIgnoredVersionRefusal(problems)) return { plan, content, problems, named: [], leftOut: plan.leftOut ?? [], ...rejected };
   const retry = retryWithoutNamed(plan, problems);
   if (retry.plan === undefined) return noted({ plan, content, problems, named: retry.named, leftOut: retry.leftOut, ...rejected });
   context.logger.warn("secure-it: retrying the routine without named package groups", { leftOut: retry.leftOut });
