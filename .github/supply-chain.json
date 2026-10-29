@@ -6,6 +6,6 @@
   "releaseAgeDays": 7,
   "ownPackages": {
     "npm": { "scopes": ["@leanish"] },
-    "GitHub Actions": { "owners": ["leanish"] }
+    "GitHub Actions": { "owners": ["leanish", "actions", "aws-actions"] }
   }
 }
