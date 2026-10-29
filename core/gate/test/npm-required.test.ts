@@ -21,7 +21,7 @@ const postcss = { time: { "8.5.28": old, "8.5.29": young, "8.5.30": young }, ver
 function registry(docs: Record<string, unknown> = {}) {
   return new NpmRegistry(fakeFetch(Object.fromEntries(Object.entries({ vite: baseDoc, postcss, ...docs }).map(([name, body]) => [`https://registry.npmjs.org/${encodeURIComponent(name)}`, { body }]))));
 }
-const inputs = (reg = registry()) => ({ registry: reg, days: 7, now: NOW, placement: (_parent: unknown, key: string) => `node_modules/${key}` });
+const inputs = (reg = registry()) => ({ registry: reg, days: 7, now: NOW, isTrusted: () => false, placement: (_parent: unknown, key: string) => `node_modules/${key}` });
 const config = parseConfig({});
 const advisory: Advisory = { id: "GHSA-fixed", ids: ["GHSA-fixed"], malicious: false, source: "osv", summary: undefined, severity: undefined };
 

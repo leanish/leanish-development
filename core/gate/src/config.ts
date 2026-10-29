@@ -81,7 +81,7 @@ export interface TrustedPackages {
   readonly npmScopes: ReadonlyArray<string>;
   /** Exact Maven groups. */
   readonly mavenGroups: ReadonlyArray<string>;
-  /** Gradle plugin id prefixes; they match plugin marker coordinates `<id>:<id>.gradle.plugin` only. */
+  /** Gradle plugin id prefixes at dot boundaries, marker coordinates `<id>:<id>.gradle.plugin` only; a trailing dot matches descendants only. */
   readonly pluginIdPrefixes: ReadonlyArray<string>;
   /** GitHub owners whose actions and reusable workflows are trusted. */
   readonly actionOwners: ReadonlyArray<string>;
@@ -112,7 +112,8 @@ function trustedBy(trusted: TrustedPackages, pkg: PackageName): boolean {
   if (pkg.ecosystem === "GitHub Actions") return trusted.actionOwners.some((owner) => pkg.name.startsWith(`${owner.toLowerCase()}/`));
   const [group, artifact] = pkg.name.split(":");
   if (trusted.mavenGroups.includes(group!)) return true;
-  return trusted.pluginIdPrefixes.some((prefix) => group!.startsWith(prefix) && artifact === `${group}.gradle.plugin`);
+  if (artifact !== `${group}.gradle.plugin`) return false;
+  return trusted.pluginIdPrefixes.some((prefix) => group === prefix || group!.startsWith(prefix.endsWith(".") ? prefix : `${prefix}.`));
 }
 
 export function parseConfig(raw: unknown): Config {

@@ -1,8 +1,26 @@
 import { describe, expect, it } from "vitest";
 
-import { parseConfig } from "../src/config.ts";
+import { isTrustedPackage, parseConfig } from "../src/config.ts";
 
 describe("supply-chain.json", () => {
+  it.each([
+    ["trustedPackages", "com.acme"],
+    ["trustedPackages", "com.acme."],
+    ["ownPackages", "com.acme"],
+    ["ownPackages", "com.acme."],
+  ])("matches %s plugin prefix %s at dot boundaries and only on markers", (field, prefix) => {
+    const config = parseConfig({ [field]: { Maven: { pluginIdPrefixes: [prefix] } } });
+    const markerTrusted = (group: string) => isTrustedPackage(config.trustedPackages, { ecosystem: "Maven", name: `${group}:${group}.gradle.plugin` });
+    expect(markerTrusted("com.acme")).toBe(prefix === "com.acme");
+    expect(markerTrusted("com.acme.x")).toBe(true);
+    expect(markerTrusted("com.acme.x.y")).toBe(true);
+    expect(markerTrusted("com.acmecorp.evil")).toBe(false);
+    expect(markerTrusted("com.acmex")).toBe(false);
+    expect(markerTrusted("com.other.acme.x")).toBe(false);
+    expect(isTrustedPackage(config.trustedPackages, { ecosystem: "Maven", name: "com.acme.x:library" })).toBe(false);
+    expect(isTrustedPackage(config.trustedPackages, { ecosystem: "Maven", name: "com.acme.x:com.other.gradle.plugin" })).toBe(false);
+  });
+
   const trustedPackages = {
     npm: { scopes: ["@leanish", "@aws-sdk"] },
     Maven: { groups: ["com.acme"], pluginIdPrefixes: ["com.acme."] },

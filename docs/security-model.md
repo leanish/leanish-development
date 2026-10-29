@@ -34,7 +34,7 @@ Temporary projects, homes and caches are removed on success or failure. This bou
 ### Reading npm archives for bundled fixes
 
 A young carrier's `bundle-fix` justification needs at least one reviewed bundled advisory it fixes; its own reviewed
-targets join the combined choice. An own-only fix needs the ordinary young-fix proof or an explicit `releaseAge` exception.
+targets join the combined choice. A fix of only the carrier's advisories needs the ordinary young-fix proof or an explicit `releaseAge` exception.
 
 To prove a young carrier version as a bundled fix (and for secure-it to choose one), the gate downloads registry archives itself: only from the npm registry, at the package's own tarball URL, refusing redirects. A download counts against fixed budgets (compressed and unpacked bytes, entries, manifest size, a deadline, and bytes per run), and its sha512 must match the integrity the lockfile records (or, for a candidate version, the one the registry publishes) before anything read from it is used. It is gunzipped and read as a tar stream in memory: files and directories only, one top directory, no path twice, no absolute or `..` paths; only package manifests are kept, and a bundled package whose files have no manifest makes the archive unreadable. Nothing is written to disk or executed. Whatever can't be read this way leaves the young version unjustified; it never reads as an empty bundle.
 
