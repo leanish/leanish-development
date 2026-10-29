@@ -4,8 +4,10 @@
 
 ### Changed
 
-- PRs use head's release-age and trusted-package policy, like exceptions. Policy changes apply in the same PR;
-  unparseable base settings no longer prevent cooldown evaluation. The tools still cannot edit the gate's policy.
+- PRs use head's release-age and trusted-package policy, like exceptions. Adding trust or shortening
+  `releaseAgeDays` applies to the PR's own versions too: newly trusted versions, or versions old enough under
+  the shorter wait, are not held. In the gate's comparison, unparseable base settings no longer prevent cooldown
+  evaluation. The tools still require parseable base settings and cannot edit the gate's policy.
 - The release-age exemption is named `trustedPackages`, with the same npm scopes, Maven groups/plugin ID prefixes
   and GitHub Actions owners. It can include third parties as well as the repository's own packages. Trust removes
   the cooldown detection window (and Actions' immutable-release requirement); identity, advisory, malware, source

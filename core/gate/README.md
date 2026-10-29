@@ -239,9 +239,12 @@ that is younger than `releaseAgeDays` is **held**, whether the rule picked it, a
 - The separate `cooldown` job stays red while anything is held (and whenever it can't tell: a comparison that didn't
   pass, a missing report, a report for another head). Its log and step summary list each held version and when it
   turns old enough. Require it next to `supply-chain` (see GitHub settings below).
-- The policy that judges a PR comes from head, like its exceptions: head's `releaseAgeDays` and trusted packages
-  apply in that PR. Review policy changes in the diff of `.github/supply-chain.json`. The tools' policy fence
-  prevents their proposals from editing that file. Unparseable base settings do not block cooldown evaluation.
+- The policy that judges a PR comes from head, like its exceptions. Adding trust or shortening `releaseAgeDays`
+  applies to the PR's own versions too: newly trusted versions, or versions old enough under the shorter wait,
+  are not held. If `.github/supply-chain.json` is absent from head, including when the PR deletes it, the defaults
+  apply. Review policy changes in that file's diff. The tools' policy fence prevents their proposals from editing
+  it. In the gate's comparison, unparseable base settings do not block cooldown evaluation; the tools still
+  require parseable base settings.
 - Exceptions don't clear a hold. Taking a held version before its time is a person's decision: every other check
   green, the reason written on the PR, then an admin merge past the red `cooldown` check. Where nothing enforces
   the check (no ruleset, e.g. a private repository on the free plan), the same: a merge with the reason written.

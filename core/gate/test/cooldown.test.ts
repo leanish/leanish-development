@@ -5,12 +5,13 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { main } from "../src/cli.ts";
+import type { GradleInventory } from "../src/gradle.ts";
 import { cooldownOf, heldUntil } from "../src/cooldown.ts";
 import { releaseSignals } from "../src/npm-registry.ts";
 import type { HeldVersion } from "../src/release-age.ts";
 import { runCompare } from "../src/gate.ts";
 import { REPORT_SCHEMA_VERSION } from "../src/report.ts";
-import { environment, files, json, tree } from "./required-fixture.ts";
+import { environment, files, json, tree, YOUNG } from "./required-fixture.ts";
 
 const HEAD = "a".repeat(40);
 const held: HeldVersion = {
@@ -54,6 +55,78 @@ describe("the cooldown in a comparison", () => {
     expect(outcome.failures).toEqual([]);
     expect(outcome.cooldown.evaluated && outcome.cooldown.releaseAgeDays).toBe(7);
     expect(outcome.cooldown.evaluated && outcome.cooldown.held.map((entry) => entry.name)).toEqual(["vite", "postcss"]);
+  });
+
+  it("uses the defaults when head deletes the configuration", async () => {
+    const base = { ...files(), ".github/supply-chain.json": json({ releaseAgeDays: 1 }) };
+    const outcome = await runCompare(tree(base), tree(files("8.3.3", "8.5.29"), "head"), environment().env);
+    expect(outcome.configText).toBeUndefined();
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.cooldown.evaluated && outcome.cooldown.releaseAgeDays).toBe(7);
+    expect(outcome.cooldown.evaluated && outcome.cooldown.held.map((entry) => entry.name)).toEqual(["vite", "postcss"]);
+  });
+
+  it.each([
+    ["actions", "checkout", true],
+    ["actions", "checkout", false],
+    ["aws-actions", "configure-aws-credentials", true],
+    ["aws-actions", "configure-aws-credentials", false],
+  ])("uses head's trust for %s/%s when head trusts it: %s", async (owner, action, trusted) => {
+    const name = `${owner}/${action}`;
+    const policy = json({ trustedPackages: { "GitHub Actions": { owners: [owner] } } });
+    const base = tree({
+      ".github/workflows/ci.yml": "jobs: {}\n",
+      ".github/supply-chain.json": trusted ? "{}" : policy,
+    });
+    const head = tree({
+      ".github/workflows/ci.yml": `jobs:\n  ci:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ${name}@${HEAD} # v1.0.0\n`,
+      ".github/supply-chain.json": trusted ? policy : "{}",
+    }, "head");
+    const { env } = environment({ affected: {}, routes: {
+      [`https://api.github.com/repos/${name}/git/ref/tags/v1.0.0`]: { body: { object: { type: "commit", sha: HEAD } } },
+      [`https://api.github.com/repos/${name}/releases?per_page=100&page=1`]: {
+        body: [{ tag_name: "v1.0.0", published_at: YOUNG, draft: false, immutable: true }],
+      },
+    } });
+    const outcome = await runCompare(base, head, env);
+    if (trusted) {
+      expect(outcome.failures).toEqual([]);
+      expect(outcome.cooldown).toEqual({ evaluated: true, releaseAgeDays: 7, held: [] });
+    } else {
+      expect(outcome.failures).toEqual([expect.stringContaining(`${name}@v1.0.0 was published`)]);
+      expect(outcome.cooldown).toEqual({ evaluated: true, releaseAgeDays: 7, held: [{
+        ecosystem: "GitHub Actions", name, version: "v1.0.0", replaced: [],
+        published: "2026-10-06T00:00:00.000Z", eligibleAt: "2026-10-13T00:00:00.000Z", justification: "unjustified",
+      }] });
+    }
+  });
+
+  it.each([true, false])("uses head's Maven group trust when head trusts it: %s", async (trusted) => {
+    const policy = json({ trustedPackages: { Maven: { groups: ["com.acme"] } } });
+    const base = tree({ "build.gradle.kts": "plugins { java }", ".github/supply-chain.json": trusted ? "{}" : policy });
+    const head = tree({ "build.gradle.kts": "plugins { java }", ".github/supply-chain.json": trusted ? policy : "{}" }, "head");
+    const inventory = (tree: string, added: boolean): GradleInventory => ({
+      schemaVersion: 3, tree, builds: [{ build: ".", configurations: [{
+        id: ":runtimeClasspath", kind: "project", declared: [], unresolved: [], error: undefined,
+        resolved: added ? [{ group: "com.acme", name: "lib", version: "1.0.0" }] : [],
+      }] }],
+    });
+    const { env } = environment({ affected: {}, routes: {
+      "https://repo1.maven.org/maven2/com/acme/lib/1.0.0/lib-1.0.0.pom": {
+        headers: { "last-modified": "Tue, 06 Oct 2026 00:00:00 GMT" }, text: "<project></project>",
+      },
+    } });
+    const outcome = await runCompare(base, head, env, { base: inventory("base", false), head: inventory("head", true) });
+    if (trusted) {
+      expect(outcome.failures).toEqual([]);
+      expect(outcome.cooldown).toEqual({ evaluated: true, releaseAgeDays: 7, held: [] });
+    } else {
+      expect(outcome.failures).toEqual([expect.stringContaining("com.acme:lib@1.0.0 was published")]);
+      expect(outcome.cooldown).toEqual({ evaluated: true, releaseAgeDays: 7, held: [{
+        ecosystem: "Maven", name: "com.acme:lib", version: "1.0.0", replaced: [],
+        published: "2026-10-06T00:00:00.000Z", eligibleAt: "2026-10-13T00:00:00.000Z", justification: "unjustified",
+      }] });
+    }
   });
 
   it.each(["{", json({ releaseAgeDays: "invalid" }), json({ trustedPackages: null })])("evaluates the cooldown when base's config doesn't parse: %s", async (config) => {
