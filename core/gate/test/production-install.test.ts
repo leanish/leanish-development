@@ -14,6 +14,20 @@ afterEach(async () => {
   installRoot = undefined;
 });
 
+/** A lockfile path in a workspace other than core/gate (the workspace itself or anything npm nests under it). */
+function otherWorkspace(path: string): boolean {
+  const segments = path.split("/");
+  const workspace = segments[0] === "core" ? segments.slice(0, 2).join("/") : segments[0]!;
+  return (segments[0] === "core" || workspace === "bump-it" || workspace === "secure-it") && workspace !== "core/gate";
+}
+
+describe("which lockfile entries the production install drops", () => {
+  it("drops the other workspaces and what's nested under them, keeping what's nested under core/gate", () => {
+    expect(["core/agent-runtime", "core/agent-runtime/node_modules/ajv", "bump-it", "bump-it/node_modules/x", "secure-it"].every(otherWorkspace)).toBe(true);
+    expect(["core/gate", "core/gate/node_modules/ajv", "node_modules/ajv", ""].some(otherWorkspace)).toBe(false);
+  });
+});
+
 describe("CI production install", () => {
   it("runs the CLI with only its production workspace dependencies", async () => {
     installRoot = await mkdtemp(join(tmpdir(), "supply-chain-ci-production-"));
@@ -33,7 +47,9 @@ describe("CI production install", () => {
     expect(ciLockEntry?.dependencies?.semver).toBe("^7.8.5");
     lockfile.packages[""]!.workspaces = ["core/gate"];
     for (const path of Object.keys(lockfile.packages)) {
-      if ((path.startsWith("core/") || path === "bump-it" || path === "secure-it") && path !== "core/gate") delete lockfile.packages[path];
+      // Drop the other workspaces and what npm nests under them, but keep what it nests under core/gate: a dependency
+      // npm can't hoist to the root (an ajv 8 next to eslint's ajv 6) lives at core/gate/node_modules/.
+      if (otherWorkspace(path)) delete lockfile.packages[path];
       if (path.startsWith("node_modules/@leanish/") && path !== "node_modules/@leanish/gate") {
         delete lockfile.packages[path];
       }
