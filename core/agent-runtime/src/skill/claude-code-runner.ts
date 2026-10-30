@@ -377,7 +377,6 @@ export function restrictedClaudeSettings(request: { readonly readDenied: Readonl
 function commonSettings(home: string): Record<string, unknown> {
   return {
     modelSettings: {
-      "claude-haiku-4-5": { autoCompactWindow: 100000 },
       "claude-haiku-5-5": { autoCompactWindow: 100000 },
     },
     // The skill tells the agent to read the repository's own instructions; nothing else is injected.

@@ -44,7 +44,7 @@ Skill schemas also accept the `[object, null]` type union and a restricted const
 keywords and malformed objects are still rejected.
 
 Both Claude Code confinements pass inline `modelSettings` with `autoCompactWindow: 100000` for canonical
-`claude-haiku-4-5` and `claude-haiku-5-5`, regardless of the requested model. CLI 2.1.312 reads this flag layer even
+`claude-haiku-5-5`, regardless of the requested model. CLI 2.1.312 reads this flag layer even
 with `--setting-sources ""`, normalizes dated/provider IDs and resolves aliases before matching the model key.
 The runner removes the higher-precedence `CLAUDE_CODE_AUTO_COMPACT_WINDOW` from the child env. This compaction
 window is an operating control, not a hard per-request token cap; inherited compaction-disable settings still apply.

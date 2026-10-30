@@ -174,7 +174,6 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
         const text = await readFile(record, "utf8");
         expect(text).toContain("COMPACT=[] PRESENT=[]");
         expect(settingsOf(text).modelSettings).toEqual({
-          "claude-haiku-4-5": { autoCompactWindow: 100000 },
           "claude-haiku-5-5": { autoCompactWindow: 100000 },
         });
         expect(settingsOf(text)).not.toHaveProperty("autoCompactWindow");
@@ -442,7 +441,6 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     expect(RESTRICTED_TOOLS).toEqual(["Read", "Glob", "Grep", "Skill"]);
     expect(restrictedClaudeSettings({ readDenied: ["/x"], home: "/home/u" })).toEqual({
       modelSettings: {
-        "claude-haiku-4-5": { autoCompactWindow: 100000 },
         "claude-haiku-5-5": { autoCompactWindow: 100000 },
       },
       permissions: { deny: ["Read(//x)", "Read(//x/**)", "Bash", "Edit", "Write", "NotebookEdit", ...DENIED_TOOLS] },
