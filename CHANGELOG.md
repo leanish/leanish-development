@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+
+- bump-it clarifies that a planned plain Gradle declaration moves while an alternate branch's `strictly(...)`
+  pin stays unchanged; that alternate pin alone does not block the plan.
+
 ## 0.10.0 - 2026-10-29
 
 ### Changed
