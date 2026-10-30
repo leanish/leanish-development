@@ -1020,7 +1020,7 @@ What each step added, with rough API-equivalent cost (about $105.6 in all, the s
 0.10.0 renames the release-age exemption, judges a PR by the policy it lands, and runs the gate in fewer jobs, in
 eleven PRs:
 - `ownPackages` renamed `trustedPackages`, with the old name as an alias until 0.11.0 (#324, #326);
-- this repository trusts the `actions` and `aws-actions` owners (#327), as every adopter did in its own PR;
+- this repository trusts the `actions` and `aws-actions` owners (#327);
 - agent-runtime's `CLAUDE_CONFIG_DIR` refusal no longer prints the value (#328);
 - a PR is judged by head's `releaseAgeDays` and `trustedPackages`, at the owner's request (#329);
 - the production-install test keeps core/gate's nested dependencies (#331);
@@ -1047,8 +1047,7 @@ alias bridges, notes in the tools' results), all applied.
   - Astra found no blocker.
   - The gate through Actions, pinned to the candidate: a PR comparison on TEST_gradle#564 (green); default-branch
     scans on this repository (no Gradle, passes) and on TEST_gradle (fails only on snakeyaml GHSA-mjmj-j48q-9wg2,
-    which the fixture keeps on purpose). On sqs-codec the three-job gate took the same wall time and about 35% less
-    runner time.
+    which the fixture keeps on purpose).
   - Fixtures, once per adapter (`fixture-pass.sh`): Claude Code (Haiku, high) and Codex (Sol, medium) each ran
     secure-it 12 of 12 (8 PRs) and bump-it 12 of 12 (15 PRs) with no failures, and every check on all 23 PRs passed.
     The first Claude Code attempt stopped at `batch`'s release check because the candidate wasn't installed yet; the
@@ -1058,16 +1057,9 @@ alias bridges, notes in the tools' results), all applied.
   - `publish-agent-runtime.yml` stopped at the missing `npm` environment; nothing was published. The owner published
     `@leanish/agent-runtime` 0.10.0 by hand; the registry's shasum `85ab4413…` matches the tarball packed from the tag.
   - This repository's ruleset now requires `gate / supply-chain` and `gate / cooldown`; the bridge job is gone.
-- **Repins**: the six fixtures (`fixture-repin`), sqs-codec#186, java-conventions#106, leanish-skills#47,
-  kryptovero#25 and `released-supply-chain.yml` (#338) merged green (kryptovero's CI is off). On v0.10.0, sqs-codec's
-  `main` fails only on zstd-jni's three advisories, which no reviewed database has yet; the 15 netty findings are
-  dropped with notes.
-- **Adoption**: leanish-development-incubator#47 moved to the published 0.10.0 (same sha512 as the packed tarball);
-  861 tests pass.
-- **`trustedPackages` migration**: with every reader on v0.10.0 (the gate pins and this machine's runner, whose
-  2026-10-30 passes ran on it), this repository, the adopters and the fixtures renamed `ownPackages`; dtv#62 and
-  leanish-development-incubator#46 first moved their gate pin from v0.9.1. leanish-development_BENCH keeps its v0.7.1
-  pin and `ownPackages`.
+- **Repins**: the six fixtures (`fixture-repin`) and this repository's `released-supply-chain.yml` (#338) moved to
+  v0.10.0. The adopters' repins and the runtime's adoption are tracked separately.
+- **`trustedPackages` migration**: this repository and its fixtures renamed `ownPackages` to `trustedPackages`.
 
 Known limitations, fixed for 0.10.1:
 - `fixture-pass.sh` didn't check that the release is installed.
