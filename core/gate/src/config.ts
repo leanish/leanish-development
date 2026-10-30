@@ -90,7 +90,7 @@ export const DEFAULT_CONFIG: Config = {
   compatibleLines: [],
 };
 
-/** Trusted packages skip the release-age wait, and only that. */
+/** Trusted packages skip the release-age wait; trusted actions also need no immutable release to date them. Nothing else is skipped. */
 export function isTrustedPackage(trusted: TrustedPackages, pkg: PackageName): boolean {
   if (pkg.ecosystem === "npm") return trusted.npmScopes.some((scope) => pkg.name.startsWith(`${scope}/`));
   if (pkg.ecosystem === "GitHub Actions") return trusted.actionOwners.some((owner) => pkg.name.startsWith(`${owner.toLowerCase()}/`));
