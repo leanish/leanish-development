@@ -10,6 +10,11 @@
 - This repository's `.github/supply-chain.json` uses `trustedPackages` instead of the deprecated `ownPackages`, with the
   same trust ([migration](docs/releasing.md#trustedpackages-migration)).
 
+### Fixed
+
+- Claude Code runs disable native background tasks. Bash default and maximum timeouts scale to 12/14 of the
+  invocation budget (12 minutes under the default 14-minute deadline).
+
 ## 0.10.0 - 2026-10-29
 
 ### Changed
