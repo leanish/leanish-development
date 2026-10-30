@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Doctor requires Claude Code 2.1.312 or newer, the version against which the background-task switch was inspected.
+
 ## 0.10.0 - 2026-10-29
 
 ### Changed
