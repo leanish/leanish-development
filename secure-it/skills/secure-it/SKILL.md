@@ -377,9 +377,6 @@ without what was refused, answer `cannot-apply` and say why.
 
 ## Checks and release notes
 
-Wait for checks to finish in the foreground before answering. Do not detach checks or polls with background tool
-options, `&`, `nohup` or another launcher.
-
 In every mode, run the repository's relevant checks after your edit (its README or CI names them; Gradle with
 `--no-daemon`). They're part of the job, never optional; report any you couldn't run, with why. For each major, read
 the release notes or changelog of the versions it crosses (the package's GitHub releases with `gh`, its CHANGELOG)

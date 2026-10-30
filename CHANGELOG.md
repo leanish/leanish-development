@@ -4,8 +4,8 @@
 
 ### Fixed
 
-- Claude Code runs disable native background tasks and require foreground checks. Bash default and maximum
-  timeouts scale to 12/14 of the invocation budget (12 minutes under the default 14-minute deadline).
+- Claude Code runs disable native background tasks. Bash default and maximum timeouts scale to 12/14 of the
+  invocation budget (12 minutes under the default 14-minute deadline).
 
 ## 0.10.0 - 2026-10-29
 

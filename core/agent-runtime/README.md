@@ -45,9 +45,8 @@ keywords and malformed objects are still rejected.
 
 Claude Code's child environment sets `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` after all caller overrides. Bash's
 default and maximum timeout are each `floor(timeoutMs * 12 / 14)`: 12 minutes under the default 14-minute run budget.
-Earlier work consumes that budget too. The skills require foreground checks; shell `&`, `nohup` and daemons can
-still detach processes. These controls were inspected in CLI 2.1.312 and apply only to the runner's child;
-the desktop batch scheduler's own `run_in_background` is unchanged.
+Earlier work consumes that budget too. These controls were inspected in CLI 2.1.312 and apply only to the runner's
+child; the desktop batch scheduler's own `run_in_background` is unchanged.
 
 ## Credentials
 

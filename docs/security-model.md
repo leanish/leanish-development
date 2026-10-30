@@ -106,8 +106,7 @@ Both tools are in this tree: [`secure-it`](../secure-it) and [`bump-it`](../bump
   - no attribution in the PR text the agent writes.
 
   Claude Code's child disables native background tasks and sets Bash's default and maximum timeout to 12/14 of
-  the invocation budget (12 minutes by default), after caller env. Skills require foreground checks; shell `&`,
-  `nohup` and daemons can still detach processes.
+  the invocation budget (12 minutes by default), after caller env.
 
   Write runs reach any host through the sandbox's proxy, as Codex's do. They also reach macOS's certificate trust
   service (`enableWeakerNetworkIsolation`): without it `gh` can't verify TLS and Node floods its output with
