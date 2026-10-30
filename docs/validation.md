@@ -1014,3 +1014,63 @@ What each step added, with rough API-equivalent cost (about $105.6 in all, the s
 - Astra, 1 call (about $4.68): rc.1's only finding, the publishing race.
 - Claude main session (about $47.7) and sub-agents (about $41.1): five Opus and three Sonnet implementers wrote the
   first versions. The main session wrote #312 and #318, cut and ran the candidate, released and repinned.
+
+## Release reviews and candidate of 0.10.0 — 2026-10-29
+
+0.10.0 renames the release-age exemption, judges a PR by the policy it lands, and runs the gate in fewer jobs, in
+eleven PRs:
+- `ownPackages` renamed `trustedPackages`, with the old name as an alias until 0.11.0 (#324, #326);
+- this repository trusts the `actions` and `aws-actions` owners (#327);
+- agent-runtime's `CLAUDE_CONFIG_DIR` refusal no longer prints the value (#328);
+- a PR is judged by head's `releaseAgeDays` and `trustedPackages`, at the owner's request (#329);
+- the production-install test keeps core/gate's nested dependencies (#331);
+- tests for the workflow's guards, deprecation checks on new copies, and notes on policy changes (#332);
+- stale docs fixed, one owner per repeated rule (#333, from an independent Sol and Astra survey);
+- fixture passes per adapter from a script, and a bounded wait for CI before publishing (#334);
+- a reviewed record's ranges clear versions the package's repository advisory names too broadly (#335);
+- the gate in three jobs instead of five (#336), at the owner's request.
+
+An exploratory PR for exact-version ignores (#325) was closed with the owner's OK, and `batch --agent` was paused.
+
+Each PR had a Haiku pair, then Sol. Sol implemented most of them (`--write`: #324, #329, #332, #333, #335, #336); Claude
+wrote #326, #327, #328, #331 and #334 and read every diff. On #335 a fresh Sol label found six points over three
+rounds (alias contradictions, strict validation of anything that can authorize a drop, record identity, SemVer ranges,
+alias bridges, notes in the tools' results), all applied.
+
+- **rc.1 (`38652f7`)**:
+  - Haiku ×2 on `git diff v0.9.1 v0.10.0-rc.1` raised eleven points, all dismissed and checked by Sol. Both flagged
+    the same two: head's policy now judges the PR (#329) and head's build can rewrite base's inventory in the shared
+    inventory job (#336). Both are the owner's decisions, documented in the security model. The gap-hunter also found
+    that the code skips the immutable-release lookup for trusted actions while a comment said "only the wait"; not new
+    (v0.9.1 skips it the same way), the wording is for 0.10.1.
+  - Sol, unprimed, raised the same two weakenings and accepted them as the owner's decisions.
+  - Astra found no blocker.
+  - The gate through Actions, pinned to the candidate: a PR comparison on TEST_gradle#564 (green); default-branch
+    scans on this repository (no Gradle, passes) and on TEST_gradle (fails only on snakeyaml GHSA-mjmj-j48q-9wg2,
+    which the fixture keeps on purpose).
+  - Fixtures, once per adapter (`fixture-pass.sh`): Claude Code (Haiku, high) and Codex (Sol, medium) each ran
+    secure-it 12 of 12 (8 PRs) and bump-it 12 of 12 (15 PRs) with no failures, and every check on all 23 PRs passed.
+    The first Claude Code attempt stopped at `batch`'s release check because the candidate wasn't installed yet; the
+    script now checks that first.
+- **Release**:
+  - v0.10.0 (`d858e28`) is rc.1 plus its release metadata (#337).
+  - `publish-agent-runtime.yml` stopped at the missing `npm` environment; nothing was published. The owner published
+    `@leanish/agent-runtime` 0.10.0 by hand; the registry's shasum `85ab4413…` matches the tarball packed from the tag.
+  - This repository's ruleset now requires `gate / supply-chain` and `gate / cooldown`; the bridge job is gone.
+- **Repins**: the six fixtures (`fixture-repin`) and this repository's `released-supply-chain.yml` (#338) moved to
+  v0.10.0. The adopters' repins and the runtime's adoption are tracked separately.
+- **`trustedPackages` migration**: this repository and its fixtures renamed `ownPackages` to `trustedPackages`.
+
+Known limitations, fixed for 0.10.1:
+- `fixture-pass.sh` didn't check that the release is installed.
+- Comments said trusted actions skip only the wait; they also skip the immutable-release lookup.
+
+What each step added, with rough API-equivalent cost (about $98.6 in all):
+- Haiku, 22 runs (about $1.0): real findings on most PRs; on rc.1, the trusted-actions wording.
+- Sol, 34 calls (about $16.1, most of them `--write` implementations and fix rounds): six of the eleven PRs, the
+  findings on #335, a clean unprimed review of rc.1 apart from the two accepted decisions, and the check of every
+  dismissal.
+- Astra, 2 calls (about $7.5): the docs survey behind #333 ($3.7) and rc.1's final review, no blocker ($3.8).
+- Claude main session (about $74.0): planned, wrote five PRs, ran the reviews, cut and ran the candidate, released and
+  repinned. No implementer sub-agents ran.
+- The Codex fixture pass's agents reported about $1.9; the Claude Code adapter reports no cost.

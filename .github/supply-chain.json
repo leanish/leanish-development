@@ -4,7 +4,7 @@
     "registries": ["https://registry.npmjs.org"]
   },
   "releaseAgeDays": 7,
-  "ownPackages": {
+  "trustedPackages": {
     "npm": { "scopes": ["@leanish"] },
     "GitHub Actions": { "owners": ["leanish", "actions", "aws-actions"] }
   }

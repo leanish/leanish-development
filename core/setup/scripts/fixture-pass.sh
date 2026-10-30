@@ -9,7 +9,8 @@
 #   fixture-pass.sh --release <tag> --owner <owner> --agent <claude-code|codex> --model <model> --effort <effort> --out <directory>
 #
 # Run it with the tools idle and nothing else writing those configs (a restore would undo the change); from any
-# directory; Java and the other tools come from the caller's environment.
+# directory; Java and the other tools come from the caller's environment. The release must be installed first
+# (`node core/setup/src/cli.ts release --candidate <tag>` for a candidate); the pass checks that before it changes anything.
 set -u
 set -o pipefail
 
@@ -33,6 +34,8 @@ for value in "$RELEASE" "$OWNER" "$AGENT" "$MODEL" "$EFFORT" "$OUT"; do
   [ -n "$value" ] || usage
 done
 case $AGENT in claude-code | codex) ;; *) echo "--agent must be claude-code or codex" >&2; exit 2 ;; esac
+# Only plain characters, since the tag is echoed in messages; setup's isReleaseTag checks it exactly.
+[[ $RELEASE =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]] || { echo "--release takes a vX.Y.Z or vX.Y.Z-rc.N tag" >&2; exit 2; }
 # The three values are written into YAML as plain scalars.
 for value in "$MODEL" "$EFFORT"; do
   [[ $value =~ ^[A-Za-z0-9._-]+$ ]] || { echo "--model and --effort take letters, digits, '.', '_' and '-' only" >&2; exit 2; }
@@ -44,6 +47,19 @@ OWNER=$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd) || exit 1
 CLI=("node" "$ROOT/core/setup/src/cli.ts")
+# batch refuses a release that isn't installed, but only after the cleanup has deleted the fixtures' branches.
+node --input-type=module -e '
+  const { pathToFileURL } = await import("node:url");
+  try { await (await import(pathToFileURL(process.argv[1]).href)).readInstalledRelease(process.argv[2]); }
+  catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exit(1); }
+' "$ROOT/core/setup/src/release.ts" "$RELEASE" || {
+  # `release --candidate` takes only candidate tags; plain `release` installs the newest stable release.
+  case $RELEASE in
+    *-rc.*) echo "$RELEASE didn't verify as installed (above); 'node $ROOT/core/setup/src/cli.ts release --candidate $RELEASE' installs it" >&2 ;;
+    *) echo "$RELEASE didn't verify as installed (above); 'node $ROOT/core/setup/src/cli.ts release' installs the newest stable release" >&2 ;;
+  esac
+  exit 1
+}
 INSTALLATION="$HOME/.config/leanish/installations/$OWNER"
 TOOLS=(bump-it secure-it)
 umask 077

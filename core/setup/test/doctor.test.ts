@@ -11,7 +11,7 @@ function machine() {
   const bundles = new Map([["/Applications/ChatGPT.app", "com.openai.codex"], ["/Applications/Claude.app", "com.anthropic.claudefordesktop"]]);
   const outputs = new Map([
     ["node --version", "v24.0.0"], ["npm --version", "11.17.0"], ["git --version", "git version 2.42.0 (Apple Git-1)"],
-    ["codex --version", "codex-cli 0.159.0"], ["claude --version", "2.1.259 (Claude Code)"],
+    ["codex --version", "codex-cli 0.159.0"], ["claude --version", "2.1.312 (Claude Code)"],
     ["claude auth status --json", '{"loggedIn":true,"email":"private","token":"secret-sentinel"}'],
     ["java -version", 'openjdk version "25.0.1"'], ["javac -version", "javac 25.0.1"],
   ]);
@@ -39,7 +39,7 @@ describe("doctor", () => {
     expect(results.at(-1)).toMatchObject({ status: "needs-confirmation", data: { usable: ["codex", "claude-code"] } });
     expect(results.at(-1)?.data?.agents).toEqual([
       { agent: "codex", desktop: true, appPath: "/Applications/ChatGPT.app", cli: true, version: "0.159.0", login: true },
-      { agent: "claude-code", desktop: true, appPath: "/Applications/Claude.app", cli: true, version: "2.1.259", login: true },
+      { agent: "claude-code", desktop: true, appPath: "/Applications/Claude.app", cli: true, version: "2.1.312", login: true },
     ]);
     expect(JSON.stringify(results)).not.toMatch(/secret-sentinel|private/);
     expect(run.mock.calls.some(([command]) => command === "security")).toBe(false);
@@ -63,7 +63,7 @@ describe("doctor", () => {
       lockf: { path: "/usr/bin/lockf" }, keychain: { path: "/usr/bin/security" }, github: { hostname: "github.com", authenticated: true },
       "codex-cli": { version: "0.159.0" }, sandbox: { version: "0.159.0" },
       java: { version: "25.0.1", compilerVersion: "25.0.1", major: 25, compilerMajor: 25 },
-      agent: { agent: "claude-code", version: "2.1.259", appPath: "/Applications/Claude.app" },
+      agent: { agent: "claude-code", version: "2.1.312", appPath: "/Applications/Claude.app" },
     });
     expect(results.filter((entry) => entry.status === "already-done").every((entry) => entry.data !== undefined)).toBe(true);
   });
@@ -226,11 +226,12 @@ describe("doctor", () => {
     expect((await doctor({ agent: "claude-code" }, host)).at(-1)?.status).toBe("blocked");
   });
 
-  it("requires a recent Claude CLI before checking its login", async () => {
+  it("requires the lowest verified Claude CLI version before checking its login", async () => {
     const { host, outputs, run } = machine();
-    outputs.set("claude --version", "2.1.258 (Claude Code)");
+    outputs.set("claude --version", "2.1.311 (Claude Code)");
     const results = await doctor({ agent: "claude-code" }, host);
-    expect(results.at(-1)).toMatchObject({ status: "blocked", data: { agents: expect.arrayContaining([{ agent: "claude-code", desktop: true, appPath: "/Applications/Claude.app", cli: false, version: "2.1.258", login: false }]) } });
+    expect(results.at(-1)?.message).toContain("Claude requires CLI >=2.1.312");
+    expect(results.at(-1)).toMatchObject({ status: "blocked", data: { agents: expect.arrayContaining([{ agent: "claude-code", desktop: true, appPath: "/Applications/Claude.app", cli: false, version: "2.1.311", login: false }]) } });
     expect(run.mock.calls.some(([command, args]) => command === "claude" && args[0] === "auth")).toBe(false);
   });
 

@@ -55,6 +55,8 @@ async function makeStub(events: ReadonlyArray<unknown>, options: { exitCode?: nu
   echo "CWD=$(pwd)"
   for arg in "$@"; do echo "ARG=$arg"; done
   echo "ENV BASE=[$BASE_VAR] OVERLAP=[$OVERLAP_VAR] CRED=[$CRED_VAR] GRADLE=[$GRADLE_USER_HOME] ZDOTDIR=[$ZDOTDIR] MEMORY=[$CLAUDE_CODE_DISABLE_AUTO_MEMORY] ASKPASS=[$GIT_ASKPASS]"
+  echo "COMPACT=[$CLAUDE_CODE_AUTO_COMPACT_WINDOW] PRESENT=[\${CLAUDE_CODE_AUTO_COMPACT_WINDOW+set}]"
+  echo "POLICY BG=[$CLAUDE_CODE_DISABLE_BACKGROUND_TASKS] DEFAULT=[$BASH_DEFAULT_TIMEOUT_MS] MAX=[$BASH_MAX_TIMEOUT_MS]"
   [ -n "$ZDOTDIR" ] && [ -f "$ZDOTDIR/.zshenv" ] && echo "SHIM=present"
 } > "${record}"
 ${options.script ?? ""}
@@ -160,6 +162,36 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     expect(text).toContain("BASE=[from-runner] OVERLAP=[from-invocation] CRED=[tok]");
     expect(text).toMatch(/ZDOTDIR=\[[^\]]+zdotdir\] MEMORY=\[1\]/);
     expect(text).toContain("SHIM=present");
+  });
+
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.each(["sandbox", "restricted"] as const)("sets Haiku model windows in %s for any requested model and removes global env overrides", async (confinement) => {
+    vi.stubEnv("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "1000000");
+    for (const model of ["claude-haiku-5-5", "haiku", "claude-sonnet-5-5", undefined]) {
+      for (const env of [undefined, { CLAUDE_CODE_AUTO_COMPACT_WINDOW: "500000" }]) {
+        const { bin, record } = await makeStub([result(ANSWER)]);
+        await new ClaudeCodeRunner({ confinement, bin, ...(env === undefined ? {} : { env }) }).run(call({ ...(model === undefined ? {} : { model }), ...(env === undefined ? {} : { env }) }));
+        const text = await readFile(record, "utf8");
+        expect(text).toContain("COMPACT=[] PRESENT=[]");
+        expect(settingsOf(text).modelSettings).toEqual({
+          "claude-haiku-5-5": { autoCompactWindow: 100000 },
+        });
+        expect(settingsOf(text)).not.toHaveProperty("autoCompactWindow");
+      }
+    }
+    expect(process.env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]).toBe("1000000");
+  });
+
+  it.each(["sandbox", "restricted"] as const)("disables background tasks and derives Bash timeouts after every env source in %s", async (confinement) => {
+    const overrides = { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "0", BASH_DEFAULT_TIMEOUT_MS: "9999999", BASH_MAX_TIMEOUT_MS: "9999999" };
+    for (const [key, value] of Object.entries(overrides)) vi.stubEnv(key, value);
+    for (const [timeoutMs, expected] of [[undefined, 720000], [7001, 6000]] as const) {
+      const { bin, record } = await makeStub([result(ANSWER)]);
+      await new ClaudeCodeRunner({ confinement, bin, env: overrides, ...(timeoutMs === undefined ? {} : { timeoutMs }) }).run(call({ env: overrides }));
+      expect(await readFile(record, "utf8")).toContain(`POLICY BG=[1] DEFAULT=[${expected}] MAX=[${expected}]`);
+    }
+    for (const [key, value] of Object.entries(overrides)) expect(process.env[key]).toBe(value);
   });
 
   it("passes --effort through, mapping the suite-level `minimal` to the CLI's `low`", async () => {
@@ -420,6 +452,9 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
   it("pins a restricted run's settings: no sandbox, the denied paths and tools, and what every run gets", () => {
     expect(RESTRICTED_TOOLS).toEqual(["Read", "Glob", "Grep", "Skill"]);
     expect(restrictedClaudeSettings({ readDenied: ["/x"], home: "/home/u" })).toEqual({
+      modelSettings: {
+        "claude-haiku-5-5": { autoCompactWindow: 100000 },
+      },
       permissions: { deny: ["Read(//x)", "Read(//x/**)", "Bash", "Edit", "Write", "NotebookEdit", ...DENIED_TOOLS] },
       claudeMdExcludes: ["**/CLAUDE.md", "**/CLAUDE.local.md", "/home/u/.claude/CLAUDE.md"],
       includeCoAuthoredBy: false,

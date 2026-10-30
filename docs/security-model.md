@@ -105,6 +105,9 @@ Both tools are in this tree: [`secure-it`](../secure-it) and [`bump-it`](../bump
     publish, message, schedule, browse the web or start sub-agents;
   - no attribution in the PR text the agent writes.
 
+  Claude Code's child disables native background tasks and sets Bash's default and maximum timeout to 12/14 of
+  the invocation budget (12 minutes by default), after caller env.
+
   Write runs reach any host through the sandbox's proxy, as Codex's do. They also reach macOS's certificate trust
   service (`enableWeakerNetworkIsolation`): without it `gh` can't verify TLS and Node floods its output with
   trust-settings errors. That service is a possible exfiltration path, which upstream documents. Claude runs use the
