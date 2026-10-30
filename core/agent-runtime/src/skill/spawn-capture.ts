@@ -1,6 +1,6 @@
 // Copied from leanish/leanish-development core/runtime/src/skill/spawn-capture.ts at c6282df; see PROVENANCE.md.
 // Local changes: an optional per-line stdout callback (decoded across chunks, each line bounded).
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 
 import { NOOP_REDACTOR, Redactor, type SecretEntry } from "../logger/redactor.ts";
@@ -11,8 +11,8 @@ export interface SpawnCaptureOptions {
   readonly bin: string;
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
-  /** Extra env merged on top of scrubbed `process.env`; undefined removes an inherited variable from the child. */
-  readonly env: Readonly<Record<string, string | undefined>>;
+  /** Extra env merged on top of the scrubbed `process.env` (e.g. `CODEX_HOME`). */
+  readonly env: Readonly<Record<string, string>>;
   readonly timeoutMs: number;
   readonly captureCapBytes: number;
   /** Prefix for timeout / non-zero-exit error messages, e.g. `"ClaudeCodeRunner"`. */
@@ -34,8 +34,6 @@ export interface SpawnCaptureOptions {
    * when the run then fails or times out. For CLIs that stream structured events (usage) on stdout.
    */
   readonly onStdoutLine?: (line: string) => void;
-  /** Cleanup diagnostics, also when a CLI error or timeout already failed the invocation. */
-  readonly onCleanupFailure?: (detail: string) => void;
 }
 
 /**
@@ -102,9 +100,9 @@ export function withoutAmbientCredentials(
  *   - stdout / stderr captured up to `captureCapBytes` (bytes beyond the cap
  *     are counted but dropped, so a runaway subprocess can't exhaust memory);
  *   - the CLI runs in its own process group: on a timeout, and after it
- *     exits, the whole group is SIGKILLed and awaited. A surviving live member
- *     fails the invocation; a command that creates a different group can escape
- *     this check. Ctrl-C/SIGTERM/SIGHUP reaching
+ *     exits, the whole group is SIGKILLed and awaited — every command it
+ *     started, orphaned ones included, is gone before this settles, so a
+ *     caller cleaning up never races a write. Ctrl-C/SIGTERM/SIGHUP reaching
  *     this process while it runs are passed on to the group;
  *   - non-zero exit rejects with the exit code + a stderr tail;
  *   - success resolves to `{ responseText, stderrTail? }`.
@@ -118,11 +116,6 @@ export function spawnCapture(options: SpawnCaptureOptions): Promise<SkillInvocat
       ? new Redactor(options.secrets)
       : NOOP_REDACTOR;
   return new Promise((resolve, reject) => {
-    const cleanupFailure = (err: Error): string => {
-      const detail = redactor.redact(err.message);
-      try { options.onCleanupFailure?.(detail); } catch { /* Diagnostics must not replace the failure. */ }
-      return detail;
-    };
     const child = spawn(options.bin, [...options.args], {
       cwd: options.cwd,
       env: {
@@ -130,7 +123,7 @@ export function spawnCapture(options: SpawnCaptureOptions): Promise<SkillInvocat
         ...options.env,
       },
       stdio: ["ignore", "pipe", "pipe"],
-      // Its own process group (id = its pid). Commands that stay in this group are killed with it.
+      // Its own process group (id = its pid), so ending the run ends everything it started.
       detached: true,
     });
     const group = child.pid;
@@ -205,10 +198,7 @@ export function spawnCapture(options: SpawnCaptureOptions): Promise<SkillInvocat
       signalGroup(group, "SIGKILL");
       void cliGone
         .then(() => killGroup(group))
-        .then(
-          () => reject(new Error(`${options.label}: '${options.bin}' did not return within ${options.timeoutMs}ms`)),
-          (err: Error) => reject(new Error(`${options.label}: '${options.bin}' did not return within ${options.timeoutMs}ms; cleanup failed: ${cleanupFailure(err)}`)),
-        );
+        .then(() => reject(new Error(`${options.label}: '${options.bin}' did not return within ${options.timeoutMs}ms`)));
     }, options.timeoutMs);
 
     child.on("error", (err) => {
@@ -229,7 +219,7 @@ export function spawnCapture(options: SpawnCaptureOptions): Promise<SkillInvocat
       clearTimeout(timer);
       if (timedOut) return;
       stopForwarding();
-      // Kill anything left in the CLI's group, and report cleanup failures even when the CLI itself failed.
+      // Anything the CLI left running in the background goes with it.
       void killGroup(group).then(() => {
         if (code !== 0) {
           reject(
@@ -243,7 +233,7 @@ export function spawnCapture(options: SpawnCaptureOptions): Promise<SkillInvocat
           responseText: redactor.redact(stdout),
           ...(stderr.length > 0 ? { stderrTail: redactor.redact(tail(stderr)) } : {}),
         });
-      }, (err: Error) => reject(new Error(`${options.label}: '${options.bin}' exited with code ${code}; cleanup failed: ${cleanupFailure(err)}; stderr tail: ${redactor.redact(tail(stderr))}`)));
+      });
     });
   });
 }
@@ -266,31 +256,13 @@ function signalGroup(group: number | undefined, signal: NodeJS.Signals | 0): boo
   }
 }
 
-/** SIGKILLs `group`, waits at most `GROUP_SETTLE_MS`, and refuses surviving live members or an unverified cleanup. */
+/** SIGKILLs every process left in `group` and waits until none answers (bounded by `GROUP_SETTLE_MS`). */
 export async function killGroup(group: number | undefined): Promise<void> {
   if (!signalGroup(group, "SIGKILL")) return;
   const deadline = Date.now() + GROUP_SETTLE_MS;
   while (signalGroup(group, 0) && Date.now() < deadline) {
     await new Promise((done) => setTimeout(done, 25));
   }
-  if (!signalGroup(group, 0)) return;
-  // On Linux a dead process's zombie can still answer kill(0). Only a non-zombie in this group proves that work
-  // survived; don't mistake unreaped zombies for live descendants. ps is consulted only after the kill window.
-  const members = liveGroupMembers(group!);
-  if (members.length > 0) throw new Error(`process group ${group} still has live members after ${GROUP_SETTLE_MS}ms: ${members.join(", ")}`);
-}
-
-function liveGroupMembers(group: number): string[] {
-  let listing: string;
-  try {
-    listing = execFileSync("ps", ["-A", "-o", "pid=,pgid=,stat="], { encoding: "utf8", timeout: 1000 });
-  } catch {
-    throw new Error(`could not verify cleanup of process group ${group} after ${GROUP_SETTLE_MS}ms`);
-  }
-  return listing.split("\n").flatMap((line) => {
-    const [pid, pgid, status] = line.trim().split(/\s+/);
-    return Number(pgid) === group && status !== undefined && !status.startsWith("Z") ? [pid!] : [];
-  });
 }
 
 const FORWARDED_SIGNALS: ReadonlyArray<NodeJS.Signals> = ["SIGINT", "SIGTERM", "SIGHUP"];

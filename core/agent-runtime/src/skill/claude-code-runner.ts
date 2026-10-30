@@ -62,11 +62,6 @@ import { resolveWorkingCopyMount } from "./wc-mount.ts";
  * (`claude-code-stream.ts`), so it survives a failure or timeout: tokens per
  * request, the CLI's own list-price cost estimate (`providerCostUsd`) and the
  * account's plan windows when the CLI reports them.
- * Native background tasks are disabled; Bash timeouts reserve 2/14 of the outer budget for the rest of the run.
- * Canonical Haiku 4.5 and 5.5 model settings get a 100K compaction window (not a hard request cap), in both
- * confinements and regardless of the requested model. Completion requires a single native
- * structured result without pending turns or late work; runSkill validates its payload locally. See the README's
- * completion contract for the allowed events and the process-group cleanup's limits.
  */
 /** How a run is confined; see the class comment. Each host names its own: neither is a safe default for the other. */
 export type ClaudeConfinement = "sandbox" | "restricted";
@@ -93,7 +88,6 @@ export interface ClaudeCodeRunnerOptions {
 }
 
 const DEFAULT_TIMEOUT_MS = 14 * 60 * 1000;
-const BASH_TIMEOUT_FRACTION = 12 / 14;
 const DEFAULT_CAPTURE_CAP_BYTES = 8 * 1024 * 1024;
 const PLUGIN_NAME = "agent-runtime-staged";
 
@@ -118,9 +112,6 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
     this.#confinement = options.confinement;
     this.#bin = options.bin ?? "claude";
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    if (!Number.isSafeInteger(this.#timeoutMs) || this.#timeoutMs < 2) {
-      throw new Error("ClaudeCodeRunner: timeoutMs must be a safe integer of at least 2ms");
-    }
     this.#stagingParentDir = options.stagingParentDir;
     this.#env = options.env ?? {};
     this.#captureCapBytes = options.captureCapBytes ?? DEFAULT_CAPTURE_CAP_BYTES;
@@ -149,8 +140,6 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
   }
 
   async #run(invocation: SkillInvocation, collector: ClaudeStreamCollector, onSpawn: () => void): Promise<SkillInvocationResult> {
-    const schema = invocation.entrypoint.outputSchema;
-    if (schema === undefined) throw new Error("ClaudeCodeRunner: an entrypoint outputSchema is required for structured output");
     // The session's saved outputs and the login are found, opened and removed under ~/.claude; a relocated config dir
     // would move them where none of that reaches. The refusal names where the variable came from, never its value: a
     // caller may have mapped a credential to it, and this error is reported before any redaction.
@@ -212,8 +201,6 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
         "--output-format",
         "stream-json",
         "--verbose",
-        "--json-schema",
-        JSON.stringify(schema),
         "--session-id",
         sessionId,
         "--no-session-persistence",
@@ -259,14 +246,8 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
             ...githubEnv,
             CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
             DISABLE_AUTOUPDATER: "1",
-            // Runner policy wins over ambient, configured and invocation env. Scope: this child only.
-            BASH_DEFAULT_TIMEOUT_MS: String(Math.floor(this.#timeoutMs * BASH_TIMEOUT_FRACTION)),
-            BASH_MAX_TIMEOUT_MS: String(Math.floor(this.#timeoutMs * BASH_TIMEOUT_FRACTION)),
-            // This global override takes precedence over modelSettings in CLI 2.1.312. Undefined removes it from
-            // the child's environment, including values inherited through process.env or supplied by the caller.
-            CLAUDE_CODE_AUTO_COMPACT_WINDOW: undefined,
-            DISABLE_AUTO_COMPACT: "0",
-            DISABLE_COMPACT: "0",
+            BASH_DEFAULT_TIMEOUT_MS: String(Math.floor(this.#timeoutMs * 12 / 14)),
+            BASH_MAX_TIMEOUT_MS: String(Math.floor(this.#timeoutMs * 12 / 14)),
             CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1",
           },
           timeoutMs: this.#timeoutMs,
@@ -274,7 +255,6 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
           label: "ClaudeCodeRunner",
           scrubAmbientCredentials: true,
           onStdoutLine: (line) => collector.accept(line),
-          onCleanupFailure: (detail) => collector.recordCleanupFailure(scrubProxyCredentials(detail)),
           ...(invocation.secrets !== undefined ? { secrets: invocation.secrets } : {}),
         }));
       } catch (err) {
@@ -285,18 +265,14 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
         const detail = reason === "" ? "" : `; the CLI reported: ${reason.slice(-2000)}`;
         throw new Error(`${scrubProxyCredentials((err as Error).message)}${detail}`);
       }
-      collector.assertComplete();
       const answer = collector.answer;
       if (answer === undefined) throw new Error("ClaudeCodeRunner: the CLI ended without a result event");
-      if (answer.isError || answer.subtype !== "success") {
+      if (answer.isError) {
         throw new Error(`ClaudeCodeRunner: the run ended with ${answer.subtype}: ${scrubProxyCredentials(answer.text).slice(-2000)}`);
       }
-      if (collector.structuredOutput === undefined) throw new Error("ClaudeCodeRunner: the successful result has no structured_output");
       const model = collector.model;
       return {
-        // Adapt the CLI's structured payload to runSkill's existing transport. Its local schema validation still
-        // applies. Never extract or rescue a JSON fence from the model's prose (Codex's contract is unchanged).
-        responseText: `\`\`\`json\n${scrubProxyCredentials(JSON.stringify(collector.structuredOutput, null, 2))}\n\`\`\``,
+        responseText: scrubProxyCredentials(answer.text),
         ...(stderrTail !== undefined ? { stderrTail: scrubProxyCredentials(stderrTail) } : {}),
         ...(model !== undefined && model !== invocation.model ? { model } : {}),
       };
@@ -313,10 +289,7 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
       await rmdir(dirname(sessionDir)).catch(() => undefined);
       await staged.cleanup().catch((err: Error) => leftBehind.push(`the staged skills and shell (${err.message})`));
       if (emptyCwd !== undefined) await rm(emptyCwd, { recursive: true, force: true }).catch((err: Error) => leftBehind.push(`the empty working directory (${err.message})`));
-      if (leftBehind.length > 0) {
-        collector.recordCleanupFailure(scrubProxyCredentials(leftBehind.join("; ")));
-        if (!failed) throw new Error(`ClaudeCodeRunner: the run ended, but cleaning up failed: ${leftBehind.join("; ")}`);
-      }
+      if (leftBehind.length > 0 && !failed) throw new Error(`ClaudeCodeRunner: the run ended, but cleaning up failed: ${leftBehind.join("; ")}`);
     }
   }
 }
@@ -404,12 +377,6 @@ export function restrictedClaudeSettings(request: { readonly readDenied: Readonl
 /** What every run gets, whatever confines it. */
 function commonSettings(home: string): Record<string, unknown> {
   return {
-    // CLI 2.1.312 canonicalizes dated/provider IDs and resolves aliases before matching these keys. Keep them
-    // independent of invocation.model so default-model and alias runs get the same Haiku policy.
-    modelSettings: {
-      "claude-haiku-4-5": { autoCompactWindow: 100000 },
-      "claude-haiku-5-5": { autoCompactWindow: 100000 },
-    },
     // The skill tells the agent to read the repository's own instructions; nothing else is injected.
     claudeMdExcludes: ["**/CLAUDE.md", "**/CLAUDE.local.md", join(home, ".claude", "CLAUDE.md")],
     // The tools publish the agent's PR text and commit message as written: no Claude Code attribution in them.
@@ -460,7 +427,12 @@ async function tempDirs(): Promise<string[]> {
 function slashCommandPrompt(invocation: SkillInvocation): string {
   const command = `/${PLUGIN_NAME}:${invocation.entrypoint.name}`;
   const parts = [command, ...(invocation.renderedArguments.length === 0 ? [] : [invocation.renderedArguments])];
-  parts.push("Wait for all checks in the foreground. Do not detach commands with &, nohup or another launcher. This invocation must finish all work before returning its answer. The CLI's structured output replaces the skill's fenced-json presentation: return the same answer object through the structured output tool, using the supplied JSON Schema.");
+  const schema = invocation.entrypoint.outputSchema;
+  // Claude Code drops a skill's frontmatter when it loads it, and the answer's schema lives there; Codex reads the
+  // whole SKILL.md, so the agent gets the same contract here.
+  if (schema !== undefined) {
+    parts.push(`The skill's frontmatter (not shown to you) defines its answer: end your final message with one \`\`\`json block valid against this JSON Schema.\n\`\`\`json\n${JSON.stringify(schema, null, 2)}\n\`\`\``);
+  }
   return parts.join("\n");
 }
 

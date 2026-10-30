@@ -4,22 +4,8 @@
 
 ### Fixed
 
-- Claude Code runner invocations disable native background jobs and wait for checks in the foreground. Bash's default
-  and maximum timeout scale to 12 minutes under the default 14-minute invocation deadline. The runner requires one
-  native structured result, validated locally, and rejects notifications, pending/late turns and additional results
-  instead of rescuing an earlier answer. Codex's fenced-JSON path is unchanged. Claude Code 2.1.312 or newer is required.
-- Subprocess cleanup reports surviving live members of the CLI's process group, or inability to verify cleanup,
-  as invocation failures, including after an exit error or timeout. Separate process groups and daemons remain outside
-  that check; this is not process containment.
-- bump-it's skill clarifies that a planned plain Gradle declaration moves while an alternate branch's `strictly(...)`
-  pin stays unchanged; the presence of that alternate pin alone does not block the plan.
-
-### Changed
-
-- Inline `modelSettings` configure a 100K auto-compaction window for canonical Haiku 4.5 and 5.5 identities in both
-  Claude Code confinements, regardless of the requested model. The global `CLAUDE_CODE_AUTO_COMPACT_WINDOW` env override
-  is removed and compaction is enabled after caller env. This is an operating control, not a hard per-request token
-  cap. Inexact usage crossing a price tier still leaves the API cost unknown.
+- Claude Code runs disable native background tasks and require foreground checks. Bash default and maximum
+  timeouts scale to 12/14 of the invocation budget (12 minutes under the default 14-minute deadline).
 
 ## 0.10.0 - 2026-10-29
 

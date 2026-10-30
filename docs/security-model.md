@@ -105,14 +105,9 @@ Both tools are in this tree: [`secure-it`](../secure-it) and [`bump-it`](../bump
     publish, message, schedule, browse the web or start sub-agents;
   - no attribution in the PR text the agent writes.
 
-  Claude Code's runner disables native background tasks in its child and requires a single structured result, with
-  local schema validation. Task notifications, pending turns and late work fail the invocation; a valid earlier
-  payload is never rescued. Bash checks wait in the foreground, with a 12-minute command budget under the default
-  14-minute invocation deadline. Inline per-model settings give Haiku 4.5 and 5.5 a 100K compaction window in both
-  confinements, regardless of the requested model; the global window env override is removed and compaction is enabled.
-  That window is not a hard
-  request-size cap. Cleanup verifies the CLI's known process group, not commands that detach into other groups:
-  `&`, `nohup` and build daemons remain a lifetime limit. See the [completion contract](../core/agent-runtime/README.md#claude-code-completion-contract).
+  Claude Code's child disables native background tasks and sets Bash's default and maximum timeout to 12/14 of
+  the invocation budget (12 minutes by default), after caller env. Skills require foreground checks; shell `&`,
+  `nohup` and daemons can still detach processes.
 
   Write runs reach any host through the sandbox's proxy, as Codex's do. They also reach macOS's certificate trust
   service (`enableWeakerNetworkIsolation`): without it `gh` can't verify TLS and Node floods its output with

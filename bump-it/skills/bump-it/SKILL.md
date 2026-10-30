@@ -96,19 +96,6 @@ or touch git metadata. Leave no temporary files: everything in the working tree 
   declarations use a plain version. The tool compares strict declarations and strict constraints Gradle interprets
   against the planned reference. Pins Gradle does not resolve still belong to the owner; preserve them and leave
   them visible in the PR diff.
-  A pin in an alternate branch does not block moving the plain declaration in the selected branch. For example,
-  for a planned httpcore 4.4.10 → 4.4.16 move, this is the resulting code: the plain version moves and the pin stays.
-  Do not answer cannot-apply just because both branches name httpcore.
-
-  ```kotlin
-  if (strictLower.get()) {
-      add(declaredLower.name, "org.apache.httpcomponents:httpcore") {
-          version { strictly("4.4.10") }
-      }
-  } else {
-      add(declaredLower.name, "org.apache.httpcomponents:httpcore:4.4.16")
-  }
-  ```
 - `gradle-wrapper`: already generated and applied by the tool. Never touch wrapper files: gradlew, gradlew.bat,
   gradle/wrapper/gradle-wrapper.properties or gradle/wrapper/gradle-wrapper.jar. Keep their bytes and executable
   modes unchanged in every editing mode. Do not run the wrapper task or download/replace a wrapper yourself.
@@ -136,7 +123,7 @@ Within the files this skill lets you edit:
 ## Verify
 
 Wait for checks to finish in the foreground before answering. Do not detach checks or polls with background tool
-options, `&`, `nohup` or another launcher; do not leave a poll running after deleting its log.
+options, `&`, `nohup` or another launcher.
 
 In every mode, run the repository's relevant checks after your edit. They're part of the job, never optional; report
 any you couldn't run, with why. For each major, read the release notes or changelog of the versions it crosses (the
@@ -166,8 +153,7 @@ why.
 
 ## Answer
 
-When the runner supplies a structured-output tool, return the answer object through it. Otherwise, end with one
-fenced json block and nothing after it. Both presentations use the same answer schema.
+End with one fenced json block and nothing after it.
 
 - `applied`: a `summary`, and a `publication` with:
   - `title`: lower case, what changes (`moving glob to 11.0.3`).

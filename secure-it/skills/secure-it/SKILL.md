@@ -378,7 +378,7 @@ without what was refused, answer `cannot-apply` and say why.
 ## Checks and release notes
 
 Wait for checks to finish in the foreground before answering. Do not detach checks or polls with background tool
-options, `&`, `nohup` or another launcher; do not leave a poll running after deleting its log.
+options, `&`, `nohup` or another launcher.
 
 In every mode, run the repository's relevant checks after your edit (its README or CI names them; Gradle with
 `--no-daemon`). They're part of the job, never optional; report any you couldn't run, with why. For each major, read
@@ -388,8 +388,7 @@ needs adapting.
 
 ## Your answer
 
-When the runner supplies a structured-output tool, return the answer object through it. Otherwise, end with one
-fenced `json` block, nothing after it. Both presentations use the same answer schema:
+End with one fenced `json` block, nothing after it:
 
 - `applied`, with a `summary` and a `publication`:
   - `title`: lower case, what changes (`moving snappy-java to 1.1.10.10 for 7 advisories`).
