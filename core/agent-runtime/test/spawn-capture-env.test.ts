@@ -1,6 +1,7 @@
 // Copied from leanish/leanish-development core/runtime/test/unit/spawn-capture-env.test.ts at c6282df; see PROVENANCE.md.
 // Local changes: imports from `../src/`; the per-line stdout callback is covered; timeout tests synchronize startup and assert process state.
 import { chmod, mkdtemp, writeFile } from "node:fs/promises";
+import * as childProcess from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,10 +9,16 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   MIN_LINE_CAP,
+  killGroup,
   SCRUBBED_AWS_ENV_VARS,
   scrubbedProcessEnv,
   spawnCapture,
 } from "../src/skill/spawn-capture.ts";
+
+vi.mock("node:child_process", async (original) => {
+  const actual = await original<typeof import("node:child_process")>();
+  return { ...actual, execFileSync: vi.fn(actual.execFileSync) };
+});
 
 /**
  * Fake binary that prints selected env vars, so we can assert what the
@@ -30,6 +37,7 @@ echo "AWS_ACCESS_KEY_ID=[$AWS_ACCESS_KEY_ID]"
 echo "AWS_PROFILE=[$AWS_PROFILE]"
 echo "MY_TOKEN=[$MY_TOKEN]"
 echo "KEPT_VAR=[$KEPT_VAR]"
+echo "KEPT_PRESENT=[\${KEPT_VAR+set}]"
 `,
   );
   await chmod(envEchoBin, 0o755);
@@ -51,7 +59,7 @@ afterEach(() => {
   saved.clear();
 });
 
-function capture(env: Record<string, string>, secrets?: { name: string; value: string }[]) {
+function capture(env: Record<string, string | undefined>, secrets?: { name: string; value: string }[]) {
   return spawnCapture({
     bin: envEchoBin,
     args: [],
@@ -78,6 +86,13 @@ describe("spawnCapture subprocess env", () => {
     setProcessEnv("AWS_ACCESS_KEY_ID", "ambient");
     const result = await capture({ AWS_ACCESS_KEY_ID: "deliberate" });
     expect(result.responseText).toContain("AWS_ACCESS_KEY_ID=[deliberate]");
+  });
+
+  it("omits an explicitly undefined env variable from the child, without changing the parent", async () => {
+    setProcessEnv("KEPT_VAR", "ambient");
+    const result = await capture({ KEPT_VAR: undefined });
+    expect(result.responseText).toContain("KEPT_PRESENT=[]");
+    expect(process.env["KEPT_VAR"]).toBe("ambient");
   });
 
   it("redacts secret values from captured stdout", async () => {
@@ -174,6 +189,75 @@ describe("spawnCapture timeout", () => {
       groupRunning: false,
     });
   }, 15_000);
+});
+
+describe("process-group cleanup verification", () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+
+  async function settleGroup(listing: string | Error) {
+    vi.useFakeTimers();
+    vi.spyOn(process, "kill").mockReturnValue(true);
+    const inspect = vi.spyOn(childProcess, "execFileSync");
+    if (listing instanceof Error) inspect.mockImplementation(() => { throw listing; });
+    else inspect.mockReturnValue(listing);
+    // Attach rejection handling before advancing the five-second cleanup window.
+    const outcome = killGroup(123).then(() => "clean", (err: Error) => err.message);
+    await vi.advanceTimersByTimeAsync(5000);
+    return outcome;
+  }
+
+  it("fails when a live member provably survives the kill window", async () => {
+    expect(await settleGroup("60 123 S\n61 123 Z\n62 999 S\n")).toBe("process group 123 still has live members after 5000ms: 60");
+  });
+
+  it("does not mistake zombies or unrelated groups for surviving work", async () => {
+    expect(await settleGroup("61 123 Z\n62 999 S\n")).toBe("clean");
+  });
+
+  it("reports when cleanup cannot be verified", async () => {
+    expect(await settleGroup(new Error("ps unavailable"))).toBe("could not verify cleanup of process group 123 after 5000ms");
+  });
+
+  it.each([0, 7])("surfaces cleanup failure after CLI exit %i instead of resolving or hanging", async (exitCode) => {
+    const diagnostics: string[] = [];
+    const outcome = spawnCapture({
+      bin: "/bin/sh", args: ["-c", `echo ready:$$; exit ${exitCode}`], cwd: tmpdir(), env: {},
+      timeoutMs: 10000, captureCapBytes: 1024, label: "test",
+      onCleanupFailure: (detail) => diagnostics.push(detail),
+      onStdoutLine: (line) => {
+        const group = Number(line.slice("ready:".length));
+        // Simulate a surviving group after the CLI exits, without leaving a real process running.
+        vi.spyOn(process, "kill").mockReturnValue(true);
+        vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(5001);
+        vi.spyOn(childProcess, "execFileSync").mockReturnValue(`60 ${group} S\n`);
+      },
+    });
+    await expect(outcome).rejects.toThrow(`exited with code ${exitCode}; cleanup failed: process group`);
+    expect(diagnostics).toEqual([expect.stringContaining("still has live members")]);
+  });
+
+  it("records cleanup failure alongside a timeout without leaving a process running", async () => {
+    const realKill = process.kill.bind(process);
+    const diagnostics: string[] = [];
+    const outcome = spawnCapture({
+      bin: "/bin/sh", args: ["-c", "echo ready:$$; exec sleep 30"], cwd: tmpdir(), env: {},
+      timeoutMs: 200, captureCapBytes: 1024, label: "test",
+      onCleanupFailure: (detail) => diagnostics.push(detail),
+      onStdoutLine: (line) => {
+        const group = Number(line.slice("ready:".length));
+        vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+          if (signal !== 0) {
+            try { realKill(pid, signal); } catch (err) { if ((err as NodeJS.ErrnoException).code !== "ESRCH") throw err; }
+          }
+          return true;
+        });
+        vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(5001);
+        vi.spyOn(childProcess, "execFileSync").mockReturnValue(`60 ${group} S\n`);
+      },
+    });
+    await expect(outcome).rejects.toThrow("did not return within 200ms; cleanup failed: process group");
+    expect(diagnostics).toEqual([expect.stringContaining("still has live members")]);
+  });
 });
 
 function isRunning(pid: number): boolean {

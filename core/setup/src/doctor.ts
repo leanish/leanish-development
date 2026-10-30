@@ -86,7 +86,7 @@ async function desktopApps(machine: DoctorMachine): Promise<ReadonlyMap<CodingAg
 }
 
 async function agentAvailability(machine: DoctorMachine, agent: CodingAgent, codexVersion: VersionCheck, appPath: string | undefined): Promise<AgentAvailability> {
-  const detected = agent === "codex" ? codexVersion : await versionAtLeast(machine.commands, "claude", "2.1.259");
+  const detected = agent === "codex" ? codexVersion : await versionAtLeast(machine.commands, "claude", "2.1.312");
   const cli = detected.usable;
   let login = false;
   if (agent === "codex" && cli) {
@@ -111,7 +111,7 @@ function selectAgent(agents: ReadonlyArray<AgentAvailability>, requested: Coding
   }
   const choice = usable.length > 1 && requested === undefined;
   return result("doctor", "agent", choice ? "needs-confirmation" : "blocked", choice ? "Choose codex or claude-code, then rerun with --agent"
-    : "An agent needs its desktop app and CLI login: Codex requires file-backed auth; Claude requires CLI >=2.1.259 and unset CLAUDE_CONFIG_DIR",
+    : "An agent needs its desktop app and CLI login: Codex requires file-backed auth; Claude requires CLI >=2.1.312 and unset CLAUDE_CONFIG_DIR",
     { usable, agents });
 }
 

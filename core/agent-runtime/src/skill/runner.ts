@@ -57,8 +57,8 @@ export interface SkillInvocation {
 
 export interface SkillInvocationResult {
   /**
-   * Full text the coding agent emitted on its terminal channel. The runtime
-   * parses the final fenced-`json` block out of this.
+   * Terminal fenced-JSON transport for runSkill's local schema validation. Codex supplies its final text;
+   * Claude Code synthesizes one block from its native structured_output after checking the entire stream.
    */
   readonly responseText: string;
   /** Tail of stderr when the subprocess emitted anything there. */

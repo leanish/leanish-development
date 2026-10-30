@@ -13,6 +13,57 @@ const message = (id: string, usage: Record<string, unknown>) => ({ type: "assist
 const result = (modelUsage: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({ type: "result", subtype: "success", is_error: false, result: "done", modelUsage, ...extra });
 
 describe("ClaudeStreamCollector", () => {
+  it("allows only enumerated informational events after the sole result", () => {
+    const collector = feed([
+      { type: "system", subtype: "init", model: "m" },
+      { type: "system", subtype: "compact_boundary" },
+      { type: "system", subtype: "api_retry" },
+      { type: "tool_progress" }, { type: "tool_use_summary" }, { type: "user" }, { type: "stream_event" },
+      result({}, { structured_output: { ok: true }, queued_turn_count: 0 }),
+      { type: "rate_limit_event" }, { type: "auth_status" }, { type: "prompt_suggestion" },
+      ...["informational", "turn_duration", "session_metadata"].map((subtype) => ({ type: "system", subtype })),
+      { type: "system", subtype: "status", status: null },
+      { type: "system", subtype: "background_tasks_changed", tasks: [] },
+    ]);
+    expect(() => collector.assertComplete()).not.toThrow();
+    expect(collector.structuredOutput).toEqual({ ok: true });
+  });
+
+  it.each([
+    { type: "system", subtype: "task_notification" },
+    { type: "system", subtype: "task_started", is_backgrounded: true },
+    { type: "system", subtype: "task_updated", patch: { is_backgrounded: true } },
+    { type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "running" }] },
+    { type: "system", subtype: "queued_notification" },
+    { type: "future-event" },
+    { type: "system", subtype: "future-event" },
+    { type: { toString: null } },
+    { type: "system", subtype: { toString: null } },
+  ])("remembers forbidden activity before an otherwise valid result: %j", (event) => {
+    const collector = feed([event, result({})]);
+    expect(() => collector.assertComplete()).toThrow("protocol failure");
+  });
+
+  it.each([
+    message("late", { input_tokens: 1 }),
+    { type: "user" }, { type: "stream_event" }, { type: "tool_progress" }, { type: "tool_use_summary" },
+    { type: "system", subtype: "init" },
+    { type: "system", subtype: "compact_boundary" },
+    { type: "system", subtype: "api_retry" },
+    { type: "system", subtype: "status", status: "compacting" },
+  ])("rejects work after the result: %j", (event) => {
+    expect(() => feed([result({}), event]).assertComplete()).toThrow("late");
+  });
+
+  it.each([{ queued_turn_count: 1 }, { deferred_tool_use: {} }, { interrupted_by_shutdown: true }])("rejects an unfinished turn: %j", (extra) => {
+    expect(() => feed([result({}, extra)]).assertComplete()).toThrow("pending, deferred or interrupted turn");
+  });
+
+  it("rejects malformed events and does not rescue earlier success after a second result", () => {
+    for (const raw of ["not JSON", "[]", "null"]) expect(() => feed([result({})], [raw]).assertComplete()).toThrow("protocol failure");
+    expect(() => feed([result({}), result({}, { is_error: true })]).assertComplete()).toThrow("second result");
+  });
+
   it("reports a drop in a message's counters and lines that aren't events as gaps", () => {
     const usage = feed(
       [message("a", { input_tokens: 9, output_tokens: 5 }), message("a", { input_tokens: 9, output_tokens: 2 }), result({ m: { inputTokens: 9, outputTokens: 5 } })],
@@ -47,6 +98,7 @@ describe("ClaudeStreamCollector", () => {
   it("has no quota reading without rate-limit events and no answer without a result", () => {
     const collector = feed([message("a", { input_tokens: 1, output_tokens: 1 })]);
     expect(collector.answer).toBeUndefined();
+    expect(() => collector.assertComplete()).toThrow("without a result event");
     expect(collector.usage().quota).toEqual({ status: "unavailable" });
   });
 

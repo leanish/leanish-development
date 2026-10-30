@@ -5,12 +5,15 @@ import { execFileSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { ClaudeCodeRunner, claudeSettings, DENIED_TOOLS, RESTRICTED_TOOLS, restrictedClaudeSettings, scrubProxyCredentials } from "../src/skill/claude-code-runner.ts";
 import { SkillLoader } from "../src/skill/skill-loader.ts";
+import { runSkill } from "../src/skill/run-skill.ts";
+import { SchemaValidator } from "../src/skill/validator.ts";
+import { ConsoleLogger } from "../src/logger/console-logger.ts";
 import type { LoadedSkill } from "../src/skill/skill.ts";
 import type { WorkingCopy } from "../src/types/working-copy.ts";
 import type { SkillUsage } from "../src/usage/skill-usage.ts";
@@ -19,7 +22,7 @@ const ASK_FILE = `---
 name: ask
 description: Test
 inputSchema: { type: object }
-outputSchema: { type: object }
+outputSchema: { type: object, properties: { answer: { type: string } }, required: [answer], additionalProperties: false }
 ---
 
 # ask
@@ -37,7 +40,7 @@ const ANSWER = '```json\n{"answer": "fake answer"}\n```';
 
 const init = (model = "claude-x") => ({ type: "system", subtype: "init", model });
 const message = (id: string, usage: Record<string, unknown>, model = "claude-x") => ({ type: "assistant", message: { id, model, usage, content: [] } });
-const result = (text: string, extra: Record<string, unknown> = {}) => ({ type: "result", subtype: "success", is_error: false, result: text, ...extra });
+const result = (text: string, extra: Record<string, unknown> = {}) => ({ type: "result", subtype: "success", is_error: false, result: text, structured_output: { answer: "fake answer" }, ...extra });
 
 /**
  * A stub `claude` that records its cwd, argv (one per line) and a few env vars into `<dir>/record`,
@@ -55,6 +58,7 @@ async function makeStub(events: ReadonlyArray<unknown>, options: { exitCode?: nu
   echo "CWD=$(pwd)"
   for arg in "$@"; do echo "ARG=$arg"; done
   echo "ENV BASE=[$BASE_VAR] OVERLAP=[$OVERLAP_VAR] CRED=[$CRED_VAR] GRADLE=[$GRADLE_USER_HOME] ZDOTDIR=[$ZDOTDIR] MEMORY=[$CLAUDE_CODE_DISABLE_AUTO_MEMORY] ASKPASS=[$GIT_ASKPASS]"
+  echo "POLICY BG=[$CLAUDE_CODE_DISABLE_BACKGROUND_TASKS] DEFAULT=[$BASH_DEFAULT_TIMEOUT_MS] MAX=[$BASH_MAX_TIMEOUT_MS] COMPACT=[$CLAUDE_CODE_AUTO_COMPACT_WINDOW] PRESENT=[\${CLAUDE_CODE_AUTO_COMPACT_WINDOW+set}] DISABLED=[$DISABLE_COMPACT/$DISABLE_AUTO_COMPACT]"
   [ -n "$ZDOTDIR" ] && [ -f "$ZDOTDIR/.zshenv" ] && echo "SHIM=present"
 } > "${record}"
 ${options.script ?? ""}
@@ -95,17 +99,20 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     ...extra,
   });
 
-  it("stages skills, invokes the entrypoint by its plugin namespace and returns the result text", async () => {
-    const { bin, record } = await makeStub([init(), result(ANSWER)]);
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("stages the skill and its schema, and adapts only the native structured payload for local validation", async () => {
+    const { bin, record } = await makeStub([init(), result('```json\n{"answer":"wrong prose"}\n```')]);
     const answer = await new ClaudeCodeRunner({ confinement: "sandbox", bin }).run(call());
     expect(answer.responseText).toContain('"answer": "fake answer"');
     const text = await readFile(record, "utf8");
     expect(args(text).slice(0, 4)).toEqual(["--print", "--output-format", "stream-json", "--verbose"]);
-    expect(args(text).slice(6, 9)).toEqual(["--no-session-persistence", "--setting-sources", ""]);
-    // The prompt is the last argument: the namespaced command, the rendered YAML on its own line, then the answer's
-    // schema (Claude Code doesn't show the skill's frontmatter, where it lives).
-    expect(text).toContain("ARG=/agent-runtime-staged:ask\nquestion: What does X do?\nThe skill's frontmatter (not shown to you) defines its answer");
-    expect(text).toContain(JSON.stringify(askSkill.outputSchema, null, 2));
+    expect(args(text)).toContain("--no-session-persistence");
+    expect(args(text)[args(text).indexOf("--setting-sources") + 1]).toBe("");
+    expect(args(text)[args(text).indexOf("--json-schema") + 1]).toBe(JSON.stringify(askSkill.outputSchema));
+    expect(text).toContain("ARG=/agent-runtime-staged:ask\nquestion: What does X do?\nWait for all checks in the foreground.");
+    expect(text).toContain("structured output replaces the skill's fenced-json presentation");
+    expect(answer.responseText).not.toContain("wrong prose");
   });
 
   it("loads no MCP servers, using strict MCP configuration without a supplied config", async () => {
@@ -169,6 +176,75 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
       const argv = args(await readFile(record, "utf8"));
       expect(argv[argv.indexOf("--effort") + 1]).toBe(expected);
     }
+  });
+
+  it("enforces foreground policy after every env source, with Bash timeouts below the whole-run budget", async () => {
+    const overrides = { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "0", BASH_DEFAULT_TIMEOUT_MS: "9999999", BASH_MAX_TIMEOUT_MS: "9999999" };
+    for (const [key, value] of Object.entries(overrides)) vi.stubEnv(key, value);
+    for (const [timeoutMs, expected] of [[undefined, 720000], [7000, 6000]] as const) {
+      const { bin, record } = await makeStub([result(ANSWER)]);
+      await new ClaudeCodeRunner({ confinement: "sandbox", bin, env: overrides, ...(timeoutMs === undefined ? {} : { timeoutMs }) }).run(call({ env: overrides }));
+      expect(await readFile(record, "utf8")).toContain(`POLICY BG=[1] DEFAULT=[${expected}] MAX=[${expected}]`);
+    }
+  });
+
+  it("refuses invalid outer timeouts before spawning", () => {
+    for (const timeoutMs of [0, 1, -1, 2.5, NaN, Infinity]) {
+      expect(() => new ClaudeCodeRunner({ confinement: "sandbox", timeoutMs })).toThrow("timeoutMs must be a safe integer");
+    }
+  });
+
+  it.each(["sandbox", "restricted"] as const)("sets per-model Haiku windows in %s for any request, removing env overrides and enabling compaction", async (confinement) => {
+    const overrides = { CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1000000", DISABLE_COMPACT: "1", DISABLE_AUTO_COMPACT: "1" };
+    for (const [key, value] of Object.entries(overrides)) vi.stubEnv(key, value);
+    for (const model of ["claude-haiku-5-5", "haiku", "claude-sonnet-5-5", undefined]) {
+      const { bin, record } = await makeStub([result(ANSWER)]);
+      await new ClaudeCodeRunner({ confinement, bin, env: overrides }).run(call({ ...(model === undefined ? {} : { model }), env: overrides }));
+      const text = await readFile(record, "utf8");
+      expect(text).toContain("COMPACT=[] PRESENT=[] DISABLED=[0/0]");
+      expect(settingsOf(text).modelSettings).toEqual({
+        "claude-haiku-4-5": { autoCompactWindow: 100000 },
+        "claude-haiku-5-5": { autoCompactWindow: 100000 },
+      });
+      expect(settingsOf(text)).not.toHaveProperty("autoCompactWindow");
+    }
+  });
+
+  it("removes a compaction override inherited only from the parent environment", async () => {
+    vi.stubEnv("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "1000000");
+    const { bin, record } = await makeStub([result(ANSWER)]);
+    await new ClaudeCodeRunner({ confinement: "sandbox", bin }).run(call());
+    expect(await readFile(record, "utf8")).toContain("COMPACT=[] PRESENT=[]");
+  });
+
+  it("validates Claude's structured payload locally through runSkill, even when the CLI claims success", async () => {
+    const { bin } = await makeStub([result(ANSWER, { structured_output: { answer: 42 } })]);
+    const runner = new ClaudeCodeRunner({ confinement: "restricted", bin });
+    await expect(runSkill({
+      entrypoints: ["ask"], supportSkills: [],
+      skillLoader: new SkillLoader({ skillsDirs: [dirname(dirname(askSkill.path))] }),
+      runnerFor: () => runner, validator: new SchemaValidator(), logger: new ConsoleLogger({ minLevel: "error" }),
+    }, { entrypoint: "ask", input: {}, workingCopies: [], codingAgent: "claude-code", access: "read-only" }))
+      .rejects.toMatchObject({ reason: "output-validation-fail" });
+  });
+
+  it("refuses a missing structured payload rather than rescuing a fenced answer", async () => {
+    const { bin } = await makeStub([result(ANSWER, { structured_output: undefined })]);
+    await expect(new ClaudeCodeRunner({ confinement: "sandbox", bin }).run(call())).rejects.toThrow("no structured_output");
+  });
+
+  it.each([
+    ["notification before result", [{ type: "system", subtype: "task_notification", task_id: "poll" }, result(ANSWER)]],
+    ["notification after result", [result(ANSWER), { type: "system", subtype: "task_notification", task_id: "poll" }]],
+    ["a second result", [result(ANSWER), result("The prior result stands")]],
+    ["a second turn", [result(ANSWER), message("late", { input_tokens: 10 }), result(ANSWER)]],
+    ["an earlier error", [result("failed", { is_error: true }), result(ANSWER)]],
+    ["pending turns", [result(ANSWER, { queued_turn_count: 1 })]],
+  ])("rejects %s and still reports usage once", async (_name, events) => {
+    const usages: SkillUsage[] = [];
+    const { bin } = await makeStub(events as unknown[]);
+    await expect(new ClaudeCodeRunner({ confinement: "sandbox", bin }).run(call({ onUsage: (usage) => usages.push(usage) }))).rejects.toThrow("protocol failure");
+    expect(usages).toHaveLength(1);
   });
 
   it("grants write access inside the sandbox: edits in the working copy, git metadata and denied paths out of reach", async () => {
@@ -255,10 +331,20 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
   });
 
   it("fails on an error result or a missing result event", async () => {
-    const failed = await makeStub([result("ran out of turns", { subtype: "error_max_turns", is_error: true })]);
-    await expect(new ClaudeCodeRunner({ confinement: "sandbox", bin: failed.bin }).run(call())).rejects.toThrowError(/ended with error_max_turns: ran out of turns/);
+    for (const subtype of ["error_max_turns", "error_max_structured_output_retries"]) {
+      // Even a payload present on an error result is not an answer to rescue.
+      const failed = await makeStub([result("retry budget exhausted", { subtype, is_error: true })]);
+      await expect(new ClaudeCodeRunner({ confinement: "sandbox", bin: failed.bin }).run(call())).rejects.toThrowError(`ended with ${subtype}: retry budget exhausted`);
+    }
     const silent = await makeStub([init()]);
     await expect(new ClaudeCodeRunner({ confinement: "sandbox", bin: silent.bin }).run(call())).rejects.toThrowError(/without a result event/);
+  });
+
+  it("requires a success subtype and explicit is_error false even when structured output is present", async () => {
+    for (const extra of [{ subtype: "error_max_turns" }, { is_error: undefined }]) {
+      const { bin } = await makeStub([result("not a success", extra)]);
+      await expect(new ClaudeCodeRunner({ confinement: "sandbox", bin }).run(call())).rejects.toThrow("the run ended with");
+    }
   });
 
   it("reports tokens per request, the CLI's cost and the plan windows it saw", async () => {
@@ -312,7 +398,7 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
 
   it("keeps the sandbox proxy's credentials out of the answer and of failures", async () => {
     const leaky = "Picked up JAVA_TOOL_OPTIONS: -Dhttps.proxyUser=srt.abc -Dhttps.proxyPassword=s3cret via http://srt.abc:s3cret@localhost:1";
-    const ok = await makeStub([result(`${leaky}\n${ANSWER}`)]);
+    const ok = await makeStub([result("done", { structured_output: { answer: leaky } })]);
     const answer = await new ClaudeCodeRunner({ confinement: "sandbox", bin: ok.bin }).run(call());
     expect(answer.responseText).not.toContain("s3cret");
     expect(answer.responseText).toContain("proxyPassword=<redacted>");
@@ -382,12 +468,15 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
     expect(error.message).not.toMatch(/cretvalue/);
   });
 
-  it("fails a run that succeeded when cleaning up fails, saying what was left behind", async () => {
+  it.each([0, 7])("records staged cleanup failure after CLI exit %i, preserving an earlier failure", async (exitCode) => {
     const stagingParentDir = await mkdtemp(join(tmpdir(), "claude-runner-staging-"));
     // The CLI makes its staged dir undeletable (the shell's ZDOTDIR lives in it).
-    const { bin } = await makeStub([result(ANSWER)], { script: 'chmod 500 "$ZDOTDIR/.."' });
+    const { bin } = await makeStub([result(ANSWER)], { exitCode, script: 'chmod 500 "$ZDOTDIR/.."' });
+    const usages: SkillUsage[] = [];
     try {
-      await expect(new ClaudeCodeRunner({ confinement: "sandbox", bin, stagingParentDir }).run(call())).rejects.toThrowError(/the run ended, but cleaning up failed: the staged skills and shell/);
+      await expect(new ClaudeCodeRunner({ confinement: "sandbox", bin, stagingParentDir }).run(call({ onUsage: (usage) => usages.push(usage) })))
+        .rejects.toThrowError(exitCode === 0 ? /cleaning up failed: the staged skills and shell/ : /exited with code 7/);
+      expect(usages[0]?.gaps).toContainEqual(expect.stringContaining("cleanup failed: the staged skills"));
     } finally {
       for (const dir of await readdir(stagingParentDir)) await chmod(join(stagingParentDir, dir), 0o700);
     }
@@ -420,6 +509,10 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
   it("pins a restricted run's settings: no sandbox, the denied paths and tools, and what every run gets", () => {
     expect(RESTRICTED_TOOLS).toEqual(["Read", "Glob", "Grep", "Skill"]);
     expect(restrictedClaudeSettings({ readDenied: ["/x"], home: "/home/u" })).toEqual({
+      modelSettings: {
+        "claude-haiku-4-5": { autoCompactWindow: 100000 },
+        "claude-haiku-5-5": { autoCompactWindow: 100000 },
+      },
       permissions: { deny: ["Read(//x)", "Read(//x/**)", "Bash", "Edit", "Write", "NotebookEdit", ...DENIED_TOOLS] },
       claudeMdExcludes: ["**/CLAUDE.md", "**/CLAUDE.local.md", "/home/u/.claude/CLAUDE.md"],
       includeCoAuthoredBy: false,

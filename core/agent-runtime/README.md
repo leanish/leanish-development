@@ -10,8 +10,8 @@ What secure-it and bump-it need to run a coding agent, without leanish-developme
   project or local ones loaded (an administrator's managed policy still applies), and a required confinement: `sandbox`
   runs every command in Claude Code's sandbox with edits only in the working copies, `restricted` (for hosts without the
   sandbox) keeps only the read tools and refuses write runs; usage and failure reasons from its stream-json events in
-  `claude-code-stream.ts`). It needs the `claude` CLI 2.1.259 or later
-  (`--permission-prompts none`); see [Adopting the tools](https://github.com/leanish/leanish-development/blob/main/docs/adopting-tools.md#prerequisites).
+  `claude-code-stream.ts`). It needs the `claude` CLI 2.1.312 or later; the background, compaction and structured-output
+  controls below were inspected in 2.1.312. See [Adopting the tools](https://github.com/leanish/leanish-development/blob/main/docs/adopting-tools.md#prerequisites).
 - **Usage:** what each skill run consumed (tokens, quota, an API-price estimate) and the final `run finished` line
   every command ends with (`usage/`, `report/run-report.ts`).
 - **Git and GitHub:** a workspace whose git metadata the agent can't write, publishing with lease checks
@@ -42,6 +42,51 @@ Skill schemas also accept the `[object, null]` type union and a restricted const
 `if`/`then` that requires one non-null object. Both tools' answers use them so that only cannot-apply may leave
 `publication` null; applied still needs the complete publication text. Other unions, general conditionals, unknown
 keywords and malformed objects are still rejected.
+
+## Claude Code completion contract
+
+Each invocation passes the entrypoint's output schema with `--json-schema` and requires one successful `result`
+with `is_error: false` and a `structured_output` payload. The adapter serializes only that payload into one internal
+JSON fence for `runSkill`'s existing local schema validation; it never extracts JSON from Claude's prose. Codex still
+returns its final fenced-JSON text through the same interface, unchanged. Both paths validate the same answer schema.
+
+Completion is checked after EOF. A second result, task notification or task lifecycle event, nonempty background-task
+list, pending/deferred/interrupted turn, malformed event, unknown event or late foreground event fails the invocation,
+even if an earlier payload was valid. No earlier answer is rescued. The allowlist is explicit:
+
+- Before the result: `assistant`, `user`, `stream_event`, `tool_progress`, `tool_use_summary`; system subtypes `init`,
+  `compact_boundary`, `api_retry`, `hook_started`, `hook_progress`, `hook_response`, `stop_hook_summary`,
+  `local_command_output`, `instruction_size_warning`, `task_summary`, and `status`.
+- Before or after the result: `rate_limit_event`, `auth_status`, `prompt_suggestion`; system subtypes `informational`,
+  `turn_duration`, `session_metadata`, an empty `background_tasks_changed` list, and idle `status` (`status: null`).
+
+`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` is set last in the runner child's environment: neither ambient variables nor
+runner/invocation overrides can shadow it. Bash's default and maximum timeout are each `floor(timeoutMs * 12 / 14)`:
+12 minutes with the default 14-minute outer deadline. Earlier work consumes that outer budget too; a late command
+does not get a fresh 12 minutes. The skills require foreground checks. These settings apply only to the child, so the
+desktop automation can still launch the whole batch with its own `run_in_background`.
+
+Both confinements always pass `modelSettings` through inline `--settings`, with `autoCompactWindow: 100000` for
+`claude-haiku-4-5` and `claude-haiku-5-5`, regardless of the requested model (including an alias or no explicit model).
+These are canonical model keys, not wildcard patterns. In CLI 2.1.312, the settings schema accepts this field and the
+compaction resolver reads it from the flag-settings layer, which remains enabled with `--setting-sources ""`.
+Model identity normalization matches dated, `[1m]`, Bedrock and Vertex spellings to their canonical key. The `haiku`
+alias resolves first through the CLI's model defaults (including `ANTHROPIC_DEFAULT_HAIKU_MODEL`), so the policy applies
+when its resolved identity matches either configured key. A new Haiku model identity needs an explicit settings entry.
+
+The runner removes `CLAUDE_CODE_AUTO_COMPACT_WINDOW` from the child env, including ambient and explicit caller values:
+that global override takes precedence over model settings in 2.1.312. It also sets `DISABLE_COMPACT=0` and
+`DISABLE_AUTO_COMPACT=0` after all caller env, keeping compaction enabled for every invocation. Other models get no
+window override from this policy. This is an operating compaction window, **not a hard per-request input cap**:
+estimates, large tool results and compaction itself can still cross a tier boundary. Usage accounting is unchanged:
+an inexact folded entry crossing a context-price threshold leaves the API cost unknown, not priced at the ordinary tier.
+
+The subprocess cleanup kills the CLI's known process group and waits up to five seconds. If the group still answers,
+`ps` distinguishes live members from zombies: live survivors or inability to inspect the group fail the invocation,
+including after a nonzero CLI exit or timeout, with the cleanup problem in the error detail. Claude also records
+cleanup problems in the existing usage `gaps`, including staged-file cleanup alongside an earlier failure. This is not process
+containment: shell `&`, `nohup`, daemons and commands creating separate groups can outlive the known group and escape
+the check. The runner does not promise that no process survives outside it.
 
 ## Credentials
 

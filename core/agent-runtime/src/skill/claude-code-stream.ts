@@ -1,6 +1,16 @@
 import { observeQuota, type QuotaUsage, type RateLimitSnapshot } from "../usage/quota.ts";
 import { type ModelUsage, type RequestUsage, sumTokens, type TokenUsage, UNATTRIBUTED_MODEL } from "../usage/skill-usage.ts";
 
+// A single-turn invocation may receive these informational events even after its result. Everything else must
+// belong to the foreground turn and arrive before it. Unknown events fail closed when completion is checked.
+const INFORMATIONAL_EVENTS = new Set(["rate_limit_event", "auth_status", "prompt_suggestion"]);
+const INFORMATIONAL_SYSTEM_EVENTS = new Set(["informational", "turn_duration", "session_metadata"]);
+const FOREGROUND_EVENTS = new Set(["assistant", "user", "stream_event", "tool_progress", "tool_use_summary"]);
+const FOREGROUND_SYSTEM_EVENTS = new Set([
+  "init", "compact_boundary", "api_retry", "hook_started", "hook_progress", "hook_response",
+  "stop_hook_summary", "local_command_output", "instruction_size_warning", "task_summary",
+]);
+
 /**
  * Reads Claude Code's `--print --output-format stream-json --verbose` events, line by line as
  * they arrive: the final answer and the run's usage.
@@ -20,6 +30,7 @@ export class ClaudeStreamCollector {
   #mainModel: string | undefined;
   #result: TerminalResult | undefined;
   #unreadable = 0;
+  #protocolFailure: string | undefined;
 
   accept(line: string): void {
     if (line.trim() === "") return;
@@ -28,9 +39,14 @@ export class ClaudeStreamCollector {
       event = JSON.parse(line);
     } catch {
       this.#unreadable += 1;
+      this.#protocolFailure ??= "stdout contained a non-JSON event";
       return;
     }
-    if (!isObject(event)) return;
+    if (!isObject(event)) {
+      this.#protocolFailure ??= "stdout contained a non-object event";
+      return;
+    }
+    this.#checkProtocol(event);
     switch (event["type"]) {
       case "system":
         if (event["subtype"] === "init" && typeof event["model"] === "string") this.#mainModel ??= event["model"];
@@ -47,7 +63,49 @@ export class ClaudeStreamCollector {
     }
   }
 
-  /** The final answer, when the terminal event arrived. */
+  /** Check after EOF, never while streaming: a later event can invalidate an earlier, valid result. */
+  assertComplete(): void {
+    if (this.#protocolFailure !== undefined) throw new Error(`ClaudeCodeRunner: protocol failure: ${this.#protocolFailure}`);
+    if (this.#result === undefined) throw new Error("ClaudeCodeRunner: the CLI ended without a result event");
+  }
+
+  /** The CLI's native payload, not JSON extracted from assistant prose. runSkill validates its schema locally. */
+  get structuredOutput(): unknown {
+    return this.#result?.structuredOutput;
+  }
+
+  /** Kept in the existing usage gaps even when cleanup accompanies another invocation failure. */
+  recordCleanupFailure(detail: string): void {
+    this.#gaps.push(`cleanup failed: ${detail}`);
+  }
+
+  #checkProtocol(event: Record<string, unknown>): void {
+    const type = event["type"];
+    if (type === "result") {
+      if (this.#result !== undefined) this.#protocolFailure ??= "received a second result event";
+      if ((event["queued_turn_count"] !== undefined && event["queued_turn_count"] !== 0)
+        || event["deferred_tool_use"] !== undefined || event["interrupted_by_shutdown"] === true) {
+        this.#protocolFailure ??= "result left a pending, deferred or interrupted turn";
+      }
+      return;
+    }
+    if (typeof type === "string" && INFORMATIONAL_EVENTS.has(type)) return;
+    if (type === "system") {
+      const subtype = event["subtype"];
+      if (typeof subtype === "string" && INFORMATIONAL_SYSTEM_EVENTS.has(subtype)) return;
+      if (subtype === "status" && (this.#result === undefined || event["status"] === null)) return;
+      if (subtype === "background_tasks_changed" && Array.isArray(event["tasks"]) && event["tasks"].length === 0) return;
+      if (this.#result === undefined && typeof subtype === "string" && FOREGROUND_SYSTEM_EVENTS.has(subtype)) return;
+      const name = typeof subtype === "string" ? subtype : "<non-string subtype>";
+      this.#protocolFailure ??= this.#result === undefined ? `unexpected system event: ${name}` : `late system event: ${name}`;
+      return;
+    }
+    if (this.#result === undefined && typeof type === "string" && FOREGROUND_EVENTS.has(type)) return;
+    const name = typeof type === "string" ? type : "<non-string type>";
+    this.#protocolFailure ??= this.#result === undefined ? `unexpected event: ${name}` : `late event: ${name}`;
+  }
+
+  /** Last terminal text for diagnostics; completion still needs assertComplete and a successful subtype. */
   get answer(): { readonly text: string; readonly isError: boolean; readonly subtype: string } | undefined {
     const result = this.#result;
     if (result === undefined) return undefined;
@@ -156,6 +214,7 @@ export interface ClaudeStreamUsage {
 
 interface TerminalResult {
   readonly text: string;
+  readonly structuredOutput: unknown;
   readonly isError: boolean;
   readonly subtype: string;
   readonly costUsd: number | undefined;
@@ -181,7 +240,8 @@ function terminalResult(event: Record<string, unknown>): TerminalResult {
   const result = typeof event["result"] === "string" ? event["result"] : "";
   return {
     text: result !== "" ? result : errors.join("\n"),
-    isError: event["is_error"] === true,
+    structuredOutput: event["structured_output"],
+    isError: event["is_error"] !== false,
     subtype: typeof event["subtype"] === "string" ? event["subtype"] : "unknown",
     costUsd: typeof cost === "number" && Number.isFinite(cost) && cost >= 0 ? cost : undefined,
     models,
