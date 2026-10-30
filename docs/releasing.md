@@ -29,7 +29,9 @@ unreleased changes collect under its "Unreleased" heading.
      (`schedule ... --release v<version>`) or delete it.
    - Run the owner's fixture repositories once per coding-agent adapter, Claude
      Code first and then Codex, with the tools idle and nothing else writing
-     their configs:
+     their configs. Install the candidate first (`node core/setup/src/cli.ts
+     release --candidate v<version>-rc.<n>`); a pass refuses an uninstalled
+     release before touching anything. Then, per adapter:
      `bash core/setup/scripts/fixture-pass.sh --release v<version>-rc.<n> --owner
      <owner> --agent claude-code|codex --model <model> --effort <effort> --out
      <directory>` (the output directory outside the repository). The owner's
