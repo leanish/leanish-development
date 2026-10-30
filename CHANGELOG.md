@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Changed
+
+- `fixture-pass.sh` refuses a release that isn't installed before it switches configs or deletes branches, and says
+  how to install it; before, `batch` refused it only after the cleanup.
+- The gate's docs say trusted Actions also skip the immutable-release lookup, not only the wait (code unchanged).
+- This repository's `.github/supply-chain.json` uses `trustedPackages` instead of the deprecated `ownPackages`, with the
+  same trust ([migration](docs/releasing.md#trustedpackages-migration)).
+
 ## 0.10.0 - 2026-10-29
 
 ### Changed
