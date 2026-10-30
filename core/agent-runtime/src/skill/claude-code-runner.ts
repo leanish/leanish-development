@@ -246,6 +246,8 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
             ...githubEnv,
             CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
             DISABLE_AUTOUPDATER: "1",
+            // The global env override takes precedence over modelSettings in CLI 2.1.312.
+            CLAUDE_CODE_AUTO_COMPACT_WINDOW: undefined,
           },
           timeoutMs: this.#timeoutMs,
           captureCapBytes: this.#captureCapBytes,
@@ -374,6 +376,10 @@ export function restrictedClaudeSettings(request: { readonly readDenied: Readonl
 /** What every run gets, whatever confines it. */
 function commonSettings(home: string): Record<string, unknown> {
   return {
+    modelSettings: {
+      "claude-haiku-4-5": { autoCompactWindow: 100000 },
+      "claude-haiku-5-5": { autoCompactWindow: 100000 },
+    },
     // The skill tells the agent to read the repository's own instructions; nothing else is injected.
     claudeMdExcludes: ["**/CLAUDE.md", "**/CLAUDE.local.md", join(home, ".claude", "CLAUDE.md")],
     // The tools publish the agent's PR text and commit message as written: no Claude Code attribution in them.

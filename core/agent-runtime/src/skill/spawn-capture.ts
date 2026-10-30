@@ -11,8 +11,8 @@ export interface SpawnCaptureOptions {
   readonly bin: string;
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
-  /** Extra env merged on top of the scrubbed `process.env` (e.g. `CODEX_HOME`). */
-  readonly env: Readonly<Record<string, string>>;
+  /** Extra env merged on top of scrubbed `process.env`; undefined removes an inherited variable from the child. */
+  readonly env: Readonly<Record<string, string | undefined>>;
   readonly timeoutMs: number;
   readonly captureCapBytes: number;
   /** Prefix for timeout / non-zero-exit error messages, e.g. `"ClaudeCodeRunner"`. */

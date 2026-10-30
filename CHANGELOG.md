@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+
+- Claude Code inline settings give Haiku 4.5 and 5.5 a 100K auto-compaction window in both confinements and remove
+  the child's global window env override. This is a compaction window, not a hard per-request token cap.
+
 ## 0.10.0 - 2026-10-29
 
 ### Changed
