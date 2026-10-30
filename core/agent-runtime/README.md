@@ -10,8 +10,8 @@ What secure-it and bump-it need to run a coding agent, without leanish-developme
   project or local ones loaded (an administrator's managed policy still applies), and a required confinement: `sandbox`
   runs every command in Claude Code's sandbox with edits only in the working copies, `restricted` (for hosts without the
   sandbox) keeps only the read tools and refuses write runs; usage and failure reasons from its stream-json events in
-  `claude-code-stream.ts`). It needs the `claude` CLI 2.1.259 or later
-  (`--permission-prompts none`); see [Adopting the tools](https://github.com/leanish/leanish-development/blob/main/docs/adopting-tools.md#prerequisites).
+  `claude-code-stream.ts`). It needs the `claude` CLI 2.1.312 or later (the lowest verified version for the per-model
+  compaction setting below); see [Adopting the tools](https://github.com/leanish/leanish-development/blob/main/docs/adopting-tools.md#prerequisites).
 - **Usage:** what each skill run consumed (tokens, quota, an API-price estimate) and the final `run finished` line
   every command ends with (`usage/`, `report/run-report.ts`).
 - **Git and GitHub:** a workspace whose git metadata the agent can't write, publishing with lease checks
@@ -42,6 +42,20 @@ Skill schemas also accept the `[object, null]` type union and a restricted const
 `if`/`then` that requires one non-null object. Both tools' answers use them so that only cannot-apply may leave
 `publication` null; applied still needs the complete publication text. Other unions, general conditionals, unknown
 keywords and malformed objects are still rejected.
+
+Both Claude Code confinements pass inline `modelSettings` with `autoCompactWindow: 100000` for canonical
+`claude-haiku-5-5`, regardless of the requested model. CLI 2.1.312 reads this flag layer even
+with `--setting-sources ""`, normalizes dated/provider IDs and resolves aliases before matching the model key.
+The runner removes the higher-precedence `CLAUDE_CODE_AUTO_COMPACT_WINDOW` from the child env. This compaction
+window is an operating control, not a hard per-request token cap; inherited compaction-disable settings still apply.
+
+Doctor requires 2.1.312, the lowest version where binary inspection verified this inline per-model setting with
+`--setting-sources ""` loading no user settings. The public changelog, checked 2026-10-30, gives no introduction
+version for per-model `autoCompactWindow`: it mentions `modelSettings` by 2.1.267 for `maxEffortLevel`, subagent
+`autoCompactWindow` in 2.1.296, a `CLAUDE_CODE_AUTO_COMPACT_WINDOW` parsing fix in 2.1.304, and in 2.1.312 a subagent's
+`autoCompactWindow` lowering that variable's window. This is a verification floor, not a documented minimum; an
+older CLI could silently ignore the window. The background switch needs only 2.1.4 and is not the reason for the
+floor.
 
 Claude Code's child environment sets `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` after all caller overrides. Bash's
 default and maximum timeout are each `floor(timeoutMs * 12 / 14)`: 12 minutes under the default 14-minute run budget.

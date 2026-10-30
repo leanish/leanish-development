@@ -24,7 +24,7 @@ node core/setup/src/cli.ts release --candidate v0.7.0-rc.1
   agent data includes `appPath` when found. System installs take precedence.
   Codex needs a
   file-backed login under `CODEX_HOME` or `~/.codex`; only its presence and CLI
-  login status are checked, never its contents. Claude needs CLI >=2.1.259, a
+  login status are checked, never its contents. Claude needs CLI >=2.1.312, a
   successful JSON login status, and unset `CLAUDE_CONFIG_DIR`. A sole usable agent
   is selected; two require `--agent`. `--java` checks both java and javac for the
   exact requested major, including legacy `1.8.0_392` strings for JDK 8. It uses

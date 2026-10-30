@@ -4,6 +4,13 @@
 
 ### Changed
 
+- Claude Code inline settings give Haiku 5.5 a 100K auto-compaction window in both confinements and remove
+  the child's global window env override. This is a compaction window, not a hard per-request token cap.
+  Doctor requires Claude Code 2.1.312, the lowest version verified by binary inspection to honor
+  `modelSettings.claude-haiku-5-5.autoCompactWindow` through `--settings` with `--setting-sources ""` (no user settings).
+  The public changelog, checked 2026-10-30, gives no introduction version for this per-model setting: this is a
+  verification floor, not a documented minimum, and an older CLI could silently ignore the window.
+  The background switch needs only 2.1.4 and is not the reason for this floor.
 - `fixture-pass.sh` refuses a release that isn't installed before it switches configs or deletes branches, and says
   how to install it; before, `batch` refused it only after the cleanup.
 - The gate's docs say trusted Actions also skip the immutable-release lookup, not only the wait (code unchanged).
