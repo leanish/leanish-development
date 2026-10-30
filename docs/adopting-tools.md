@@ -50,8 +50,9 @@ and [coverage gaps](coverage-gaps.md) before giving a tool repository access.
   catalog. The CLI must support the sandbox/profile options this runner uses. Run
   from a normal macOS login session, not inside a sandbox that prevents Seatbelt
   from being applied. Never copy credentials into this repository or a plist.
-- **For `codingAgent: claude-code`: the `claude` CLI** 2.1.259 or newer (tested
-  with 2.1.296), logged in for the same user, with `CLAUDE_CONFIG_DIR` unset.
+- **For `codingAgent: claude-code`: the `claude` CLI** 2.1.312 or newer, logged in for the same user, with
+  `CLAUDE_CONFIG_DIR` unset. This is the [lowest verified version for the inline per-model compaction setting](../core/agent-runtime/README.md),
+  not a documented introduction version; an older CLI could silently ignore the window.
   Runs use that login's plan and usage windows, shared with any interactive use;
   a run that hits a limit fails and its logged failure says so.
 - For Gradle repositories, **a suitable JDK** and their checked-in executable
