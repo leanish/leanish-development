@@ -11,6 +11,16 @@
   The public changelog, checked 2026-10-30, gives no introduction version for this per-model setting: this is a
   verification floor, not a documented minimum, and an older CLI could silently ignore the window.
   The background switch needs only 2.1.4 and is not the reason for this floor.
+- `fixture-pass.sh` refuses a release that isn't installed before it switches configs or deletes branches, and says
+  how to install it; before, `batch` refused it only after the cleanup.
+- The gate's docs say trusted Actions also skip the immutable-release lookup, not only the wait (code unchanged).
+- This repository's `.github/supply-chain.json` uses `trustedPackages` instead of the deprecated `ownPackages`, with the
+  same trust ([migration](docs/releasing.md#trustedpackages-migration)).
+
+### Fixed
+
+- Claude Code runs disable native background tasks. Bash default and maximum timeouts scale to 12/14 of the
+  invocation budget (12 minutes under the default 14-minute deadline).
 
 ## 0.10.0 - 2026-10-29
 

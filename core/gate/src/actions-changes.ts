@@ -7,7 +7,8 @@
  *     whatever its author wrote), trusted only from an immutable release (a
  *     mutable one's tag can be moved to newer code, which would inherit the
  *     release's age); no immutable release fails, trusted actions aside (they
- *     skip only the wait);
+ *     skip the wait, so they need no release to date them; the pin rules
+ *     above still apply);
  *   - unchanged uses that aren't pinned or verified, `docker://` uses and
  *     local actions without metadata are coverage gaps: the PR didn't make
  *     them worse.

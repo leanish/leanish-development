@@ -248,6 +248,9 @@ export class ClaudeCodeRunner implements CodingAgentRunner {
             DISABLE_AUTOUPDATER: "1",
             // The global env override takes precedence over modelSettings in CLI 2.1.312.
             CLAUDE_CODE_AUTO_COMPACT_WINDOW: undefined,
+            BASH_DEFAULT_TIMEOUT_MS: String(Math.floor(this.#timeoutMs * 12 / 14)),
+            BASH_MAX_TIMEOUT_MS: String(Math.floor(this.#timeoutMs * 12 / 14)),
+            CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1",
           },
           timeoutMs: this.#timeoutMs,
           captureCapBytes: this.#captureCapBytes,
