@@ -1,0 +1,1 @@
+{"floors":[{"ecosystem":"npm","package":"minimatch","version":"11.0.1","declaredIn":"package.json","selector":[["minimatch"]],"purpose":"security","advisories":["GHSA-g3hv-75wg-m249"],"reason":"Security fix for GHSA-g3hv-75wg-m249","added":"2026-10-31"}]}
