@@ -21,6 +21,8 @@
 
 - Claude Code runs disable native background tasks. Bash default and maximum timeouts scale to 12/14 of the
   invocation budget (12 minutes under the default 14-minute deadline).
+- bump-it clarifies that a planned plain Gradle declaration moves while an alternate branch's `strictly(...)`
+  pin stays unchanged; that alternate pin alone does not block the plan.
 
 ## 0.10.0 - 2026-10-29
 

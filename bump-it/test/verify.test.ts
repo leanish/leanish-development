@@ -215,6 +215,22 @@ describe("bump verification", () => {
       reference: inventory, gradle: { base: inventory, head: inventory }, changedFiles: [...input.changedFiles, ...Object.keys(inactive("1.0"))] })).toEqual([]);
   });
 
+  it("accepts the planned plain declaration move beside an unchanged alternate strict pin", async () => {
+    const plan = await planFor(routineUnit([candidate({ ecosystem: "Maven", name: "g:lib", from: "1.0", locations: [":runtimeClasspath"], declarations: [] })]), { files: new Map(), changes: [], notes: [] }, async () => undefined);
+    const script = (version: string) => `dependencies {
+  if (strictLower.get()) { implementation("g:lib") { version { strictly("1.0") } } }
+  else { implementation("g:lib:${version}") }
+}`;
+    const reference = markMoved(gradle("1.1.0"), "g:lib", "1.1.0", [":runtimeClasspath"]);
+    const input: VerifyInputs = { plan, npmFiles: new Map(), base: tree("base", { "build.gradle.kts": script("1.0") }),
+      head: tree("head", { "build.gradle.kts": script("1.1.0") }), env, reference,
+      gradle: { base: gradle("1.0"), head: reference }, changedFiles: ["build.gradle.kts"], toolWritten: undefined };
+    expect(await verifyPlan(input)).toEqual([]);
+    // Preserving the pin does not exempt the planned, ordinary declaration from moving.
+    expect(await verifyPlan({ ...input, head: input.base, gradle: { base: gradle("1.0"), head: gradle("1.0") } }))
+      .not.toEqual([]);
+  });
+
   it("requires head to resolve and declare exactly what the plan's reference does, and the plan to have landed in it", async () => {
     const plan = await planFor(routineUnit([candidate({ ecosystem: "Maven", name: "g:lib", from: "1.0", locations: [":runtimeClasspath"], declarations: [] })]), { files: new Map(), changes: [], notes: [] }, async () => undefined);
     const script = (version: string) => ({ "build.gradle.kts": `dependencies { implementation("g:lib:${version}") }` });

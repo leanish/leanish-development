@@ -96,6 +96,19 @@ or touch git metadata. Leave no temporary files: everything in the working tree 
   declarations use a plain version. The tool compares strict declarations and strict constraints Gradle interprets
   against the planned reference. Pins Gradle does not resolve still belong to the owner; preserve them and leave
   them visible in the PR diff.
+  A pin in an alternate branch does not block moving the plain declaration in the selected branch. For example,
+  for a planned com.example:lib 1.2.0 → 1.2.5 move, this is the resulting code: the plain version moves and the pin
+  stays. Do not answer cannot-apply just because both branches name the same library.
+
+  ```kotlin
+  if (useLegacy.get()) {
+      implementation("com.example:lib") {
+          version { strictly("1.2.0") }
+      }
+  } else {
+      implementation("com.example:lib:1.2.5")
+  }
+  ```
 - `gradle-wrapper`: already generated and applied by the tool. Never touch wrapper files: gradlew, gradlew.bat,
   gradle/wrapper/gradle-wrapper.properties or gradle/wrapper/gradle-wrapper.jar. Keep their bytes and executable
   modes unchanged in every editing mode. Do not run the wrapper task or download/replace a wrapper yourself.
