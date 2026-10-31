@@ -97,16 +97,16 @@ or touch git metadata. Leave no temporary files: everything in the working tree 
   against the planned reference. Pins Gradle does not resolve still belong to the owner; preserve them and leave
   them visible in the PR diff.
   A pin in an alternate branch does not block moving the plain declaration in the selected branch. For example,
-  for a planned httpcore 4.4.10 → 4.4.16 move, this is the resulting code: the plain version moves and the pin stays.
-  Do not answer cannot-apply just because both branches name httpcore.
+  for a planned com.example:lib 1.2.0 → 1.2.5 move, this is the resulting code: the plain version moves and the pin
+  stays. Do not answer cannot-apply just because both branches name the same library.
 
   ```kotlin
-  if (strictLower.get()) {
-      add(declaredLower.name, "org.apache.httpcomponents:httpcore") {
-          version { strictly("4.4.10") }
+  if (useLegacy.get()) {
+      implementation("com.example:lib") {
+          version { strictly("1.2.0") }
       }
   } else {
-      add(declaredLower.name, "org.apache.httpcomponents:httpcore:4.4.16")
+      implementation("com.example:lib:1.2.5")
   }
   ```
 - `gradle-wrapper`: already generated and applied by the tool. Never touch wrapper files: gradlew, gradlew.bat,
