@@ -1075,4 +1075,6 @@ What each step added, with rough API-equivalent cost (about $98.6 in all):
 - Astra, 2 calls (about $7.5): the docs survey behind #333 ($3.7) and rc.1's final review, no blocker ($3.8).
 - Claude main session (about $74.0): planned, wrote five PRs, ran the reviews, cut and ran the candidate, released and
   repinned. No implementer sub-agents ran.
-- The Codex fixture pass's agents reported about $1.9; the Claude Code adapter reports no cost.
+- The Codex fixture pass's agents had an API-equivalent estimate of about $1.9. The Claude Code pass had none, since
+  no Haiku price was configured; Claude Code's own per-call estimate (`providerCostUsd`) was recorded per run but isn't
+  summed here.
