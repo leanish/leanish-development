@@ -43,11 +43,11 @@ that repository's still-needed floor.
 
 supply-chain v0.4.2 ran for real on the owner's fixture repositories, private test inputs kept out of regular
 passes. Heads, costs and details are in each one's `VALIDATION.md`:
-[gradle](https://github.com/leanish/supply-chain_TEST_gradle/blob/main/VALIDATION.md),
-[npm-actions](https://github.com/leanish/supply-chain_TEST_npm-actions/blob/main/VALIDATION.md),
-[npm-bundles](https://github.com/leanish/supply-chain_TEST_npm-bundles/blob/main/VALIDATION.md),
-[conventions](https://github.com/leanish/supply-chain_TEST_conventions/blob/main/VALIDATION.md) and
-[bump-it-wrapper](https://github.com/leanish/supply-chain_TEST_bump-it-wrapper/blob/main/VALIDATION.md).
+[gradle](https://github.com/leanish/supply-chain_TEST_gradle/blob/110e520803742822c1c4f9b4b2ea6410efb06fb2/VALIDATION.md),
+[npm-actions](https://github.com/leanish/supply-chain_TEST_npm-actions/blob/3a09768e543b9c70368de9ca516993a23ee57c22/VALIDATION.md),
+[npm-bundles](https://github.com/leanish/supply-chain_TEST_npm-bundles/blob/5122187b9d32f3a61768af6d66420734fc78bcd2/VALIDATION.md),
+[conventions](https://github.com/leanish/supply-chain_TEST_conventions/blob/b60b307d9986581ab0a54a409e20ded1b72f5a24/VALIDATION.md) and
+[bump-it-wrapper](https://github.com/leanish/supply-chain_TEST_bump-it-wrapper/blob/cb6f58daf686ed2a9ccef956f8b4f73b59bc89e0/VALIDATION.md).
 
 - **Majors that need code.** secure-it adapted code while building a security major
   (gradle case 12: SnakeYAML 1.33 → 2.0) and during review after a later break (case 17).
@@ -65,7 +65,7 @@ passes. Heads, costs and details are in each one's `VALIDATION.md`:
 ## Strict pins on a new fixture — 2026-10-13
 
 The `strictly(...)` handling ran for real, from its branch, on
-[supply-chain_TEST_strict](https://github.com/leanish/supply-chain_TEST_strict/blob/main/VALIDATION.md), whose
+[supply-chain_TEST_strict](https://github.com/leanish/supply-chain_TEST_strict/blob/c934362d1b6338ca4aa7b84ac265cd7dc6cf41a7/VALIDATION.md), whose
 `EXPECTED.md` lists nine cases (strict declarations, a strict constraint, a strict pin in one configuration only, a
 strict vulnerable version, a strict parent, a strict security floor, and an inactive strict branch).
 
@@ -257,7 +257,9 @@ this candidate on, Astra's pass runs only on a candidate Sol finds clean, as the
 strict again failed the repair test; the source was restored byte for byte.
 ## Fixture coverage
 
-What the fixture repositories exercise, by evidence state. Case numbers refer to each fixture's `EXPECTED.md`.
+What the fixture repositories exercise, by evidence state. Case identifiers refer to the expectations
+kept outside the fixture repositories, alongside validation evidence, for human and release validation.
+Keep these records outside the tool agent's workspace when running fixture trials.
 
 - **real tool run:** the tools ran for real and the outcome is recorded.
 - **real tool run, branch only:** the tool's branch is recorded, not its CI or comparison results.
@@ -280,7 +282,7 @@ What the fixture repositories exercise, by evidence state. Case numbers refer to
 | secure-it npm direct fix | npm-actions 7 (JSON5) | real tool run |
 | secure-it npm parent search, override and floor | npm-actions B, 7 (glob/minimatch) | real tool run |
 | secure-it bundled fix through its carrier | npm-bundles A | real tool run, branch only |
-| secure-it Gradle parent search and floor | gradle 4/C (consumed seeds; re-seed steps in its EXPECTED) | real tool run |
+| secure-it Gradle parent search and floor | gradle 4/C (consumed seeds; re-seed steps retained outside the fixture repositories) | real tool run |
 | secure-it floor removal | gradle (#13) | real tool run (#13 ready, CI green, not merged) |
 | `strictly(...)` pins left to the owner (both tools); Gradle's own Kotlin pins not counted | strict 1–9 | real tool run, from the branch before release |
 | secure-it verification retry | — | unit tests only |
