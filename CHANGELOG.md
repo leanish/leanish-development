@@ -16,6 +16,12 @@
 - The gate's docs say trusted Actions also skip the immutable-release lookup, not only the wait (code unchanged).
 - This repository's `.github/supply-chain.json` uses `trustedPackages` instead of the deprecated `ownPackages`, with the
   same trust ([migration](docs/releasing.md#trustedpackages-migration)).
+- Documentation: the validation record no longer points into the fixture repositories for case expectations, which
+  are kept outside them so the tools' agent can't read them; the v0.4.2 record's links are pinned to the last fixture
+  commits that had those files.
+- Documentation: the tool configuration lists a known limit of the API cost estimate. A Claude Code usage entry that
+  folds the final totals' remainder into a request above the long-context threshold can't be priced, so the estimate
+  stays incomplete, with a gap (pre-existing).
 
 ### Fixed
 
