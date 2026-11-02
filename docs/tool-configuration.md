@@ -119,6 +119,13 @@ not family aliases such as `sol`. Each entry requires:
   `longContext` object holding the same four prices. A request above the
   threshold without that object cannot be priced.
 
+Known limit: when Claude Code's final totals hold more than its streamed
+requests, the runtime folds the remainder into the largest streamed request
+and marks it inexact, because it can't tell which request (or unstreamed
+sub-agent call) the remainder belongs to. If that folded entry is above the
+long-context threshold, the run's estimate is incomplete, with a gap saying
+why; Claude Code's own `providerCostUsd` is still recorded.
+
 Unknown fields fail. Prices more than 90 days old still estimate the run but add
 a dated gap. Models missing from the table, and incomplete measurements, produce
 explicit cost gaps. [The parser](../core/agent-runtime/src/usage/model-prices.ts)
