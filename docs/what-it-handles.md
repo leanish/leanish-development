@@ -39,7 +39,8 @@ Some missing coverage is instead reported as a gap: **a passing PR can have gaps
 
 secure-it keeps all malware repairs in one PR, before other work. It seeks the nearest
 clean version past the wait: newer in the current line, then older, then a newer line.
-Trusted packages skip the wait. A blocked repair postpones other fixes.
+Trusted packages wait here too: a package that shipped malware can't vouch for its next
+release. Elsewhere trusted packages skip the wait. A blocked repair postpones other fixes.
 
 ## npm
 

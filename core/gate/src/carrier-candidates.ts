@@ -177,7 +177,8 @@ export async function decideCarrier(group: CarrierGroup, own: ReadonlyArray<stri
     locations,
     carries: carries((name) => [...new Set(choice.bundle.packages.filter((entry) => entry.name === name).map((entry) => entry.version))].sort()),
     unfixable,
-    // An own carrier never waits, so the gate never holds it, whatever its age (`aged` is the gate's view, as in candidates.ts).
+    // The gate never holds a trusted carrier, whatever its age (`aged` is the gate's view, as in candidates.ts); leaving
+    // malware, the choice is past the wait anyway (`leaveMalware`).
     to: { version: choice.version, line: choice.line, aged: choice.aged || isTrustedPackage(context.config.trustedPackages, pkg), major: line(choice.version) !== line(group.version), blockers: [] },
     problem: undefined,
     ...vetoFields(choice),
