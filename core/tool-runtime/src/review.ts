@@ -59,6 +59,7 @@ export type ReviewOutcome =
   | "closed"
   | "held"
   | "graduated"
+  | "deferred"
   | "error";
 
 export interface ReviewEntry {
@@ -78,18 +79,27 @@ export interface ReviewSteps {
    * `merge.conflicted` to resolve in the working tree first (mechanically for
    * dependency files, the agent for code). Returns which.
    */
-  rebase(pr: GitHubPullRequest, merge: BaseMerge, context: PublicationContext): Promise<"retired" | "rebased">;
+  rebase(pr: GitHubPullRequest, merge: BaseMerge, context: PublicationContext): Promise<"retired" | "rebased" | "deferred">;
   /**
-   * CI failed: the agent adapts the change once (`attempt` from 1); whether a change was published. `failingChecks`
+   * CI failed: the agent adapts the change once (`attempt` from 1); whether a change was published, or `deferred` when
+   * it couldn't execute at all (the attempt is then given back, so it must mean nothing ran). `failingChecks`
    * names the failed jobs and statuses of the same snapshot that classified CI as failed.
    */
-  adapt(pr: GitHubPullRequest, prepared: PreparedBranch, context: PublicationContext, attempt: number, failingChecks: ReadonlyArray<string>): Promise<boolean>;
+  adapt(pr: GitHubPullRequest, prepared: PreparedBranch, context: PublicationContext, attempt: number, failingChecks: ReadonlyArray<string>): Promise<boolean | "deferred">;
   /**
    * Whether the PR's recorded plan takes versions younger than the wait, and
    * whether they've all aged by now; undefined when it holds none. Throws on
    * a recorded hold it can't read, so such a PR is never marked ready.
    */
   cooldown?(pr: GitHubPullRequest): CooldownState | undefined;
+  /**
+   * Whether the tick may act on the PR at all, asked once its ownership is settled and before anything else: retiring
+   * a held draft, preparing its branch, a rebase, readiness or an adaptation. `leave` reports it and does nothing.
+   * Absent, every PR the tool owns is acted on.
+   */
+  disposition?(pr: GitHubPullRequest): Promise<{ readonly kind: "proceed" } | { readonly kind: "leave"; readonly reason: string }>;
+  /** Told after the tick closed a PR whose CI kept failing past its adaptations, for the tool's own bookkeeping. */
+  closed?(pr: GitHubPullRequest): Promise<void>;
 }
 
 /** A held PR's versions: some still `waiting`, or all `aged`; `until` is when the last one turns old enough. */
@@ -150,6 +160,8 @@ async function reviewOne(context: ReviewContext, steps: ReviewSteps, pr: GitHubP
   if (recorded?.head !== pr.headSha) throw new Error(`${pr.url}: its body doesn't record its head after recovery`);
   const state: PullRequestState = recorded;
 
+  const disposition = await steps.disposition?.(pr);
+  if (disposition?.kind === "leave") return result("left-alone", disposition.reason);
   const cooldown = steps.cooldown?.(pr);
   if (cooldown !== undefined && !pr.isDraft) return result("left-alone", "a person marked the held PR ready");
   if (cooldown?.kind === "aged") {
@@ -214,12 +226,18 @@ async function reviewOne(context: ReviewContext, steps: ReviewSteps, pr: GitHubP
       pr.headSha,
       `CI still fails after ${state.adaptations} adaptation(s); ${context.rules.tool} is giving this one up. The next run starts over from the current default branch.`,
     );
+    await steps.closed?.(pr);
     return result("closed", `CI failed after ${state.adaptations} adaptation(s)`);
   }
   // Counted before the agent starts: an attempt that fails or publishes nothing still uses one up.
   const attempt = state.adaptations + 1;
   await recordState(publication, pr.number, pr.headSha, { ...state, adaptations: attempt });
   const pushed = await steps.adapt(pr, checkedOut.prepared, publication, attempt, failingCheckNames(checks));
+  if (pushed === "deferred") {
+    // Nothing ran: the attempt counted before the agent goes back, so a deferral never uses one up.
+    await recordState(publication, pr.number, pr.headSha, state);
+    return result("deferred", `attempt ${attempt} of ${MAX_ADAPTATIONS} can't execute now`);
+  }
   return result(pushed ? "adapted" : "adaptation-unchanged", `attempt ${attempt} of ${MAX_ADAPTATIONS}`);
 }
 

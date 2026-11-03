@@ -178,6 +178,37 @@ describe("reviewOpenPullRequests", () => {
     expect(calls).toEqual(["adapt #7 attempt 1"]);
   });
 
+  it("asks the tool first and does nothing to a PR it says to leave: no branch, rebase, readiness or adaptation", async () => {
+    const github = new FakeGitHub(ownPr());
+    github.checks = RED;
+    const calls: string[] = [];
+    const workspace = new InMemoryWorkspace();
+    const leave = { ...steps(calls), disposition: async () => ({ kind: "leave" as const, reason: "its authorization was withdrawn" }) };
+    expect(await reviewOpenPullRequests(context(github, workspace), leave)).toMatchObject([{ outcome: "left-alone", detail: "its authorization was withdrawn" }]);
+    expect(calls).toEqual([]);
+    expect(stateOf(github.prs.get(7)!.body)?.adaptations).toBe(0);
+    expect(github.calls.filter((call) => !call.startsWith("getPullRequest") && !call.startsWith("listOpenPullRequests"))).toEqual([]);
+  });
+
+  it("reports a deferred adaptation, and tells the tool after closing an exhausted PR", async () => {
+    const github = new FakeGitHub(ownPr());
+    github.checks = RED;
+    const deferring = { ...steps(), adapt: async () => "deferred" as const };
+    expect(await reviewOpenPullRequests(context(github), deferring)).toMatchObject([{ outcome: "deferred", detail: "attempt 1 of 2 can't execute now" }]);
+    // Nothing ran, so nothing was used up: deferring forever never closes the PR as if adaptations had failed.
+    expect(stateOf(github.prs.get(7)!.body)?.adaptations).toBe(0);
+    expect(await reviewOpenPullRequests(context(github), deferring)).toMatchObject([{ outcome: "deferred", detail: "attempt 1 of 2 can't execute now" }]);
+    expect(await reviewOpenPullRequests(context(github), deferring)).toMatchObject([{ outcome: "deferred" }]);
+    expect(github.prs.get(7)!.state).toBe("open");
+
+    const closed: number[] = [];
+    const exhausted = new FakeGitHub(ownPr({ body: withMarker(RULES, "Body.", { head: HEAD_SHA, base: BASE_SHA, adaptations: MAX_ADAPTATIONS }) }));
+    exhausted.checks = RED;
+    const told = { ...steps(), closed: async (pr: GitHubPullRequest) => { closed.push(pr.number); } };
+    expect(await reviewOpenPullRequests(context(exhausted), told)).toMatchObject([{ outcome: "closed" }]);
+    expect(closed).toEqual([7]);
+  });
+
   it("reports one PR's error and goes on to the next", async () => {
     const github = new FakeGitHub(ownPr(), ownPr({ number: 8, nodeId: "PR_node8", url: "u8" }));
     let headChecks = 0;
