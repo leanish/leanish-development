@@ -157,12 +157,8 @@ describe("independently gated security requirements", () => {
 
   it.each([
     [undefined, "trustedPackages"],
-    [undefined, "ownPackages"],
     ["trustedPackages", undefined],
-    ["ownPackages", undefined],
     ["trustedPackages", "trustedPackages"],
-    ["ownPackages", "trustedPackages"],
-    ["trustedPackages", "ownPackages"],
   ])("uses head's trust across %s → %s while still proving the third-party requirement", async (baseField, headField) => {
     const original = files();
     const head = files("8.3.3", "8.5.29");

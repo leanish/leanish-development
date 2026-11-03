@@ -26,6 +26,14 @@
   action without an immutable release) can't prove its age, so it isn't taken either, and the refusal says why. This
   is the tools' choice only: the gate still doesn't hold trusted packages, so a PR made by hand isn't refused for it.
 
+### Removed
+
+- The `ownPackages` alias of `trustedPackages` in `.github/supply-chain.json`, as announced in 0.10.0. A config that
+  still has it fails, saying to rename the field (or to delete it, next to `trustedPackages`); rename it before moving
+  any reader to this release ([migration](docs/releasing.md#trustedpackages-migration)). The gate passes a PR making
+  the rename, comparing against base's own lockfiles and Gradle builds, with a note that base's policy couldn't be
+  read, which can't say whether the trust changed too: review the policy diff.
+
 ## 0.10.1 - 2026-11-02
 
 ### Changed

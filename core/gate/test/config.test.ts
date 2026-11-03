@@ -6,8 +6,6 @@ describe("supply-chain.json", () => {
   it.each([
     ["trustedPackages", "com.acme"],
     ["trustedPackages", "com.acme."],
-    ["ownPackages", "com.acme"],
-    ["ownPackages", "com.acme."],
   ])("matches %s plugin prefix %s at dot boundaries and only on markers", (field, prefix) => {
     const config = parseConfig({ [field]: { Maven: { pluginIdPrefixes: [prefix] } } });
     const markerTrusted = (group: string) => isTrustedPackage(config.trustedPackages, { ecosystem: "Maven", name: `${group}:${group}.gradle.plugin` });
@@ -27,13 +25,12 @@ describe("supply-chain.json", () => {
     "GitHub Actions": { owners: ["leanish", "aws-actions"] },
   };
 
-  it.each(["trustedPackages", "ownPackages"])("normalizes %s to the same trust policy", (field) => {
-    const config = parseConfig({ [field]: trustedPackages });
+  it("normalizes trustedPackages to the trust policy", () => {
+    const config = parseConfig({ trustedPackages });
     expect(config.trustedPackages).toEqual({
       npmScopes: ["@leanish", "@aws-sdk"], mavenGroups: ["com.acme"],
       pluginIdPrefixes: ["com.acme."], actionOwners: ["leanish", "aws-actions"],
     });
-    expect(config).not.toHaveProperty("ownPackages");
     for (const [ecosystem, name, expected] of [
       ["npm", "@aws-sdk/client-s3", true],
       ["npm", "@untrusted/lib", false],
@@ -48,14 +45,17 @@ describe("supply-chain.json", () => {
   });
 
   it.each([
-    { trustedPackages, ownPackages: trustedPackages },
-    { trustedPackages: {}, ownPackages: {} },
-    { trustedPackages: null, ownPackages: {} },
-  ])("rejects both field names together, even with matching or empty policies", (raw) => {
-    expect(() => parseConfig(raw)).toThrow("trustedPackages and ownPackages cannot both be present");
+    [{ ownPackages: trustedPackages }, "rename the field"],
+    [{ ownPackages: {} }, "rename the field"],
+    [{ ownPackages: null }, "rename the field"],
+    [{ trustedPackages, ownPackages: trustedPackages }, "delete it"],
+    [{ trustedPackages: {}, ownPackages: {} }, "delete it"],
+  ])("rejects the removed ownPackages name, saying what to do (%j)", (raw, fix) => {
+    expect(() => parseConfig(raw)).toThrow(`ownPackages was renamed trustedPackages in 0.10.0, and 0.11.0 removed the old name; ${fix}`);
   });
 
-  it.each(["trustedPackages", "ownPackages"])("validates %s without silently ignoring malformed policy", (field) => {
+  it("validates trustedPackages without silently ignoring malformed policy", () => {
+    const field = "trustedPackages";
     expect(() => parseConfig({ [field]: null })).toThrow(`${field} must be an object`);
     expect(() => parseConfig({ [field]: { owners: [] } })).toThrow(`${field} has unknown field(s): owners`);
     expect(() => parseConfig({ [field]: { npm: { scopes: ["acme"] } } })).toThrow(`${field}.npm.scopes has acme, not an @scope`);

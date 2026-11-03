@@ -136,14 +136,20 @@ v0.10.0 is the first release that accepts `trustedPackages`; the v0.9.1 parser r
 Migrate each repository in this order:
 
 1. Keep `ownPackages` while moving every gate pin and every installed bump-it and
-   secure-it that reads the repository to v0.10.0 (or a later release that still accepts the alias).
+   secure-it that reads the repository to a v0.10 release (0.11.0 no longer accepts the alias).
    Include runners, scheduled tasks and manual checkouts; installing a new release
    alone does not repoint an existing schedule. For this repository, include
    `released-supply-chain.yml`.
 2. Once every reader supports it, rename `ownPackages` to `trustedPackages` in this
    repository, adopters and fixtures. Remove the old name; configuring both is an
    error. Renaming preserves the same trust under head's policy.
-3. Complete the rename before moving any reader to 0.11.0, which removes the alias.
+3. Complete the rename before moving any reader to 0.11.0, which removed the alias:
+   a config that still has `ownPackages` fails there, saying to rename the field (or
+   to delete it, when `trustedPackages` is there too). A gate already on 0.11.0
+   passes the PR making the rename, comparing against base's own lockfiles and
+   Gradle builds, with a note that base's policy couldn't be read; head's policy
+   judges it. That note can't say whether the rename also changed what is
+   trusted: review the policy diff.
 
 ## Publishing @leanish/agent-runtime
 
