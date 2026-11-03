@@ -36,5 +36,9 @@ function requestPath(path: string): string {
   });
   if (resource[0] === "git" && ["ref", "refs"].includes(resource[1] ?? "")) normalized.splice(3, normalized.length, "{ref}");
   if (resource[0] === "releases" && resource[1] === "tags") normalized.splice(2, normalized.length, "{tag}");
+  // A person's login and a label's name are as identifying as a repository name.
+  if (resource[0] === "collaborators" && resource.length > 1) normalized[1] = "{login}";
+  if (resource[0] === "issues" && resource[2] === "labels" && resource.length > 3) normalized[3] = "{label}";
+  if (resource[0] === "labels" && resource.length > 1) normalized[1] = "{label}";
   return ["/repos/{owner}/{repo}", ...normalized].join("/");
 }

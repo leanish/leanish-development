@@ -40,6 +40,24 @@ describe("GitHubRequests", () => {
     expect(JSON.stringify(requests.summary())).not.toContain("secret");
   });
 
+  it("drops logins and label names from issue paths", async () => {
+    const requests = new GitHubRequests();
+    const fetch = requests.wrap(vi.fn<typeof globalThis.fetch>(async () => new Response("{}")));
+    await fetch(API + "/repos/acme/lib/collaborators/some-person/permission");
+    await fetch(API + "/repos/acme/lib/issues/12/labels/take-early", { method: "DELETE" });
+    await fetch(API + "/repos/acme/lib/issues/12/events?per_page=100");
+    await fetch(API + "/repos/acme/lib/issues/12/comments", { method: "POST" });
+    await fetch(API + "/repos/acme/lib/labels/take-early");
+    expect(requests.summary().byKind).toEqual({
+      "GET /repos/{owner}/{repo}/collaborators/{login}/permission": 1,
+      "DELETE /repos/{owner}/{repo}/issues/{id}/labels/{label}": 1,
+      "GET /repos/{owner}/{repo}/issues/{id}/events": 1,
+      "POST /repos/{owner}/{repo}/issues/{id}/comments": 1,
+      "GET /repos/{owner}/{repo}/labels/{label}": 1,
+    });
+    expect(JSON.stringify(requests.summary())).not.toMatch(/some-person|take-early/);
+  });
+
   it("counts retries, HTTP refusals and rejected attempts, and returns independent snapshots", async () => {
     const requests = new GitHubRequests();
     const raw = vi.fn<typeof globalThis.fetch>()
