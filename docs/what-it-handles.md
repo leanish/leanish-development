@@ -249,8 +249,8 @@ Each tool reviews its own open PRs on later runs:
 - **The base moved:** the tool recomputes the plan and updates the PR, merging the
   new base or redoing the change if the plan changed.
 - **CI is green:** the draft is marked ready. **Held by the cooldown:** it waits.
-  secure-it maintains separate [held drafts](../secure-it/README.md#what-a-run-does)
-  until they graduate or a person takes them over.
+  secure-it opens no PR for a fix that waits: its [issue](../secure-it/README.md#issues-decide-what-runs)
+  tracks it until it ages or a person labels it `take-early`.
 - **CI failed:** the agent adapts the PR, **at most twice**; an attempt counts even
   if it changes nothing. If CI still fails after the second, the next review closes
   the PR and deletes its branch, and a later run starts over. A run that replans an

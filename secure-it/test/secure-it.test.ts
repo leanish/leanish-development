@@ -17,13 +17,19 @@ import { selectRemovals, withoutFloorRecords } from "../src/floor-removal.ts";
 import type { Tree } from "@leanish/gate/tree";
 import { assertAgentWorkspace, type ToolRunContext } from "@leanish/tool-runtime/command";
 import { retargetRepository } from "@leanish/tool-runtime/test/retarget-repository";
-import { runCompare, type GateEnvironment } from "@leanish/gate/gate";
+import { readScanState, readSettings, runCompare, type GateEnvironment } from "@leanish/gate/gate";
+import { ISSUE_LABEL, ISSUE_WRITER, recordOf } from "../src/issue-text.ts";
+import type { Attempt, IssueRecord } from "../src/issue-model.ts";
+import { decisionMoves } from "../src/issue-assessment.ts";
+import { recoverAttempts } from "../src/issue-attempts.ts";
+import { reviewExecution } from "../src/issue-review.ts";
 import { fakeFetch } from "@leanish/gate/test/fake-fetch";
 import { archive, manifest, serving } from "@leanish/gate/test/tarballs";
 import { parseToolConfig } from "@leanish/tool-runtime/config";
 import { MemoryJournal } from "@leanish/tool-runtime/test/memory-journal";
 import { branchFor, stateOf, withMarker } from "@leanish/tool-runtime/own-pr";
 import { BASE_SHA, FakeGitHub, GREEN, HEAD_SHA, ownPr, PUSHED_SHA, RED } from "@leanish/tool-runtime/test/fake-github";
+import { FakeIssues } from "@leanish/tool-runtime/test/fake-issues";
 import { cooldownWarning, planOf, planSection, withPlanSection } from "../src/plan-block.ts";
 import { EVIDENCE_DIFFERS, EVIDENCE_LEFT_OUT } from "../src/advisory-notice.ts";
 import { planBlock } from "@leanish/tool-runtime/plan-blocks";
@@ -109,6 +115,7 @@ function harness(options: { prs?: GitHubPullRequest[]; fixes?: SecurityFix[]; ca
     repo: { repo: REPO, branch: undefined },
     base: "main",
     github,
+    issues: new FakeIssues(),
     workspace,
     workingCopy,
     logger: new ConsoleLogger({ minLevel: "error" }),
@@ -136,6 +143,7 @@ function harness(options: { prs?: GitHubPullRequest[]; fixes?: SecurityFix[]; ca
     candidates: async () => ({ fixes: options.fixes ?? [vite()], incomplete: [], gaps: [], notes: options.candidateNotes ?? [], osvScannerVersion: "2.6.0" }),
     verify: async () => options.problems ?? [],
     disposition: async () => ({ kind: "proceed" }),
+    clock: () => NOW,
     snapshot: async () => SNAPSHOT,
     candidateTree: async () => SNAPSHOT_TREE,
     changedBetween: async () => ["package.json", "package-lock.json"],
@@ -534,8 +542,10 @@ describe("secure-it run", () => {
       seen.push(args[3]);
       return h.deps.candidates(...args);
     } };
-    await secureIt(deps).run(h.context);
+    // That state isn't a real scan, so the issues can't be synced from it: nothing executes, and the run says why.
+    expect(await secureIt(deps).run(h.context)).toMatchObject({ outcome: "deferred", reason: expect.stringContaining("the issues couldn't be synced") });
     expect(seen).toEqual([state]);
+    expect(h.agentCalls).toHaveLength(0);
   });
 
   it("asks before executing, and a deferred unit stops before its branch, npm files, agent and verification", async () => {
@@ -562,6 +572,272 @@ describe("secure-it run", () => {
     expect(await secureIt(deps).run(h.context)).toMatchObject({ outcome: "deferred", reason: "deferred", problems: ["vite at node_modules/vite is 8.3.2, not 8.3.3"] });
     expect(asked).toEqual(["unit", "retry"]);
     expect(h.agentCalls).toHaveLength(1);
+  });
+
+  describe("issue flow", () => {
+    const GHSA = "GHSA-rq7h-c2jc-7f22";
+    /** A real scan of the harness lockfile: osv-scanner reports vite@8.3.1, and the registry dates vite 8.3.3. */
+    const scanned = (published: string): GateEnvironment => ({
+      now: () => NOW, osvScanner: "osv-scanner", githubToken: undefined,
+      fetch: fakeFetch({
+        "https://registry.npmjs.org/vite": { body: { time: { "8.3.1": OLD, "8.3.3": published }, versions: { "8.3.1": {}, "8.3.3": {} } } },
+        // No source repository: no repository advisories to read.
+        "https://registry.npmjs.org/vite/8.3.1": { body: {} },
+        "https://registry.npmjs.org/left-pad/1.0.0": { body: {} },
+      }),
+      run: async (command, args) => {
+        if (command !== "osv-scanner") throw new Error(`unexpected command: ${command}`);
+        if (args[0] === "--version") return { code: 0, stdout: "osv-scanner version: 2.6.0\n", stderr: "" };
+        const input = JSON.parse(await readFile(args[args.indexOf("--lockfile") + 1]!.replace(/^osv-scanner:/, ""), "utf8")) as {
+          results: Array<{ packages: Array<{ package: { name: string; version: string } }> }>;
+        };
+        const packages = input.results[0]!.packages.map(({ package: pkg }) => ({ package: pkg,
+          vulnerabilities: pkg.name === "vite" && pkg.version === "8.3.1" ? [{ id: GHSA, summary: "dev server reads files", affected: [{ package: { ecosystem: "npm", name: "vite" }, ranges: [{ type: "SEMVER", events: [{ introduced: "0" }, { fixed: "8.3.3" }] }] }] }] : [],
+        }));
+        return { code: 1, stdout: JSON.stringify({ results: [{ packages }] }), stderr: "" };
+      },
+    });
+    const young = vite({ to: { version: "8.3.3", line: "8", aged: false, major: false, blockers: [] } });
+    const flow = (h: Harness, published = "2026-10-05T00:00:00Z") => secureIt({ ...h.deps, gate: async () => scanned(published), scan: readScanState });
+    const issuesOf = (h: Harness) => h.context.issues as FakeIssues;
+
+    it("opens an issue for a young fix and runs nothing until the wait ends, then leaves the issue alone", async () => {
+      const h = harness({ fixes: [young] });
+      expect(await flow(h).run(h.context)).toMatchObject({ outcome: "deferred", reason: "waiting for the release-age wait (#1)" });
+      const issue = issuesOf(h).issues.get(1)!;
+      expect(recordOf(issue.body)).toMatchObject({ subject: { kind: "decision", moves: [{ name: "vite", from: "8.3.1", to: "8.3.3" }] }, attempts: [] });
+      expect(issue.body).toContain("2026-10-12");
+      expect(h.agentCalls).toEqual([]);
+      expect(h.github.calls.some((call) => call.startsWith("createPullRequest"))).toBe(false);
+      issuesOf(h).calls.length = 0;
+      expect(await flow(h).run(h.context)).toMatchObject({ outcome: "deferred" });
+      expect(issuesOf(h).calls).toEqual([]);
+    });
+
+    it("fixes a decision past the wait right away, tracked by its issue", async () => {
+      const h = harness();
+      expect(await flow(h, OLD).run(h.context)).toMatchObject({ outcome: "published" });
+      expect(recordOf(issuesOf(h).issues.get(1)!.body)).toMatchObject({ subject: { kind: "decision" }, attempts: [] });
+      expect(h.agentCalls).toHaveLength(1);
+    });
+
+    it("takes a young decision early on a writer's reason and label, recording one attempt before anything runs", async () => {
+      const h = harness({ fixes: [young] });
+      await flow(h).run(h.context);
+      issuesOf(h).permissions.set("owner", "admin");
+      issuesOf(h).comment(1, "owner", "take-early: the dev server is exposed on our staging host");
+      issuesOf(h).label(1, "owner", "take-early");
+      expect(await flow(h).run(h.context)).toMatchObject({ outcome: "published", number: 42 });
+      const labeled = issuesOf(h).events.get(1)!.find((event) => event.event === "labeled")!;
+      const branch = `secure-it/2026-10-07-take-early-${labeled.id}`;
+      const record = recordOf(issuesOf(h).issues.get(1)!.body)!;
+      expect(record).toMatchObject({ grant: { labelEventId: labeled.id, reasonCommentId: expect.any(Number) }, attempts: [{ branch, pr: 42 }] });
+      expect(record.attempts[0]!.outcome).toBeUndefined();
+      expect(h.github.prs.get(42)).toMatchObject({ headRef: branch, body: expect.stringContaining("Tracks #1, taken early.") });
+      expect(h.agentCalls).toHaveLength(1);
+    });
+
+    it("keeps an early attempt running on the PR it opened when a later publication step fails", async () => {
+      const h = harness({ fixes: [young] });
+      await flow(h).run(h.context);
+      issuesOf(h).permissions.set("owner", "admin");
+      issuesOf(h).comment(1, "owner", "take-early: urgent");
+      issuesOf(h).label(1, "owner", "take-early");
+      // Not a GitHub API error, so labelling doesn't absorb it: the run fails after the PR exists.
+      h.github.fail("addLabels", new Error("socket hang up") as never);
+      expect(await flow(h).run(h.context)).toMatchObject({ outcome: "failed", detail: "socket hang up" });
+      const record = recordOf(issuesOf(h).issues.get(1)!.body)!;
+      expect(record.attempts).toMatchObject([{ pr: 42 }]);
+      expect(record.attempts[0]!.outcome).toBeUndefined();
+    });
+
+    it("retires a PR taken early once its versions aged before planning that work afresh, so no second PR opens beside it", async () => {
+      const h = harness({ fixes: [young] });
+      // The comparison holds vite 8.3.3 while it's young, and nothing once it aged.
+      const holding = (young: boolean) => async (inputs: VerifyInputs) => {
+        inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: young ? [{ ecosystem: "npm", name: "vite", version: "8.3.3", replaced: ["8.3.1"], published: "2026-10-05T00:00:00.000Z", eligibleAt: "2026-10-12T00:00:00.000Z", justification: "security-fix" }] : [] });
+        return [];
+      };
+      const tool = (fixes: SecurityFix[]) => secureIt({ ...h.deps, gate: async () => scanned("2026-10-05T00:00:00Z"), scan: readScanState, verify: holding(fixes.some((fix) => fix.to?.aged === false)),
+        candidates: async () => ({ fixes, incomplete: [], gaps: [], notes: [], osvScannerVersion: "2.6.0" }) });
+      await tool([young]).run(h.context);
+      issuesOf(h).permissions.set("owner", "admin");
+      issuesOf(h).comment(1, "owner", "take-early: urgent");
+      issuesOf(h).label(1, "owner", "take-early");
+      expect(await tool([young]).run(h.context)).toMatchObject({ outcome: "published", number: 42 });
+      // A week later vite 8.3.3 is past the wait: the run comes before any review.
+      const later = { ...h.context, now: new Date("2026-10-14T06:00:00Z") };
+      expect(await tool([vite()]).run(later)).toMatchObject({ outcome: "published" });
+      expect(h.github.prs.get(42)?.state).toBe("closed");
+      expect([...h.github.prs.values()].filter((pr) => pr.state === "open")).toHaveLength(1);
+      expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 42, outcome: "pr-closed" }]);
+    });
+
+    it("keeps an early attempt running on its published PR when recording that PR fails once", async () => {
+      const h = harness({ fixes: [young] });
+      await flow(h).run(h.context);
+      issuesOf(h).permissions.set("owner", "admin");
+      issuesOf(h).comment(1, "owner", "take-early: urgent");
+      issuesOf(h).label(1, "owner", "take-early");
+      // The attempt is recorded, the PR published, then the write attaching it fails once.
+      const update = issuesOf(h).updateIssue.bind(issuesOf(h));
+      let writes = 0;
+      issuesOf(h).updateIssue = async (args) => {
+        if (args.state === undefined && ++writes === 2) throw new Error("issue write timed out");
+        return update(args);
+      };
+      expect(await flow(h).run(h.context)).toMatchObject({ outcome: "failed", detail: "issue write timed out" });
+      const record = recordOf(issuesOf(h).issues.get(1)!.body)!;
+      expect(record.attempts).toMatchObject([{ pr: 42 }]);
+      expect(record.attempts[0]!.outcome).toBeUndefined();
+    });
+
+    it("settles an attempt and returns its label even when this run's sync superseded its issue", async () => {
+      const h = harness({ fixes: [young] });
+      const holding = (held: boolean) => async (inputs: VerifyInputs) => {
+        inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: held ? [{ ecosystem: "npm", name: "vite", version: "8.3.3", replaced: ["8.3.1"], published: "2026-10-05T00:00:00.000Z", eligibleAt: "2026-10-12T00:00:00.000Z", justification: "security-fix" }] : [] });
+        return [];
+      };
+      const tool = (fixes: SecurityFix[]) => secureIt({ ...h.deps, gate: async () => scanned("2026-10-05T00:00:00Z"), scan: readScanState, verify: holding(fixes.some((fix) => fix.to?.aged === false)),
+        candidates: async () => ({ fixes, incomplete: [], gaps: [], notes: [], osvScannerVersion: "2.6.0" }) });
+      await tool([young]).run(h.context);
+      issuesOf(h).permissions.set("owner", "admin");
+      issuesOf(h).comment(1, "owner", "take-early: urgent");
+      issuesOf(h).label(1, "owner", "take-early");
+      await tool([young]).run(h.context);
+      // Aged, vite joins left-pad's routine fix: another decision, so issue #1 is superseded in the same run.
+      await tool([vite(), leftPad()]).run({ ...h.context, now: new Date("2026-10-14T06:00:00Z") });
+      expect(issuesOf(h).issues.get(1)).toMatchObject({ state: "closed", labels: [ISSUE_LABEL] });
+      expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 42, outcome: "pr-closed" }]);
+    });
+
+    it("says once that a label on a superseded issue authorizes nothing, and runs nothing for it", async () => {
+      const h = harness({ fixes: [young] });
+      const tool = (fixes: SecurityFix[]) => secureIt({ ...h.deps, gate: async () => scanned("2026-10-05T00:00:00Z"), scan: readScanState,
+        candidates: async () => ({ fixes, incomplete: [], gaps: [], notes: [], osvScannerVersion: "2.6.0" }) });
+      await tool([young]).run(h.context);
+      // A newer young version: another decision, so #1 is superseded by #2.
+      await tool([vite({ to: { version: "8.3.4", line: "8", aged: false, major: false, blockers: [] } })]).run(h.context);
+      expect(issuesOf(h).issues.get(1)?.state).toBe("closed");
+      issuesOf(h).permissions.set("owner", "admin");
+      issuesOf(h).comment(1, "owner", "take-early: urgent");
+      issuesOf(h).label(1, "owner", "take-early");
+      const later = vite({ to: { version: "8.3.4", line: "8", aged: false, major: false, blockers: [] } });
+      await tool([later]).run(h.context);
+      await tool([later]).run(h.context);
+      const notices = issuesOf(h).comments.get(1)!.filter((comment) => comment.body.startsWith("secure-it won't take this early"));
+      expect(notices.map((comment) => comment.body)).toEqual([expect.stringContaining("secure-it won't take this early: the issue is closed.")]);
+      expect(h.agentCalls).toEqual([]);
+    });
+
+    /** Issue #1 as a take-early grant left it, with `attempt` recorded (a run that crashed before settling it). */
+    const granted = async (h: Harness, attempt: (labelEventId: number) => Attempt) => {
+      await flow(h).run(h.context);
+      issuesOf(h).permissions.set("owner", "admin");
+      const reason = issuesOf(h).comment(1, "owner", "take-early: the dev server is exposed on our staging host");
+      issuesOf(h).label(1, "owner", "take-early");
+      const labeled = issuesOf(h).events.get(1)!.find((event) => event.event === "labeled")!;
+      const issue = issuesOf(h).issues.get(1)!;
+      const grant = { labelEventId: labeled.id, reasonCommentId: reason.id, actor: "owner", at: labeled.createdAt, young: [{ ecosystem: "npm" as const, name: "vite", version: "8.3.3" }] };
+      issuesOf(h).issues.set(1, { ...issue, body: ISSUE_WRITER.withRecord(issue.body, { ...recordOf(issue.body)!, grant, attempts: [attempt(labeled.id)] }) });
+      return `secure-it/2026-10-07-take-early-${labeled.id}`;
+    };
+    const started = (branch: (id: number) => string) => (id: number): Attempt => ({ id: `${id}-1`, grantEventId: id, branch: branch(id), startedAt: NOW.toISOString() });
+
+    it("ends an attempt a crash left without a PR as interrupted, and doesn't run it again on the same label", async () => {
+      const h = harness({ fixes: [young] });
+      await granted(h, started((id) => `secure-it/2026-10-07-take-early-${id}`));
+      expect(await flow(h).run(h.context)).toMatchObject({ outcome: "deferred", reason: "take-early refused on #1: this label's attempt has ended; a new reason and label authorize another" });
+      expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toMatchObject([{ outcome: "interrupted" }]);
+      expect(h.agentCalls).toEqual([]);
+    });
+
+    it("recovers a merged PR a crash left unattached, even after its branch was deleted", async () => {
+      const h = harness({ fixes: [young] });
+      const branch = await granted(h, started((id) => `secure-it/2026-10-07-take-early-${id}`));
+      h.github.prs.set(7, ownPr({ number: 7, headRef: branch, state: "closed", merged: true }));
+      await flow(h).run(h.context);
+      expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 7, outcome: "pr-merged" }]);
+      expect(h.agentCalls).toEqual([]);
+    });
+
+    it("ends an attempt whose PR was closed unmerged, and takes the label it consumed off the issue", async () => {
+      const h = harness({ fixes: [young] });
+      const branch = await granted(h, (id) => ({ ...started(() => "")(id), branch: `secure-it/2026-10-07-take-early-${id}`, pr: 7 }));
+      h.github.prs.set(7, ownPr({ number: 7, headRef: branch, state: "closed", merged: false }));
+      await flow(h).run(h.context);
+      expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 7, outcome: "pr-closed" }]);
+      expect(issuesOf(h).issues.get(1)!.labels).not.toContain("take-early");
+      expect(h.agentCalls).toEqual([]);
+    });
+
+    it("defers a decision whose verification finds a young version planning didn't choose, without retrying the agent", async () => {
+      const h = harness();
+      const held = { ecosystem: "Maven" as const, name: "g:transitive", version: "2.0.1", replaced: ["2.0.0"], published: "2026-10-06T00:00:00Z", eligibleAt: "2026-10-13T00:00:00Z", justification: "unjustified" as const };
+      const deps = { ...h.deps, gate: async () => scanned(OLD), scan: readScanState, verify: async (inputs: VerifyInputs) => {
+        inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: [held] });
+        return [];
+      } };
+      expect(await secureIt(deps).run(h.context)).toMatchObject({ outcome: "deferred", reason: "verification found young versions its issue #1 doesn't allow: g:transitive@2.0.1" });
+      await secureIt(deps).run(h.context);
+      expect(issuesOf(h).comments.get(1)!.map((comment) => comment.body)).toEqual([expect.stringContaining("young versions it didn't plan: `g:transitive@2.0.1`")]);
+      expect(h.agentCalls).toHaveLength(2);
+      expect(h.github.calls.some((call) => call.startsWith("createPullRequest"))).toBe(false);
+    });
+
+    it("stops at a failed verification that also holds an unplanned young version, without asking the agent again", async () => {
+      const h = harness();
+      const held = { ecosystem: "Maven" as const, name: "g:transitive", version: "2.0.1", replaced: ["2.0.0"], published: "2026-10-06T00:00:00Z", eligibleAt: "2026-10-13T00:00:00Z", justification: "unjustified" as const };
+      const deps = { ...h.deps, gate: async () => scanned(OLD), scan: readScanState, verify: async (inputs: VerifyInputs) => {
+        inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: [held] });
+        return ["compare: g:transitive@2.0.1 is younger than the wait"];
+      } };
+      expect(await secureIt(deps).run(h.context)).toMatchObject({ outcome: "deferred", reason: "verification found young versions its issue #1 doesn't allow: g:transitive@2.0.1" });
+      expect(h.agentCalls).toHaveLength(1);
+    });
+
+    it("keeps a decision's issue open, and the run's issues synced, when that unit can't be planned this run", async () => {
+      const h = harness({ fixes: [young] });
+      await flow(h).run(h.context);
+      const failing = secureIt({ ...h.deps, gate: async () => scanned("2026-10-05T00:00:00Z"), scan: readScanState, requiredNpm: async () => {
+        throw new Error("registry 502");
+      } });
+      expect(await failing.run(h.context)).toMatchObject({ outcome: "failed", detail: "registry 502" });
+      expect(issuesOf(h).issues.get(1)?.state).toBe("open");
+      expect(h.agentCalls).toEqual([]);
+    });
+
+    it("ends an early attempt the agent couldn't apply, so the same label never runs it twice", async () => {
+      const h = harness({ fixes: [young], answer: { outcome: "cannot-apply", summary: "no" } });
+      await flow(h).run(h.context);
+      issuesOf(h).permissions.set("owner", "admin");
+      issuesOf(h).comment(1, "owner", "take-early: urgent");
+      issuesOf(h).label(1, "owner", "take-early");
+      expect(await flow(h).run(h.context)).toMatchObject({ outcome: "cannot-apply" });
+      expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toMatchObject([{ outcome: "agent-refused" }]);
+      expect(await flow(h).run(h.context)).toMatchObject({ outcome: "deferred" });
+      expect(h.agentCalls).toHaveLength(1);
+    });
+
+    it("refuses a label from someone without write access, saying so on the issue once", async () => {
+      const h = harness({ fixes: [young] });
+      await flow(h).run(h.context);
+      issuesOf(h).permissions.set("visitor", "read");
+      issuesOf(h).comment(1, "visitor", "take-early: please");
+      issuesOf(h).label(1, "visitor", "take-early");
+      expect(await flow(h).run(h.context)).toMatchObject({ outcome: "deferred", reason: "take-early refused on #1: whoever added the label has no write access" });
+      await flow(h).run(h.context);
+      const notices = issuesOf(h).comments.get(1)!.filter((comment) => comment.author === "leanish");
+      expect(notices.map((comment) => comment.body)).toEqual([expect.stringContaining("secure-it won't take this decision early: whoever added the label has no write access.")]);
+      expect(h.agentCalls).toEqual([]);
+    });
+
+    it("runs nothing when the write PAT can't write issues, and says what to fix", async () => {
+      const h = harness();
+      issuesOf(h).forbidden.add("createIssue");
+      expect(await flow(h, OLD).run(h.context)).toMatchObject({ outcome: "deferred", reason: expect.stringContaining("the write PAT needs Issues: read and write") });
+      expect(h.agentCalls).toEqual([]);
+    });
   });
 
   it("publishes nothing when verification fails, the agent can't apply, nothing is fixable, or the inventory is incomplete", async () => {
@@ -1150,6 +1426,21 @@ describe("secure-it review", () => {
     expect(retired.agentCalls).toEqual([]);
   });
 
+  it("doesn't rebase a tracked major whose recomputation now takes a young version, saying so on its issue", async () => {
+    const major = vite({ to: { version: "9.0.1", line: "9", aged: true, major: true, blockers: [] } });
+    const previous = await vitePr({}, major);
+    const pr = { ...previous, body: `Fixes vite.\n\nTracks #1.\n${previous.body}` };
+    const younger = vite({ to: { version: "9.0.2", line: "9", aged: false, major: true, blockers: [] } });
+    const h = harness({ prs: [pr], baseSha: NEW_BASE, fixes: [younger] });
+    h.workspace.setRemoteHead("secure-it/2026-10-05-vite-major", HEAD_SHA);
+    const issues = h.context.issues as FakeIssues;
+    issues.issues.set(1, { number: 1, url: "https://github.com/acme/widget/issues/1", title: "secure-it: vite", body: "## secure-it", state: "open", stateReason: null, author: "leanish", labels: [ISSUE_LABEL] });
+    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "deferred" }] });
+    expect(h.agentCalls).toEqual([]);
+    expect(h.workspace.publications).toEqual([]);
+    expect(issues.comments.get(1)!.map((comment) => comment.body)).toEqual([expect.stringContaining("would take young versions no grant covers: `vite@9.0.2`")]);
+  });
+
   it("retries a rebased routine and records omissions in its updated plan", async () => {
     const h = harness({ prs: [await vitePr()], baseSha: NEW_BASE, fixes: [vite(), leftPad()] });
     h.workspace.setRemoteHead("secure-it/2026-10-05-security", HEAD_SHA);
@@ -1271,6 +1562,39 @@ describe("secure-it review", () => {
     expect(updated.body).not.toContain("No adaptation needed; old checks.");
     expect(planOf(updated.body)).toEqual(planOf(pr.body));
     expect(h.workspace.publications[0]?.args.message).toBe(publication.commitMessage);
+  });
+
+  it("keeps a tracked PR's issue line through an adaptation, and defuses the agent's closing keywords", async () => {
+    const previous = await vitePr();
+    const pr = { ...previous, body: `Fixes vite.\n\nTracks #3.\n${previous.body}` };
+    const publication = { title: "adapting vite, fixes #3", body: "Adapted src/app.ts.\n\nFixes #3.\nTracks #9.", commitMessage: "adapting vite\n\ncloses #3" };
+    const h = harness({ prs: [pr], answer: { outcome: "applied", summary: "adapted", publication } });
+    h.github.checks = RED;
+    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ outcome: "adapted" }] });
+    const updated = h.github.prs.get(pr.number)!;
+    expect(updated.title).toBe("adapting vite, fixes `#3`");
+    expect(updated.body).toContain("Adapted src/app.ts.\n\nFixes `#3`.\n\nTracks #3.");
+    expect(updated.body).not.toContain("Tracks #9.");
+    expect(h.workspace.publications[0]?.args.message).toBe("adapting vite\n\ncloses `#3`");
+  });
+
+  it("doesn't publish a tracked PR's adaptation that holds a young version the PR didn't hold, and says so on its issue", async () => {
+    const previous = await vitePr();
+    const pr = { ...previous, body: `Fixes vite.\n\nTracks #3.\n${previous.body}` };
+    const publication = { title: "adapting vite", body: "Adapted.", commitMessage: "adapting vite" };
+    const held = { ecosystem: "npm" as const, name: "esbuild", version: "0.30.1", replaced: ["0.30.0"], published: "2026-10-06T00:00:00Z", eligibleAt: "2026-10-13T00:00:00Z", justification: "unjustified" as const };
+    const h = harness({ prs: [pr], answer: { outcome: "applied", summary: "adapted", publication } });
+    h.github.checks = RED;
+    const issues = h.context.issues as FakeIssues;
+    issues.issues.set(3, { number: 3, url: "https://github.com/acme/widget/issues/3", title: "secure-it: vite", body: "## secure-it", state: "open", stateReason: null, author: "leanish", labels: [ISSUE_LABEL] });
+    const verify = async (inputs: VerifyInputs) => {
+      inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: [held] });
+      return [];
+    };
+    // The agent ran, so the attempt counts; nothing is pushed.
+    expect(await secureIt({ ...h.deps, verify }).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "adaptation-unchanged" }] });
+    expect(h.workspace.publications).toEqual([]);
+    expect(issues.comments.get(3)!.map((comment) => comment.body)).toEqual([expect.stringContaining("secure-it didn't update #7: on the new base, verification found young versions it didn't hold before: `esbuild@0.30.1`")]);
   });
 
   it("has the agent adapt a failing PR, verifies the result, and records the attempt", async () => {
@@ -1436,6 +1760,35 @@ describe("the cooldown hold", () => {
     inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: inputs.plan.packages.includes("npm|vite") ? [HELD] : [] });
     return [];
   };
+
+  /** The tool's issues as a run reads them (`syncIssues`'s tracked list), without an assessment. */
+  async function syncedIssues(h: Harness) {
+    const issues = h.context.issues as FakeIssues;
+    return [...issues.issues.values()].map((issue) => ({ number: issue.number, state: issue.state, body: issue.body, record: recordOf(issue.body)!, reopened: false, labels: issue.labels }));
+  }
+
+  /**
+   * `pr` as a take-early attempt published it: tracking its issue, which records the label, the reason and the attempt
+   * this PR runs, so review goes on with it while its versions are young.
+   */
+  async function early(h: Harness, pr: GitHubPullRequest, granted?: Array<{ ecosystem: "npm" | "Maven"; name: string; version: string; eligibleAt: string }>): Promise<GitHubPullRequest> {
+    const issues = h.context.issues as FakeIssues;
+    const plan = planOf(pr.body)!;
+    const young = granted ?? (plan.cooldown ?? []).map(({ ecosystem, name, version, eligibleAt }) => ({ ecosystem, name, version, eligibleAt }));
+    const subject = { kind: "decision" as const, moves: decisionMoves(plan) };
+    const record: IssueRecord = { version: 1, subject, openedAt: BASE_SHA, findings: [], absences: [], attempts: [] };
+    const issue = await issues.createIssue({ repo: REPO, title: "secure-it: vite", body: ISSUE_WRITER.render({ subject, findings: [], status: { kind: "waiting", young } }, record, BASE_SHA).body, labels: [ISSUE_LABEL] });
+    issues.permissions.set("owner", "admin");
+    const reason = issues.comment(issue.number, "owner", "take-early: tested");
+    issues.label(issue.number, "owner", "take-early");
+    const labeled = issues.events.get(issue.number)!.find((event) => event.event === "labeled")!;
+    const grant = { labelEventId: labeled.id, reasonCommentId: reason.id, actor: "owner", at: labeled.createdAt, young: young.map(({ ecosystem, name, version }) => ({ ecosystem, name, version })) };
+    const attempt = { id: `${labeled.id}-1`, grantEventId: labeled.id, branch: pr.headRef, startedAt: NOW.toISOString(), pr: pr.number };
+    issues.issues.set(issue.number, { ...issues.issues.get(issue.number)!, body: ISSUE_WRITER.withRecord(issue.body, { ...record, grant, attempts: [attempt] }) });
+    const tracked = { ...pr, body: `Tracks #${issue.number}.\n\n${pr.body}` };
+    h.github.prs.set(tracked.number, tracked);
+    return tracked;
+  }
 
   it("keeps a held PR's cooldown warning and hold when rewriting its notes", async () => {
     const plan = await planFor([vite()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined });
@@ -1710,6 +2063,22 @@ describe("the cooldown hold", () => {
     return { ...h, base, fixes, probes, deps };
   }
 
+  it("ends an early attempt its preflight started when that preflight fails the unit, instead of leaving it running", async () => {
+    const h = heldGradle({ independent: true, broken: "throw" });
+    // A scan with no findings: decisions come from the planned units, so each held unit still gets its issue.
+    const deps = { ...h.deps, scan: async (scanned: Tree) => ({ settings: await readSettings(scanned), packages: [] }) as unknown as ScanState };
+    expect(await secureIt(deps).run(h.context)).toMatchObject({ units: [{ outcome: "deferred" }, { outcome: "deferred" }] });
+    const issues = h.context.issues as FakeIssues;
+    const [ga] = [...issues.issues.values()].filter((issue) => recordOf(issue.body)?.subject.kind === "decision"
+      && JSON.stringify(recordOf(issue.body)!.subject).includes("g:a"));
+    issues.permissions.set("owner", "admin");
+    issues.comment(ga!.number, "owner", "take-early: urgent");
+    issues.label(ga!.number, "owner", "take-early");
+    expect(await secureIt(deps).run(h.context)).toMatchObject({ units: expect.arrayContaining([{ topic: "security-cooldown-g:a", outcome: "failed", detail: "reference unavailable" }]) });
+    expect(recordOf(issues.issues.get(ga!.number)!.body)!.attempts).toMatchObject([{ outcome: "failed" }]);
+    expect(h.agentCalls).toEqual([]);
+  });
+
   it("fails held Gradle fixes whose references only resolve together, each alone, instead of joining them", async () => {
     const h = heldGradle();
     const result = await secureIt(h.deps).run(h.context);
@@ -1849,8 +2218,10 @@ describe("the cooldown hold", () => {
     for (const [i, fix] of h.fixes.entries()) {
       const topic = fix.to!.aged ? "security" : `security-cooldown-${fix.name}`;
       const plan = await planFor([fix], { lockfiles: new Map(), gradle: h.base, named: () => true, tagCommit: async () => undefined }, { kind: "routine", topic });
-      const pr = ownPr({ number: i + 7, nodeId: `node${i + 7}`, url: `https://github.com/leanish/widget/pull/${i + 7}`, headRef: branchFor(RULES, new Date("2026-10-05T00:00:00Z"), topic), body: withMarker(RULES, withPlanSection("Fixes one.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
-      h.github.prs.set(pr.number, pr);
+      // A held one as take-early published it: holding its own young versions, tracking its issue's grant.
+      const held = fix.to!.aged ? plan : { ...plan, cooldown: plan.moves.map((move) => ({ ...HELD, ecosystem: "Maven" as const, name: move.name, version: move.to, replaced: [move.from], signals: [] })) };
+      const pr = ownPr({ number: i + 7, nodeId: `node${i + 7}`, url: `https://github.com/leanish/widget/pull/${i + 7}`, headRef: branchFor(RULES, new Date("2026-10-05T00:00:00Z"), topic), body: withMarker(RULES, withPlanSection("Fixes one.", held), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+      h.github.prs.set(pr.number, fix.to!.aged ? pr : await early(h, pr));
       h.workspace.setRemoteHead(pr.headRef, pr.headSha);
     }
   }
@@ -1915,6 +2286,19 @@ describe("the cooldown hold", () => {
     expect(h.agentCalls).toEqual([]);
     // One tick shares the two preflight references across PRs.
     expect(h.probes).toEqual([["g:a"], ["g:b"]]);
+  });
+
+  it("doesn't preflight a held PR's work once its grant is withdrawn, while reviewing another PR taken early", async () => {
+    const h = heldGradle({ independent: true });
+    await seedSplitGradlePrs(h);
+    // #8's label (on its issue, #2) is removed: its work no longer runs early, whichever PR review looks at.
+    await (h.context.issues as FakeIssues).removeLabel({ repo: REPO, number: 2, label: "take-early" });
+    expect(await secureIt(h.deps).review({ ...h.context, workingCopy: { ...h.context.workingCopy, headSha: "f".repeat(40) } })).toMatchObject({ reviewed: [
+      { number: 7, outcome: "rebased" },
+      { number: 8, outcome: "left-alone" },
+    ] });
+    // #7's preflight and its final verification; never g:b's.
+    expect(h.probes.every((names) => !names.includes("g:b"))).toBe(true);
   });
 
   it("does not share held Gradle preflight results across base commits in one review tick", async () => {
@@ -2091,6 +2475,7 @@ describe("the cooldown hold", () => {
       body: withMarker(RULES, withPlanSection("Fixes vite.", { ...await heldPlan(YOUNG_VITE()), cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr], baseSha: "f".repeat(40), fixes: [YOUNG_VITE(), leftPad()] });
     h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
+    const tracked = await early(h, pr);
     const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => {
       if (plan.topic === "security") throw new Error("registry 502");
       return plan;
@@ -2098,7 +2483,7 @@ describe("the cooldown hold", () => {
     expect(await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).review(h.context)).toMatchObject({ reviewed: [
       { number: 7, outcome: "error", detail: expect.stringContaining("registry 502") },
     ] });
-    expect(h.github.prs.get(7)).toEqual(pr);
+    expect(h.github.prs.get(7)).toEqual(tracked);
   });
 
   it("keeps a held PR whose fix has aged since when the aged plan fails, rather than retiring it", async () => {
@@ -2107,6 +2492,7 @@ describe("the cooldown hold", () => {
       body: withMarker(RULES, withPlanSection("Fixes vite.", { ...await heldPlan(YOUNG_VITE()), cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr], baseSha: "f".repeat(40), fixes: [vite(), leftPad()] });
     h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
+    const tracked = await early(h, pr);
     const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => {
       if (plan.topic === "security") throw new Error("registry 502");
       return plan;
@@ -2114,7 +2500,7 @@ describe("the cooldown hold", () => {
     expect(await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).review(h.context)).toMatchObject({ reviewed: [
       { number: 7, outcome: "error", detail: expect.stringContaining("registry 502") },
     ] });
-    expect(h.github.prs.get(7)).toEqual(pr);
+    expect(h.github.prs.get(7)).toEqual(tracked);
     expect(h.workspace.deletions).toEqual([]);
   });
 
@@ -2206,10 +2592,11 @@ describe("the cooldown hold", () => {
       body: withMarker(RULES, withPlanSection("Fixes vite.", { ...await heldPlan(YOUNG_VITE()), cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr], baseSha: "f".repeat(40), fixes: [YOUNG_VITE(), YOUNG_PAD()] });
     h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
+    const tracked = await early(h, pr);
     expect(await secureIt({ ...h.deps, requiredNpm: apartFails, verify: holdingVerify }).review(h.context)).toMatchObject({ reviewed: [
       { number: 7, outcome: "error", detail: "security-cooldown-vite keeps the other root's requirement" },
     ] });
-    expect(h.github.prs.get(7)).toEqual(pr);
+    expect(h.github.prs.get(7)).toEqual(tracked);
   });
 
   it("reuses v0.7's single held PR for the unit holding its lowest package, and opens the other", async () => {
@@ -2349,7 +2736,7 @@ describe("the cooldown hold", () => {
     expect([...h.github.prs.values()].map((pr) => pr.headRef)).toEqual(["secure-it/2026-10-07-security-cooldown-a-b", "secure-it/2026-10-07-security-cooldown-a-b-2"]);
   });
 
-  it("keeps a waiting held PR a draft on green CI, and retires it once everything has aged", async () => {
+  it("keeps a PR taken early a draft on green CI while its versions are young, and retires it once they aged, ending its attempt", async () => {
     const plan = await planFor([YOUNG_VITE()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined },
       { kind: "routine", topic: "security-cooldown" });
     const heldPr = (eligibleAt: string) => ownPr({
@@ -2357,16 +2744,132 @@ describe("the cooldown hold", () => {
       body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, eligibleAt, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }),
     });
     const waiting = harness({ prs: [heldPr("2026-10-13T00:00:00.000Z")] });
+    await early(waiting, heldPr("2026-10-13T00:00:00.000Z"));
     waiting.github.checks = GREEN;
     expect(await secureIt(waiting.deps).review(waiting.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "held" }] });
     expect(waiting.github.prs.get(7)?.isDraft).toBe(true);
     const aged = harness({ prs: [heldPr("2026-10-07T05:00:00.000Z")] });
-    expect(await secureIt(aged.deps).review(aged.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "graduated" }] });
+    await early(aged, heldPr("2026-10-07T05:00:00.000Z"));
+    // The registry dates vite 8.3.3 past the wait too, so its grant has nothing young left.
+    const registry = fakeFetch({ "https://registry.npmjs.org/vite": { body: { time: { "8.3.3": "2026-09-29T00:00:00.000Z" }, versions: { "8.3.3": {} } } } });
+    const dated = { ...aged.deps, gate: async () => ({ ...await aged.deps.gate(aged.context), fetch: registry }) };
+    expect(await secureIt(dated).review(aged.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "graduated" }] });
     expect(aged.github.prs.get(7)?.state).toBe("closed");
     expect(aged.agentCalls).toEqual([]);
+    // The next run settles the attempt from the closed PR and gives the label back.
+    const issues = aged.context.issues as FakeIssues;
+    const client = { issues, github: aged.github, repo: REPO, clean: (body: string) => body, ours: () => true };
+    // The label's removal fails the first time: the attempt's end is recorded anyway, and the next recovery returns it.
+    issues.forbidden.add("removeLabel");
+    await recoverAttempts(client, await syncedIssues(aged));
+    expect(recordOf(issues.issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 7, outcome: "pr-closed" }]);
+    expect(issues.issues.get(1)!.labels).toContain("take-early");
+    issues.forbidden.delete("removeLabel");
+    await recoverAttempts(client, await syncedIssues(aged));
+    expect(issues.issues.get(1)!.labels).not.toContain("take-early");
+    // Only the event that attempt consumed: a newer label is a new grant, and stays.
+    issues.label(1, "owner", "take-early");
+    await recoverAttempts(client, await syncedIssues(aged));
+    expect(issues.issues.get(1)!.labels).toContain("take-early");
   });
 
-  it("keeps a held PR on a moved base when its aged fix still requires a young dependency", async () => {
+  it("runs a PR taken early's unchanged decision on a new base only with the young versions its grant covered", async () => {
+    const plan = await heldPlan(YOUNG_VITE());
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite", body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pr] });
+    const tracked = await early(h, pr);
+    const client = { issues: h.context.issues, github: h.github, repo: REPO, clean: (body: string) => body, ours: () => true, now: NOW, trusted: () => false, retire: async () => "closed" as const, eligibleAt: async () => "2026-10-13T00:00:00.000Z" };
+    const previous = planOf(tracked.body)!;
+    expect(await reviewExecution(client, tracked, previous, previous, ["vite@8.3.3"])).toEqual({ kind: "proceed" });
+    // The same moves, but its parent probe now brings in a young version too: the label didn't cover it.
+    expect(await reviewExecution(client, tracked, previous, previous, ["vite@8.3.3", "g:transitive@2.0.1"])).toEqual({
+      kind: "leave", reason: "on the new base it takes young versions its `take-early` label didn't cover: g:transitive@2.0.1",
+    });
+  });
+
+  it("knows a PR was taken early from its issue even when the gate held nothing in it", async () => {
+    // The probe brought g:x@2 into a configuration where it's new; the gate saw it elsewhere in the repository already.
+    const plan = await heldPlan(YOUNG_VITE());
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite", body: withMarker(RULES, withPlanSection("Fixes vite.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pr] });
+    const tracked = await early(h, pr, [{ ecosystem: "Maven", name: "g:x", version: "2", eligibleAt: "2026-10-13T00:00:00.000Z" }]);
+    await (h.context.issues as FakeIssues).removeLabel({ repo: REPO, number: 1, label: "take-early" });
+    h.github.checks = GREEN;
+    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "left-alone", detail: "its `take-early` label was removed" }] });
+    expect(h.github.prs.get(7)).toEqual(tracked);
+  });
+
+  it("keeps a PR taken early a draft while its granted versions are young, even when the gate held nothing in it", async () => {
+    const plan = await heldPlan(YOUNG_VITE());
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite", body: withMarker(RULES, withPlanSection("Fixes vite.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pr] });
+    await early(h, pr, [{ ecosystem: "Maven", name: "g:x", version: "2", eligibleAt: "2026-10-13T00:00:00.000Z" }]);
+    h.github.checks = GREEN;
+    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "held" }] });
+    expect(h.github.prs.get(7)?.isDraft).toBe(true);
+  });
+
+  it("fails closed on a PR taken early whose issue is gone, even when the gate held nothing in it", async () => {
+    const plan = await heldPlan(YOUNG_VITE());
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite", body: withMarker(RULES, withPlanSection("Fixes vite.\n\nTracks #5, taken early.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pr] });
+    h.github.checks = GREEN;
+    // Issue #5 doesn't exist (deleted): nothing confirms the attempt, and nothing says the PR is ordinary now.
+    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "left-alone", detail: "it tracks #5, which isn't this decision's issue" }] });
+    expect(h.github.prs.get(7)).toEqual(pr);
+  });
+
+  it("leaves a PR taken early to the owner once its label is removed, saying so on the issue once", async () => {
+    const plan = await heldPlan(YOUNG_VITE());
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite", body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pr] });
+    const tracked = await early(h, pr);
+    const issues = h.context.issues as FakeIssues;
+    await issues.removeLabel({ repo: REPO, number: 1, label: "take-early" });
+    h.github.checks = GREEN;
+    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "left-alone", detail: "its `take-early` label was removed" }] });
+    await secureIt(h.deps).review(h.context);
+    expect(issues.comments.get(1)!.filter((comment) => comment.author === "leanish").map((comment) => comment.body)).toEqual([expect.stringContaining("secure-it leaves #7 to you")]);
+    expect(h.github.prs.get(7)).toEqual(tracked);
+  });
+
+  it("reviews a trusted exception's PR with young trusted versions as any held PR, without asking for a grant", async () => {
+    const plan = await heldPlan(YOUNG_VITE());
+    const trusted = { ...HELD, ecosystem: "Maven" as const, name: "com.acme:lib", signals: [] };
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security", body: withMarker(RULES, withPlanSection("Fixes lib.\n\nTracks #1.", { ...plan, cooldown: [trusted] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pr], files: { "package-lock.json": LOCK, ".github/supply-chain.json": JSON.stringify({ trustedPackages: { Maven: { groups: ["com.acme"] } } }) } });
+    h.github.checks = GREEN;
+    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "held" }] });
+    expect((h.context.issues as FakeIssues).calls).toEqual([]);
+  });
+
+  it("leaves a held draft from before issues that a person marked ready, even once an issue tracks its packages", async () => {
+    const plan = await heldPlan(YOUNG_VITE());
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite", isDraft: false, body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pr] });
+    const subject = { kind: "package" as const, ecosystem: "npm" as const, name: "vite" };
+    const record: IssueRecord = { version: 1, subject, openedAt: BASE_SHA, findings: [], absences: [], attempts: [] };
+    await (h.context.issues as FakeIssues).createIssue({ repo: REPO, title: "secure-it: vite", body: ISSUE_WRITER.render({ subject, findings: [], status: { kind: "informational" } }, record, BASE_SHA).body, labels: [ISSUE_LABEL] });
+    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "left-alone", detail: "a person marked the held PR ready" }] });
+    expect(h.github.prs.get(7)?.state).toBe("open");
+  });
+
+  it("closes a held draft from before issues only once an issue tracks its packages, linking to it", async () => {
+    const plan = await heldPlan(YOUNG_VITE());
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite", body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pr] });
+    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "left-alone", detail: "a held draft from before issues; a run opens the issue that replaces it" }] });
+    expect(h.github.prs.get(7)?.state).toBe("open");
+    const issues = h.context.issues as FakeIssues;
+    const subject = { kind: "package" as const, ecosystem: "npm" as const, name: "vite" };
+    const record: IssueRecord = { version: 1, subject, openedAt: BASE_SHA, findings: [], absences: [], attempts: [] };
+    await issues.createIssue({ repo: REPO, title: "secure-it: vite", body: ISSUE_WRITER.render({ subject, findings: [], status: { kind: "informational" } }, record, BASE_SHA).body, labels: [ISSUE_LABEL] });
+    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "left-alone", detail: "closed: replaced by #1" }] });
+    expect(h.github.prs.get(7)?.state).toBe("closed");
+    expect(h.github.calls).toContainEqual(expect.stringMatching(/^createComment 7 secure-it now tracks these fixes in #1/));
+  });
+
+  it("leaves a PR taken early to the owner when, on a moved base, its fix now requires a young dependency its grant didn't cover", async () => {
     const plan = await planFor([vite()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined },
       { kind: "routine", topic: "security-cooldown" });
     const pr = ownPr({
@@ -2375,6 +2878,7 @@ describe("the cooldown hold", () => {
     });
     const h = harness({ prs: [pr], baseSha: "f".repeat(40), fixes: [vite()] });
     h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
+    const tracked = await early(h, pr);
     let requiredPlanned = 0;
     const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, planned) => {
       requiredPlanned++;
@@ -2385,10 +2889,11 @@ describe("the cooldown hold", () => {
         }] }
         : planned;
     };
-    expect(await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "rebased" }] });
+    expect(await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "deferred" }] });
     expect(requiredPlanned).toBeGreaterThan(0);
-    expect(h.github.prs.get(7)?.state).not.toBe("closed");
-    expect(planOf(h.github.prs.get(7)!.body)?.cooldown).toHaveLength(1);
+    expect(h.github.prs.get(7)).toEqual(tracked);
+    expect(h.agentCalls).toEqual([]);
+    expect((h.context.issues as FakeIssues).comments.get(1)!.at(-1)!.body).toContain("a different decision than the one `take-early` authorized");
   });
 
   it("refuses a held PR whose recorded hold doesn't read", async () => {

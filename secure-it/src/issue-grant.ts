@@ -12,7 +12,7 @@
  * the decision is past the wait there's nothing to authorize (`none`): its PR goes on as an ordinary one. Times are
  * GitHub's, to the second: a reason posted in the label's own second counts as before it.
  */
-import type { Grant, IssueRecord, PackageVersion, SubjectStatus } from "./issue-model.ts";
+import { type Grant, type IssueRecord, type PackageVersion, SHOWN_PENDING, type SubjectStatus } from "./issue-model.ts";
 import { TAKE_EARLY_LABEL } from "./issue-text.ts";
 
 /** An issue event as the issues client reads it. */
@@ -83,6 +83,13 @@ export function grantOf(input: GrantInput): GrantDecision {
   }
   if (running !== undefined) return refused("an early attempt is still running under an earlier label", "running");
 
+  // A first label covers what the issue showed when it was added: a young version shown only after it wasn't seen.
+  const shown = input.record.shown;
+  if (shown?.since === SHOWN_PENDING) return refused("the issue is still being updated with what the decision takes; label it again once it shows that", "young-pending");
+  // A since that doesn't read as a time compares as not-a-number: refused too, never granted.
+  if (shown === undefined || !(Date.parse(label.createdAt) >= Date.parse(shown.since))) {
+    return refused(`the decision's young versions changed after the label (now ${input.status.young.map(describe).join(", ")}); a new reason and label authorize them`, "young-shown");
+  }
   const reason = reasonComment(input.comments, actor, label.createdAt);
   if (reason === undefined) return refused(`no \`${TAKE_EARLY_LABEL}: <reason>\` comment by the labeler before the label, unedited since`, "reason");
   // A renewed label needs a reason of its own: one written after the earlier grant, never the one that grant used.

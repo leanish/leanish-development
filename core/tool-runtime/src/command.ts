@@ -9,6 +9,7 @@
  * a GitHub request summary and the `run finished` line on stderr,
  * interruptions included.
  */
+import { createGitHubIssues, type GitHubIssues } from "./github-issues.ts";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -55,6 +56,8 @@ export interface ToolRunContext {
   /** The branch the tool works against: the configured one, else the repository's default branch. */
   readonly base: string;
   readonly github: GitHubClient;
+  /** The repository's issues, with the write PAT (secure-it tracks advisories there); never handed to the agent. */
+  readonly issues: GitHubIssues;
   readonly workspace: Workspace;
   readonly workingCopy: WorkingCopy;
   readonly logger: Logger;
@@ -149,6 +152,7 @@ export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray
     await m.ensureDir(config.dirs.cache);
     // The tools' fine-grained token has no Checks permission, so CI is read from Actions jobs and commit statuses.
     const github = createGitHubClient({ env: { GITHUB_TOKEN: write }, fetch, headChecks: "actions-jobs" });
+    const issues = createGitHubIssues({ env: { GITHUB_TOKEN: write }, fetch });
     const base = repo.branch ?? (await defaultBranch(repo.repo, write, fetch));
     const workspace = m.workspace(join(config.dirs.state, "workspaces"), write, config);
     const synced = await workspace.sync([{ id: repo.repo, source: { url: `https://github.com/${repo.repo}.git`, branch: base } }]);
@@ -186,6 +190,7 @@ export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray
       repo,
       base,
       github,
+      issues,
       workspace,
       workingCopy,
       logger,

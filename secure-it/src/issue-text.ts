@@ -17,8 +17,40 @@ import { type IssueRecord, type ObservedFinding, parseRecord, type SubjectAssess
 const HEADING = "## secure-it";
 /** The label a person adds, after a `take-early: <reason>` comment, to let secure-it fix a waiting decision now. */
 export const TAKE_EARLY_LABEL = "take-early";
+/**
+ * The label on every issue the tool opens: its listing reads only these, never the login's PRs or other issues. A person
+ * who removes it takes the issue out of the tool's sight, and a run opens another for what it tracked.
+ */
+export const ISSUE_LABEL = "leanish:secure-it-issue";
 
 export const ISSUE_WRITER: IssueWriter = { render, withRecord };
+
+/**
+ * GitHub closes an issue a merged PR's text or commit names after a closing keyword (`Fixes #12`, `closes
+ * owner/repo#12`, `resolves https://github.com/owner/repo/issues/12`). The tool's issues resolve only through an
+ * assessment, so such a reference, an agent's say, becomes a code span, which GitHub neither links nor acts on.
+ */
+const CLOSING = /\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)(:\s*|\s+(?::\s*)?)((?:[\w.-]+\/[\w.-]+)?#\d+|https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/issues\/\d+)/gi;
+
+export function withoutClosingKeywords(text: string): string {
+  return text.replace(CLOSING, (_match, keyword: string, separator: string, reference: string) => `${keyword}${separator}\`${reference}\``);
+}
+
+const TRACKS_LINE = /^Tracks #\d+(?:, taken early)?\.$\n?/gm;
+
+/**
+ * A PR's title, description and commit message as published for the issue it tracks: no closing keyword, and exactly
+ * one `Tracks #N.` line, the last, the tool's; any other such line (an agent's, an older one) goes. A PR an early
+ * attempt published says so in it (`Tracks #N, taken early.`): review then needs that attempt on the issue to go on,
+ * whatever the gate's cooldown holds.
+ */
+export function trackingContent<T extends { readonly title: string; readonly body: string; readonly commitMessage: string }>(content: T, issue: number, early = false): T {
+  const body = withoutClosingKeywords(content.body.replace(TRACKS_LINE, "")).trimEnd();
+  return { ...content, title: withoutClosingKeywords(content.title), commitMessage: withoutClosingKeywords(content.commitMessage), body: `${body}\n\nTracks #${issue}${early ? ", taken early" : ""}.` };
+}
+
+/** The hidden marker a notice comment ends with, so each notice is posted once however often a run retries. */
+export const noticeMarker = (id: string): string => `<!-- leanish:notice ${id} -->`;
 
 /**
  * The record an issue body carries, or undefined when it has none this release reads. A body with a block anywhere but

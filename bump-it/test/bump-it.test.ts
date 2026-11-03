@@ -22,6 +22,7 @@ import { parseToolConfig } from "@leanish/tool-runtime/config";
 import { MemoryJournal } from "@leanish/tool-runtime/test/memory-journal";
 import { branchFor, stateOf, withMarker } from "@leanish/tool-runtime/own-pr";
 import { BASE_SHA, FakeGitHub, GREEN, HEAD_SHA, ownPr, PUSHED_SHA, RED } from "@leanish/tool-runtime/test/fake-github";
+import { FakeIssues } from "@leanish/tool-runtime/test/fake-issues";
 import { bumpIt, type BumpItDeps, RULES } from "../src/bump-it.ts";
 import { changesBetween, type NpmResult } from "../src/npm-compute.ts";
 import { NpmGraph } from "../src/npm-graph.ts";
@@ -90,7 +91,7 @@ function harness(options: { bumps?: BumpCandidate[]; prs?: GitHubPullRequest[]; 
     return originalPrepare(workingCopy, args);
   };
   for (const pr of options.prs ?? []) workspace.setRemoteHead(pr.headRef, pr.headSha);
-  const context: ToolRunContext = { config: CONFIG, repo: { repo: REPO, branch: undefined }, base: "main", github, workspace, workingCopy: wc, now: NOW, releaseAgeDays: 7, releaseAgeExclude: [], readToken: "read-token", fetch: globalThis.fetch, isolation: { readDenied: [], env: {}, buildCacheRoot: "/tmp/bump-it-cache" }, logger: new ConsoleLogger({ minLevel: "error" }), agent: (async (call: { input: Record<string, unknown> }) => { agentCalls.push(call); return options.refuse ? { outcome: "cannot-apply", summary: "can't migrate" } : { outcome: "applied", summary: "updated", publication: { title: "upgrading lib", body: "Adapts to the upgrade.", commitMessage: "upgrading lib" } }; }) as ToolRunContext["agent"] };
+  const context: ToolRunContext = { config: CONFIG, repo: { repo: REPO, branch: undefined }, base: "main", github, issues: new FakeIssues(), workspace, workingCopy: wc, now: NOW, releaseAgeDays: 7, releaseAgeExclude: [], readToken: "read-token", fetch: globalThis.fetch, isolation: { readDenied: [], env: {}, buildCacheRoot: "/tmp/bump-it-cache" }, logger: new ConsoleLogger({ minLevel: "error" }), agent: (async (call: { input: Record<string, unknown> }) => { agentCalls.push(call); return options.refuse ? { outcome: "cannot-apply", summary: "can't migrate" } : { outcome: "applied", summary: "updated", publication: { title: "upgrading lib", body: "Adapts to the upgrade.", commitMessage: "upgrading lib" } }; }) as ToolRunContext["agent"] };
   const deps: BumpItDeps = {
     publicationParent: async (_wc, prepared) => prepared,
     fileState: async (_wc, path) => ({ path, sha256: null, executable: false, index: "" }),

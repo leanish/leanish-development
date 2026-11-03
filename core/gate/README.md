@@ -252,7 +252,8 @@ every version a PR adds or changes that is younger than `releaseAgeDays` is **he
   green, the reason written on the PR, then an admin merge past the red `cooldown` check. Where nothing enforces
   the check (no ruleset, e.g. a private repository on the free plan), the same: a merge with the reason written.
 - Open PRs aren't rescanned: the cooldown is judged when the PR is opened, pushed to, reopened or retargeted.
-  secure-it retires each held PR once its own versions aged and plans fresh ones (bump-it never publishes held versions).
+  secure-it opens a PR with young versions only when a person asked for it (`take-early` on its issue) or for a
+  trusted package, and retires it once its own versions aged and plans fresh ones (bump-it never publishes held versions).
   For a person's PR, re-run the **whole** workflow after the time it gives (a re-run of the `cooldown` job alone
   reads the old report and stays red), or push. A base that raises its wait later doesn't re-hold a PR that was
   already green. A re-run uses the original merge commit; a new PR event compares with the current base.

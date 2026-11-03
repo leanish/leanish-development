@@ -8,6 +8,11 @@ import { clearLeftoverBranch, type PublicationContext } from "./publication.ts";
 export interface UnitBranch {
   /** The unit's topic, which names a fresh branch (`freeBranch`). */
   readonly topic: string;
+  /**
+   * A fresh branch reserved before the unit ran (a recorded attempt's), used instead of one named from the topic: a
+   * branch already taken can't be reserved again, so that fails rather than publishing somewhere else.
+   */
+  readonly reserved?: string;
   /** The open PR the unit reuses (already repaired: `repairOwnership`); undefined for a fresh branch. */
   readonly reusable: GitHubPullRequest | undefined;
   /** The tool's open PRs: their branches are taken. */
@@ -44,7 +49,9 @@ async function reusedBranch(context: PublicationContext, pr: GitHubPullRequest, 
 }
 
 async function freshBranch(context: PublicationContext, unit: UnitBranch): Promise<PreparedBranch> {
-  const branch = freeBranch(context.rules, unit.now, unit.topic, new Set([...unit.own.map((pr) => pr.headRef), ...unit.taken]));
+  const taken = new Set([...unit.own.map((pr) => pr.headRef), ...unit.taken]);
+  if (unit.reserved !== undefined && taken.has(unit.reserved)) throw new Error(`${unit.reserved} was reserved for this unit, but another PR or unit has it`);
+  const branch = unit.reserved ?? freeBranch(context.rules, unit.now, unit.topic, taken);
   unit.taken.add(branch);
   await clearLeftoverBranch(context.github, context.rules, context.repo, branch);
   const fresh = await context.workspace.prepareBranch(context.workingCopy, { branch, start: "default" });

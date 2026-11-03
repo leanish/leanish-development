@@ -99,9 +99,11 @@ async function search(work: SecurityFix[], options: { base?: string; probes?: st
 describe("moving a Gradle parent instead of flooring what it brings", () => {
   it("probes okhttp's aged versions lowest first and moves it to the first that brings a fixed okio", async () => {
     const probes: string[] = [];
-    const { plan, notes } = await search([okio()], { probes });
+    const { plan, notes, fixes } = await search([okio()], { probes });
     expect(notes).toEqual([]);
     expect(probes).toEqual(["4.10.0", "4.11.0", "4.12.0"]);
+    // What the chosen probe resolved beyond the base, the moved parent aside: dated by the issues, never moved.
+    expect(fixes[0]!.induced).toEqual([{ name: OKIO, version: "3.6.0" }]);
     expect(plan.moves).toEqual([expect.objectContaining({
       name: OKHTTP, from: "4.9.3", to: "4.12.0", mechanism: "gradle-declared", locations: [":compileClasspath", ":runtimeClasspath"], advisories: [],
       carries: [{ name: OKIO, from: ["2.8.0"], to: ["3.6.0"], locations: [":compileClasspath", ":runtimeClasspath"], advisories: ["GHSA-okio"] }],

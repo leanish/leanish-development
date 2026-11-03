@@ -77,7 +77,15 @@ export interface ParentMove {
  * A fix as planned: the rule's choice, the parents that let npm lock it where an override would be needed, and notes
  * on why a parent couldn't (for the PR).
  */
-export type FixWork = SecurityFix & { readonly parents?: ReadonlyArray<ParentMove>; readonly notes?: ReadonlyArray<string> };
+export type FixWork = SecurityFix & {
+  readonly parents?: ReadonlyArray<ParentMove>;
+  readonly notes?: ReadonlyArray<string>;
+  /**
+   * Maven versions the chosen parent probe resolved that the base didn't have, beyond the moves: never moved by the
+   * plan, but dated by the issue assessment, so a young one makes the decision wait for its grant.
+   */
+  readonly induced?: ReadonlyArray<{ readonly name: string; readonly version: string }>;
+};
 
 export type PlanKind = "routine" | "major" | "malware" | "floor-removal";
 
@@ -142,7 +150,7 @@ export const packageKey = (fix: Pick<SecurityFix, "ecosystem" | "name">) => `${f
 export interface SecurityUnit {
   readonly kind: PlanKind;
   readonly topic: string;
-  readonly work: ReadonlyArray<SecurityFix>;
+  readonly work: ReadonlyArray<FixWork>;
   readonly coupled?: ReadonlyArray<ReadonlyArray<string>>;
   /** Predicted to take a version younger than the wait (the verifying comparison decides). */
   readonly held?: boolean;

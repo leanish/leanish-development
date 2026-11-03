@@ -79,6 +79,8 @@ interface Parent {
   readonly locations: ReadonlyArray<string>;
   /** Everything the move now carries, re-proved together: earlier claims and the new one. */
   readonly carries: ReadonlyArray<CarriedPackage>;
+  /** What the chosen probe resolved that the base didn't have (`FixWork.induced`). */
+  readonly induced: ReadonlyArray<{ readonly name: string; readonly version: string }>;
 }
 
 /** `work` with X's floored locations carried by the parent's move (merged into the parent's own fix when it has one). */
@@ -90,11 +92,13 @@ function fold(work: ReadonlyArray<FixWork>, fix: FixWork, floored: ReadonlyArray
   const carrier: FixWork = own === undefined
     ? { ecosystem: "Maven", name: parent.name, from: parent.from, locations: parent.locations, targets: [], unfixable: [], malicious: false, severity: fix.severity, to, problem: undefined, carries: parent.carries }
     : { ...withoutVetoes(own), locations: [...new Set([...own.locations, ...parent.locations])], to, carries: parent.carries };
+  const induced = new Map([...(own?.induced ?? []), ...parent.induced].map((entry) => [`${entry.name}@${entry.version}`, entry]));
+  const proved: FixWork = induced.size === 0 ? carrier : { ...carrier, induced: [...induced.values()] };
   return work.flatMap((entry) => {
     if (entry === fix) return rest.length === 0 ? [] : [{ ...fix, locations: rest }];
-    if (entry === own) return [carrier];
+    if (entry === own) return [proved];
     return [entry];
-  }).concat(own === undefined ? [carrier] : []);
+  }).concat(own === undefined ? [proved] : []);
 }
 
 function withoutVetoes(fix: FixWork): FixWork {
@@ -169,7 +173,7 @@ async function tryRoot(fix: FixWork, floored: ReadonlyArray<string>, root: strin
     if (checked.some((location) => !resolvedWhole(reference, location))) continue;
     const proved = await claimsHold(claims, reference, options);
     if (proved === undefined) continue;
-    return { name: root, from, to: version, line: line(version), locations: reach, carries: proved };
+    return { name: root, from, to: version, line: line(version), locations: reach, carries: proved, induced: inducedBy(inputs.gradle, reference, root) };
   }
   return `no version past the wait brings ${claims.map((claim) => claim.name).join(", ")} without ${claims.flatMap((claim) => claim.advisories).join(", ")}`;
 }
@@ -187,6 +191,28 @@ async function claimsHold(claims: ReadonlyArray<CarriedPackage>, reference: Grad
     return brought[at]!.every((version) => !targetsOf(snapshot, { ecosystem: "Maven", name: claim.name, version }).some((group) => targets.has(group)));
   });
   return held ? claims.map((claim, at) => ({ ...claim, to: brought[at]! })) : undefined;
+}
+
+/**
+ * The versions `reference` resolves in a configuration where `base` doesn't, per build and configuration: a version
+ * already resolved elsewhere still runs anew where it arrives (a buildscript classpath, say). The moved root's own is
+ * aside (its age was checked); each version is listed once.
+ */
+function inducedBy(base: GradleInventory, reference: GradleInventory, root: string): Array<{ name: string; version: string }> {
+  const contexts = (inventory: GradleInventory) => new Map(inventory.builds.flatMap((build) => build.configurations.map((configuration) =>
+    [`${build.build}|${configuration.id}`, new Set(configuration.resolved.map((entry) => `${entry.group}:${entry.name}@${entry.version}`))] as const)));
+  const before = contexts(base);
+  const found = new Map<string, { name: string; version: string }>();
+  for (const build of reference.builds) {
+    for (const configuration of build.configurations) {
+      const known = before.get(`${build.build}|${configuration.id}`) ?? new Set<string>();
+      for (const entry of configuration.resolved) {
+        const name = `${entry.group}:${entry.name}`;
+        if (name !== root && !known.has(`${name}@${entry.version}`)) found.set(`${name}@${entry.version}`, { name, version: entry.version });
+      }
+    }
+  }
+  return [...found.values()].sort((a, b) => (`${a.name}@${a.version}` < `${b.name}@${b.version}` ? -1 : 1));
 }
 
 /** Whether a configuration resolved completely in an inventory. */
