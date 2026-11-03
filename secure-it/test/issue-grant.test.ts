@@ -13,6 +13,8 @@ const record: IssueRecord = {
   findings: [{ ecosystem: "npm", name: "lib", ids: ["GHSA-1"] }],
   absences: [],
   attempts: [],
+  // What the issue showed before the label.
+  shown: { young: [{ ecosystem: "npm", name: "lib", version: "1.0.1" }], since: "2026-11-03T07:00:00.000Z" },
 };
 
 const labeled = (id: number, actor = "owner", createdAt = LABELED_AT): GrantEvent => ({ id, event: "labeled", actor, createdAt, label: "take-early" });
@@ -37,6 +39,21 @@ describe("grantOf", () => {
       kind: "granted",
       grant: { labelEventId: 7, reasonCommentId: 5, actor: "owner", at: LABELED_AT, young: [{ ecosystem: "npm", name: "lib", version: "1.0.1" }] },
     });
+  });
+
+  it("doesn't let a first label cover young versions the issue showed only after it was added", () => {
+    // The same moves now also take lib-dep@2.0.1 (a probe brought it in), shown by the run after the label.
+    const later = { ...record, shown: { young: [{ ecosystem: "npm" as const, name: "lib", version: "1.0.1" }, { ecosystem: "npm" as const, name: "lib-dep", version: "2.0.1" }], since: "2026-11-03T09:00:00.000Z" } };
+    const status: SubjectStatus = { kind: "waiting", young: [young("1.0.1"), { ...young("2.0.1"), name: "lib-dep" }] };
+    expect(grantOf(input({ record: later, status }))).toMatchObject({ kind: "refused", noticeId: "take-early:7:young-shown",
+      reason: "the decision's young versions changed after the label (now npm lib@1.0.1, npm lib-dep@2.0.1); a new reason and label authorize them" });
+    // Nothing recorded what the issue showed: fail closed.
+    const { shown: _shown, ...unknown } = record;
+    expect(grantOf(input({ record: unknown }))).toMatchObject({ kind: "refused", noticeId: "take-early:7:young-shown" });
+    // While the issue is being rewritten with a newcomer, nothing authorizes anything.
+    expect(grantOf(input({ record: { ...record, shown: { ...record.shown!, since: "pending" } } }))).toMatchObject({ kind: "refused", noticeId: "take-early:7:young-pending" });
+    // A label added after that run covers both.
+    expect(grantOf(input({ record: later, status, events: [labeled(9, "owner", "2026-11-03T09:05:00Z")], comments: [reason(8, "owner", "2026-11-03T09:04:00Z")] }))).toMatchObject({ kind: "granted" });
   });
 
   it("has nothing to grant without a current label", () => {

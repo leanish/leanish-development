@@ -93,6 +93,7 @@ one pair); the write and read PATs must have different values. For each PAT:
 |---|---|---|
 | Contents | Read and write | Read-only |
 | Pull requests | Read and write | Read-only |
+| Issues | Read and write (secure-it only) | No access |
 | Workflows | Read and write | No access |
 | Actions | Read-only | Read-only |
 | Commit statuses | Read-only | Read-only |
@@ -103,8 +104,12 @@ Leave other permissions and account permissions unset.
 
 - Workflows write permits pushing action-pin changes in workflow files; it does
   not grant Actions write.
-- Pull requests write also covers PR labels/comments via the Issues endpoints;
-  Issues permission is unnecessary.
+- Pull requests write also covers PR labels/comments via the Issues endpoints.
+  secure-it's write PAT also needs Issues read and write: it tracks every finding
+  in an issue and reads the `take-early` label there
+  ([issues](../secure-it/README.md#issues-decide-what-runs)). Without it, a run
+  executes nothing and says the write PAT needs Issues: read and write. bump-it's
+  doesn't need it.
 - The tools read CI from Actions workflow runs/jobs and commit statuses, so
   checks-only results from other apps must be exposed as commit statuses to be
   seen.

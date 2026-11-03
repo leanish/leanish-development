@@ -23,7 +23,7 @@ function informational(name: string, findings: ObservedFinding[]): SubjectAssess
   return { subject: { kind: "package", ecosystem: "npm", name }, findings, status: { kind: "informational" } };
 }
 
-const assessed = (subjects: SubjectAssessment[], complete = true, sha = SHA): Assessment => ({ sha, complete, subjects });
+const assessed = (subjects: SubjectAssessment[], complete = true, sha = SHA): Assessment => ({ sha, at: "2026-11-03T00:00:00.000Z", complete, subjects });
 
 /** Runs `reconcile` to completion against fake issues, applying each operation as GitHub would. */
 function converge(assessment: Assessment, issues: TrackedIssue[] = [], rounds = 5): { issues: TrackedIssue[]; operations: IssueOperation[][]; notes: string[] } {
@@ -58,7 +58,8 @@ describe("reconcile", () => {
     const a = decision([move("lib")], [finding("lib", ["GHSA-1"])]);
     const b = informational("other", [finding("other", ["GHSA-2"], { reviewed: false })]);
     const first = converge(assessed([a, b]));
-    expect(first.operations).toHaveLength(1);
+    // Round 1 creates both; round 2 reads the waiting decision back and confirms since when it shows its young versions.
+    expect(first.operations.map((round) => round.map((operation) => operation.kind))).toEqual([["create", "create"], ["update"]]);
     expect(subjectsOf(first.issues)).toEqual([subjectId(a.subject), subjectId(b.subject)].sort());
     expect(reconcile(assessed([a, b]), first.issues, ISSUE_WRITER).operations).toEqual([]);
   });
@@ -68,9 +69,9 @@ describe("reconcile", () => {
     const fixB = decision([move("lib", "1.0.2")], [finding("lib", ["GHSA-1"])]);
     const start = converge(assessed([fixA])).issues;
     const toB = converge(assessed([fixB]), start);
-    // Round 1 creates B; round 2, with B there, closes A as superseded by it.
+    // Round 1 creates B; round 2, with B there, confirms what B shows and closes A as superseded by it.
     expect(toB.operations[0]!.map((operation) => operation.kind)).toEqual(["create"]);
-    expect(toB.operations[1]!.map((operation) => operation.kind)).toEqual(["close"]);
+    expect(toB.operations[1]!.map((operation) => operation.kind)).toEqual(["update", "close"]);
     const closedA = toB.issues.find((issue) => issue.number === 1)!;
     expect(closedA.record.pendingClose).toMatchObject({ reason: "superseded", successors: [2] });
     const backToA = converge(assessed([fixA]), toB.issues);

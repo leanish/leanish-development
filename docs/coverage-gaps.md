@@ -25,6 +25,25 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 
 ## Limits
 
+- **Young versions a run finds while executing (secure-it)**: issues defer the young versions planning chose
+  before a unit executes, including what a Gradle parent search's chosen probe resolved beyond the base. The probe
+  itself runs before any issue decides, so a young version it brings in has already been resolved by then; only what
+  follows waits. A floor removal isn't gated by an issue at all: its unlocked resolution can settle on a different
+  version of a parent whose own dependencies include a recently published one (a parent's age doesn't bound its
+  dependencies'), and nothing dates those before the removal is applied and verified. A young version only verification finds (a transitive
+  move, say) stops that unit at once, with no retry, and is named on the issue, but the agent runs again on every run
+  until that version ages. Gradle dynamic versions (ranges, `latest`) can bring one in the same way, as can a young
+  version already in the repository.
+- **A run whose planning fails changes no issue (secure-it)**: when candidate planning throws or the inventory is
+  incomplete, the run executes nothing and leaves the issues as they are. While that persists (on a repository's first
+  run, say), a finding the scan sees has no issue yet.
+- **A `take-early` attempt ends on any failure (secure-it)**: an agent that couldn't apply it, a failed verification
+  or a crash ends it, a transient one included; only a new reason and label start another.
+- **A fix that only breaks once its versions aged has no deadline (secure-it)**: a waiting decision's PR opens only
+  then, and may still need adapting.
+- **Held drafts from before issues (secure-it)**: review leaves one alone until an issue tracks one of its packages,
+  then closes it with a link; until then a run whose plan is unchanged still refreshes its text.
+
 - **An action with no immutable release, newly used (gate)**: a new or additional occurrence fails unless its
   owner is listed in `trustedPackages["GitHub Actions"].owners`. Existing uses do not authorize more copies.
   The gate documents the [scope and risks of trusting an owner](../core/gate/README.md#configuration-githubsupply-chainjson).

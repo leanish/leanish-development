@@ -10,6 +10,60 @@ core/tool-runtime/run.sh secure-it run leanish/sqs-codec      # daily: batch fix
 core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours: look after its PRs
 ```
 
+## Issues decide what runs
+
+Every finding a run sees on the default branch, minus those a valid exception covers, is tracked by an issue the tool
+opens with the write PAT (it needs **Issues: read and write**, see
+[adopting the tools](../docs/adopting-tools.md)). An issue tracks one subject:
+
+- **A decision:** the exact moves a unit would make. Past the release-age wait, or a trusted package's ordinary fix
+  (said as a trusted exception), a run fixes it right away. Its PR says `Tracks #N.`, never a closing keyword.
+- **A decision waiting for the wait:** it takes a version younger than `releaseAgeDays`. No PR opens: the issue says
+  when each young version is past the wait, and a run fixes it then. Age always counts from the version's registry
+  publication, never from the author's repository. A malware fix's destination always waits, trusted packages included.
+- **A package without a decision:** blocked (no fix, or the rule refused one), informational (only the project's own
+  repository reports it: nothing is done), or unassessed (planning failed this run).
+
+A run whose candidate planning fails, or whose inventory is incomplete, executes nothing and changes no issue; one unit
+failing to plan leaves its findings tracked and retires nothing.
+
+Every issue the tool opens carries the `leanish:secure-it-issue` label, and the tool reads only issues with it, so the
+login's PRs and other issues never crowd its listing. Removing the label takes an issue out of the tool's sight: a run
+opens another for what it tracked.
+
+Issues don't change subject: when a decision changes (another version, another grouping), the run opens the new issue
+first, then closes the old one as superseded by it. Once a complete scan no longer sees a finding, its issue closes as
+resolved; a scan with coverage gaps closes nothing. An issue a person closes is dismissed: the run doesn't reopen it
+for the same findings, and only a finding that comes back after it was gone opens a new one. Issue text never selects
+versions: the code decides, and the only thing a person's input changes is whether a waiting decision runs early.
+
+### Taking a fix early: `take-early`
+
+Someone with write, maintain or admin access comments `take-early: <reason>` on a waiting decision's issue, then adds
+the `take-early` label. The next run fixes exactly that decision, with the young versions it took then (or fewer as
+they age), on a branch reserved for that label, and opens a draft PR with the [cooldown warning](#the-cooldown-warning).
+It stays a draft until those versions are past the wait; then review retires it, as any held PR, and the next run
+fixes that work afresh, in the batch it now belongs to.
+
+- **One label, one attempt**, recorded on the issue before anything executes. An attempt that the agent couldn't
+  apply, that failed, or that a crash interrupted ends; so does one whose PR closed without merging, which also takes
+  the label off. Only a new reason and a new label authorize another, and a retry never reduces the decision.
+- **A label covers what the issue showed when it was added.** A young version the issue shows only later (the same
+  moves now bring in another, say) needs a new reason and label. It counts as shown only once a later read of the
+  issue confirms it was published (plus two minutes for clock skew); until then no label authorizes anything there.
+- **Every refusal is said on the issue**, once: no write access, no reason before the label, a reason edited since,
+  a decision that now takes a young version the label didn't cover, or a label on an issue that isn't a current
+  decision (closed, superseded, a package without a decision).
+- **Removing the label withdraws it:** review leaves the PR to its owner and says so on the issue. So does a moved
+  base that changes the decision or takes a young version the label didn't cover. Whether a PR was taken early is
+  read from its issue's attempt, not from the gate's cooldown.
+
+Verification can find a young version planning didn't choose (a transitive move, say). Whether the decision was past
+the wait or taken early, the run then publishes nothing, names the versions on the issue and tries again next run.
+
+A held draft opened before issues is closed by review, with a link, once an issue tracks one of its packages; until a
+run opens one, it's left as it is.
+
 ## What a run does
 
 1. **Finds what fails.** It runs `candidates --rule security` on the default branch's head. The Gradle inventory runs
@@ -58,11 +112,11 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
    A young npm carrier passes as a `bundle-fix` only under [the gate's proof](../core/gate/README.md#a-young-carrier-with-a-bundled-fix-npm).
    Verification refuses a carrier choice that neither that proof nor an exception justifies.
 
-   - **Young fixes go apart, each group in its own PR.** Fixes whose target is younger than the release-age wait,
+   - **Young fixes go apart, each group its own decision.** Fixes whose target is younger than the release-age wait,
      everything coupled to them, and any fix whose required npm dependency is young leave the aged batch, so the aged
      fixes aren't held back. They're then split as far as they can be, one held routine unit (topic
-     `security-cooldown-<package>`, after its lowest package) per group, so no young fix waits for another and each
-     can be taken when it ages or by a person's call:
+     `security-cooldown-<package>`, after its lowest package) per group, so no young fix waits for another. Each group
+     is a [waiting decision](#issues-decide-what-runs): it runs once it ages, or on a `take-early` label:
      - **Always together, the couplings known when splitting:** coupled npm peers, a carrier and its carried package,
        and what planning the aged batch finds (a root that needs another root's fix). Planning a held group can find
        more; those don't rejoin groups already split, and each PR proves what it moves alone.
@@ -203,8 +257,9 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
    from the second attempt's problems, or from the first refusal's when that attempt couldn't apply or failed before
    its verification; the run report keeps the first (`rejected`). A review's adaptation is never
    restarted this way, since a restart from the base would lose it.
-7. **Publishes** draft PRs: `secure-it/<date>-security` for the routine, `secure-it/<date>-security-cooldown-<package>`
-   for each held group, `secure-it/<date>-<package>-major` for each major, or `secure-it/<date>-malware`. Each unit
+7. **Publishes** draft PRs: `secure-it/<date>-security` for the routine, `secure-it/<date>-take-early-<label event>`
+   for a held group taken early, `secure-it/<date>-<package>-major` for each major, or `secure-it/<date>-malware`.
+   Only what its issue lets execute gets this far ([Issues](#issues-decide-what-runs)). Each unit
    starts from the scanned base and publishes at most one new or updated PR. A failed unit is reported and doesn't stop
    other major units. The tool appends the move table and the hidden plan for later runs to the agent's description, and
    keeps local paths out of the title, description and commit message
@@ -274,18 +329,22 @@ The tick from [`core/tool-runtime`](../core/tool-runtime), with secure-it's step
     pushed, with the plan in the PR. Fixes remained on the new base, so an edit that leaves the base as it was fails
     verification; it doesn't retire the PR.
 - **CI failed (version-fix units):** the agent adapts, at most twice, and the result is verified before it's pushed.
-- **A held PR** (the verifying comparison held young versions; its plan records them) never becomes ready on the
-  tool's say. Green CI, or only the gate's `cooldown` job failing in its hold step after a passing comparison, is
-  `held`; any other failure is adapted as usual. Once the last held version has aged, the draft is closed with a
-  comment before anything else (`graduated`), and the next run plans again from the default branch with fresh checks.
-  A held PR a person marked ready is theirs: the tick leaves it alone.
+- **A held PR** (the verifying comparison held young versions; its plan records them: one taken early, or a trusted
+  exception's) never becomes ready on the tool's say. Green CI, or only the gate's `cooldown` job failing in its hold
+  step after a passing comparison, is `held`; any other failure is adapted as usual. Once the last held version has
+  aged, the draft is closed with a comment before anything else (`graduated`), and the next run plans again from the
+  default branch with fresh checks. A held PR a person marked ready is theirs: the tick leaves it alone. One taken
+  early goes on only while its `take-early` grant stands (see [Issues](#issues-decide-what-runs)); once it's closed
+  (graduated, out of adaptations, or by a person), its attempt ends and its label comes off.
+- **A held draft from before issues** (it tracks no issue) isn't reviewed any more: it's closed with a link once an
+  issue tracks one of its packages, and left as it is until then.
 
 ## The cooldown warning
 
 Whatever the verifying comparison holds goes into the plan, and the PR's description opens with a GitHub warning:
 the versions that came early (published, held until, and why: the rule-picked fix, required by it, an exception),
 plus provenance, publisher changes and new install scripts for npm, for information. It says that needing a version
-and passing every check doesn't rule out malware, that secure-it keeps the PR a draft and retires it once everything
+and passing every check doesn't rule out malware, that secure-it keeps the PR a draft until everything
 aged, and how a person takes it earlier: every other check green, the reason written on the PR, an admin merge. A PR
 planned as aged that the comparison holds anyway is held the same way. A cooldown the comparison couldn't evaluate
 fails verification.

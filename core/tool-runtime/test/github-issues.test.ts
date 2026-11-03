@@ -53,13 +53,13 @@ describe("createGitHubIssues", () => {
       json([...full.slice(0, 99), apiIssue({ number: 100, pull_request: { url: "x" } })]),
       json([apiIssue({ number: 101, body: null, user: null, state: "closed", state_reason: "not_planned", labels: [] })]),
     );
-    const listed = await issues(fetch).listIssues({ repo: REPO, creator: "leanish" });
+    const listed = await issues(fetch).listIssues({ repo: REPO, creator: "leanish", label: "leanish:secure-it-issue" });
     expect(listed).toHaveLength(100);
     expect(listed.some((issue) => issue.number === 100)).toBe(false);
     expect(listed.at(-1)).toEqual({ number: 101, url: `https://github.com/${REPO}/issues/12`, title: "zstd-jni: advisory waiting for its fix", body: "", state: "closed", stateReason: "not_planned", author: null, labels: [] });
     expect(calls.map((call) => call.url)).toEqual([
-      `https://api.github.com/repos/${REPO}/issues?state=all&creator=leanish&per_page=100&page=1`,
-      `https://api.github.com/repos/${REPO}/issues?state=all&creator=leanish&per_page=100&page=2`,
+      `https://api.github.com/repos/${REPO}/issues?state=all&creator=leanish&labels=leanish%3Asecure-it-issue&per_page=100&page=1`,
+      `https://api.github.com/repos/${REPO}/issues?state=all&creator=leanish&labels=leanish%3Asecure-it-issue&per_page=100&page=2`,
     ]);
     expect((calls[0]!.init.headers as Record<string, string>)["authorization"]).toBe(`Bearer ${TOKEN}`);
     expect(calls[0]!.init.redirect).toBe("error");
@@ -98,12 +98,12 @@ describe("createGitHubIssues", () => {
       json({ id: 9, user: { login: "leanish" }, body: "superseded by #13", created_at: "2026-11-03T10:00:00Z", updated_at: "2026-11-03T10:00:00Z" }, 201),
     );
     const client = issues(fetch);
-    await client.createIssue({ repo: REPO, title: "t", body: "b" });
+    await client.createIssue({ repo: REPO, title: "t", body: "b", labels: ["leanish:secure-it-issue"] });
     const closed = await client.updateIssue({ repo: REPO, number: 12, state: "closed", stateReason: "not_planned" });
     await client.createComment({ repo: REPO, number: 12, body: "superseded by #13" });
     expect(closed).toMatchObject({ state: "closed", stateReason: "not_planned" });
     expect(calls.map((call) => [call.init.method, call.url, call.init.body])).toEqual([
-      ["POST", `https://api.github.com/repos/${REPO}/issues`, JSON.stringify({ title: "t", body: "b" })],
+      ["POST", `https://api.github.com/repos/${REPO}/issues`, JSON.stringify({ title: "t", body: "b", labels: ["leanish:secure-it-issue"] })],
       ["PATCH", `https://api.github.com/repos/${REPO}/issues/12`, JSON.stringify({ state: "closed", state_reason: "not_planned" })],
       ["POST", `https://api.github.com/repos/${REPO}/issues/12/comments`, JSON.stringify({ body: "superseded by #13" })],
     ]);
@@ -112,8 +112,8 @@ describe("createGitHubIssues", () => {
   it("refuses invalid input before calling GitHub", async () => {
     const { fetch, calls } = scripted();
     const client = issues(fetch);
-    await expect(client.createIssue({ repo: REPO, title: "", body: "b" })).rejects.toThrow("title must have");
-    await expect(client.createIssue({ repo: REPO, title: "t", body: "x".repeat(MAX_ISSUE_BODY_CHARS + 1) })).rejects.toThrow("body over");
+    await expect(client.createIssue({ repo: REPO, title: "", body: "b", labels: [] })).rejects.toThrow("title must have");
+    await expect(client.createIssue({ repo: REPO, title: "t", body: "x".repeat(MAX_ISSUE_BODY_CHARS + 1), labels: [] })).rejects.toThrow("body over");
     await expect(client.updateIssue({ repo: REPO, number: 12 })).rejects.toThrow("nothing to change");
     await expect(client.updateIssue({ repo: REPO, number: 12, stateReason: "completed" })).rejects.toThrow("a state reason without a state");
     await expect(client.getIssue({ repo: "a/b/c", number: 1 })).rejects.toThrow("invalid repo");

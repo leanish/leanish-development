@@ -12,7 +12,7 @@
  *     finding's episode ended, so its return is new and opens a new issue, past any dismissal and without any grant.
  *   - An incomplete assessment closes and resolves nothing.
  */
-import { type Assessment, type FindingKey, type IssueRecord, keyOf, sameFinding, type SubjectAssessment, subjectId } from "./issue-model.ts";
+import { type Assessment, type FindingKey, type IssueRecord, keyOf, type PackageVersion, sameFinding, SHOWN_PENDING, type SubjectAssessment, subjectId } from "./issue-model.ts";
 
 /** An issue the tool opened, with its record read back. */
 export interface TrackedIssue {
@@ -56,6 +56,25 @@ export interface Reconciliation {
   readonly operations: ReadonlyArray<IssueOperation>;
   /** Why something waits for a later call or run, for the report. */
   readonly notes: ReadonlyArray<string>;
+}
+
+/**
+ * `record` showing a waiting subject's young versions. A version joining makes `since` pending: the issue is being
+ * rewritten, and no label authorizes anything until a later round reads that body back from GitHub and confirms it,
+ * setting `since` to `at` (that round's clock, taken after the read, plus a skew margin). So a label counts only after
+ * the scope it covers was published. One aging out keeps `since`. Any other status leaves the record as it is.
+ */
+function withShown(record: IssueRecord, subject: SubjectAssessment, at: string): IssueRecord {
+  if (subject.status.kind !== "waiting") return record;
+  const young = subject.status.young.map(({ ecosystem, name, version }) => ({ ecosystem, name, version }));
+  const known = (pkg: PackageVersion) => record.shown?.young.some((entry) => entry.ecosystem === pkg.ecosystem && entry.name === pkg.name && entry.version === pkg.version) === true;
+  const since = record.shown === undefined || !young.every(known) ? SHOWN_PENDING
+    : record.shown.since === SHOWN_PENDING ? at
+      : record.shown.since;
+  // Unchanged only when the very same versions are shown since the same time: a pending record whose versions changed
+  // (a crash left it, and the decision now takes others) is rewritten, so what it records is what the body shows.
+  const same = record.shown !== undefined && since === record.shown.since && record.shown.young.length === young.length && young.every(known);
+  return same ? record : { ...record, shown: { young, since } };
 }
 
 /**
@@ -103,7 +122,7 @@ export function reconcile(assessment: Assessment, issues: ReadonlyArray<TrackedI
     // One subject's text failing (a decision too large to show whole) is noted and leaves the others going.
     isolated(notes, current === undefined ? `${id}` : `#${current.number}`, () => {
       if (current !== undefined) {
-        const { body } = writer.render(subject, recordOf(current), assessment.sha);
+        const { body } = writer.render(subject, withShown(recordOf(current), subject, assessment.at), assessment.sha);
         if (body !== current.body) operations.push({ kind: "update", number: current.number, body });
         return;
       }
@@ -113,7 +132,7 @@ export function reconcile(assessment: Assessment, issues: ReadonlyArray<TrackedI
         return;
       }
       if (unreadable.length > 0) return;
-      const record: IssueRecord = { version: 1, subject: subject.subject, openedAt: assessment.sha, findings: subject.findings.map(keyOf), absences: [], attempts: [] };
+      const record = withShown({ version: 1, subject: subject.subject, openedAt: assessment.sha, findings: subject.findings.map(keyOf), absences: [], attempts: [] }, subject, assessment.at);
       const text = writer.render(subject, record, assessment.sha);
       operations.push({ kind: "create", subject: id, title: text.title, body: text.body });
     });

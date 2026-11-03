@@ -4,6 +4,17 @@
 
 ### Changed
 
+- secure-it tracks every finding it sees in an issue, and opens a PR only once the fix is past the release-age wait.
+  A fix that takes a younger version waits in its issue, which says until when, instead of in a held draft PR; a
+  trusted package's ordinary fix still goes ahead right away, as a trusted exception. A person with write access takes
+  a waiting fix early by commenting `take-early: <reason>` and adding the `take-early` label: the next run fixes exactly
+  that decision, once per label, and says on the issue whenever it won't. Issues are never edited into another
+  decision: a changed one opens a new issue and closes the old as superseded, a finding no complete scan sees any more
+  closes its issue as resolved, and an issue a person closes stays dismissed. PRs say `Tracks #N.` rather than closing
+  their issue. A PR taken early is retired once its versions aged, as held drafts were, and its attempt ends; held drafts
+  from before are closed with a link once an issue tracks their packages. Verification finding a young version planning
+  didn't choose stops publication and says so on the issue. **secure-it's write PAT now needs Issues: read and write**
+  ([adopting the tools](docs/adopting-tools.md)); without it a run executes nothing and says why.
 - Leaving malware, the security rule waits for a trusted package too: its clean replacement (direct or a carrier's)
   must be at least `releaseAgeDays` old, like anyone else's. A package that shipped malware can't vouch for its next
   release. With no clean version past the wait, the malware fix is blocked and reported, as for other packages.

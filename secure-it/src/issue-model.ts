@@ -84,6 +84,11 @@ export interface SubjectAssessment {
 export interface Assessment {
   /** The commit assessed. */
   readonly sha: string;
+  /**
+   * When a young version shown pending is confirmed as shown (UTC ISO, `Shown.since`): `syncIssues` sets it for each
+   * round to that round's clock, taken after it read the issues back, plus a skew margin.
+   */
+  readonly at: string;
   /** Whether the inventory and every advisory lookup completed: only a complete one may conclude that a finding is gone. */
   readonly complete: boolean;
   readonly subjects: ReadonlyArray<SubjectAssessment>;
@@ -146,7 +151,23 @@ export interface IssueRecord {
   readonly grant?: Grant;
   readonly attempts: ReadonlyArray<Attempt>;
   readonly pendingClose?: PendingClose;
+  /** For a waiting decision: the young versions its issue shows, and since when it has shown them all (`Shown`). */
+  readonly shown?: Shown;
 }
+
+/**
+ * What a waiting decision's issue showed a person: its young versions, and since when every one of them has been
+ * shown. `since` moves only when a version joins, never when one ages out: a label added before it can't have seen
+ * the newcomer, so it doesn't authorize it. It's `SHOWN_PENDING` from the write that adds a version until a later read
+ * confirms that write was published (`withShown`): no label authorizes anything meanwhile.
+ */
+export interface Shown {
+  readonly young: ReadonlyArray<PackageVersion>;
+  /** A UTC ISO time, or `SHOWN_PENDING`. */
+  readonly since: string;
+}
+
+export const SHOWN_PENDING = "pending";
 
 export const RECORD_VERSION = 1;
 
@@ -194,11 +215,14 @@ export function parseRecord(payload: unknown): IssueRecord | undefined {
   if (subject === undefined || findings === undefined || absences === undefined || attempts === undefined || !isText(payload["openedAt"])) return undefined;
   const grant = payload["grant"] === undefined ? undefined : parseGrant(payload["grant"]);
   const pendingClose = payload["pendingClose"] === undefined ? undefined : parsePendingClose(payload["pendingClose"]);
-  if ((payload["grant"] !== undefined && grant === undefined) || (payload["pendingClose"] !== undefined && pendingClose === undefined)) return undefined;
+  const shown = payload["shown"] === undefined ? undefined : parseShown(payload["shown"]);
+  if ((payload["grant"] !== undefined && grant === undefined) || (payload["pendingClose"] !== undefined && pendingClose === undefined)
+    || (payload["shown"] !== undefined && shown === undefined)) return undefined;
   return {
     version: RECORD_VERSION, subject, openedAt: payload["openedAt"], findings, absences, attempts,
     ...(grant === undefined ? {} : { grant }),
     ...(pendingClose === undefined ? {} : { pendingClose }),
+    ...(shown === undefined ? {} : { shown }),
   };
 }
 
@@ -226,6 +250,12 @@ function parsePackageVersion(value: unknown): PackageVersion | undefined {
   return isObject(value) && isEcosystem(value["ecosystem"]) && isText(value["name"]) && isText(value["version"])
     ? { ecosystem: value["ecosystem"], name: value["name"], version: value["version"] }
     : undefined;
+}
+
+function parseShown(value: unknown): Shown | undefined {
+  if (!isObject(value) || !isText(value["since"])) return undefined;
+  const young = arrayOf(value["young"], parsePackageVersion);
+  return young === undefined ? undefined : { young, since: value["since"] };
 }
 
 function parseGrant(value: unknown): Grant | undefined {

@@ -34,13 +34,24 @@ import { requireNpmExcludes } from "@leanish/tool-runtime/npm-version";
 import { runSandboxed, sandboxWritable } from "@leanish/tool-runtime/sandboxed";
 import { ensureOsvScanner, verifyingRun } from "@leanish/tool-runtime/osv-scanner";
 import { prepareUnitBranch } from "@leanish/tool-runtime/branches";
-import { ownPullRequests, topicOf } from "@leanish/tool-runtime/own-pr";
+import { branchFor, ownPullRequests, topicOf } from "@leanish/tool-runtime/own-pr";
 import { inspectOwnership, type Ours, type Ownership, repairOwnership, samePlan } from "@leanish/tool-runtime/ownership";
 import { publicationParent, revertToBase } from "@leanish/tool-runtime/reconcile";
 import { assertPublishable, closeAndDelete, ownOpenPullRequests, type PublicationContext, publishNew, publishUpdate, rewriteText } from "@leanish/tool-runtime/publication";
 import { machineRoots } from "@leanish/tool-runtime/publication-text";
 import { type BaseMerge, type CooldownState, reviewOpenPullRequests, type ReviewSteps } from "@leanish/tool-runtime/review";
 
+import { versionCatalogs } from "@leanish/gate/gate";
+import { isTrustedPackage } from "@leanish/gate/config";
+import { cleanBody, withCanonical } from "@leanish/tool-runtime/publication-text";
+import { assessmentOf, decisionMoves, type PlannedUnit, youngOf } from "./issue-assessment.ts";
+import { type PackageVersion, subjectId } from "./issue-model.ts";
+import { observationsOf } from "./issue-observations.ts";
+import { postNotice, syncIssues } from "./issue-sync.ts";
+import { type Disposition, inactiveLabelNotices, issueDisposition, type Tracking, type TrackedExecution } from "./issue-tracking.ts";
+import { type AttemptClient, type AttemptPatch, endAttempt, recoverAttempts, settleAttempt } from "./issue-attempts.ts";
+import { earlyDecisions, reviewClosed, reviewDisposition, reviewExecution, type ReviewIssues, takenEarlyOf, trackedIssueOf } from "./issue-review.ts";
+import { trackingContent } from "./issue-text.ts";
 import { removalTransform } from "./floor-gradle.ts";
 import { probeOnBase } from "./floor-probe.ts";
 import { type ComputedRemoval, type RemovalProbe, floorsOf, selectRemovals } from "./floor-removal.ts";
@@ -52,7 +63,7 @@ import { requiredNpmPlan } from "./npm-required-plan.ts";
 import { npmWindowFor } from "./npm-window.ts";
 import { assertNoPlanMarker } from "@leanish/tool-runtime/plan-blocks";
 import { planDigest, planOf, planSection, withPlanSection } from "./plan-block.ts";
-import { type ChangePlan, coupledWork, type FixWork, heldMembers, heldUnits, isHeldTopic, packageKey, planFor, type PlannedHold, type SecurityUnit, withUnsupportedCarriers } from "./plan.ts";
+import { type ChangePlan, coupledWork, type FixWork, heldMembers, heldUnits, isHeldTopic, packageKey, planFor, type PlannedHold, type SecurityUnit, type Selection, withUnsupportedCarriers } from "./plan.ts";
 import { namedProblems, retryWithoutNamed, type ProblemMoves } from "./retry.ts";
 import { referencePlan, verifyPlan, type VerifyInputs } from "./verify.ts";
 
@@ -62,12 +73,15 @@ export const RULES = ownPullRequests("secure-it");
 export interface ExecutionTarget {
   readonly kind: "unit" | "preflight" | "retry" | "removal" | "review";
   readonly plan: ChangePlan;
+  /** For a retry: the unit's own plan, which decides it (a reduced plan is a different decision, never authorized as one). */
+  readonly of?: ChangePlan;
   /** The PR a review step works on. */
   readonly pr?: number;
+  /** For a unit: the branch of the open PR it would reuse; an early attempt publishes there instead of a reserved one. */
+  readonly branch?: string;
 }
 
-/** Whether a target may execute now; `defer` says why not, and stops it before anything runs. */
-export type Disposition = { readonly kind: "proceed" } | { readonly kind: "defer"; readonly reason: string };
+export type { Disposition } from "./issue-tracking.ts";
 
 const PROCEED: Disposition = { kind: "proceed" };
 const SKILLS_DIR = fileURLToPath(new URL("../skills", import.meta.url));
@@ -97,6 +111,8 @@ export interface SecureItDeps {
    * it, npm files materialized, a Gradle reference, the agent, a verification). `defer` stops it there, as an outcome.
    */
   readonly disposition: (target: ExecutionTarget) => Promise<Disposition>;
+  /** The wall clock issue writes are stamped by (`syncIssues`); the system's when absent. */
+  readonly clock?: () => Date;
   readonly verify: (inputs: VerifyInputs) => Promise<string[]>;
   /** Records the working tree as the verification snapshot (`snapshotCandidate`), returning its commit. */
   readonly snapshot: (workingCopy: WorkingCopy) => Promise<string>;
@@ -303,9 +319,31 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   ]);
 
   const execution = { context, deps, env, inventories, publication: publicationOf(context, deps), npmFiles: new Map<string, string>(), branches: new Set<string>(), heldReferences: new Map<string, Promise<ReadonlyArray<string>>>() };
-  const own = await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base);
+  const listed = await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base);
   const results: Readonly<Record<string, unknown>>[] = [];
-  const { units, failures, ungrouped } = await holdRequiredYoung(execution, selection.units, base);
+  // Metadata first (no Gradle): the units and their plans. Then the issues decide what may execute, before any preflight.
+  const prepared = await withRequiredYoung(execution, selection.units, base);
+  let tracking: Tracking | Error | undefined;
+  // Early attempts this run recorded, by topic: a unit failing after one (its preflight asked, say) ends it.
+  const started = new Map<string, { readonly issue: number; readonly attempt: string }>();
+  try {
+    tracking = scanned === undefined
+      ? undefined
+      : await trackIssues(execution, { tree, scanned, complete: found.incomplete.length === 0 && found.gaps.length === 0 && prepared.failures.size === 0, units: prepared.units.filter((unit) => !prepared.failures.has(unit)), blocked: selection.blocked, own: listed, base });
+  } catch (error) {
+    // Nothing executes without its issue: a sync that failed defers every unit this run, saying why.
+    tracking = asError(error);
+    context.logger.warn("secure-it: the issues couldn't be synced; nothing executes this run", { error: tracking.message });
+  }
+  // A PR taken early whose granted versions all aged is retired before any unit runs, as review would: this run plans
+  // that work afresh, so no second PR for it opens beside it.
+  const own = tracking === undefined || tracking instanceof Error || scanned === undefined ? listed : await withoutAgedEarly(execution, listed, tracking, scanned.settings.config);
+  const governed = tracking === undefined
+    ? execution
+    : { ...execution, deps: { ...deps, disposition: tracking instanceof Error ? untracked(execution, tracking) : trackedDisposition(execution, tracking, started) } };
+  const pending = prepared.units.filter((unit) => !prepared.failures.has(unit));
+  const { units, ungrouped } = prepared;
+  const failures = new Map([...prepared.failures, ...await heldPreflight(governed, pending, base)]);
   // Claims over every unit, failed ones included: a failure never moves another unit's claim.
   const claims = await heldClaimsOf(execution.publication, units, own);
   for (const unit of units) {
@@ -320,11 +358,12 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
       // While that grouping is unknown, a held PR with npm moves stays reserved for the npm work it could take back,
       // as review keeps it: a held unit without npm work claiming it fails rather than rewrite it without that work.
       if (ungrouped !== undefined && isHeldUnit(unit) && claimedPlan !== undefined && hasNpmMoves(claimedPlan)) throw ungrouped;
-      results.push(await runUnit(execution, unit, base, own, claimed, undecidedPackages));
+      results.push(await runUnit(governed, unit, base, own, claimed, undecidedPackages));
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       context.logger.warn("secure-it: a unit failed", { topic: unit.topic, error: detail });
       results.push({ topic: unit.topic, outcome: "failed", detail });
+      await endStarted(execution, started.get(unit.topic));
     }
   }
   if (!found.fixes.some((fix) => fix.malicious) && (await floorsOf(tree)).some((floor) => floor.purpose === "security")) {
@@ -775,36 +814,150 @@ async function runUnit(
     await refreshText(execution, pr, plan);
     return { ...details, outcome: "already-open", pullRequest: pr.url };
   }
-  const disposition = await execution.deps.disposition({ kind: "unit", plan });
+  const disposition = await execution.deps.disposition({ kind: "unit", plan, ...(owned[0] === undefined ? {} : { branch: owned[0].pr.headRef }) });
   if (disposition.kind === "defer") return { ...details, outcome: "deferred", reason: disposition.reason };
-  const reusable = owned[0] === undefined ? undefined : await repairOwnership(publication, owned[0]);
-  const prepared = await preparePlan(execution, plan, reusable, own, base.tree.id);
+  const tracked = disposition.tracked;
+  const attempt = tracked?.attempt;
+  if (tracked === undefined || attempt === undefined) return executeUnit(execution, plan, base, owned[0], own, details, tracked);
+  // A reused PR is the attempt's from the start (its preflight may have reserved another branch): recovery reads it.
+  if (owned[0] !== undefined && attempt.branch !== owned[0].pr.headRef) await settleAttempt(attemptClient(execution), tracked.issue, attempt.id, { pr: owned[0].pr.number });
+  // An early attempt ends here unless it published: one grant runs one attempt, whatever stopped it.
+  let result: Readonly<Record<string, unknown>>;
+  try {
+    result = await executeUnit(execution, plan, base, owned[0], own, details, tracked);
+  } catch (error) {
+    // A publication can fail after its PR exists (a label, say): that PR is the attempt's, still running.
+    await endAttempt(attemptClient(execution), tracked.issue, attempt.id);
+    throw error;
+  }
+  await settleAttempt(attemptClient(execution), tracked.issue, attempt.id, attemptPatchOf(result));
+  return result;
+}
+
+/** A unit the issues (or the tool's default) let execute: applied, verified and published. */
+async function executeUnit(
+  execution: Execution,
+  plan: ChangePlan,
+  base: PlanBase,
+  owned: Ours | undefined,
+  own: ReadonlyArray<GitHubPullRequest>,
+  details: Readonly<Record<string, unknown>>,
+  tracked: TrackedExecution | undefined,
+): Promise<Readonly<Record<string, unknown>>> {
+  const { context, publication } = execution;
+  const reusable = owned === undefined ? undefined : await repairOwnership(publication, owned);
+  const prepared = await preparePlan(execution, plan, reusable, own, base.tree.id, reusable === undefined ? tracked?.attempt?.branch : undefined);
   const input = await agentInput(execution, plan, base.tree, "apply");
   const answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({ entrypoint: "secure-it", input });
   if (answer.outcome !== "applied" || answer.publication == null) return { ...details, outcome: "cannot-apply", summary: answer.summary };
   assertNoPlanMarker(answer.publication.body);
-  const verified = await verifyWithRetry(execution, base, plan, answer.publication, { retryRejected: true });
+  const admits = tracked === undefined ? undefined : await admitted(base.tree, tracked.young);
+  const verified = await verifyWithRetry(execution, base, plan, answer.publication, { retryRejected: true, ...(admits === undefined ? {} : { admits }) });
   const checked = {
     ...details, notes: verified.plan.notes ?? [], packages: verified.plan.packages, named: verified.named, leftOut: verified.leftOut,
     ...(verified.rejected === undefined ? {} : { rejected: verified.rejected }),
   };
+  if (tracked !== undefined && verified.unplanned !== undefined) {
+    // Verification found a young version planning didn't choose (a transitive move, say): its issue never allowed it.
+    const unplanned = verified.unplanned;
+    const next = tracked.attempt === undefined
+      ? "a run tries again, and goes ahead once they're past the wait"
+      : "this `take-early` attempt has ended; a new reason and label authorize another, or a run goes ahead once they're past the wait";
+    await postNotice({ issues: context.issues, repo: context.repo.repo, clean: issueCleaner(context) }, tracked.issue, `unplanned-young:${unplanned.join(",")}`,
+      `secure-it applied this decision, but verification found young versions it didn't plan: ${unplanned.map((entry) => `\`${entry}\``).join(", ")}. Nothing was published; ${next}.`);
+    return { ...checked, outcome: "deferred", reason: `verification found young versions its issue #${tracked.issue} doesn't allow: ${unplanned.join(", ")}`, problems: verified.problems };
+  }
   if (verified.deferred !== undefined) return { ...checked, outcome: "deferred", reason: verified.deferred, problems: verified.problems };
   if (verified.problems.length > 0) return { ...checked, outcome: "verification-failed", problems: verified.problems };
-  const content = { ...verified.content, body: withPlanSection(verified.content.body, verified.plan) };
+  const published = tracked === undefined ? verified.content : trackingContent(verified.content, tracked.issue, tracked.attempt !== undefined);
+  const content = { ...published, body: withPlanSection(published.body, verified.plan) };
   if (reusable !== undefined) {
     const { pr } = await publishUpdate(publication, prepared, reusable.number, content, 0);
-    return { ...checked, outcome: "updated", pullRequest: pr.url };
+    return { ...checked, outcome: "updated", pullRequest: pr.url, number: pr.number };
   }
   const created = await publishNew(publication, prepared, content);
   return created === undefined
     ? { ...checked, outcome: "nothing-changed", summary: answer.summary }
-    : { ...checked, outcome: "published", pullRequest: created.url };
+    : { ...checked, outcome: "published", pullRequest: created.url, number: created.number };
 }
 
-/** The plan's branch: the reused PR's, captured with its history and redone from a clean, detached base; or a fresh one. */
-function preparePlan(execution: Execution, plan: ChangePlan, reusable: GitHubPullRequest | undefined, own: ReadonlyArray<GitHubPullRequest>, baseSha: string): Promise<PreparedBranch> {
+/** Which held versions an execution may take: the ones its issue allows, and any trusted package's. */
+async function admitted(base: Tree, allowed: ReadonlyArray<{ readonly ecosystem: string; readonly name: string; readonly version: string }>): Promise<(held: HeldVersion) => boolean> {
+  const { config } = await readSettings(base);
+  return (held) => isTrustedPackage(config.trustedPackages, held)
+    || allowed.some((young) => young.ecosystem === held.ecosystem && young.name === held.name && young.version === held.version);
+}
+
+/** How a unit's result ends (or continues) the early attempt it ran. */
+function attemptPatchOf(result: Readonly<Record<string, unknown>>): AttemptPatch {
+  switch (result["outcome"]) {
+    case "published":
+    case "updated":
+      return { pr: result["number"] as number };
+    case "cannot-apply":
+      return { outcome: "agent-refused" };
+    case "deferred":
+      return { outcome: "deferred" };
+    default:
+      return { outcome: "failed" };
+  }
+}
+
+/**
+ * `own` without the PRs taken early whose granted versions have all aged, each closed as review graduates one, its
+ * attempt ended and its label returned. Early is what the issue records (a running attempt that is the PR's), not the
+ * gate's cooldown, which can hold nothing for a version new only where it arrives. Only the tool's own drafts: one a
+ * person marked ready, or someone pushed to, stays theirs.
+ */
+async function withoutAgedEarly(execution: Execution, own: ReadonlyArray<GitHubPullRequest>, tracking: Tracking, config: ScanState["settings"]["config"]): Promise<GitHubPullRequest[]> {
+  const { context } = execution;
+  const eligibleAt = eligibleAtOf(execution, config);
+  const aged = async (pkg: PackageVersion) => {
+    if (isTrustedPackage(config.trustedPackages, pkg)) return true;
+    const at = await eligibleAt(pkg).catch(() => undefined);
+    return at !== undefined && Date.parse(at) <= context.now.getTime();
+  };
+  const kept: GitHubPullRequest[] = [];
+  for (const pr of own) {
+    const number = trackedIssueOf(pr.body);
+    const record = tracking.sync.tracked.find((issue) => issue.number === number)?.record;
+    const attempt = record?.attempts.find((entry) => entry.pr === pr.number && entry.outcome === undefined);
+    const grant = record?.grant;
+    const retire = number !== undefined && attempt !== undefined && grant?.labelEventId === attempt.grantEventId
+      && (await Promise.all(grant.young.map(aged))).every(Boolean) && pr.isDraft && (await inspectOwnership(execution.publication, pr)).kind === "ours";
+    if (!retire) {
+      kept.push(pr);
+      continue;
+    }
+    const closed = await closeAndDelete(execution.publication, pr.number, pr.headSha,
+      "Every version this PR was taken early for is now past the release-age wait. secure-it retires this draft: this run plans that work again from the default branch, with fresh checks.",
+      { onlyDraft: true });
+    if (closed === "not-draft") kept.push(pr);
+    else await settleAttempt(attemptClient(execution), number, attempt.id, { outcome: "pr-closed" });
+  }
+  return kept;
+}
+
+/** A plan's decision, as its issue's subject names it. */
+const decisionIdOf = (plan: ChangePlan) => subjectId({ kind: "decision", moves: decisionMoves(plan) });
+
+/** The issues and PRs an early attempt is settled with. */
+function attemptClient(execution: Execution): AttemptClient {
+  const { context } = execution;
+  return {
+    issues: context.issues, github: context.github, repo: context.repo.repo, clean: issueCleaner(context),
+    ours: (pr) => topicOf(RULES, pr.headRef) !== undefined && pr.headRepo?.toLowerCase() === context.repo.repo.toLowerCase() && (pr.body.includes(RULES.marker) || pr.labels.includes(RULES.label)),
+  };
+}
+
+/**
+ * The plan's branch: the reused PR's, captured with its history and redone from a clean, detached base; or a fresh one,
+ * the `reserved` one when an early attempt recorded it.
+ */
+function preparePlan(execution: Execution, plan: ChangePlan, reusable: GitHubPullRequest | undefined, own: ReadonlyArray<GitHubPullRequest>, baseSha: string, reserved?: string): Promise<PreparedBranch> {
   return prepareUnitBranch(execution.publication, {
     topic: plan.topic, reusable, own, taken: execution.branches, baseSha, now: execution.context.now, revert: execution.deps.revert,
+    ...(reserved === undefined ? {} : { reserved }),
   });
 }
 
@@ -824,6 +977,8 @@ interface VerifiedBatch {
   readonly rejected?: ReadonlyArray<string>;
   /** Why a retry didn't run: its plan may not execute now (`disposition`). The first attempt's problems stand. */
   readonly deferred?: string;
+  /** Young versions a comparison held that the execution's issue doesn't allow (`admits`); it stopped there. */
+  readonly unplanned?: ReadonlyArray<string>;
 }
 
 /**
@@ -831,7 +986,20 @@ interface VerifiedBatch {
  * from the base would lose), ask the agent once more for the same plan with the refusal. Then restart once from the
  * same base without named package groups; never shrink malware or guess an unnamed cause.
  */
-async function verifyWithRetry(execution: Execution, base: PlanBase, plan: ChangePlan, content: Content, options: { readonly retryRejected?: boolean } = {}): Promise<VerifiedBatch> {
+async function verifyWithRetry(
+  execution: Execution,
+  base: PlanBase,
+  plan: ChangePlan,
+  content: Content,
+  options: {
+    readonly retryRejected?: boolean;
+    /**
+     * Which young versions its issue lets this execution take. A comparison holding any other stops it there, failed
+     * or not: no retry runs what it found (`unplanned`).
+     */
+    readonly admits?: (held: HeldVersion) => boolean;
+  } = {},
+): Promise<VerifiedBatch> {
   const { context, deps, env, inventories } = execution;
   if (execution.npmFiles.size === 0 && plan.moves.some((move) => move.ecosystem === "npm")) {
     const window = await npmWindowFor(plan, context.releaseAgeDays, context.releaseAgeExclude, context.now, env.fetch, await lockfilesOf(base.tree));
@@ -841,14 +1009,21 @@ async function verifyWithRetry(execution: Execution, base: PlanBase, plan: Chang
   const heard = (evaluation: CooldownEvaluation) => {
     cooldown = evaluation;
   };
+  const unplannedIn = (): string[] => (options.admits === undefined || cooldown?.evaluated !== true
+    ? []
+    : cooldown.held.filter((held) => !options.admits!(held)).map((held) => `${held.name}@${held.version}`));
+  const stopped = (batch: Omit<VerifiedBatch, "deferred" | "unplanned">, found: string[]): VerifiedBatch =>
+    ({ ...batch, unplanned: found, deferred: `verification found young versions its issue doesn't allow: ${found.join(", ")}` });
   const first = await verifyEdit(context, deps, plan, env, inventories, base.tree, base.gradle, execution.npmFiles, heard);
+  const firstFound = unplannedIn();
+  if (firstFound.length > 0) return stopped({ plan, content, problems: first, named: [], leftOut: plan.leftOut ?? [] }, firstFound);
   if (first.length === 0) return withCooldown(env, base.tree, { plan, content, problems: first, named: [], leftOut: plan.leftOut ?? [] }, cooldown);
   let problems = first;
   let rejected: Pick<VerifiedBatch, "rejected"> = {};
   // Why the feedback attempt never reached a verification; the reduction then works from the first refusal.
   let unverified: string | undefined;
   if (options.retryRejected === true) {
-    const asked = await deps.disposition({ kind: "retry", plan });
+    const asked = await deps.disposition({ kind: "retry", plan, of: plan });
     if (asked.kind === "defer") return { plan, content, problems: first, named: [], leftOut: plan.leftOut ?? [], deferred: asked.reason };
     context.logger.warn("secure-it: asking the agent again with the verification's refusal", { problems });
     rejected = { rejected: first };
@@ -865,6 +1040,8 @@ async function verifyWithRetry(execution: Execution, base: PlanBase, plan: Chang
         problems = await verifyEdit(context, deps, plan, env, inventories, base.tree, base.gradle, execution.npmFiles, heard);
         // Only once verified, so the problems and the publication are always the same attempt's.
         content = again.publication;
+        const found = unplannedIn();
+        if (found.length > 0) return stopped({ plan, content, problems, named: [], leftOut: plan.leftOut ?? [], rejected: first }, found);
       }
     } catch (error) {
       unverified = `the attempt failed: ${error instanceof Error ? error.message : String(error)}`;
@@ -881,7 +1058,7 @@ async function verifyWithRetry(execution: Execution, base: PlanBase, plan: Chang
     unverified === undefined || batch.problems.length === 0 ? batch : { ...batch, problems: [...batch.problems, `asked again with that refusal, ${unverified}`] };
   const retry = retryWithoutNamed(plan, problems);
   if (retry.plan === undefined) return noted({ plan, content, problems, named: retry.named, leftOut: retry.leftOut, ...rejected });
-  const reduced = await deps.disposition({ kind: "retry", plan: retry.plan });
+  const reduced = await deps.disposition({ kind: "retry", plan: retry.plan, of: plan });
   if (reduced.kind === "defer") return noted({ plan, content, problems, named: retry.named, leftOut: retry.leftOut, ...rejected, deferred: reduced.reason });
   context.logger.warn("secure-it: retrying the routine without named package groups", { leftOut: retry.leftOut });
   let answer: SkillAnswer;
@@ -897,6 +1074,8 @@ async function verifyWithRetry(execution: Execution, base: PlanBase, plan: Chang
     assertNoPlanMarker(answer.publication.body);
     cooldown = undefined;
     remaining = [...await verifyEdit(context, deps, retry.plan, env, inventories, base.tree, base.gradle, execution.npmFiles, heard)];
+    const found = unplannedIn();
+    if (found.length > 0) return stopped({ plan: retry.plan, content: answer.publication, problems: remaining, named: retry.named, leftOut: retry.plan.leftOut ?? [], ...rejected }, found);
   } catch (error) {
     // After a feedback attempt, the report keeps its refusal whatever stopped the reduced one; otherwise as before.
     if (rejected.rejected === undefined) throw error;
@@ -1025,23 +1204,79 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
   const env = await deps.gate(context);
   const inventories = deps.gradle(context);
   const publication = publicationOf(context, deps);
-  const execution = { context, deps, env, inventories, publication, npmFiles: new Map<string, string>(), branches: new Set<string>(), heldReferences: new Map<string, Promise<ReadonlyArray<string>>>() };
+  // Trusted packages as the default branch configures them: their young versions in a PR need no grant.
+  const { config } = await readSettings(await deps.trees.commit(context.workingCopy, context.workingCopy.headSha));
+  const trusted = (pkg: { readonly ecosystem: SecurityFix["ecosystem"]; readonly name: string }) => isTrustedPackage(config.trustedPackages, pkg);
+  const open = await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base);
+  // The decisions open PRs were taken early for (never reduced: a retry without some of it is another decision) and,
+  // of those, the ones whose grant stands now: the only young work review runs before verifying (held preflights).
+  // Read once per tick, when first asked.
+  let early: ReturnType<typeof earlyDecisions> | undefined;
+  const decisions = () => (early ??= earlyDecisions(issues, open));
+  const governed: SecureItDeps = {
+    ...deps,
+    disposition: async (target) => {
+      if (target.kind === "preflight" && !(await decisions()).authorized.has(decisionIdOf(target.plan))) return { kind: "defer", reason: "review resolves young held work only for a PR taken early; a run decides the rest through its issue" };
+      if (target.kind === "retry" && target.of !== undefined && target.plan !== target.of && (await decisions()).taken.has(decisionIdOf(target.of))) return { kind: "defer", reason: "a decision taken early is retried whole or not at all" };
+      return deps.disposition(target);
+    },
+  };
+  const execution = { context, deps: governed, env, inventories, publication, npmFiles: new Map<string, string>(), branches: new Set<string>(), heldReferences: new Map<string, Promise<ReadonlyArray<string>>>() };
   const notes: Array<Readonly<Record<string, unknown>>> = [];
   const planFrom = (pr: GitHubPullRequest): ChangePlan => {
     const plan = planOf(pr.body);
     if (plan === undefined) throw new Error(`${pr.url} has no plan secure-it can read`);
     return plan;
   };
-  /** Verifies a reviewed PR's new content and publishes it with its plan section; what verification left out is noted. */
+  const issues: ReviewIssues = {
+    ...attemptClient(execution), now: context.now, trusted, eligibleAt: eligibleAtOf(execution, config),
+    retire: (pr, comment) => closeAndDelete(publication, pr.number, pr.headSha, comment, { onlyDraft: true }),
+  };
+  /**
+   * Verifies a reviewed PR's new content and publishes it with its plan section; what verification left out is noted.
+   * A PR tracking an issue keeps its `Tracks #N.` line whatever the agent rewrote, and publishes no young version it
+   * didn't already hold (or a trusted package's): a new one waits, said on the issue.
+   */
   const verifyAndPublish = async (pr: GitHubPullRequest, prepared: PreparedBranch, base: PlanBase, plan: ChangePlan, content: Content, failure: string, attempt?: number) => {
-    const verified = await verifyWithRetry(execution, base, plan, content);
+    const tracked = trackedIssueOf(pr.body);
+    const held = planOf(pr.body)?.cooldown ?? [];
+    const admits = (entry: HeldVersion) => issues.trusted(entry) || held.some((known) => known.ecosystem === entry.ecosystem && known.name === entry.name && known.version === entry.version);
+    const verified = await verifyWithRetry(execution, base, plan, content, tracked === undefined ? {} : { admits });
+    if (tracked !== undefined && verified.unplanned !== undefined) {
+      const unplanned = verified.unplanned;
+      await postNotice(issues, tracked, `unplanned-young:${pr.number}:${unplanned.join(",")}`,
+        `secure-it didn't update #${pr.number}: on the new base, verification found young versions it didn't hold before: ${unplanned.map((entry) => `\`${entry}\``).join(", ")}. It tries again on a later review, and goes ahead once they're past the wait.`);
+      return { deferred: `verification found young versions #${pr.number} didn't hold before: ${unplanned.join(", ")}` } as const;
+    }
     if (verified.deferred !== undefined) return { deferred: verified.deferred } as const;
     if (verified.leftOut.length > 0) notes.push({ number: pr.number, leftOut: verified.leftOut, named: verified.named });
     if (verified.problems.length > 0) throw new Error(`${failure}: ${verified.problems.join("; ")}`);
-    return publishUpdate(publication, prepared, pr.number, { ...verified.content, body: withPlanSection(verified.content.body, verified.plan) }, attempt);
+    if (tracked === undefined) return publishUpdate(publication, prepared, pr.number, { ...verified.content, body: withPlanSection(verified.content.body, verified.plan) }, attempt);
+    const published = trackingContent(verified.content, tracked, takenEarlyOf(pr.body));
+    return publishUpdate(publication, prepared, pr.number, { ...published, body: withPlanSection(published.body, verified.plan) }, attempt);
   };
+  // PRs taken early that are held while their granted versions are young, until when, from their disposition this tick.
+  const heldEarly = new Map<number, string>();
   const steps: ReviewSteps = {
-    cooldown: (pr) => cooldownState(planFrom(pr), context.now),
+    // A PR taken early graduates like any held PR once its versions aged: its next run plans that work afresh, in the
+    // batch it now belongs to, so no PR for the same packages is left beside it. While its granted versions are young it
+    // stays held, as its disposition (asked just before) found, even when its plan's cooldown holds nothing.
+    cooldown: (pr) => {
+      const planned = cooldownState(planFrom(pr), context.now);
+      const early = heldEarly.get(pr.number);
+      return planned?.kind === "waiting" || early === undefined ? planned : { kind: "waiting", until: early };
+    },
+    disposition: async (pr) => {
+      const plan = planOf(pr.body);
+      if (plan === undefined) return { kind: "proceed" };
+      const decided = await reviewDisposition(issues, pr, plan, isHeldPlan(plan));
+      if (decided.kind === "proceed" && decided.held !== undefined) heldEarly.set(pr.number, decided.held.until);
+      return decided;
+    },
+    closed: async (pr) => {
+      const plan = planOf(pr.body);
+      if (plan !== undefined) await reviewClosed(issues, pr, plan);
+    },
     async rebase(pr, merge: BaseMerge) {
       execution.npmFiles.clear();
       const previous = planFrom(pr);
@@ -1104,7 +1339,16 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       const plan = previous.kind === undefined ? { ...recomputed, kind: undefined, topic: previous.topic } : recomputed;
       if (plan.notes !== undefined && plan.notes.length > 0) notes.push({ number: pr.number, notes: plan.notes });
       const changed = planDigest(plan) !== planDigest(previous);
-      // Re-applying or verifying the plan on the new base executes it: asked first.
+      // Re-applying or verifying the plan on the new base executes it: asked first, and a PR taken early only as the
+      // decision its grant covered.
+      // The young versions the recomputed unit takes, as a run assesses them: none may run without a grant.
+      const young = (await youngOf(unit, plan, { trusted, eligibleAt: eligibleAtOf(execution, config), now: context.now }))
+        .filter((entry) => !trusted(entry)).map((entry) => `${entry.name}@${entry.version}`);
+      const scoped = await reviewExecution(issues, pr, previous, plan, young);
+      if (scoped.kind === "leave") {
+        notes.push({ number: pr.number, left: scoped.reason });
+        return "deferred";
+      }
       if ((await deps.disposition({ kind: "review", plan, pr: pr.number })).kind === "defer") return "deferred";
       const code: string[] = [];
       const restoredFiles = new Map<string, FileState>();
@@ -1217,4 +1461,113 @@ export function retirementOf(previous: ChangePlan, units: ReadonlyArray<Security
 
 function isHeldPlan(plan: ChangePlan): boolean {
   return !plan.malware && plan.kind === "routine" && isHeldTopic(plan.topic);
+}
+
+/** What the run's issue flow reads: the shared scan, its units planned from metadata, and what blocked others. */
+interface TrackingInputs {
+  readonly tree: Tree;
+  readonly scanned: ScanState;
+  readonly complete: boolean;
+  readonly units: ReadonlyArray<SecurityUnit>;
+  readonly blocked: Selection["blocked"];
+  readonly own: ReadonlyArray<GitHubPullRequest>;
+  readonly base: PlanBase;
+}
+
+/** Observes, assesses and syncs the tool's issues for this run (`issue-tracking.ts`). */
+async function trackIssues(execution: Execution, inputs: TrackingInputs): Promise<Tracking> {
+  const { context } = execution;
+  const today = context.now.toISOString().slice(0, 10);
+  const { config } = inputs.scanned.settings;
+  // A unit whose planning fails is left out, and the assessment is incomplete: its findings stay tracked (as
+  // unassessed) and no issue is retired for it. The unit itself fails when it runs, with that error.
+  const planned: PlannedUnit[] = [];
+  let complete = inputs.complete;
+  for (const unit of inputs.units) {
+    try {
+      planned.push({ unit, plan: await planUnit(execution, unit, inputs.base) });
+    } catch (error) {
+      complete = false;
+      context.logger.warn("secure-it: a unit can't be planned for its issue", { topic: unit.topic, error: asError(error).message });
+    }
+  }
+  const recorded = inputs.own.flatMap((pr) => {
+    const plan = planOf(pr.body);
+    return plan === undefined ? [] : [{ id: subjectId({ kind: "decision", moves: decisionMoves(plan) }), pr: { number: pr.number, url: pr.url } }];
+  });
+  const assessment = await assessmentOf({
+    sha: inputs.tree.id,
+    now: context.now,
+    complete,
+    observations: observationsOf(inputs.scanned, today),
+    units: planned,
+    blocked: inputs.blocked,
+    trusted: (pkg) => isTrustedPackage(config.trustedPackages, pkg),
+    eligibleAt: eligibleAtOf(execution, config),
+    prOf: (moves) => recorded.find((entry) => entry.id === subjectId({ kind: "decision", moves }))?.pr,
+  });
+  const sync = await syncIssues({ issues: context.issues, repo: context.repo.repo, clean: issueCleaner(context), ...(execution.deps.clock === undefined ? {} : { clock: execution.deps.clock }) }, assessment);
+  // Before any disposition: an attempt a previous run left running is settled from its PR, or ends as interrupted.
+  const recovered = await recoverAttempts(attemptClient(execution), sync.tracked);
+  for (const note of [...sync.notes, ...recovered]) context.logger.warn("secure-it: issues", { note });
+  // Labels where they authorize nothing are said so too, whether or not anything here would execute.
+  await inactiveLabelNotices({ issues: context.issues, repo: context.repo.repo, clean: issueCleaner(context) }, { assessment, sync });
+  return { assessment, sync };
+}
+
+/** When a version is past the repository's wait, from its registry publication; undefined when that can't be read. */
+function eligibleAtOf(execution: Execution, config: ScanState["settings"]["config"]): (pkg: { readonly ecosystem: SecurityFix["ecosystem"]; readonly name: string; readonly version: string }) => Promise<string | undefined> {
+  const catalogs = versionCatalogs(config, execution.env, new ActionsGitHub(execution.env.fetch, execution.env.githubToken));
+  return async (pkg) => {
+    const published = await catalogs[pkg.ecosystem].published(pkg);
+    return published === undefined ? undefined : new Date(published.getTime() + config.releaseAgeDays * 86_400_000).toISOString();
+  };
+}
+
+/** Local paths out of issue text, as publication keeps them out of PRs. */
+function issueCleaner(context: ToolRunContext): (body: string) => string {
+  const roots = { workingCopy: withCanonical([context.workingCopy.path]), other: machineRoots(context.config.dirs) };
+  return (body) => cleanBody(body, roots);
+}
+
+/**
+ * The run's disposition once its issues are known: units and their retries go by their decision's issue (a retry by
+ * its unit's own plan; a reduced plan of a decision taken early is a different decision, never authorized as one);
+ * floor removals and review steps keep the tool's default.
+ */
+function trackedDisposition(execution: Execution, tracking: Tracking, started: Map<string, { readonly issue: number; readonly attempt: string }>): SecureItDeps["disposition"] {
+  const client = { issues: execution.context.issues, repo: execution.context.repo.repo, clean: issueCleaner(execution.context), now: execution.context.now };
+  return async (target) => {
+    if (target.kind === "removal" || target.kind === "review") return execution.deps.disposition(target);
+    const own = target.of ?? target.plan;
+    // An early attempt publishes to the branch of the PR its unit reuses, or to one reserved for its grant alone.
+    const decided = await issueDisposition(tracking, own, client, (labelEventId) => target.branch ?? branchFor(RULES, client.now, `take-early-${labelEventId}`));
+    if (decided.kind === "proceed" && decided.tracked?.attempt !== undefined) started.set(own.topic, { issue: decided.tracked.issue, attempt: decided.tracked.attempt.id });
+    if (decided.kind === "defer" || target.of === undefined || target.plan === target.of) return decided;
+    const id = subjectId({ kind: "decision", moves: decisionMoves(own) });
+    const subject = tracking.assessment.subjects.find((entry) => subjectId(entry.subject) === id);
+    return subject?.status.kind === "eligible" ? decided : { kind: "defer", reason: "a decision taken early is retried whole or not at all" };
+  };
+}
+
+/**
+ * Ends an early attempt this run started for a unit that then failed (its preflight, its claim, or after publishing
+ * when recording the PR failed): one grant runs one attempt, and the issue says it ended rather than leaving it to read
+ * as running, unless a PR from it exists (`endAttempt`). A failure to write it is logged; the next run's recovery
+ * settles it from PR history.
+ */
+async function endStarted(execution: Execution, started: { readonly issue: number; readonly attempt: string } | undefined): Promise<void> {
+  if (started === undefined) return;
+  try {
+    await endAttempt(attemptClient(execution), started.issue, started.attempt);
+  } catch (error) {
+    execution.context.logger.warn("secure-it: an early attempt couldn't be ended", { issue: started.issue, error: asError(error).message });
+  }
+}
+
+/** Every unit deferred: the issues that decide them couldn't be read or written this run. */
+function untracked(execution: Execution, failure: Error): SecureItDeps["disposition"] {
+  return async (target) => (target.kind === "removal" || target.kind === "review"
+    ? execution.deps.disposition(target)
+    : { kind: "defer", reason: `the issues couldn't be synced: ${failure.message}` });
 }

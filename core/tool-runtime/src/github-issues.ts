@@ -11,6 +11,8 @@ const API_ORIGIN = "https://api.github.com";
 const PAGE_SIZE = 100;
 /** Hard stop on pagination: 1,000 issues, comments or events; past it a call fails rather than read part of a history. */
 const MAX_PAGES = 10;
+/** A tool's own issues, open and closed, for as long as it runs on a repository: 5,000 before it says so. */
+const ISSUE_PAGES = 50;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 /** GitHub logins: alphanumerics and single hyphens; `[bot]` suffixes appear on apps. */
@@ -56,10 +58,14 @@ export interface GitHubIssueEvent {
 export type RepositoryPermission = "admin" | "maintain" | "write" | "triage" | "read" | "none";
 
 export interface GitHubIssues {
-  /** Every issue (open and closed, never a PR) `creator` opened in `repo`. */
-  listIssues(args: { readonly repo: string; readonly creator: string }): Promise<ReadonlyArray<GitHubIssue>>;
+  /**
+   * Every issue (open and closed, never a PR) `creator` opened in `repo` with `label`. The label keeps the listing to the
+   * tool's own issues, so the login's PRs and other issues, however many, never fill its pages.
+   */
+  listIssues(args: { readonly repo: string; readonly creator: string; readonly label: string }): Promise<ReadonlyArray<GitHubIssue>>;
   getIssue(args: { readonly repo: string; readonly number: number }): Promise<GitHubIssue>;
-  createIssue(args: { readonly repo: string; readonly title: string; readonly body: string }): Promise<GitHubIssue>;
+  /** Opens an issue with `labels` (GitHub creates a label that doesn't exist yet). */
+  createIssue(args: { readonly repo: string; readonly title: string; readonly body: string; readonly labels: ReadonlyArray<string> }): Promise<GitHubIssue>;
   /** Changes only what's given: the body, and the state with GitHub's reason for a closing. */
   updateIssue(args: {
     readonly repo: string;
@@ -134,12 +140,12 @@ export function createGitHubIssues(options: CreateGitHubIssuesOptions): GitHubIs
    * Every page of a plain JSON array listing, until a short page. A full last page reads one more to know it was the
    * last: past the cap, only an empty one is accepted, so exactly the cap's worth still reads whole.
    */
-  async function paged<T>(operation: string, path: string, map: (value: unknown) => T | undefined): Promise<T[]> {
+  async function paged<T>(operation: string, path: string, map: (value: unknown) => T | undefined, maxPages = MAX_PAGES): Promise<T[]> {
     const items: T[] = [];
     for (let page = 1; ; page++) {
       const values = await ok(operation, `${path}${path.includes("?") ? "&" : "?"}per_page=${PAGE_SIZE}&page=${page}`);
       if (!Array.isArray(values)) throw new GitHubApiError(operation, "malformed listing");
-      if (page > MAX_PAGES && values.length > 0) throw new GitHubApiError(operation, `more than ${MAX_PAGES} pages`);
+      if (page > maxPages && values.length > 0) throw new GitHubApiError(operation, `more than ${maxPages} pages`);
       for (const value of values) {
         const item = map(value);
         if (item !== undefined) items.push(item);
@@ -149,13 +155,15 @@ export function createGitHubIssues(options: CreateGitHubIssuesOptions): GitHubIs
   }
 
   return {
-    async listIssues({ repo, creator }) {
+    async listIssues({ repo, creator, label }) {
       const operation = "listIssues";
       checkRepo(operation, repo);
       checkLogin(operation, creator);
-      // The issues listing includes PRs; those carry `pull_request` and are dropped.
-      return paged(operation, `/repos/${repo}/issues?state=all&creator=${encodeURIComponent(creator)}`, (value) =>
-        record(operation, value)["pull_request"] === undefined ? toIssue(operation, value) : undefined);
+      checkLabel(operation, label);
+      // The issues listing includes PRs; those carry `pull_request` and are dropped. A tool keeps every issue it opened
+      // (closed ones too, for dismissals), so its listing reads more pages than others: still all of them, or an error.
+      return paged(operation, `/repos/${repo}/issues?state=all&creator=${encodeURIComponent(creator)}&labels=${encodeURIComponent(label)}`, (value) =>
+        record(operation, value)["pull_request"] === undefined ? toIssue(operation, value) : undefined, ISSUE_PAGES);
     },
     async getIssue({ repo, number }) {
       const operation = "getIssue";
@@ -165,11 +173,12 @@ export function createGitHubIssues(options: CreateGitHubIssuesOptions): GitHubIs
       if (record(operation, value)["pull_request"] !== undefined) throw new GitHubApiError(operation, "not an issue");
       return toIssue(operation, value);
     },
-    async createIssue({ repo, title, body }) {
+    async createIssue({ repo, title, body, labels }) {
       const operation = "createIssue";
       checkRepo(operation, repo);
       checkText(operation, title, body);
-      return toIssue(operation, await ok(operation, `/repos/${repo}/issues`, { method: "POST", body: JSON.stringify({ title, body }) }));
+      for (const label of labels) checkLabel(operation, label);
+      return toIssue(operation, await ok(operation, `/repos/${repo}/issues`, { method: "POST", body: JSON.stringify({ title, body, labels }) }));
     },
     async updateIssue({ repo, number, body, state, stateReason }) {
       const operation = "updateIssue";
@@ -204,8 +213,7 @@ export function createGitHubIssues(options: CreateGitHubIssuesOptions): GitHubIs
       const operation = "removeLabel";
       checkRepo(operation, repo);
       checkNumber(operation, number);
-      // `.` and `..` survive encoding and would move the path to the issue's whole label collection, or above it.
-      if (label.length === 0 || label === "." || label === "..") throw new GitHubApiError(operation, "invalid label");
+      checkLabel(operation, label);
       const answer = await request(operation, `/repos/${repo}/issues/${number}/labels/${encodeURIComponent(label)}`, { method: "DELETE" });
       if (!(answer.body instanceof GitHubApiError)) return;
       if (answer.status !== 404) throw answer.body;
@@ -252,6 +260,11 @@ function checkNumber(operation: string, number: number): void {
 
 function checkLogin(operation: string, login: string): void {
   if (!LOGIN_PATTERN.test(login)) throw new GitHubApiError(operation, "invalid login");
+}
+
+function checkLabel(operation: string, label: string): void {
+  // `.` and `..` survive encoding and would move a path to the issue's whole label collection, or above it.
+  if (label.length === 0 || label.length > 50 || label === "." || label === "..") throw new GitHubApiError(operation, "invalid label");
 }
 
 function checkText(operation: string, title: string, body: string): void {
