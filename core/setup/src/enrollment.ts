@@ -88,7 +88,7 @@ export async function verifyTokens(
         if (typeof body?.default_branch === "string") branch = body.default_branch;
       } catch { /* Unknown visibility or branch cannot establish a permission. */ }
       const routes: Readonly<Record<string, string | undefined>> = {
-        metadata: `repos/${repo}`, contents: `repos/${repo}/contents`, pull_requests: `repos/${repo}/pulls?per_page=1`,
+        metadata: `repos/${repo}`, contents: `repos/${repo}/contents`, pull_requests: `repos/${repo}/pulls?per_page=1`, issues: `repos/${repo}/issues?per_page=1`,
         actions: `repos/${repo}/actions/runs?per_page=1`, statuses: branch === undefined ? undefined : `repos/${repo}/commits/${encodeURIComponent(branch)}/status`,
       };
       for (const permission of contribution.permissions) {
@@ -96,16 +96,20 @@ export async function verifyTokens(
         let status: PermissionResult["status"] = "unverified";
         let reason = "Read-only probes cannot prove this grant or absence of extra access; the real test run covers unverified permissions";
         const route = routes[permission.name];
-        if (required === "read") {
+        // A write grant includes reading: its read probe catches a token missing the permission altogether, while the
+        // write itself stays for the real test run to prove.
+        if (required === "read" || required === "write") {
           const denied = (code: number | undefined) => code !== undefined && [401, 403, 404].includes(code);
           const probe = authentication?.status === 200 && isPrivate && repository?.status === 200 && route !== undefined
             ? permission.name === "metadata" ? repository : await tokenRead(machine.fetch, token, route) : undefined;
           if (denied(authentication?.status) || denied(repository?.status) || denied(probe?.status)) {
             status = "fail";
             reason = "A required authenticated read was denied";
-          } else if (probe?.status === 200) {
+          } else if (probe?.status === 200 && required === "read") {
             status = "pass";
             reason = "Private-repository read capability verified";
+          } else if (probe?.status === 200) {
+            reason = "Private-repository read capability verified; the write grant is for the real test run to prove";
           }
         }
         permissions.push({ role, repo, permission: permission.name, required, status, reason });

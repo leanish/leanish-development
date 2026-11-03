@@ -15,6 +15,10 @@
   from before are closed with a link once an issue tracks their packages. Verification finding a young version planning
   didn't choose stops publication and says so on the issue. **secure-it's write PAT now needs Issues: read and write**
   ([adopting the tools](docs/adopting-tools.md)); without it a run executes nothing and says why.
+- `setup verify-tokens` checks secure-it's Issues permission, and probes write-level permissions with a read where one
+  exists (all but Workflows), on private repositories as before: a read GitHub denies (401, 403 or 404) now fails there
+  instead of at the first real run. A read that succeeds leaves the write grant unverified, for the real test run to
+  prove; it can't tell the grant apart from another permission that also allows that read.
 - Leaving malware, the security rule waits for a trusted package too: its clean replacement (direct or a carrier's)
   must be at least `releaseAgeDays` old, like anyone else's. A package that shipped malware can't vouch for its next
   release. With no clean version past the wait, the malware fix is blocked and reported, as for other packages.

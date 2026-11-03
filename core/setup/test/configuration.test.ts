@@ -37,7 +37,8 @@ describe("owner installations", () => {
     const contribution = (await descriptor(tool)).descriptor;
     expect(contribution.schedule).toMatchObject({ frequency: tool === "bump-it" ? "weekly" : "daily" });
     expect(contribution.permissions.map(({ name, write, read }) => [name, write, read])).toEqual([
-      ["contents", "write", "read"], ["pull_requests", "write", "read"], ["workflows", "write", "none"], ["actions", "read", "read"],
+      ["contents", "write", "read"], ["pull_requests", "write", "read"], ...(tool === "secure-it" ? [["issues", "write", "none"]] : []),
+      ["workflows", "write", "none"], ["actions", "read", "read"],
       ["statuses", "read", "read"], ["metadata", "read", "read"], ["checks", "none", "none"],
     ]);
     expect((await configure(selected, home)).status).toBe("already-done");

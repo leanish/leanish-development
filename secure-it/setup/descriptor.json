@@ -8,6 +8,7 @@
   "permissions": [
     { "name": "contents", "label": "Contents", "write": "write", "read": "read" },
     { "name": "pull_requests", "label": "Pull requests", "write": "write", "read": "read" },
+    { "name": "issues", "label": "Issues", "write": "write", "read": "none" },
     { "name": "workflows", "label": "Workflows", "write": "write", "read": "none" },
     { "name": "actions", "label": "Actions", "write": "read", "read": "read" },
     { "name": "statuses", "label": "Commit statuses", "write": "read", "read": "read" },

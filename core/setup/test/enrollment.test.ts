@@ -55,7 +55,7 @@ describe("human-only secret enrollment", () => {
         name: `leanish-${tool}-${role}-acme`, target_name: "acme", expires_in: "90",
         description: `${tool} ${role} token for acme, stored in Keychain as leanish-${tool}-acme-${role}. Select only the opted-in repositories.`,
         ...(role === "write"
-          ? { contents: "write", pull_requests: "write", workflows: "write", actions: "read", statuses: "read", metadata: "read" }
+          ? { contents: "write", pull_requests: "write", ...(tool === "secure-it" ? { issues: "write" } : {}), workflows: "write", actions: "read", statuses: "read", metadata: "read" }
           : { contents: "read", pull_requests: "read", actions: "read", statuses: "read", metadata: "read" }),
       });
     }
@@ -127,6 +127,25 @@ describe("human-only secret enrollment", () => {
     expect(value.status).toBe("blocked");
     expect(value.data?.permissions).toContainEqual(expect.objectContaining({ permission: "contents", required: "read", status: "fail" }));
     expect(JSON.stringify(value)).not.toContain(WRITE);
+  });
+
+  it("probes a write grant with a read, leaving the write itself unverified", async () => {
+    const secureIt = { tool: "secure-it" as const, owner: "acme" };
+    await configure({ ...secureIt, repos: ["acme/one"], agent: "codex", name: "Dev", email: "dev@example.com" }, home);
+    const fake = machine();
+    const value = await verifyTokens(secureIt, home, fake);
+    expect(value.status).toBe("already-done");
+    expect(value.data?.permissions).toContainEqual(expect.objectContaining({
+      role: "write", permission: "issues", required: "write", status: "unverified", reason: expect.stringContaining("read capability verified"),
+    }));
+    expect(value.data?.permissions).toContainEqual(expect.objectContaining({ role: "read", permission: "issues", required: "none", status: "unverified" }));
+    const issueReads = fake.fetch.mock.calls.filter(([url]) => String(url).includes("/repos/acme/one/issues"));
+    expect(issueReads.map(([, init]) => (init?.headers as Record<string, string>)["Authorization"])).toEqual([`Bearer ${WRITE}`]);
+    const fetcher = fake.fetch.getMockImplementation()!;
+    fake.fetch.mockImplementation(async (url, init) => String(url).includes("/issues") ? new Response("{}", { status: 403 }) : fetcher(url, init));
+    const denied = await verifyTokens(secureIt, home, fake);
+    expect(denied.status).toBe("blocked");
+    expect(denied.data?.permissions).toContainEqual(expect.objectContaining({ role: "write", permission: "issues", required: "write", status: "fail" }));
   });
 
   it("marks empty tokens as failed permissions and does not contact GitHub", async () => {
