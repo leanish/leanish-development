@@ -14,8 +14,8 @@
  * the lowest such version at least `releaseAgeDays` old, else the lowest (trusted
  * packages skip the wait). A choice outside the version's own line is a
  * `major` move: the code may need adapting. A malicious version moves to the
- * nearest clean version at least `releaseAgeDays` old (trusted packages: any
- * age): newer in its line first, then older in its line (a downgrade), then
+ * nearest clean version at least `releaseAgeDays` old, trusted packages
+ * included: newer in its line first, then older in its line (a downgrade), then
  * newer lines. An npm choice whose publisher identity `compare` would reject
  * keeps that as a blocker: a reviewed `identity` exception is the way through.
  *
@@ -58,8 +58,8 @@ export interface SecurityMove {
   /** The compatible line it's in. */
   readonly line: string;
   /**
-   * Whether the gate leaves it unheld (not `isYoung`): at least `releaseAgeDays` old, or a trusted package, which never
-   * waits. False for the lowest fix when no fix in its line is that old yet.
+   * Whether the gate leaves it unheld (not `isYoung`): at least `releaseAgeDays` old, or a trusted package, which waits only
+   * when leaving malware. False for the lowest fix when no fix in its line is that old yet.
    */
   readonly aged: boolean;
   /** Outside the current version's line: the code may need adapting. */
@@ -419,12 +419,16 @@ async function chooseMove(
     const order = preferred(fixing);
     // The same order over every candidate, vetoed ones included: where each veto sits relative to the choice.
     const tried = preferred(moves);
-    // Trusted packages skip the wait here too; the version must still be clean.
-    if (trusted && order.length > 0) return move(order[0]!, true, tried);
+    // Trusted packages wait here too: a package that shipped malware can't vouch for its next release.
+    let undated = false;
     for (const version of order) {
-      if (await isAged({ ...name, version }, catalog, config, now)) return move(version, true, tried);
+      const published = await catalog.published({ ...name, version });
+      if (published === undefined) undated = true;
+      else if (hasAged(published, config.releaseAgeDays, now)) return move(version, true, tried);
     }
-    return none(`no clean version of ${pkg.name} at least ${config.releaseAgeDays} days old to leave the malicious ${pkg.version} for`);
+    // Waiting doesn't help a version without a date the gate trusts (an action without an immutable release): say so.
+    const why = undated ? ", and a clean version without a publish date the gate can trust (an action without an immutable release, say) can't prove it" : "";
+    return none(`no clean version of ${pkg.name} at least ${config.releaseAgeDays} days old to leave the malicious ${pkg.version} for${why}`);
   }
   // A refusal names what unreviewed advisories alone ruled out, judged against the targets it names.
   const refused = (why: string, named: ReadonlyArray<string>) => none(`${why}${vetoNote(vetoesOf(snapshot, name, pkg.version, named, moves))}`);

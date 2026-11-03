@@ -215,6 +215,18 @@ describe("choosing a carrier version", () => {
       const { services } = setup({ "2.10.0": { days: 1, bundle: clean } });
       expect(await chooseCarrier(malwareSearch(["2.10.0"]), services)).toMatchObject({ kind: "none" });
     });
+
+    it("never takes a young version for a trusted carrier either", async () => {
+      const { services } = setup({ "2.8.0": { days: 90, bundle: clean }, "2.10.0": { days: 1, bundle: clean } });
+      const trusted = { ...malwareSearch(["2.8.0", "2.10.0"]), trustedPackage: true };
+      expect(await chooseCarrier(trusted, services)).toMatchObject({ version: "2.8.0", aged: true });
+      expect(await chooseCarrier({ ...malwareSearch(["2.10.0"]), trustedPackage: true }, services)).toMatchObject({ kind: "none" });
+    });
+
+    it("can't decide for a trusted carrier whose candidate has no publish time, as for any other", async () => {
+      const { services } = setup({ "2.10.0": { bundle: clean } });
+      expect(await chooseCarrier({ ...malwareSearch(["2.10.0"]), trustedPackage: true }, services)).toMatchObject({ kind: "incomplete" });
+    });
   });
 });
 

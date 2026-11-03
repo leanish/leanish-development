@@ -68,7 +68,7 @@ export interface CarrierSearch {
   readonly malicious: boolean;
   /** Candidate versions, ascending (`movesFrom`, `any` direction for malware). */
   readonly versions: ReadonlyArray<string>;
-  /** Trusted packages skip the wait. */
+  /** Trusted packages skip the wait for ordinary fixes; leaving malware they wait too. */
   readonly trustedPackage: boolean;
 }
 
@@ -148,16 +148,15 @@ async function leaveMalware(search: CarrierSearch, services: CarrierServices, st
   const newer = search.versions.filter((version) => isAbove(version, search.from));
   const order = [...newer.filter(sameLine), ...search.versions.filter((version) => !isAbove(version, search.from) && sameLine(version)).reverse(), ...newer.filter((version) => !sameLine(version))];
   for (const version of order) {
-    if (!search.trustedPackage) {
-      const age = await ageOf(search, services, version);
-      if (age === undefined) return incomplete(`the publish time of ${search.carrier}@${version} is unknown`);
-      if (age < services.config.releaseAgeDays) continue;
-    }
+    // A trusted carrier waits here too: a package that shipped malware can't vouch for its next release.
+    const age = await ageOf(search, services, version);
+    if (age === undefined) return incomplete(`the publish time of ${search.carrier}@${version} is unknown`);
+    if (age < services.config.releaseAgeDays) continue;
     const verdict = await state.fixes(version, [version]);
     if (verdict.kind === "incomplete") return verdict;
-    if (verdict.fixes) return state.chosen(version, line(version), !search.trustedPackage, order);
+    if (verdict.fixes) return state.chosen(version, line(version), true, order);
   }
-  return { kind: "none", reason: `no clean ${search.carrier} version${search.trustedPackage ? "" : ` at least ${services.config.releaseAgeDays} days old`} to leave the malicious bundle of ${search.from} for`, vetoed: [] };
+  return { kind: "none", reason: `no clean ${search.carrier} version at least ${services.config.releaseAgeDays} days old to leave the malicious bundle of ${search.from} for`, vetoed: [] };
 }
 
 /** Reads bundles in batches and judges versions on one snapshot extended with each batch. */

@@ -402,13 +402,23 @@ describe("securityCandidates, regressions", () => {
     expect(found.fixes[0]?.severity).toBe("CRITICAL");
   });
 
-  it("lets a trusted package leave malware for a clean version however young", async () => {
+  it("makes a trusted package wait too when it leaves malware", async () => {
     const affected = { "@acme/lib@1.0.1": ["MAL-2026-2"] };
-    const registry = { "@acme/lib": { "1.0.1": OLD, "1.0.2": YESTERDAY } };
     const head = await tree({ "@acme/lib": "1.0.1" }, { ".github/supply-chain.json": JSON.stringify({ trustedPackages: { npm: { scopes: ["@acme"] } } }) });
-    const found = await securityCandidates(head, environment(affected, registry));
-    // The gate never holds a trusted package (it never waits), so its young fix isn't planned as held either.
-    expect(found.fixes[0]).toMatchObject({ malicious: true, to: { version: "1.0.2", aged: true } });
+    // A package that shipped malware can't vouch for its next release: the young 1.0.2 isn't taken, and nothing else is clean.
+    const young = { "@acme/lib": { "1.0.1": OLD, "1.0.2": YESTERDAY } };
+    const [blocked] = (await securityCandidates(head, environment(affected, young))).fixes;
+    expect(blocked).toMatchObject({ malicious: true, to: undefined });
+    expect(blocked?.problem).toContain("days old to leave the malicious 1.0.1");
+    // An older clean version that waited is taken instead: a downgrade in its line.
+    const withOlder = { "@acme/lib": { "1.0.0": OLD, "1.0.1": OLD, "1.0.2": YESTERDAY } };
+    const [fix] = (await securityCandidates(head, environment(affected, withOlder))).fixes;
+    expect(fix).toMatchObject({ malicious: true, to: { version: "1.0.0", aged: true } });
+    // A clean version without a publish date can't prove its age, however long one waits: the refusal says so.
+    const undated = { "@acme/lib": { "1.0.1": OLD, "1.0.2": "not a date" } };
+    const [refused] = (await securityCandidates(head, environment(affected, undated))).fixes;
+    expect(refused).toMatchObject({ malicious: true, to: undefined });
+    expect(refused?.problem).toContain("without a publish date the gate can trust");
   });
 
   it("keeps a publisher identity break the gate would reject as a blocker on the move", async () => {

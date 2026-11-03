@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed
+
+- Leaving malware, the security rule waits for a trusted package too: its clean replacement (direct or a carrier's)
+  must be at least `releaseAgeDays` old, like anyone else's. A package that shipped malware can't vouch for its next
+  release. With no clean version past the wait, the malware fix is blocked and reported, as for other packages.
+  Trusted packages still skip the wait for ordinary fixes. A clean version without a date the gate trusts (a trusted
+  action without an immutable release) can't prove its age, so it isn't taken either, and the refusal says why. This
+  is the tools' choice only: the gate still doesn't hold trusted packages, so a PR made by hand isn't refused for it.
+
 ## 0.10.1 - 2026-11-02
 
 ### Changed
