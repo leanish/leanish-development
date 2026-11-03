@@ -108,7 +108,9 @@ node core/setup/src/cli.ts release --candidate v0.7.0-rc.1
   including HTTP 401/403/404, or empty/identical tokens) and `unverified`
   (write/none levels, public reads or unavailable evidence), with fixed reasons,
   never credentials or HTTP diagnostics. Only authenticated private-repository
-  reads prove read capabilities. Any `fail` blocks (exit 1). Otherwise the result
+  reads prove read capabilities. A write level is probed with a read where the
+  permission has one: a denied read fails, and a read that succeeds leaves the
+  write grant `unverified`. Any `fail` blocks (exit 1). Otherwise the result
   is `already-done` (exit 0), with the unverified list in `data.unverified` and a
   reminder that the explicitly authorized real test run covers those permissions.
   This verifies available reads, not the whole PAT permission table.
