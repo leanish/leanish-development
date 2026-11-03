@@ -11,7 +11,7 @@ import { type SecurityCandidates, type SecurityFix, securityCandidates } from "@
 import { type CooldownEvaluation, heldUntil } from "@leanish/gate/cooldown";
 import type { NpmPeerPlanner } from "@leanish/gate/npm-peers";
 import { type EvidenceOptions, heldEvidence } from "@leanish/gate/advisory-evidence";
-import { type GateEnvironment, type GradleInputs, readSettings } from "@leanish/gate/gate";
+import { type GateEnvironment, type GradleInputs, readScanState, readSettings, type ScanState } from "@leanish/gate/gate";
 import { type GradleInventory, gradleLocation, gradleResolutionProblems, pinnedAmong, strictPinNote, strictPins } from "@leanish/gate/gradle";
 import { namingFailures } from "@leanish/gate/http";
 import { FileRepositoryAdvisoryCache } from "@leanish/tool-runtime/repository-advisory-cache";
@@ -57,6 +57,19 @@ import { namedProblems, retryWithoutNamed, type ProblemMoves } from "./retry.ts"
 import { referencePlan, verifyPlan, type VerifyInputs } from "./verify.ts";
 
 export const RULES = ownPullRequests("secure-it");
+
+/** What is about to execute: a unit's plan (applied, or preflighted), a verification's retry, a floor removal, a reviewed PR's. */
+export interface ExecutionTarget {
+  readonly kind: "unit" | "preflight" | "retry" | "removal" | "review";
+  readonly plan: ChangePlan;
+  /** The PR a review step works on. */
+  readonly pr?: number;
+}
+
+/** Whether a target may execute now; `defer` says why not, and stops it before anything runs. */
+export type Disposition = { readonly kind: "proceed" } | { readonly kind: "defer"; readonly reason: string };
+
+const PROCEED: Disposition = { kind: "proceed" };
 const SKILLS_DIR = fileURLToPath(new URL("../skills", import.meta.url));
 
 /** What the agent answers (the skill's output schema). */
@@ -76,7 +89,14 @@ export interface SecureItDeps {
   readonly gate: (context: ToolRunContext) => Promise<GateEnvironment>;
   readonly gradle: (context: ToolRunContext) => GradleInventories;
   readonly trees: { readonly commit: (workingCopy: WorkingCopy, sha: string) => Promise<Tree>; readonly working: (workingCopy: WorkingCopy) => Tree };
-  readonly candidates: (tree: Tree, env: GateEnvironment, gradle: GradleInputs) => Promise<SecurityCandidates>;
+  /** The tree's scan state (`readScanState`), read once and shared with candidate planning; absent, planning reads its own. */
+  readonly scan?: (tree: Tree, env: GateEnvironment, gradle: GradleInputs) => Promise<ScanState>;
+  readonly candidates: (tree: Tree, env: GateEnvironment, gradle: GradleInputs, scanned?: ScanState) => Promise<SecurityCandidates>;
+  /**
+   * Whether a plan may execute now: asked right before every step that would run its versions (a branch prepared for
+   * it, npm files materialized, a Gradle reference, the agent, a verification). `defer` stops it there, as an outcome.
+   */
+  readonly disposition: (target: ExecutionTarget) => Promise<Disposition>;
   readonly verify: (inputs: VerifyInputs) => Promise<string[]>;
   /** Records the working tree as the verification snapshot (`snapshotCandidate`), returning its commit. */
   readonly snapshot: (workingCopy: WorkingCopy) => Promise<string>;
@@ -110,7 +130,10 @@ export function defaultDeps(): SecureItDeps {
     },
     gradle: (context) => sandboxedGradleInventories(context.isolation, context.workingCopy),
     trees: { commit: (workingCopy, sha) => gitTree(workingCopy.path, sha, runProcess, workingCopy.gitDir), working: (workingCopy) => workingTree(workingCopy.path) },
+    scan: readScanState,
     candidates: securityCandidates,
+    // Every plan executes as it always did; the issue flow decides otherwise.
+    disposition: async () => PROCEED,
     npm: (context, args) => runSandboxed(context.isolation, { workingCopy: context.workingCopy, command: ["npm", ...args] }),
     verify: verifyPlan,
     snapshot: (workingCopy) => snapshotCandidate(workingCopy),
@@ -261,7 +284,8 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   const inventories = deps.gradle(context);
   const tree = await deps.trees.commit(context.workingCopy, context.workingCopy.headSha);
   const base = { tree, gradle: await inventories.ofCommit(tree) };
-  const found = await deps.candidates(tree, env, { head: base.gradle });
+  const scanned = await deps.scan?.(tree, env, { head: base.gradle });
+  const found = await deps.candidates(tree, env, { head: base.gradle }, scanned);
   // A fix that can't be decided (its publisher identity, a carrier's reads) is blocked like a refused one, but it's a
   // check that failed: reported as an error, so the run reads as one that broke, while the other units still go on.
   // Spread last in every result, so no unit's own keys can replace it.
@@ -423,6 +447,12 @@ function declaringLocations(gradle: GradleInventory | undefined, name: string): 
 }
 
 // Automatic floor removal, kept on purpose: docs/simplification-candidates.md#reviewed-and-kept-2026-10-16.
+/**
+ * Proves which security floors can go, by probing the base without them (npm and Gradle, unlocked). The probe is how
+ * secure-it learns what removing them would resolve, so no disposition precedes it: it runs only versions the base's
+ * own requirements select. A young one it resolves is a known limit, and the removal it proves still asks before
+ * executing (`runRemoval`, review's rebase).
+ */
 async function computeRemoval(execution: Execution, base: PlanBase): Promise<ComputedRemoval> {
   const pins = strictPins(base.gradle);
   // A floor declared with strictly(...) is the owner's pin too: it stays, whatever the proof would say.
@@ -456,6 +486,8 @@ async function runRemoval(execution: Execution, removal: ComputedRemoval, base: 
     await refreshText(execution, pr, plan);
     return { ...report, outcome: "already-open", pullRequest: pr.url };
   }
+  const disposition = await execution.deps.disposition({ kind: "removal", plan });
+  if (disposition.kind === "defer") return { ...report, outcome: "deferred", reason: disposition.reason };
   const reusable = owned[0] === undefined ? undefined : await repairOwnership(execution.publication, owned[0]);
   const prepared = await preparePlan(execution, plan, reusable, own, base.tree.id);
   const content = await applyRemoval(execution, removal);
@@ -533,6 +565,9 @@ async function preflightError(execution: Execution, unit: SecurityUnit, base: Pl
   try {
     const plan = await planUnit(execution, unit, base);
     if (!plan.moves.some((move) => move.ecosystem === "Maven")) return undefined;
+    // A preflight resolves the plan's Gradle reference: execution, so it asks first. A deferred unit isn't failed here;
+    // its run says it was deferred.
+    if ((await execution.deps.disposition({ kind: "preflight", plan })).kind === "defer") return undefined;
     const key = `${base.tree.id}:${planDigest(plan)}`;
     let checked = execution.heldReferences.get(key);
     if (checked === undefined) {
@@ -740,6 +775,8 @@ async function runUnit(
     await refreshText(execution, pr, plan);
     return { ...details, outcome: "already-open", pullRequest: pr.url };
   }
+  const disposition = await execution.deps.disposition({ kind: "unit", plan });
+  if (disposition.kind === "defer") return { ...details, outcome: "deferred", reason: disposition.reason };
   const reusable = owned[0] === undefined ? undefined : await repairOwnership(publication, owned[0]);
   const prepared = await preparePlan(execution, plan, reusable, own, base.tree.id);
   const input = await agentInput(execution, plan, base.tree, "apply");
@@ -751,6 +788,7 @@ async function runUnit(
     ...details, notes: verified.plan.notes ?? [], packages: verified.plan.packages, named: verified.named, leftOut: verified.leftOut,
     ...(verified.rejected === undefined ? {} : { rejected: verified.rejected }),
   };
+  if (verified.deferred !== undefined) return { ...checked, outcome: "deferred", reason: verified.deferred, problems: verified.problems };
   if (verified.problems.length > 0) return { ...checked, outcome: "verification-failed", problems: verified.problems };
   const content = { ...verified.content, body: withPlanSection(verified.content.body, verified.plan) };
   if (reusable !== undefined) {
@@ -784,6 +822,8 @@ interface VerifiedBatch {
   readonly leftOut: NonNullable<ChangePlan["leftOut"]>;
   /** What verification refused in the first attempt, when the agent was asked again with it. */
   readonly rejected?: ReadonlyArray<string>;
+  /** Why a retry didn't run: its plan may not execute now (`disposition`). The first attempt's problems stand. */
+  readonly deferred?: string;
 }
 
 /**
@@ -808,6 +848,8 @@ async function verifyWithRetry(execution: Execution, base: PlanBase, plan: Chang
   // Why the feedback attempt never reached a verification; the reduction then works from the first refusal.
   let unverified: string | undefined;
   if (options.retryRejected === true) {
+    const asked = await deps.disposition({ kind: "retry", plan });
+    if (asked.kind === "defer") return { plan, content, problems: first, named: [], leftOut: plan.leftOut ?? [], deferred: asked.reason };
     context.logger.warn("secure-it: asking the agent again with the verification's refusal", { problems });
     rejected = { rejected: first };
     try {
@@ -839,6 +881,8 @@ async function verifyWithRetry(execution: Execution, base: PlanBase, plan: Chang
     unverified === undefined || batch.problems.length === 0 ? batch : { ...batch, problems: [...batch.problems, `asked again with that refusal, ${unverified}`] };
   const retry = retryWithoutNamed(plan, problems);
   if (retry.plan === undefined) return noted({ plan, content, problems, named: retry.named, leftOut: retry.leftOut, ...rejected });
+  const reduced = await deps.disposition({ kind: "retry", plan: retry.plan });
+  if (reduced.kind === "defer") return noted({ plan, content, problems, named: retry.named, leftOut: retry.leftOut, ...rejected, deferred: reduced.reason });
   context.logger.warn("secure-it: retrying the routine without named package groups", { leftOut: retry.leftOut });
   let answer: SkillAnswer;
   let remaining: string[];
@@ -991,6 +1035,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
   /** Verifies a reviewed PR's new content and publishes it with its plan section; what verification left out is noted. */
   const verifyAndPublish = async (pr: GitHubPullRequest, prepared: PreparedBranch, base: PlanBase, plan: ChangePlan, content: Content, failure: string, attempt?: number) => {
     const verified = await verifyWithRetry(execution, base, plan, content);
+    if (verified.deferred !== undefined) return { deferred: verified.deferred } as const;
     if (verified.leftOut.length > 0) notes.push({ number: pr.number, leftOut: verified.leftOut, named: verified.named });
     if (verified.problems.length > 0) throw new Error(`${failure}: ${verified.problems.join("; ")}`);
     return publishUpdate(publication, prepared, pr.number, { ...verified.content, body: withPlanSection(verified.content.body, verified.plan) }, attempt);
@@ -1004,7 +1049,8 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       // Recomputed on the new base first: it may already have the fix, or need a different one.
       const base = await deps.trees.commit(context.workingCopy, baseSha);
       const baseGradle = await inventories.ofCommit(base);
-      const found = await deps.candidates(base, env, { head: baseGradle });
+      const scanned = await deps.scan?.(base, env, { head: baseGradle });
+      const found = await deps.candidates(base, env, { head: baseGradle }, scanned);
       if (found.incomplete.length > 0) throw new Error(`the new base's inventory is incomplete: ${found.incomplete.join("; ")}`);
       // A fix without a move because a check failed (its identity, a carrier's reads) isn't one the base no longer
       // needs. On any package, not only this PR's, since how fixes split into units (malware first) depends on all of
@@ -1020,6 +1066,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
           await closeAndDelete(publication, pr.number, pr.headSha, "The default branch no longer has removable security floors.");
           return "retired";
         }
+        if ((await deps.disposition({ kind: "review", plan: removal.plan, pr: pr.number })).kind === "defer") return "deferred";
         // Recompute unlocked on every changed base; dependency conflicts are resolved by reverting the old plan.
         await deps.revert(context.workingCopy, baseSha);
         const content = await applyRemoval(execution, removal);
@@ -1057,6 +1104,8 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       const plan = previous.kind === undefined ? { ...recomputed, kind: undefined, topic: previous.topic } : recomputed;
       if (plan.notes !== undefined && plan.notes.length > 0) notes.push({ number: pr.number, notes: plan.notes });
       const changed = planDigest(plan) !== planDigest(previous);
+      // Re-applying or verifying the plan on the new base executes it: asked first.
+      if ((await deps.disposition({ kind: "review", plan, pr: pr.number })).kind === "defer") return "deferred";
       const code: string[] = [];
       const restoredFiles = new Map<string, FileState>();
       if (changed) {
@@ -1093,8 +1142,8 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
         await prepareNpmFiles(execution, plan, base, true);
       }
       // Fixes remain (the recomputation said so): an edit that left the base as it was fails verification, it isn't retired.
-      await verifyAndPublish(pr, merge.prepared, { tree: base, gradle: baseGradle }, plan, content, "after merging the default branch");
-      return "rebased";
+      const published = await verifyAndPublish(pr, merge.prepared, { tree: base, gradle: baseGradle }, plan, content, "after merging the default branch");
+      return "deferred" in published ? "deferred" : "rebased";
     },
     async adapt(pr, prepared, _context, attempt, failingChecks) {
       execution.npmFiles.clear();
@@ -1103,6 +1152,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
         context.logger.warn("secure-it: floor-removal CI failure cannot be adapted", { number: pr.number, detail: "the proved removal cannot legitimately be edited" });
         return false;
       }
+      if ((await deps.disposition({ kind: "review", plan, pr: pr.number })).kind === "defer") return "deferred";
       const base = await deps.trees.commit(context.workingCopy, prepared.baseSha);
       const answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({
         entrypoint: "secure-it",
@@ -1110,8 +1160,9 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       });
       if (answer.outcome !== "applied" || answer.publication == null) return false;
       assertNoPlanMarker(answer.publication.body);
-      const { pushed } = await verifyAndPublish(pr, prepared, { tree: base, gradle: await inventories.ofCommit(base) }, plan, answer.publication, "the adaptation doesn't verify", attempt);
-      return pushed;
+      const published = await verifyAndPublish(pr, prepared, { tree: base, gradle: await inventories.ofCommit(base) }, plan, answer.publication, "the adaptation doesn't verify", attempt);
+      // Deferred after the agent ran (only a retry was): the attempt happened and counts, so it reports nothing pushed.
+      return "deferred" in published ? false : published.pushed;
     },
   };
   const reviewed = await reviewOpenPullRequests({ ...publication }, steps);
