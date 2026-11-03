@@ -125,9 +125,12 @@ interface FailingVersion {
   readonly severities: Array<string | undefined>;
 }
 
-/** The fix the rule picks for every version a full scan of `head` fails on. */
-export async function securityCandidates(head: Tree, env: GateEnvironment, gradle: GradleInputs = {}): Promise<SecurityCandidates> {
-  const state = await readScanState(head, env, gradle);
+/**
+ * The fix the rule picks for every version a full scan of `head` fails on. A caller that already read `head`'s scan
+ * state (`readScanState`, to observe its findings before planning can fail) passes it, so both rest on one snapshot.
+ */
+export async function securityCandidates(head: Tree, env: GateEnvironment, gradle: GradleInputs = {}, scanned?: ScanState): Promise<SecurityCandidates> {
+  const state = scanned ?? await readScanState(head, env, gradle);
   const { config, exceptions } = state.settings;
   const now = env.now();
   const today = now.toISOString().slice(0, 10);

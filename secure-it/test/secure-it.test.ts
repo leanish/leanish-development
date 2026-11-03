@@ -35,7 +35,8 @@ import { materializeInCopy } from "../src/npm-materialize.ts";
 import { requiredNpmPlan } from "../src/npm-required-plan.ts";
 import { environment, OLD, postcss, securityBatch } from "@leanish/gate/test/required-fixture";
 import { preservedFloors } from "../src/floor-checks.ts";
-import { defaultDeps, heldClaims, retirementOf, RULES, type SecureItDeps, secureIt, unitOf } from "../src/secure-it.ts";
+import type { ScanState } from "@leanish/gate/gate";
+import { defaultDeps, type ExecutionTarget, heldClaims, retirementOf, RULES, type SecureItDeps, secureIt, unitOf } from "../src/secure-it.ts";
 
 // Keep local security verification real; replace only the external scan.
 vi.mock("@leanish/gate/gate", async (original) => ({ ...await original<object>(), runCompare: vi.fn() }));
@@ -134,6 +135,7 @@ function harness(options: { prs?: GitHubPullRequest[]; fixes?: SecurityFix[]; ca
     npm: async () => ({ code: 0, stdout: "11.20.0\n", stderr: "" }),
     candidates: async () => ({ fixes: options.fixes ?? [vite()], incomplete: [], gaps: [], notes: options.candidateNotes ?? [], osvScannerVersion: "2.6.0" }),
     verify: async () => options.problems ?? [],
+    disposition: async () => ({ kind: "proceed" }),
     snapshot: async () => SNAPSHOT,
     candidateTree: async () => SNAPSHOT_TREE,
     changedBetween: async () => ["package.json", "package-lock.json"],
@@ -522,6 +524,44 @@ describe("secure-it run", () => {
     const h = harness({ fixes: [], candidateNotes: notes });
     expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "nothing-to-fix", notes });
     expect(h.agentCalls).toEqual([]);
+  });
+
+  it("reads the tree's scan state once and plans candidates on that same state", async () => {
+    const h = harness();
+    const state = { marker: "the run's one scan" } as unknown as ScanState;
+    const seen: unknown[] = [];
+    const deps = { ...h.deps, scan: async () => state, candidates: async (...args: Parameters<SecureItDeps["candidates"]>) => {
+      seen.push(args[3]);
+      return h.deps.candidates(...args);
+    } };
+    await secureIt(deps).run(h.context);
+    expect(seen).toEqual([state]);
+  });
+
+  it("asks before executing, and a deferred unit stops before its branch, npm files, agent and verification", async () => {
+    const asked: string[] = [];
+    const h = harness();
+    const deps = { ...h.deps, disposition: async (target: ExecutionTarget) => {
+      asked.push(target.kind);
+      return { kind: "defer" as const, reason: "waiting for the release-age wait" };
+    } };
+    expect(await secureIt(deps).run(h.context)).toMatchObject({ outcome: "deferred", reason: "waiting for the release-age wait" });
+    expect(asked).toEqual(["unit"]);
+    expect(h.agentCalls).toHaveLength(0);
+    expect(h.written).toEqual([]);
+    expect(h.github.calls.some((call) => call.startsWith("createPullRequest"))).toBe(false);
+  });
+
+  it("asks again before each retry's agent call, and a deferred retry keeps the first refusal without another agent call", async () => {
+    const asked: string[] = [];
+    const h = harness({ problems: ["vite at node_modules/vite is 8.3.2, not 8.3.3"] });
+    const deps = { ...h.deps, disposition: async (target: ExecutionTarget) => {
+      asked.push(target.kind);
+      return target.kind === "retry" ? { kind: "defer" as const, reason: "deferred" } : { kind: "proceed" as const };
+    } };
+    expect(await secureIt(deps).run(h.context)).toMatchObject({ outcome: "deferred", reason: "deferred", problems: ["vite at node_modules/vite is 8.3.2, not 8.3.3"] });
+    expect(asked).toEqual(["unit", "retry"]);
+    expect(h.agentCalls).toHaveLength(1);
   });
 
   it("publishes nothing when verification fails, the agent can't apply, nothing is fixable, or the inventory is incomplete", async () => {
@@ -1197,6 +1237,25 @@ describe("secure-it review", () => {
     expect(planOf(adapt.github.prs.get(pr.number)!.body)).toEqual(planOf(pr.body));
     expect(adapt.github.prs.get(pr.number)!.body).not.toContain(marker);
     expect(adapt.workspace.publications).toEqual([]);
+  });
+
+  it("asks before an adaptation, and a deferred one runs no agent", async () => {
+    const pr = await vitePr();
+    const h = harness({ prs: [pr] });
+    h.github.checks = RED;
+    const deps = { ...h.deps, disposition: async (target: ExecutionTarget) => (target.kind === "review" ? { kind: "defer" as const, reason: "no" } : { kind: "proceed" as const }) };
+    expect(await secureIt(deps).review(h.context)).toMatchObject({ reviewed: [{ outcome: "deferred" }] });
+    expect(h.agentCalls).toHaveLength(0);
+  });
+
+  it("counts an adaptation whose agent ran even when only its reduced retry is deferred", async () => {
+    const pr = await batchPr([vite(), leftPad()]);
+    const h = harness({ prs: [pr], problems: ["vite at node_modules/vite is 8.3.2, not 8.3.3"] });
+    h.github.checks = RED;
+    const deps = { ...h.deps, disposition: async (target: ExecutionTarget) => (target.kind === "retry" ? { kind: "defer" as const, reason: "no" } : { kind: "proceed" as const }) };
+    expect(await secureIt(deps).review(h.context)).toMatchObject({ reviewed: [{ outcome: "adaptation-unchanged", detail: "attempt 1 of 2" }] });
+    expect(h.agentCalls).toHaveLength(1);
+    expect(stateOf(h.github.prs.get(pr.number)!.body)?.adaptations).toBe(1);
   });
 
   it("publishes the adaptation's new title, verdict and checks with its plan", async () => {
