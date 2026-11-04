@@ -1129,6 +1129,21 @@ describe("bump-it review", () => {
     expect(await bumpIt(code.deps).review(code.context)).toMatchObject({ reviewed: [{ outcome: "rebased" }] });
     expect(code.agentCalls).toMatchObject([{ input: { mode: "resolve", conflicted: ["src/lib.ts"] } }]);
   });
+  it("keeps a gate-cooldown-only failure a draft without spending an adaptation", async () => {
+    const h = harness({ prs: [await prFor(major())] });
+    h.github.checks = { source: "actions-jobs", checkRuns: [
+      { name: "supply-chain / supply-chain", status: "completed", conclusion: "success" },
+      { name: "supply-chain / cooldown", status: "completed", conclusion: "failure", steps: [
+        { name: "Evaluate the cooldown", status: "completed", conclusion: "success" },
+        { name: "Hold the young versions", status: "completed", conclusion: "failure" },
+      ] },
+    ], statuses: [] };
+    expect(await bumpIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ outcome: "held", detail: "by the gate's cooldown under the base's current wait" }] });
+    expect(h.github.prs.get(7)!.isDraft).toBe(true);
+    expect(stateOf(h.github.prs.get(7)!.body)!.adaptations).toBe(0);
+    expect(h.agentCalls).toEqual([]);
+    expect(h.workspace.publications).toEqual([]);
+  });
   it("routine failures do not adapt; a major adapts with the attempt marker", async () => {
     const routineFail = harness({ prs: [await prFor(routine())] }); routineFail.github.checks = RED;
     expect(await bumpIt(routineFail.deps).review(routineFail.context)).toMatchObject({ reviewed: [{ outcome: "adaptation-unchanged" }] });

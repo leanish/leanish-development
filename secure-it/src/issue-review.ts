@@ -4,10 +4,8 @@
  * - A PR taken early (its issue records a running attempt that is this PR's) goes on only while the grant that started
  *   it stands: the `take-early` label still there, its reason unedited, its labeler still a writer, and the decision
  *   taking no young version the grant didn't cover. Otherwise it's left to the owner, which the issue says once. Once
- *   every version it was taken early for is past the wait, it's retired, as a held PR graduates.
- * - A held draft from before issues (its plan held, tracking no issue) is closed with a link to the issue that now
- *   tracks its packages, only once such an issue exists: until a run opens one, it's left as it is.
- * - Everything else goes on as before.
+ *   every version it was taken early for is past the wait, it's retired and its attempt ends.
+ * - A version PR without an issue line is left to the owner; nothing migrates it.
  *
  * Issue numbers come from the PR's own line (`Tracks #N.`), and a tracked issue counts only when the tool opened it and
  * its record is this PR's decision: a body someone edited can't point review at another issue.
@@ -21,9 +19,9 @@ import { decisionMoves } from "./issue-assessment.ts";
 import type { AttemptClient } from "./issue-attempts.ts";
 import { settleAttempt } from "./issue-attempts.ts";
 import { grantOf } from "./issue-grant.ts";
-import { type Attempt, type Grant, type IssueRecord, subjectId, subjectPackages, type YoungVersion } from "./issue-model.ts";
+import { type Attempt, type Grant, type IssueRecord, subjectId, type PackageVersion, type YoungVersion } from "./issue-model.ts";
 import { postNotice } from "./issue-notices.ts";
-import { ISSUE_LABEL, recordOf } from "./issue-text.ts";
+import { recordOf } from "./issue-text.ts";
 import { planOf } from "./plan-block.ts";
 import type { ChangePlan } from "./plan.ts";
 
@@ -32,7 +30,7 @@ export interface ReviewIssues extends AttemptClient {
   /** Whether a package is trusted (`trustedPackages`): its young versions are a trusted exception, needing no grant. */
   readonly trusted: (pkg: { readonly ecosystem: Ecosystem; readonly name: string }) => boolean;
   /**
-   * Closes a legacy held draft with `comment`, deleting its branch (`closeAndDelete`), only while it's still a draft
+   * Closes a PR taken early with `comment`, deleting its branch (`closeAndDelete`), only while it's still a draft
    * when re-read: "not-draft" when a person marked it ready meanwhile.
    */
   readonly retire: (pr: GitHubPullRequest, comment: string) => Promise<"closed" | "not-draft">;
@@ -43,11 +41,13 @@ export interface ReviewIssues extends AttemptClient {
 /**
  * Whether review goes on with a PR. A PR taken early whose granted versions are still young goes on `held` until the
  * last of them ages ("unknown" when a date can't be read): kept a draft whatever its plan's cooldown holds, so it
- * never becomes ready before then, and a person marking it ready takes it over.
+ * never becomes ready before then, and a person marking it ready takes it over. `young` is what its standing grant
+ * covers this tick: the young versions verification may admit for it (none for an ordinary PR).
  */
 export type ReviewDisposition =
-  | { readonly kind: "proceed"; readonly held?: { readonly until: string } }
-  | { readonly kind: "leave"; readonly reason: string };
+  | { readonly kind: "proceed"; readonly held?: { readonly until: string }; readonly young?: ReadonlyArray<PackageVersion> }
+  | { readonly kind: "leave"; readonly reason: string }
+  | { readonly kind: "graduated"; readonly reason: string };
 
 const TRACKS = /^Tracks #(\d+)(, taken early)?\.$/gm;
 
@@ -98,9 +98,9 @@ async function stillYoung(client: ReviewIssues, grant: Grant): Promise<YoungVers
   return young;
 }
 
-export async function reviewDisposition(client: ReviewIssues, pr: GitHubPullRequest, plan: ChangePlan, held: boolean): Promise<ReviewDisposition> {
+export async function reviewDisposition(client: ReviewIssues, pr: GitHubPullRequest, plan: ChangePlan): Promise<ReviewDisposition> {
   const number = trackedIssueOf(pr.body);
-  if (number === undefined) return held ? migrate(client, pr, plan) : { kind: "proceed" };
+  if (number === undefined) return { kind: "leave", reason: "it tracks no issue; close it by hand and run secure-it again" };
   const scope = await scopeOf(client, pr, plan, number);
   // A PR taken early that its issue can't confirm (gone, unreadable, no running attempt) fails closed: nothing on it
   // says it's ordinary now. Any other without its issue, or with no early attempt there, is an ordinary PR: fine while
@@ -112,23 +112,18 @@ export async function reviewDisposition(client: ReviewIssues, pr: GitHubPullRequ
     return youngIn(client, plan).length === 0 && !takenEarlyOf(pr.body) ? { kind: "proceed" } : leave(client, number, `no-attempt:${pr.number}`, pr, "no running early attempt on its issue is this PR's");
   }
   const young = await stillYoung(client, scope.grant);
-  if (young.length === 0) return graduated(client, pr, plan, scope);
+  if (young.length === 0) return graduated(client, pr, scope);
   const standing = await grantFor(client, scope, young);
-  if (standing.kind === "stands") return { kind: "proceed", held: { until: latest(young) } };
+  if (standing.kind === "stands") return { kind: "proceed", held: { until: latest(young) }, young: standing.grant.young };
   return leave(client, number, `left:${pr.number}:${standing.key}`, pr, standing.why);
 }
 
-/**
- * A PR taken early whose granted versions all aged: its plan's cooldown graduates it when it holds them; one whose
- * plan holds nothing (the gate saw them elsewhere in the repository) is retired here the same way, and its attempt
- * ends, so a run never opens a second PR for that work beside it.
- */
-async function graduated(client: ReviewIssues, pr: GitHubPullRequest, plan: ChangePlan, scope: Scope & { readonly kind: "early" }): Promise<ReviewDisposition> {
-  if ((plan.cooldown ?? []).length > 0) return { kind: "proceed" };
+/** Retires a PR whose granted versions all aged, before any branch or CI work, and ends its attempt. */
+async function graduated(client: ReviewIssues, pr: GitHubPullRequest, scope: Scope & { readonly kind: "early" }): Promise<ReviewDisposition> {
   const retired = await client.retire(pr, "Every version this PR was taken early for is now past the release-age wait. secure-it retires this draft: its next run plans that work again from the default branch, with fresh checks.");
   if (retired === "not-draft") return { kind: "leave", reason: "a person marked the held PR ready" };
   await settleAttempt(client, scope.number, scope.attempt.id, { outcome: "pr-closed" });
-  return { kind: "leave", reason: "graduated: every version it was taken early for aged" };
+  return { kind: "graduated", reason: "every version it was taken early for aged" };
 }
 
 /** When the last of `young` ages: "unknown" when any date can't be read. */
@@ -247,20 +242,4 @@ async function trackedIssue(client: ReviewIssues, number: number, plan: ChangePl
 async function leave(client: ReviewIssues, number: number, noticeId: string, pr: GitHubPullRequest, why: string): Promise<ReviewDisposition> {
   await postNotice(client, number, noticeId, `secure-it leaves #${pr.number} to you: ${why}. It won't update, adapt or mark it ready; close it, or merge it if you still want it.`);
   return { kind: "leave", reason: why };
-}
-
-/** A legacy held draft: closed with a link once the tool has an open issue for one of its packages; left until then. */
-async function migrate(client: ReviewIssues, pr: GitHubPullRequest, plan: ChangePlan): Promise<ReviewDisposition> {
-  // A person who marked it ready took it over: it stays theirs, as any held PR marked ready does.
-  if (!pr.isDraft) return { kind: "leave", reason: "a person marked the held PR ready" };
-  const login = await client.issues.login();
-  const packages = new Set(plan.moves.map((move) => `${move.ecosystem}|${move.name}`));
-  const tracking = (await client.issues.listIssues({ repo: client.repo, creator: login, label: ISSUE_LABEL })).filter((issue) => {
-    const record = issue.state === "open" ? recordOf(issue.body) : undefined;
-    return record !== undefined && record.pendingClose === undefined && subjectPackages(record.subject).some((pkg) => packages.has(`${pkg.ecosystem}|${pkg.name}`));
-  });
-  if (tracking.length === 0) return { kind: "leave", reason: "a held draft from before issues; a run opens the issue that replaces it" };
-  const links = tracking.map((issue) => `#${issue.number}`).sort().join(", ");
-  const retired = await client.retire(pr, `secure-it now tracks these fixes in ${links}: a fix that needs a version younger than the wait waits there, and a PR opens once it's past the wait (or on a \`take-early\` label). This held draft is closed in favour of that.`);
-  return { kind: "leave", reason: retired === "closed" ? `closed: replaced by ${links}` : "a person marked the held PR ready" };
 }

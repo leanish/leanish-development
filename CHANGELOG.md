@@ -11,10 +11,17 @@
   that decision, once per label, and says on the issue whenever it won't. Issues are never edited into another
   decision: a changed one opens a new issue and closes the old as superseded, a finding no complete scan sees any more
   closes its issue as resolved, and an issue a person closes stays dismissed. PRs say `Tracks #N.` rather than closing
-  their issue. A PR taken early is retired once its versions aged, as held drafts were, and its attempt ends; held drafts
-  from before are closed with a link once an issue tracks their packages. Verification finding a young version planning
-  didn't choose stops publication and says so on the issue. **secure-it's write PAT now needs Issues: read and write**
+  their issue. A PR taken early is retired once its granted versions aged, and its attempt ends. Verification finding
+  a young version planning didn't choose stops publication and says so on the issue. **secure-it's write PAT now needs Issues: read and write**
   ([adopting the tools](docs/adopting-tools.md)); without it a run executes nothing and says why.
+- secure-it review holds early PRs by their issue's grant, including when the gate held nothing in their recorded
+  plan. Graduation closes the draft and settles its attempt before branch or CI work. Verification admits only the
+  grant's young versions and trusted packages; recorded cooldown warnings and evidence remain visible. bump-it and
+  ordinary PRs still wait when only the gate's cooldown holds them.
+- Before upgrading from earlier versions or release candidates, close obsolete secure-it version-fix PRs and issues
+  by hand, keeping any human changes you need, then run secure-it to create current decision issues. Nothing is
+  migrated; authorize waiting decisions again if needed. Review leaves version-fix PRs without `Tracks` to the owner.
+  Floor-removal PRs intentionally track no issue and keep their separate review behavior.
 - `setup verify-tokens` checks secure-it's Issues permission, and probes write-level permissions with a read where one
   exists (all but Workflows), on private repositories as before: a read GitHub denies (401, 403 or 404) now fails there
   instead of at the first real run. A read that succeeds leaves the write grant unverified, for the real test run to

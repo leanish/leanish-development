@@ -71,7 +71,12 @@ package is the code around them. Setup and operation are in [Adopting the tools]
      and description with the agent's new verdict and check results, keeping the verified plan and publication state
      markers.
 
-  Steps 1 and 3 use no model. A PR held by the gate's cooldown stays a draft rather than counting as a failure; see
+  The tool's disposition runs after ownership recovery, before branch or CI work. It may leave the PR alone, report
+  a graduation it completed, or proceed with `held.until`: display text that keeps a draft from becoming ready on
+  green or cooldown-only CI. The runtime calculates no release ages. A person who marked a held PR ready owns it.
+  Other CI failures still adapt, and base movement still recomputes the plan.
+
+  Steps 1 and 3 use no model. A PR held only by the gate's cooldown stays a draft without spending an adaptation; see
   [requirements](../../docs/requirements.md). A problem with one PR doesn't stop the others.
 - **The command** (`command.ts`): `<tool> run|review <owner/repo> [--config <file>]`. It reads both tokens from the
   Keychain and refuses identical ones, syncs the working copy and runs the agent isolated with only the read-only

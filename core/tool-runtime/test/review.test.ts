@@ -336,7 +336,7 @@ describe("reviewOpenPullRequests", () => {
   });
   describe("a PR the cooldown holds", () => {
     const UNTIL = "2026-10-13T00:00:00.000Z";
-    const holding = (kind: "waiting" | "aged", calls: string[] = []): ReviewSteps => ({ ...steps(calls), cooldown: () => ({ kind, until: UNTIL }) });
+    const holding = (kind: "waiting" | "aged", calls: string[] = []): ReviewSteps => ({ ...steps(calls), disposition: async () => kind === "aged" ? { kind: "graduated", reason: "the tool retired it" } : { kind: "proceed", held: { until: UNTIL } } });
     const step = (name: string, conclusion: string) => ({ name, status: "completed", conclusion });
     const CI_HOLDING = {
       source: "actions-jobs" as const,
@@ -356,6 +356,16 @@ describe("reviewOpenPullRequests", () => {
         expect(github.prs.get(7)?.isDraft).toBe(true);
         expect(calls).toEqual([]);
       }
+    });
+
+    it("displays an unknown disposition hold without calculating its age", async () => {
+      const github = new FakeGitHub(ownPr());
+      github.checks = GREEN;
+      const calls: string[] = [];
+      expect((await reviewOpenPullRequests(context(github), { ...steps(calls), disposition: async () => ({ kind: "proceed", held: { until: "unknown" } }) }))[0])
+        .toMatchObject({ outcome: "held", detail: "until unknown" });
+      expect(github.prs.get(7)!.isDraft).toBe(true);
+      expect(calls).toEqual([]);
     });
 
     it("stays a draft when an older gate's rescan status holds it, its own cooldown green, held or untracked, with no model and no adaptation", async () => {
@@ -386,26 +396,28 @@ describe("reviewOpenPullRequests", () => {
       }
     });
 
-    it("retires the draft once everything has aged, before looking at the base or CI", async () => {
+    it("reports a graduation the tool completed before looking at the base or CI", async () => {
       const github = new FakeGitHub(ownPr());
       github.checks = GREEN;
       const calls: string[] = [];
-      const entries = await reviewOpenPullRequests(context(github, new InMemoryWorkspace(), workingCopy(NEW_BASE)), holding("aged", calls));
-      expect(entries[0]).toMatchObject({ outcome: "graduated", detail: `held until ${UNTIL}` });
-      expect(github.prs.get(7)?.state).toBe("closed");
+      const workspace = new InMemoryWorkspace();
+      const entries = await reviewOpenPullRequests(context(github, workspace, workingCopy(NEW_BASE)), holding("aged", calls));
+      expect(workspace.preparations).toEqual([]);
+      expect(entries[0]).toMatchObject({ outcome: "graduated", detail: "the tool retired it" });
+      expect(github.calls.some((call) => call.startsWith("headChecks"))).toBe(false);
       expect(calls).toEqual([]);
       expect(github.calls.some((call) => call.startsWith("markReadyForReview"))).toBe(false);
     });
 
-    it("leaves a held PR a person marked ready alone", async () => {
-      for (const kind of ["waiting", "aged"] as const) {
-        const github = new FakeGitHub(ownPr({ isDraft: false }));
-        github.checks = RED;
-        const calls: string[] = [];
-        expect((await reviewOpenPullRequests(context(github), holding(kind, calls)))[0]).toMatchObject({ outcome: "left-alone", detail: "a person marked the held PR ready" });
-        expect(github.prs.get(7)?.state).not.toBe("closed");
-        expect(calls).toEqual([]);
-      }
+    it("leaves a disposition-held PR a person marked ready alone", async () => {
+      const github = new FakeGitHub(ownPr({ isDraft: false }));
+      github.checks = RED;
+      const calls: string[] = [];
+      const workspace = new InMemoryWorkspace();
+      expect((await reviewOpenPullRequests(context(github, workspace), holding("waiting", calls)))[0]).toMatchObject({ outcome: "left-alone", detail: "a person marked the held PR ready" });
+      expect(github.prs.get(7)?.state).toBe("open");
+      expect(workspace.preparations).toEqual([]);
+      expect(calls).toEqual([]);
     });
   });
 });

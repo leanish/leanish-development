@@ -9,7 +9,7 @@ import type { PreparedBranch, WorkingCopy } from "@leanish/agent-runtime/types/w
 import { ActionsGitHub } from "@leanish/gate/actions-github";
 import type { Floor } from "@leanish/gate/floors";
 import { type SecurityCandidates, type SecurityFix, securityCandidates, severityRank } from "@leanish/gate/candidates";
-import { type CooldownEvaluation, heldUntil } from "@leanish/gate/cooldown";
+import type { CooldownEvaluation } from "@leanish/gate/cooldown";
 import type { NpmPeerPlanner } from "@leanish/gate/npm-peers";
 import { type EvidenceOptions, heldEvidence } from "@leanish/gate/advisory-evidence";
 import { type GateEnvironment, type GradleInputs, readScanState, readSettings, type ScanState } from "@leanish/gate/gate";
@@ -42,7 +42,7 @@ import { inspectOwnership, type Ours, type Ownership, repairOwnership, samePlan 
 import { publicationParent, revertToBase } from "@leanish/tool-runtime/reconcile";
 import { assertPublishable, closeAndDelete, ownOpenPullRequests, type PublicationContext, publishNew, publishUpdate, rewriteText } from "@leanish/tool-runtime/publication";
 import { machineRoots } from "@leanish/tool-runtime/publication-text";
-import { type BaseMerge, type CooldownState, reviewOpenPullRequests, type ReviewSteps } from "@leanish/tool-runtime/review";
+import { type BaseMerge, reviewOpenPullRequests, type ReviewSteps } from "@leanish/tool-runtime/review";
 
 import { versionCatalogs } from "@leanish/gate/gate";
 import { isTrustedPackage } from "@leanish/gate/config";
@@ -1285,45 +1285,39 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
     ...attemptClient(execution), now: context.now, trusted, eligibleAt: eligibleAtOf(execution, config),
     retire: (pr, comment) => closeAndDelete(publication, pr.number, pr.headSha, comment, { onlyDraft: true }),
   };
+  // The young versions each version PR's grant covered when its disposition was asked this tick: one snapshot per PR,
+  // so verification needs no second issue read (a grant withdrawn meanwhile leaves the PR on the next tick).
+  const allowedYoung = new Map<number, ReadonlyArray<PackageVersion>>();
   /**
    * Verifies a reviewed PR's new content and publishes it with its plan section; what verification left out is noted.
-   * A PR tracking an issue keeps its `Tracks #N.` line whatever the agent rewrote, and publishes no young version it
-   * didn't already hold (or a trusted package's): a new one waits, said on the issue.
+   * A PR tracking an issue keeps its `Tracks #N.` line whatever the agent rewrote, and publishes no young version
+   * its grant didn't cover (or a trusted package's): a new one waits, said on the issue.
    */
   const verifyAndPublish = async (pr: GitHubPullRequest, prepared: PreparedBranch, base: PlanBase, plan: ChangePlan, content: Content, failure: string, attempt?: number) => {
     const tracked = trackedIssueOf(pr.body);
-    const held = planOf(pr.body)?.cooldown ?? [];
-    const admits = (entry: HeldVersion) => issues.trusted(entry) || held.some((known) => known.ecosystem === entry.ecosystem && known.name === entry.name && known.version === entry.version);
-    const verified = await verifyWithRetry(execution, base, plan, content, tracked === undefined ? {} : { admits });
-    if (tracked !== undefined && verified.unplanned !== undefined) {
+    if (tracked === undefined) throw new Error("a version PR can't be published without its decision's issue");
+    const allowed = allowedYoung.get(pr.number);
+    if (allowed === undefined) throw new Error("a version PR can't be verified without its review disposition");
+    const admits = await admitted(base.tree, allowed);
+    const verified = await verifyWithRetry(execution, base, plan, content, { admits });
+    if (verified.unplanned !== undefined) {
       const unplanned = verified.unplanned;
       await postNotice(issues, tracked, `unplanned-young:${pr.number}:${unplanned.join(",")}`,
-        `secure-it didn't update #${pr.number}: on the new base, verification found young versions it didn't hold before: ${unplanned.map((entry) => `\`${entry}\``).join(", ")}. It tries again on a later review, and goes ahead once they're past the wait.`);
-      return { deferred: `verification found young versions #${pr.number} didn't hold before: ${unplanned.join(", ")}` } as const;
+        `secure-it didn't update #${pr.number}: on the new base, verification found young versions no grant covers: ${unplanned.map((entry) => `\`${entry}\``).join(", ")}. It tries again on a later review, and goes ahead once they're past the wait.`);
+      return { deferred: `verification found young versions no grant covers: ${unplanned.join(", ")}` } as const;
     }
     if (verified.deferred !== undefined) return { deferred: verified.deferred } as const;
     if (verified.leftOut.length > 0) notes.push({ number: pr.number, leftOut: verified.leftOut, named: verified.named });
     if (verified.problems.length > 0) throw new Error(`${failure}: ${verified.problems.join("; ")}`);
-    if (tracked === undefined) return publishUpdate(publication, prepared, pr.number, { ...verified.content, body: withPlanSection(verified.content.body, verified.plan) }, attempt);
     const published = trackingContent(verified.content, tracked, takenEarlyOf(pr.body));
     return publishUpdate(publication, prepared, pr.number, { ...published, body: withPlanSection(published.body, verified.plan) }, attempt);
   };
-  // PRs taken early that are held while their granted versions are young, until when, from their disposition this tick.
-  const heldEarly = new Map<number, string>();
   const steps: ReviewSteps = {
-    // A PR taken early graduates like any held PR once its versions aged: its next run plans that work afresh, in the
-    // batch it now belongs to, so no PR for the same packages is left beside it. While its granted versions are young it
-    // stays held, as its disposition (asked just before) found, even when its plan's cooldown holds nothing.
-    cooldown: (pr) => {
-      const planned = cooldownState(planFrom(pr), context.now);
-      const early = heldEarly.get(pr.number);
-      return planned?.kind === "waiting" || early === undefined ? planned : { kind: "waiting", until: early };
-    },
     disposition: async (pr) => {
-      const plan = planOf(pr.body);
-      if (plan === undefined) return { kind: "proceed" };
-      const decided = await reviewDisposition(issues, pr, plan, isHeldPlan(plan));
-      if (decided.kind === "proceed" && decided.held !== undefined) heldEarly.set(pr.number, decided.held.until);
+      const plan = planFrom(pr);
+      if (plan.kind === "floor-removal") return { kind: "proceed" };
+      const decided = await reviewDisposition(issues, pr, plan);
+      if (decided.kind === "proceed") allowedYoung.set(pr.number, decided.young ?? []);
       return decided;
     },
     closed: async (pr) => {
@@ -1398,7 +1392,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       const young = (await youngOf(unit, plan, { trusted, eligibleAt: eligibleAtOf(execution, config), now: context.now }))
         .filter((entry) => !trusted(entry)).map((entry) => `${entry.name}@${entry.version}`);
       const scoped = await reviewExecution(issues, pr, previous, plan, young);
-      if (scoped.kind === "leave") {
+      if (scoped.kind !== "proceed") {
         notes.push({ number: pr.number, left: scoped.reason });
         return "deferred";
       }
@@ -1464,13 +1458,6 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
   };
   const reviewed = await reviewOpenPullRequests({ ...publication }, steps);
   return { outcome: "reviewed", reviewed, notes };
-}
-
-/** Whether a PR's plan is held, and whether its last held version has aged by `now`. */
-export function cooldownState(plan: ChangePlan, now: Date): CooldownState | undefined {
-  const until = heldUntil(plan.cooldown ?? []);
-  if (until === undefined) return undefined;
-  return { kind: now.getTime() >= Date.parse(until) ? "aged" : "waiting", until };
 }
 
 /** New routine PRs recompute all non-majors; majors and legacy PRs retain their package scope. */
