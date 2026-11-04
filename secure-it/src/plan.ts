@@ -29,7 +29,7 @@ import { packageKey } from "@leanish/gate/package-version";
 import type { HeldVersion } from "@leanish/gate/release-age";
 import { gradleLocation, type GradleInventory } from "@leanish/gate/gradle";
 import type { Ecosystem } from "@leanish/gate/versions";
-import { nearestCopy } from "@leanish/tool-runtime/npm-graph";
+import { nearestCopy, rangeOf } from "@leanish/tool-runtime/npm-graph";
 
 import type { FloorRemoval } from "./floor-removal.ts";
 
@@ -485,10 +485,10 @@ export function dependentsOf(lockfiles: ReadonlyMap<string, unknown>, location: 
   return { installedAs, declaredByWorkspace, dependents };
 }
 
+/** Whether `version` satisfies the range a spec asks for (`rangeOf`: an `npm:` alias's own range), prereleases apart. */
 export function satisfies(version: string, range: string): boolean {
-  const alias = /^npm:(?:@[^/@]+\/)?[^@]+(?:@(.+))?$/.exec(range.trim());
-  const effective = alias === null ? range : (alias[1] ?? "*");
-  return semver.validRange(effective) !== null && semver.satisfies(version, effective, { includePrerelease: false });
+  const effective = rangeOf(range);
+  return effective !== undefined && semver.satisfies(version, effective, { includePrerelease: false });
 }
 
 /**

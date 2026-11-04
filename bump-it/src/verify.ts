@@ -12,7 +12,8 @@ import type { WrapperFile } from "./wrapper-generation.ts";
 import { WRAPPER_FILES, type WrapperPlanner } from "./gradle-wrapper.ts";
 import { plannedPinsLanded } from "./action-pins.ts";
 import { referenceDifferences, type ReferenceFloor, type ReferenceMove, referenceProblems } from "@leanish/tool-runtime/gradle-reference";
-import { type BumpPlan, DEPENDENCY_FIELDS, dependencyDigest, sha256 } from "./plan.ts";
+import { NPM_DEPENDENCY_FIELDS } from "@leanish/tool-runtime/npm-file-checks";
+import { type BumpPlan, dependencyDigest, sha256 } from "./plan.ts";
 
 export interface VerifyInputs {
   readonly plan: BumpPlan;
@@ -155,7 +156,7 @@ async function npmProblems(inputs: VerifyInputs): Promise<string[]> {
     try {
       const wanted = JSON.parse(expected) as Record<string, unknown>;
       const found = JSON.parse(actual) as Record<string, unknown>;
-      const fields = plan.kind === "major" ? DEPENDENCY_FIELDS : [...new Set([...Object.keys(wanted), ...Object.keys(found)])];
+      const fields = plan.kind === "major" ? NPM_DEPENDENCY_FIELDS : [...new Set([...Object.keys(wanted), ...Object.keys(found)])];
       if (fields.some((field) => !isDeepStrictEqual(wanted[field], found[field]))) {
         problems.push(`${path} changed ${plan.kind === "major" ? "dependency fields" : "fields"} outside the npm plan`);
       }

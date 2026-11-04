@@ -4,7 +4,7 @@ import type { SecurityFix } from "@leanish/gate/candidates";
 import type { GradleInventory } from "@leanish/gate/gradle";
 import { planBlock } from "@leanish/tool-runtime/plan-blocks";
 import { planOf } from "../src/plan-block.ts";
-import { coupledWork, youngUnits, planFor, selectWork, splitByAge, withUnsupportedCarriers } from "../src/plan.ts";
+import { coupledWork, youngUnits, planFor, satisfies, selectWork, splitByAge, withUnsupportedCarriers } from "../src/plan.ts";
 
 function fix(overrides: Partial<SecurityFix> & Pick<SecurityFix, "name" | "from">): SecurityFix {
   return {
@@ -345,5 +345,24 @@ describe("recorded plan identity", () => {
     for (const payload of [untyped, unnamed, { ...plan, packages: 42 }, { ...plan, packages: ["npm|a", 5] }]) {
       expect(planOf(planBlock(payload))).toBeUndefined();
     }
+  });
+});
+
+describe("satisfies", () => {
+  // Whether a dependent's declared spec already allows a version: an alias by its own range, never a prerelease.
+  it.each([
+    { version: "1.4.0", spec: "^1.2.0", satisfied: true },
+    { version: "2.0.0", spec: "^1.2.0", satisfied: false },
+    { version: "1.4.0", spec: "  ~1.4  ", satisfied: true },
+    { version: "1.4.0", spec: "npm:lib@^1.2.0", satisfied: true },
+    { version: "1.4.0", spec: "npm:@scope/lib@^1.2.0", satisfied: true },
+    { version: "2.0.0", spec: "npm:@scope/lib@^1.2.0", satisfied: false },
+    { version: "9.9.9", spec: "npm:lib", satisfied: true },
+    { version: "1.4.0-beta.1", spec: "^1.2.0", satisfied: false },
+    { version: "1.4.0", spec: "latest", satisfied: false },
+    { version: "1.4.0", spec: "github:owner/lib", satisfied: false },
+    { version: "1.4.0", spec: "file:../lib", satisfied: false },
+  ])("satisfies($version, '$spec') is $satisfied", ({ version, spec, satisfied }) => {
+    expect(satisfies(version, spec)).toBe(satisfied);
   });
 });

@@ -5,7 +5,24 @@ import { isDeepStrictEqual } from "node:util";
 import { FLOORS_PATH } from "@leanish/gate/floors";
 import type { Tree } from "@leanish/gate/tree";
 
+import { formatManifest } from "./manifest-format.ts";
+
 export const NPM_DEPENDENCY_FIELDS = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "bundleDependencies", "bundledDependencies", "peerDependenciesMeta", "overrides", "workspaces"] as const;
+
+/**
+ * `current` with its dependency fields as `planned` has them (one `planned` lacks is removed), everything else kept: an
+ * agent's adaptation, the scripts. When that changes nothing, `current`'s own bytes; otherwise its formatting is kept.
+ */
+export function withPlannedDependencyFields(current: string, planned: string): string {
+  const manifest = JSON.parse(current) as Record<string, unknown>;
+  const original = structuredClone(manifest);
+  const wanted = JSON.parse(planned) as Record<string, unknown>;
+  for (const field of NPM_DEPENDENCY_FIELDS) {
+    if (wanted[field] === undefined) delete manifest[field];
+    else manifest[field] = wanted[field];
+  }
+  return isDeepStrictEqual(original, manifest) ? current : formatManifest(current, manifest);
+}
 
 export async function computedNpmProblems(files: ReadonlyMap<string, string> | undefined, head: Tree, major: boolean, base?: Tree, changedFiles: ReadonlyArray<string> = []): Promise<string[]> {
   const problems: string[] = [];

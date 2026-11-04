@@ -1,6 +1,4 @@
 /** Planning and editing one independent unit; no publication until verification passes. */
-import { isDeepStrictEqual } from "node:util";
-
 import { ActionsGitHub } from "@leanish/gate/actions-github";
 import { readActionsInventory } from "@leanish/gate/actions-inventory";
 import type { GateEnvironment, GradleInputs } from "@leanish/gate/gate";
@@ -9,6 +7,7 @@ import type { Tree } from "@leanish/gate/tree";
 import type { ToolRunContext } from "@leanish/tool-runtime/command";
 import { GATE_WORKFLOW, isPolicyFile, writtenPins } from "@leanish/tool-runtime/edit-checks";
 import type { FileState } from "@leanish/tool-runtime/git-copies";
+import { withPlannedDependencyFields } from "@leanish/tool-runtime/npm-file-checks";
 import { referenceTransform } from "@leanish/tool-runtime/gradle-reference";
 import { type GradleInventories, lockfilesOf } from "@leanish/tool-runtime/inventories";
 import { ownPullRequests } from "@leanish/tool-runtime/own-pr";
@@ -19,10 +18,9 @@ import type { WrapperCandidates, WrapperPlanner } from "./gradle-wrapper.ts";
 import { constrainedUnit } from "./constraints.ts";
 import type { BumpItDeps } from "./deps.ts";
 import { assertLocalFile } from "./files.ts";
-import { formatManifest } from "./manifest-format.ts";
 import { coupledUnit, constrainedPeers, type UndecidedPeers } from "./peers.ts";
 import { assertNoPlanMarker } from "@leanish/tool-runtime/plan-blocks";
-import { type BumpPlan, DEPENDENCY_FIELDS, planFor, planSection } from "./plan.ts";
+import { type BumpPlan, planFor, planSection } from "./plan.ts";
 import type { Unit } from "./units.ts";
 import { referenceMoves } from "./verify.ts";
 
@@ -111,17 +109,7 @@ export async function writeNpm(execution: Execution, files: ReadonlyMap<string, 
     if (preserveManifestFields && path.endsWith("package.json")) {
       const current = await execution.deps.trees.working(execution.context.workingCopy).read(path);
       if (current !== undefined) {
-        const manifest = JSON.parse(current) as Record<string, unknown>;
-        const original = structuredClone(manifest);
-        const planned = JSON.parse(content) as Record<string, unknown>;
-        for (const field of DEPENDENCY_FIELDS) {
-          if (planned[field] === undefined) {
-            delete manifest[field];
-          } else {
-            manifest[field] = planned[field];
-          }
-        }
-        text = isDeepStrictEqual(original, manifest) ? current : formatManifest(current, manifest);
+        text = withPlannedDependencyFields(current, content);
       }
     }
     await execution.deps.writeFile(execution.context.workingCopy, path, text);
