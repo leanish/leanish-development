@@ -4,8 +4,8 @@
  *
  * A grant is the issue's current label: the latest `take-early` labeled event with no unlabeled after it, the label
  * still on the open issue, added by someone with write, maintain or admin access, after their own
- * `take-early: <reason>` comment, unedited since the label. It covers the young versions the decision took then, or
- * fewer as they age; a new young version voids it. One grant runs one attempt: once that attempt has ended, only a new
+ * `take-early: <reason>` comment, unedited since the label. It covers the young versions the decision took then, as
+ * the issue showed them before the label, or fewer as they age; a new young version voids it. One grant runs one attempt: once that attempt has ended, only a new
  * label event and a new reason comment authorize another, and a new grant never replaces a running attempt.
  *
  * Fails closed: a labeler who lost write access, or a reason edited or deleted since, stops a running attempt too. Once
@@ -91,6 +91,12 @@ export function grantOf(input: GrantInput): GrantDecision {
   // A since that doesn't read as a time compares as not-a-number: refused too, never granted.
   if (shown === undefined || !(Date.parse(label.createdAt) >= Date.parse(shown.since))) {
     return refused(`the decision's young versions changed after the label (now ${input.status.young.map(describe).join(", ")}); a new reason and label authorize them`, "young-shown");
+  }
+  // And only what it showed: a young version its issue never displayed (an update that couldn't be written, say) isn't
+  // the label's, however the times compare.
+  const unshown = input.status.young.filter((young) => !shown.young.some((seen) => versionKey(seen) === versionKey(young)));
+  if (unshown.length > 0) {
+    return refused(`the decision takes ${unshown.map(describe).join(", ")}, which its issue didn't show when it was labeled; label it again once it shows that`, "young-unshown");
   }
   const reason = reasonComment(input.comments, actor, label.createdAt);
   if (reason === undefined) return refused(`no \`${TAKE_EARLY_LABEL}: <reason>\` comment by the labeler before the label, unedited since`, "reason");
