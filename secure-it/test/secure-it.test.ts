@@ -877,6 +877,24 @@ describe("secure-it run", () => {
       expect(h.agentCalls).toEqual([]);
     });
 
+    it("tracks young npm work whose grouping a failed aged plan leaves unknown by package, not as a decision", async () => {
+      // The aged plan decides which of its roots join the young work; without it the young decision isn't known yet,
+      // so its finding stays tracked unassessed, like any unit that can't be planned.
+      const h = harness({ fixes: [young, leftPad()] });
+      const failing = secureIt({ ...h.deps, gate: async () => scanned("2026-10-05T00:00:00Z"), scan: readScanState, requiredNpm: async (_base, plan) => {
+        if (plan.topic === "security") throw new Error("registry 502");
+        return plan;
+      } });
+      expect(await failing.run(h.context)).toMatchObject({ units: expect.arrayContaining([
+        expect.objectContaining({ topic: "security", outcome: "failed", detail: "registry 502" }),
+        expect.objectContaining({ topic: "security-cooldown-vite", outcome: "failed", detail: expect.stringContaining("the aged unit's plan, which decides which of its fixes join held work, failed") }),
+      ]) });
+      const issues = [...issuesOf(h).issues.values()];
+      expect(issues.map((issue) => recordOf(issue.body)?.subject)).toEqual([{ kind: "package", ecosystem: "npm", name: "vite" }]);
+      expect(issues[0]!.body).toContain("no fix was planned for it this run");
+      expect(h.agentCalls).toEqual([]);
+    });
+
     it("ends an early attempt the agent couldn't apply, so the same label never runs it twice", async () => {
       const h = harness({ fixes: [young], answer: { outcome: "cannot-apply", summary: "no" } });
       await flow(h).run(h.context);

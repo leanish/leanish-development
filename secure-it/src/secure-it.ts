@@ -330,7 +330,7 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   try {
     tracking = scanned === undefined
       ? undefined
-      : await trackIssues(execution, { tree, scanned, complete: found.incomplete.length === 0 && found.gaps.length === 0 && prepared.failures.size === 0, units: prepared.units.filter((unit) => !prepared.failures.has(unit)), claimants: prepared.units, blocked: selection.blocked, own: listed, base });
+      : await trackIssues(execution, { tree, scanned, complete: found.incomplete.length === 0 && found.gaps.length === 0 && prepared.failures.size === 0, units: prepared.units.filter((unit) => failureOf(prepared, unit) === undefined), claimants: prepared.units, blocked: selection.blocked, own: listed, base });
   } catch (error) {
     // Nothing executes without its issue: a sync that failed defers every unit this run, saying why.
     tracking = asError(error);
@@ -360,7 +360,7 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
     try {
       // A unit whose own planning or preflight failed fails alone; held units also need every own PR's claim and, when
       // the aged plan failed, held units with npm work need the grouping it decides. Other units still run.
-      const failure = failures.get(unit) ?? (isHeldUnit(unit) && hasNpmWork(unit) ? ungrouped : undefined);
+      const failure = failures.get(unit) ?? failureOf(prepared, unit);
       if (failure !== undefined) throw failure;
       if (claims instanceof Error && isHeldUnit(unit)) throw claims;
       const claimed = claims instanceof Error ? undefined : claims.byTopic.get(unit.topic);
@@ -650,6 +650,11 @@ async function heldGradleProblems(plan: ChangePlan, base: PlanBase, inventories:
   // verification's policy fence refuses any edit to it.
   const { config } = await readSettings(base.tree);
   return [...referenceProblems(base.gradle, reference, planned.moves, planned.floors), ...gradleResolutionProblems(reference, config.gradle.ignoreConfigurations)];
+}
+
+/** Why a prepared unit can't run: its own failure, or, for held npm work, the failed aged plan that leaves its grouping unknown. */
+function failureOf(prepared: HeldSplit, unit: SecurityUnit): Error | undefined {
+  return prepared.failures.get(unit) ?? (prepared.ungrouped !== undefined && isHeldUnit(unit) && hasNpmWork(unit) ? prepared.ungrouped : undefined);
 }
 
 /**
