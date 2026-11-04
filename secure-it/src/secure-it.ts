@@ -706,21 +706,20 @@ async function admitted(base: Tree, allowed: ReadonlyArray<PackageVersion>): Pro
     || allowed.some((young) => versionKey(young) === versionKey(held));
 }
 
-/** How a unit's result ends (or continues) the early attempt it ran. */
 /**
  * The PR an ordinary unit just published, shown on its issue now rather than at the next run's sync. The PR exists
- * either way, so a write that fails is logged, never the unit's failure.
+ * either way, so a write that fails (a rate limit too: whatever the run does next meets it) is logged, never the unit's
+ * failure.
  */
 async function showPublished(execution: Execution, tracked: TrackedExecution, result: Readonly<Record<string, unknown>>): Promise<void> {
   if (result["outcome"] !== "published" || typeof result["number"] !== "number" || typeof result["pullRequest"] !== "string") return;
   const pr = { number: result["number"], url: result["pullRequest"] };
   await showPullRequest(attemptClient(execution), tracked.issue, pr, tracked.assessment).catch((error: unknown) => {
-    // A rate limit stops the run as anywhere else; it can't write the rest either.
-    if (error instanceof GitHubApiError && error.reason === "rate limited") throw error;
     execution.context.logger.warn("secure-it: a published PR couldn't be shown on its issue; the next run's sync shows it", { issue: tracked.issue, pr: pr.number, error: asError(error).message });
   });
 }
 
+/** How a unit's result ends (or continues) the early attempt it ran. */
 function attemptPatchOf(result: Readonly<Record<string, unknown>>): AttemptPatch {
   switch (result["outcome"]) {
     case "published":
