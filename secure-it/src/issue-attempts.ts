@@ -9,10 +9,9 @@
  */
 import type { GitHubClient, GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
 import type { GitHubIssues } from "@leanish/tool-runtime/github-issues";
-import { TooLargeError } from "@leanish/tool-runtime/plan-blocks";
 
 import { type Assessment, type Attempt, type IssueRecord, subjectId } from "./issue-model.ts";
-import type { TrackedIssue } from "./issue-reconcile.ts";
+import { recordShows, type TrackedIssue } from "./issue-reconcile.ts";
 import { issueWriter, recordOf, TAKE_EARLY_LABEL } from "./issue-text.ts";
 
 export interface AttemptClient {
@@ -101,19 +100,21 @@ export async function recoverAttempts(client: AttemptClient, tracked: ReadonlyAr
 /**
  * `body` with `record`, its text rendered again from `assessment` while that still assesses the issue's subject: the
  * headline and the attempts it lists then say what the record now does. Otherwise (no assessment: a review, or an
- * issue that isn't open as its subject's; a subject the run no longer assesses; a text that no longer fits) only the
- * record changes, so an attempt's end is never lost to its text.
+ * issue that isn't open as its subject's; a subject the run no longer assesses; a record that doesn't track yet what
+ * the text would show, which only a sync records; a text that can't render) only the record changes, so an attempt's
+ * end is never lost to its text.
  */
 function bodyWith(client: AttemptClient, body: string, record: IssueRecord, assessment: Assessment | undefined): string {
   const writer = issueWriter(client.clean);
   if (assessment === undefined) return writer.withRecord(body, record);
   const subject = assessment.subjects.find((entry) => subjectId(entry.subject) === subjectId(record.subject));
-  if (subject === undefined) return writer.withRecord(body, record);
+  if (subject === undefined || !recordShows(record, subject)) return writer.withRecord(body, record);
   try {
     return writer.render(subject, record, assessment.sha).body;
-  } catch (error) {
-    if (error instanceof TooLargeError) return writer.withRecord(body, record);
-    throw error;
+  } catch {
+    // Whatever keeps the text from rendering (one too large, say), the attempt's end is still written; the next sync
+    // renders the text again, and reports it if it still can't.
+    return writer.withRecord(body, record);
   }
 }
 

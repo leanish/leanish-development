@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { type Assessment, type DecisionMove, type IssueRecord, type ObservedFinding, parseRecord, type SubjectAssessment, subjectId } from "../src/issue-model.ts";
-import { type IssueOperation, reconcile, type TrackedIssue } from "../src/issue-reconcile.ts";
+import { type IssueOperation, reconcile, recordShows, type TrackedIssue } from "../src/issue-reconcile.ts";
 import { ISSUE_WRITER, type IssueWriter, recordOf } from "../src/issue-text.ts";
 
 const SHA = "a".repeat(40);
@@ -374,5 +374,23 @@ describe("issue text", () => {
     expect(parseRecord({ version: 1, subject: { kind: "decision", moves: [] }, openedAt: SHA, findings: [], absences: [], attempts: [] })).toBeUndefined();
     expect(parseRecord({ version: 1, subject: { kind: "package", ecosystem: "pip", name: "x" }, openedAt: SHA, findings: [], absences: [], attempts: [] })).toBeUndefined();
     expect(parseRecord({ version: 1, subject: { kind: "package", ecosystem: "npm", name: "x" }, openedAt: SHA, findings: [], absences: [], attempts: [], grant: { actor: "x" } })).toBeUndefined();
+  });
+});
+
+describe("recordShows", () => {
+  const subject = decision([move("lib")], [finding("lib", ["GHSA-a"])]);
+  const record = (overrides: Partial<IssueRecord>): IssueRecord => ({
+    version: 1, subject: subject.subject, openedAt: SHA, findings: [{ ecosystem: "npm", name: "lib", ids: ["GHSA-a"] }], absences: [], attempts: [],
+    shown: { young: [{ ecosystem: "npm", name: "lib", version: "1.0.1" }], since: "2026-11-03T00:00:00.000Z" }, ...overrides,
+  });
+
+  it("holds when the record tracks every finding and young version the subject would show", () => {
+    expect(recordShows(record({}), subject)).toBe(true);
+  });
+
+  it("fails on a finding the record doesn't track yet, or a young version it didn't record as shown", () => {
+    expect(recordShows(record({ findings: [] }), subject)).toBe(false);
+    expect(recordShows(record({ shown: { young: [], since: "2026-11-03T00:00:00.000Z" } }), subject)).toBe(false);
+    expect(recordShows(record({ shown: undefined }), subject)).toBe(false);
   });
 });

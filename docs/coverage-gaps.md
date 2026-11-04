@@ -44,7 +44,7 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   then, and may still need adapting.
 - **Version-fix PRs from before issues (secure-it)**: review leaves a version-fix PR without a `Tracks` line to its
   owner for good, and nothing closes it. A run still matches one to a fix it plans by its kind and topic alone: it
-  leaves it as it is when the plan is unchanged, or redoes it, then with a `Tracks` line, when the plan changed. The
+  keeps it, refreshing only its plan notes, when the plan is unchanged, or redoes it, then with a `Tracks` line, when the plan changed. The
   owner closes such PRs by hand before upgrading (see the upgrade note in the CHANGELOG).
 - **GitHub's lagging issue listing (secure-it)**: the filtered listing a run reads its issues from shows a write only
   seconds later. A run reads back by number every issue it wrote, and every issue before executing through it, but a

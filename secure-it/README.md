@@ -74,7 +74,7 @@ Verification can find a young version planning didn't choose (a transitive move,
 the wait or taken early, the run then publishes nothing, names the versions on the issue and tries again next run.
 
 Review leaves a version-fix PR without a `Tracks` line to its owner; a run still matches one to a fix it plans by its
-kind and topic alone, leaving it as it is when the plan is unchanged or redoing it, then with a `Tracks` line, when the
+kind and topic alone, keeping it, refreshing only its plan notes, when the plan is unchanged or redoing it, then with a `Tracks` line, when the
 plan changed. Before upgrading from 0.10.x, close secure-it's open version-fix PRs by hand, keeping any human changes
 you need: the first run assesses the findings and opens the corresponding issues. Don't close secure-it's issues to
 start over: closing an issue dismisses its tracked findings. A new advisory finding can open a new issue; a dismissed

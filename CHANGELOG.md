@@ -23,7 +23,7 @@
   ordinary PRs still wait when only the gate's cooldown holds them.
 - Before upgrading from 0.10.x, close secure-it's open version-fix PRs by hand, keeping any human changes you need:
   review leaves a version-fix PR without `Tracks` to its owner, and a run still matches one to a fix it plans by its
-  kind and topic alone, as before: it leaves it as it is when the plan is unchanged, or redoes it, then with a
+  kind and topic alone, as before: it keeps it, refreshing only its plan notes, when the plan is unchanged, or redoes it, then with a
   `Tracks` line, when the plan changed. The first run then assesses the findings and opens the corresponding issues.
   Don't close secure-it's issues to start over: closing an issue dismisses its tracked findings. A new advisory
   finding can open a new issue; a dismissed finding can open one again after a complete assessment records it absent
