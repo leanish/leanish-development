@@ -24,10 +24,11 @@ import { assertAgentWorkspace, type ToolRunContext } from "@leanish/tool-runtime
 import { retargetRepository } from "@leanish/tool-runtime/test/retarget-repository";
 import { readScanState, readSettings, runCompare, type GateEnvironment } from "@leanish/gate/gate";
 import { ISSUE_LABEL, ISSUE_WRITER, recordOf } from "../src/issue-text.ts";
-import type { Attempt, IssueRecord, ObservedFinding } from "../src/issue-model.ts";
+import { type Attempt, type IssueRecord, type ObservedFinding, subjectId } from "../src/issue-model.ts";
 import { decisionMoves } from "../src/issue-assessment.ts";
 import { recoverAttempts } from "../src/issue-attempts.ts";
-import { reviewExecution, trackedIssueOf } from "../src/issue-review.ts";
+import { EarlyPrs, takenEarlyOf, trackedIssueOf } from "../src/decision-issues.ts";
+import { earlyDecisions, reviewDisposition, reviewExecution } from "../src/issue-review.ts";
 import { fakeFetch } from "@leanish/gate/test/fake-fetch";
 import { archive, manifest, serving } from "@leanish/gate/test/tarballs";
 import { parseToolConfig } from "@leanish/tool-runtime/config";
@@ -3180,6 +3181,33 @@ describe("the cooldown hold", () => {
     expect(await reviewExecution(client, tracked, previous, previous, [covered, extra])).toEqual({
       kind: "leave", reason: `on the new base it takes young versions its \`take-early\` label didn't cover: ${extra.name}@${extra.version}`,
     });
+  });
+
+  it.each([
+    { label: true, aged: true, outcome: { kind: "graduated", reason: "every version it was taken early for aged" }, taken: false },
+    { label: false, aged: false, outcome: { kind: "leave", reason: "its `take-early` label was removed" }, taken: true },
+  ])("lets the retry guard reuse what review's disposition read (label kept: $label, aged: $aged), reading the issue no more", async ({ label, aged, outcome, taken }) => {
+    const plan = await heldPlan(YOUNG_VITE());
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite", body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pr] });
+    // A plain `Tracks #1.` line: only the issue says it's taken early, so the guard depends on the shared answer.
+    const tracked = await early(h, pr);
+    expect(takenEarlyOf(tracked.body)).toBe(false);
+    const issues = h.context.issues as FakeIssues;
+    if (!label) await issues.removeLabel({ repo: REPO, number: 1, label: "take-early" });
+    const client = { issues, github: h.github, repo: REPO, clean: (body: string) => body, ours: () => true, now: NOW, trusted: () => false, retire: async () => "closed" as const, eligibleAt: async () => (aged ? "2026-10-06T00:00:00.000Z" : "2026-10-13T00:00:00.000Z") };
+    const shared = new EarlyPrs({ issues, repo: REPO });
+    expect(await reviewDisposition(client, tracked, planOf(tracked.body)!, shared)).toEqual(outcome);
+    let reads = 0;
+    const getIssue = issues.getIssue.bind(issues);
+    issues.getIssue = async (args) => {
+      reads++;
+      return getIssue(args);
+    };
+    // A withdrawn grant still forbids reducing the running attempt's decision; one the tool retired doesn't.
+    const decision = subjectId({ kind: "decision", moves: decisionMoves(plan) });
+    expect([...await earlyDecisions([tracked], shared)]).toEqual(taken ? [decision] : []);
+    expect(reads).toBe(0);
   });
 
   it.each([true, false])("admits an early adaptation by its grant, regardless of its recorded cooldown (covered: %s)", async (covered) => {
