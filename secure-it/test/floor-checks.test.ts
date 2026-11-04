@@ -9,7 +9,7 @@ import { verifyPlan } from "../src/verify.ts";
 const ID = "CVE-2026-12345";
 const floor = (overrides: Record<string, unknown> = {}) => ({ ecosystem: "Maven", package: "g:lib", version: "1.0", declaredIn: "build.gradle.kts",
   selector: [":runtimeClasspath"], purpose: "security", advisories: [ID], reason: "security fix", added: "2026-10-01", ...overrides });
-const plan: ChangePlan = { topic: "security", malware: false, packages: ["Maven|g:lib"], severity: "HIGH",
+const plan: ChangePlan = { kind: "major", topic: "security", malware: false, packages: ["Maven|g:lib"], severity: "HIGH",
   moves: [{ ecosystem: "Maven", name: "g:lib", from: "1.0", to: "1.1", mechanism: "gradle-declared", locations: [":runtimeClasspath"],
     advisories: [ID], major: true, commitSha: undefined, declaredAs: undefined }] };
 

@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import type { SecurityFix } from "@leanish/gate/candidates";
 import type { GradleInventory } from "@leanish/gate/gradle";
-import { coupledWork, heldUnits, isHeldTopic, planFor, selectWork, splitByAge, withUnsupportedCarriers } from "../src/plan.ts";
+import { planBlock } from "@leanish/tool-runtime/plan-blocks";
+import { planOf } from "../src/plan-block.ts";
+import { coupledWork, youngUnits, planFor, selectWork, splitByAge, withUnsupportedCarriers } from "../src/plan.ts";
 
 function fix(overrides: Partial<SecurityFix> & Pick<SecurityFix, "name" | "from">): SecurityFix {
   return {
@@ -44,7 +46,7 @@ describe("selectWork", () => {
     const core = fix({ name: "@own/core", from: "1.0.0", to: { version: "1.0.1", line: "1", aged: true, major: false, blockers: [] } });
     const ui = { name: "@own/ui", from: "1.0.0", to: "1.0.1", locations: ["node_modules/@own/ui"], line: "1", aged: true, declarations: [] };
     const selected = await coupledWork([core], { resolve: async () => ({ additions: [ui], blocked: [], sets: [["@own/core", "@own/ui"]] }) });
-    expect(selected.units.flatMap(splitByAge)).toMatchObject([{ kind: "routine", held: false, work: [{ name: "@own/core" }, { name: "@own/ui" }] }]);
+    expect(selected.units.flatMap(splitByAge)).toMatchObject([{ kind: "routine", young: false, work: [{ name: "@own/core" }, { name: "@own/ui" }] }]);
   });
 
   it("reports the notes of work peers leave out, transitively tied work's too, and all of a dropped malware unit's", async () => {
@@ -272,7 +274,7 @@ describe("packages tied by a carried target", () => {
 
   it("go to the held unit together when one of them is young", async () => {
     const { units } = await coupledWork([carrier(), brace(false), fix({ name: "other", from: "1.0.0" })]);
-    expect(units.map((unit) => [unit.topic, unit.work.map((entry) => entry.name).sort()])).toEqual([["security", ["other"]], ["security-cooldown-brace", ["brace", "carrier"]]]);
+    expect(units.map((unit) => [unit.topic, unit.work.map((entry) => entry.name).sort()])).toEqual([["security", ["other"]], ["security-young-npm|brace", ["brace", "carrier"]]]);
   });
 
   it("go to one major unit together when either needs a major", async () => {
@@ -292,44 +294,56 @@ describe("splitByAge", () => {
     const companion = { name: "peer", from: "1.0.0", to: "1.0.2", locations: ["node_modules/peer"], line: "1", aged: true, declarations: [] };
     const peers = { resolve: async () => ({ additions: [companion], blocked: [], sets: [["vite", "peer"]] }) };
     const selected = await coupledWork([young("vite"), fix({ name: "left-pad", from: "1.0.0" })], peers);
-    expect(selected.units.map((unit) => [unit.topic, unit.held, names(unit.work), unit.coupled])).toEqual([
+    expect(selected.units.map((unit) => [unit.topic, unit.young, names(unit.work), unit.coupled])).toEqual([
       ["security", false, ["left-pad"], []],
-      ["security-cooldown-peer", true, ["vite", "peer"], [["npm|vite", "npm|peer"]]],
+      ["security-young-npm|peer", true, ["vite", "peer"], [["npm|vite", "npm|peer"]]],
     ]);
   });
 
   it("keeps an all-aged batch whole, and holds a young major or malware unit whole", () => {
     const aged = { kind: "routine" as const, topic: "security", work: [fix({ name: "a", from: "1.0.0" })] };
-    expect(splitByAge(aged)).toEqual([{ ...aged, held: false }]);
+    expect(splitByAge(aged)).toEqual([{ ...aged, young: false }]);
     const major = { kind: "major" as const, topic: "lib-major", work: [young("lib", true)] };
-    expect(splitByAge(major)).toEqual([{ ...major, held: true }]);
+    expect(splitByAge(major)).toEqual([{ ...major, young: true }]);
     const malware = { kind: "malware" as const, topic: "malware", work: [young("bad"), fix({ name: "ok", from: "1.0.0", malicious: true })] };
-    expect(splitByAge(malware)).toEqual([{ ...malware, held: true }]);
+    expect(splitByAge(malware)).toEqual([{ ...malware, young: true }]);
   });
 
   it("holds each young fix apart when nothing couples them, so none waits for another", () => {
     expect(splitByAge({ kind: "routine", topic: "security", work: [young("b"), young("a")] }).map((unit) => [unit.topic, names(unit.work)]))
-      .toEqual([["security-cooldown-a", ["a"]], ["security-cooldown-b", ["b"]]]);
+      .toEqual([["security-young-npm|a", ["a"]], ["security-young-npm|b", ["b"]]]);
   });
 
   it("keeps transitively coupled young fixes in one held unit, named after its lowest package", () => {
     const units = splitByAge({ kind: "routine", topic: "security", work: [young("c"), young("a"), young("b"), young("d")], coupled: [["npm|c", "npm|b"], ["npm|b", "npm|a"]] });
     expect(units.map((unit) => [unit.topic, names(unit.work).sort(), unit.coupled])).toEqual([
-      ["security-cooldown-a", ["a", "b", "c"], [["npm|c", "npm|b"], ["npm|b", "npm|a"]]],
-      ["security-cooldown-d", ["d"], undefined],
+      ["security-young-npm|a", ["a", "b", "c"], [["npm|c", "npm|b"], ["npm|b", "npm|a"]]],
+      ["security-young-npm|d", ["d"], undefined],
     ]);
   });
 });
 
-describe("heldUnits", () => {
+describe("youngUnits", () => {
   const young = (name: string) => fix({ name, from: "1.0.0", to: { version: "1.0.1", line: "1", aged: false, major: false, blockers: [] } });
 
-  it("joins fixes through a bridge key that has no fix of its own, and records only members", async () => {
-    const units = heldUnits([young("a"), young("b"), young("x")], [], [["npm|a", "npm|c"], ["npm|b", "npm|c"]]);
-    expect(units.map((unit) => [unit.topic, names(unit.work).sort()])).toEqual([["security-cooldown-a", ["a", "b"]], ["security-cooldown-x", ["x"]]]);
+  it("joins fixes through a bridge key without moving that bridge", async () => {
+    const units = youngUnits([young("a"), young("b"), young("x")], [], [["npm|a", "npm|c"], ["npm|b", "npm|c"]]);
+    expect(units.map((unit) => [unit.topic, names(unit.work).sort()])).toEqual([["security-young-npm|a", ["a", "b"]], ["security-young-npm|x", ["x"]]]);
     const plan = await planFor(units[0]!.work, { lockfiles: new Map([["package-lock.json", { packages: { "node_modules/a": { version: "1.0.0" }, "node_modules/b": { version: "1.0.0" } } }]]), gradle: undefined, named: undefined, tagCommit: async () => undefined }, units[0]);
-    expect(plan.members).toEqual(["npm|a", "npm|b"]);
-    expect(isHeldTopic(plan.topic) && !isHeldTopic("security") && isHeldTopic("security-cooldown")).toBe(true);
+    expect(plan.packages).toEqual(["npm|a", "npm|b"]);
+    expect(plan.moves.map((move) => move.name)).toEqual(["a", "b"]);
   });
 
+});
+
+describe("recorded plan identity", () => {
+  it("rejects a missing kind, missing topic or non-name packages instead of guessing a unit", () => {
+    const plan = { kind: "routine", topic: "security", malware: false, packages: ["npm|a"], moves: [] };
+    const { kind: _kind, ...untyped } = plan;
+    const { topic: _topic, ...unnamed } = plan;
+    expect(planOf(planBlock(plan))).toEqual(plan);
+    for (const payload of [untyped, unnamed, { ...plan, packages: 42 }, { ...plan, packages: ["npm|a", 5] }]) {
+      expect(planOf(planBlock(payload))).toBeUndefined();
+    }
+  });
 });

@@ -15,7 +15,7 @@ import { type EvidenceOptions, heldEvidence } from "@leanish/gate/advisory-evide
 import { type GateEnvironment, type GradleInputs, readScanState, readSettings, type ScanState } from "@leanish/gate/gate";
 import { unexcusedProblem } from "@leanish/gate/exceptions";
 import { findingsOf } from "@leanish/gate/findings";
-import { type GradleInventory, gradleLocation, gradleResolutionProblems, pinnedAmong, strictPinNote, strictPins } from "@leanish/gate/gradle";
+import { type GradleInventory, gradleLocation, pinnedAmong, strictPinNote, strictPins } from "@leanish/gate/gradle";
 import { namingFailures } from "@leanish/gate/http";
 import { FileRepositoryAdvisoryCache } from "@leanish/tool-runtime/repository-advisory-cache";
 import { BundleReader } from "@leanish/gate/npm-bundles";
@@ -28,7 +28,7 @@ import { FLOORS_FILE, isMechanical } from "@leanish/tool-runtime/edit-checks";
 import { writeLocalFile } from "@leanish/tool-runtime/local-files";
 import { gradleSourceIndex } from "@leanish/gate/gradle-sources";
 import { candidateTree, changedBetween, fileState, type FileState, linkProblems, snapshotCandidate } from "@leanish/tool-runtime/git-copies";
-import { referenceProblems, referenceTransform } from "@leanish/tool-runtime/gradle-reference";
+import { referenceTransform } from "@leanish/tool-runtime/gradle-reference";
 import { type GradleInventories, lockfilesOf, sandboxedGradleInventories } from "@leanish/tool-runtime/inventories";
 import { FileJournal, type PublicationJournal } from "@leanish/tool-runtime/journal";
 import { formatManifest } from "@leanish/tool-runtime/manifest-format";
@@ -53,7 +53,7 @@ import { postNotice } from "./issue-notices.ts";
 import { syncIssues } from "./issue-sync.ts";
 import { attemptBranches, type Disposition, inactiveLabelNotices, issueDisposition, type Tracking, type TrackedExecution } from "./issue-tracking.ts";
 import { type AttemptClient, type AttemptPatch, endAttempt, recoverAttempts, settleAttempt } from "./issue-attempts.ts";
-import { earlyDecisions, reviewClosed, reviewDisposition, reviewExecution, type ReviewIssues, takenEarlyOf, trackedIssueOf } from "./issue-review.ts";
+import { earlyDecisions, isEarlyPr, reviewClosed, reviewDisposition, reviewExecution, type ReviewIssues, takenEarlyOf, trackedIssueOf } from "./issue-review.ts";
 import { trackingContent } from "./issue-text.ts";
 import { removalTransform } from "./floor-gradle.ts";
 import { probeOnBase } from "./floor-probe.ts";
@@ -66,15 +66,15 @@ import { requiredNpmPlan } from "./npm-required-plan.ts";
 import { npmWindowFor } from "./npm-window.ts";
 import { assertNoPlanMarker } from "@leanish/tool-runtime/plan-blocks";
 import { planDigest, planOf, planSection, withPlanSection } from "./plan-block.ts";
-import { type ChangePlan, coupledWork, type FixWork, heldMembers, heldUnits, isHeldTopic, packageKey, planFor, type PlannedHold, type SecurityUnit, type Selection, withUnsupportedCarriers } from "./plan.ts";
+import { type ChangePlan, coupledWork, type FixWork, youngUnits, packageKey, planFor, type PlannedHold, type SecurityUnit, type Selection, withUnsupportedCarriers } from "./plan.ts";
 import { namedProblems, retryWithoutNamed, type ProblemMoves } from "./retry.ts";
 import { referencePlan, verifyPlan, type VerifyInputs } from "./verify.ts";
 
 export const RULES = ownPullRequests("secure-it");
 
-/** What is about to execute: a unit's plan (applied, or preflighted), a verification's retry, a floor removal, a reviewed PR's. */
+/** What is about to execute: a unit's plan, a verification's retry, a floor removal, a reviewed PR's. */
 export interface ExecutionTarget {
-  readonly kind: "unit" | "preflight" | "retry" | "removal" | "review";
+  readonly kind: "unit" | "retry" | "removal" | "review";
   readonly plan: ChangePlan;
   /** For a retry: the unit's own plan, which decides it (a reduced plan is a different decision, never authorized as one). */
   readonly of?: ChangePlan;
@@ -287,8 +287,8 @@ interface Execution {
   readonly npmFiles: Map<string, string>;
   /** Branches this run created, on top of the open PRs' ones: two units' topics can cut to the same branch name. */
   readonly branches: Set<string>;
-  /** Preflight only, shared for one run/tick by base and plan; rejections stay unknown until the next invocation. */
-  readonly heldReferences: Map<string, Promise<ReadonlyArray<string>>>;
+  /** Confirmed early ownership, read once per PR in this run/tick; execution still asks its issue afresh. */
+  readonly early: Map<number, Promise<boolean>>;
 }
 
 interface PlanBase {
@@ -321,16 +321,14 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
     ...(selection.undecided ?? []).flatMap((set) => set.packages.map((key) => [key, "direct-peer set"] as const)),
   ]);
 
-  const execution = { context, deps, env, inventories, publication: publicationOf(context, deps), npmFiles: new Map<string, string>(), branches: new Set<string>(), heldReferences: new Map<string, Promise<ReadonlyArray<string>>>() };
+  const execution = { context, deps, env, inventories, publication: publicationOf(context, deps), npmFiles: new Map<string, string>(), branches: new Set<string>(), early: new Map<number, Promise<boolean>>() };
   const listed = await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base);
   const results: Readonly<Record<string, unknown>>[] = [];
-  // Metadata first (no Gradle): the units and their plans. Then the issues decide what may execute, before any preflight.
+  // Metadata first (no Gradle): the units and their plans. Then the issues decide what may execute.
   const prepared = await withRequiredYoung(execution, selection.units, base);
   let tracking: Tracking | Error;
-  // Early attempts this run recorded, by topic: a unit failing after one (its preflight asked, say) ends it.
-  const started = new Map<string, { readonly issue: number; readonly attempt: string }>();
   try {
-    tracking = await trackIssues(execution, { tree, scanned, complete: found.incomplete.length === 0 && found.gaps.length === 0 && prepared.failures.size === 0, units: prepared.units.filter((unit) => failureOf(prepared, unit) === undefined), claimants: prepared.units, blocked: selection.blocked, own: listed, base });
+    tracking = await trackIssues(execution, { tree, scanned, complete: found.incomplete.length === 0 && found.gaps.length === 0 && prepared.failures.size === 0, units: prepared.units.filter((unit) => failureOf(prepared, unit) === undefined), blocked: selection.blocked, own: listed, base });
   } catch (error) {
     // Nothing executes without its issue: a sync that failed defers every unit this run, saying why.
     tracking = asError(error);
@@ -344,34 +342,21 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   const own = retired.own;
   // A unit with a package of an early PR that couldn't be retired waits this run, so no second PR opens beside that one.
   const waits = (unit: SecurityUnit) => unit.work.some((fix) => retired.stuck.has(packageKey(fix)));
-  const governed = { ...execution, deps: { ...deps, disposition: tracking instanceof Error ? untracked(execution, tracking) : trackedDisposition(execution, tracking, started) } };
-  const pending = prepared.units.filter((unit) => !prepared.failures.has(unit) && !waits(unit));
-  const { units, ungrouped } = prepared;
-  const failures = new Map([...prepared.failures, ...await heldPreflight(governed, pending, base)]);
-  // Claims over every unit, failed ones included: a failure never moves another unit's claim.
-  const claims = await heldClaimsOf(execution.publication, units, own);
+  const governed = { ...execution, deps: { ...deps, disposition: tracking instanceof Error ? untracked(execution, tracking) : trackedDisposition(execution, tracking) } };
+  const { units } = prepared;
   for (const unit of units) {
-    if (waits(unit) && !failures.has(unit)) {
+    if (waits(unit) && !prepared.failures.has(unit)) {
       results.push({ topic: unit.topic, outcome: "deferred", reason: "a PR taken early for its packages couldn't be retired this run" });
       continue;
     }
     try {
-      // A unit whose own planning or preflight failed fails alone; held units also need every own PR's claim and, when
-      // the aged plan failed, held units with npm work need the grouping it decides. Other units still run.
-      const failure = failures.get(unit) ?? failureOf(prepared, unit);
+      const failure = failureOf(prepared, unit);
       if (failure !== undefined) throw failure;
-      if (claims instanceof Error && isHeldUnit(unit)) throw claims;
-      const claimed = claims instanceof Error ? undefined : claims.byTopic.get(unit.topic);
-      const claimedPlan = claims instanceof Error || claimed === undefined ? undefined : claims.plans.get(claimed);
-      // While that grouping is unknown, a held PR with npm moves stays reserved for the npm work it could take back,
-      // as review keeps it: a held unit without npm work claiming it fails rather than rewrite it without that work.
-      if (ungrouped !== undefined && isHeldUnit(unit) && claimedPlan !== undefined && hasNpmMoves(claimedPlan)) throw ungrouped;
-      results.push(await runUnit(governed, unit, base, own, claimed, undecidedPackages));
+      results.push(await runUnit(governed, unit, base, own, undecidedPackages));
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       context.logger.warn("secure-it: a unit failed", { topic: unit.topic, error: detail });
       results.push({ topic: unit.topic, outcome: "failed", detail });
-      await endStarted(execution, started.get(unit.topic));
     }
   }
   if (!found.fixes.some((fix) => fix.malicious) && (await floorsOf(tree)).some((floor) => floor.purpose === "security")) {
@@ -532,7 +517,7 @@ async function applyRemoval(execution: Execution, removal: ComputedRemoval): Pro
 
 async function runRemoval(execution: Execution, removal: ComputedRemoval, base: PlanBase, own: ReadonlyArray<GitHubPullRequest>): Promise<Readonly<Record<string, unknown>>> {
   const plan = removal.plan!;
-  const owned = await recognisedPlans(execution.publication, own, plan);
+  const owned = await recognisedPlans(execution, own, { plan });
   const already = owned.find((candidate) => samePlan(candidate.pr, planDigest(plan), digestOf));
   const report = { topic: plan.topic, packages: plan.packages, notes: removal.notes };
   if (already !== undefined) {
@@ -556,9 +541,9 @@ async function runRemoval(execution: Execution, removal: ComputedRemoval, base: 
 }
 
 /** The units a run or review works on, and why some of them can't run this time. */
-interface HeldSplit {
+interface YoungSplit {
   readonly units: SecurityUnit[];
-  /** Units that fail with their own error instead of running: their planning or their preflight failed. */
+  /** Units that fail with their own error instead of running: their planning failed. */
   readonly failures: ReadonlyMap<SecurityUnit, Error>;
   /**
    * Why the grouping of held work with npm is unknown, when it is: the aged plan, which decides which of its npm roots
@@ -575,95 +560,22 @@ interface HeldSplit {
 const hasNpmWork = (unit: SecurityUnit) => unit.work.some((fix) => fix.ecosystem === "npm")
   || (unit.coupled ?? []).some((set) => set.some((key) => key.startsWith("npm|")));
 
-/**
- * A routine fix whose required npm dependency is younger than the wait can't
- * wait either: it moves to a held unit with every package the aged plan couples
- * to it, and with every root requiring the same young companion (a key without
- * a fix of its own still joins them). Held work is then grouped again (`heldUnits`).
- * Moving roots only drops requirements, so one pass leaves the rest aged.
- * Kept on purpose: docs/simplification-candidates.md#reviewed-and-kept-2026-10-16.
- * Then held units are checked before any agent work (`heldPreflight`). Grouping comes from couplings and required-young
- * relationships alone: a failure never joins, splits or renames units, it fails the units it belongs to. Runs and
- * base-movement reviews both split here.
- */
-async function holdRequiredYoung(execution: Execution, units: ReadonlyArray<SecurityUnit>, base: PlanBase): Promise<HeldSplit> {
-  const prepared = await withRequiredYoung(execution, units, base);
-  const pending = prepared.units.filter((unit) => !prepared.failures.has(unit));
-  // Held units are preflighted alike when the grouping of npm work is unknown: their count decides whether it runs.
-  return { ...prepared, failures: new Map([...prepared.failures, ...await heldPreflight(execution, pending, base)]) };
-}
-
-/**
- * The held units whose plan fails, or whose planned Gradle references don't resolve, each with its own error; the
- * other units keep their grouping and run. A plan with Maven moves has Gradle apply its declaration moves and floors to
- * an exported base and resolve the reference: a returned inventory must have the planned declarations and no
- * resolution failures. A thrown Gradle execution error (or a missing inventory) fails only the unit whose reference it
- * was. Every failure is logged with its unit and reason.
- * Only two or more held units incur this preflight; only plans with Maven moves incur extra Gradle resolutions.
- */
-async function heldPreflight(execution: Execution, units: ReadonlyArray<SecurityUnit>, base: PlanBase): Promise<Map<SecurityUnit, Error>> {
-  const failures = new Map<SecurityUnit, Error>();
-  const held = units.filter(isHeldUnit);
-  if (held.length < 2) return failures;
-  for (const unit of held) {
-    const error = await preflightError(execution, unit, base);
-    if (error === undefined) continue;
-    execution.context.logger.warn("secure-it: a held unit's preflight failed", { topic: unit.topic, error: error.message });
-    failures.set(unit, error);
-  }
-  return failures;
-}
-
-/** Why a held unit can't go ahead: its planning error, its Gradle reference's problems or execution error; else undefined. */
-async function preflightError(execution: Execution, unit: SecurityUnit, base: PlanBase): Promise<Error | undefined> {
-  try {
-    const plan = await planUnit(execution, unit, base);
-    if (!plan.moves.some((move) => move.ecosystem === "Maven")) return undefined;
-    // A preflight resolves the plan's Gradle reference: execution, so it asks first. A deferred unit isn't failed here;
-    // its run says it was deferred.
-    if ((await execution.deps.disposition({ kind: "preflight", plan })).kind === "defer") return undefined;
-    const key = `${base.tree.id}:${planDigest(plan)}`;
-    let checked = execution.heldReferences.get(key);
-    if (checked === undefined) {
-      checked = heldGradleProblems(plan, base, execution.inventories);
-      execution.heldReferences.set(key, checked);
-    }
-    const problems = await checked;
-    return problems.length === 0 ? undefined : new Error(`the held plan's Gradle reference doesn't resolve: ${problems.join("; ")}`);
-  } catch (error) {
-    return asError(error);
-  }
-}
-
 const asError = (error: unknown): Error => (error instanceof Error ? error : new Error(String(error)));
 
-/** Problems a completed reference proves; execution errors and a missing inventory propagate as unknown. */
-async function heldGradleProblems(plan: ChangePlan, base: PlanBase, inventories: GradleInventories): Promise<ReadonlyArray<string>> {
-  const planned = referencePlan(plan, base.gradle);
-  if (planned.problems.length > 0) return planned.problems;
-  const reference = await referenceOf(plan, base.tree, base.gradle, inventories);
-  if (reference === undefined) throw new Error("the held plan has no Gradle reference inventory");
-  // As in verification's reference comparison, even a returned inventory can contain resolution failures; the gate's
-  // `gradle.ignoreConfigurations` are left out. The gate reads head's config and this base's: they agree, since
-  // verification's policy fence refuses any edit to it.
-  const { config } = await readSettings(base.tree);
-  return [...referenceProblems(base.gradle, reference, planned.moves, planned.floors), ...gradleResolutionProblems(reference, config.gradle.ignoreConfigurations)];
-}
-
 /** Why a prepared unit can't run: its own failure, or, for held npm work, the failed aged plan that leaves its grouping unknown. */
-function failureOf(prepared: HeldSplit, unit: SecurityUnit): Error | undefined {
-  return prepared.failures.get(unit) ?? (prepared.ungrouped !== undefined && isHeldUnit(unit) && hasNpmWork(unit) ? prepared.ungrouped : undefined);
+function failureOf(prepared: YoungSplit, unit: SecurityUnit): Error | undefined {
+  return prepared.failures.get(unit) ?? (prepared.ungrouped !== undefined && unit.young === true && hasNpmWork(unit) ? prepared.ungrouped : undefined);
 }
 
 /**
- * The aged unit's fixes that need a young required npm companion, held with it (the first step of `holdRequiredYoung`).
+ * The aged unit's fixes that need a young required npm companion, grouped with it.
  * When the aged unit can't be planned, it fails with that error rather than being planned again; with npm work, which
  * of its roots the young requirements would hold is unknown, so the grouping of held npm work is too, whether or not
  * held units remain (a held PR whose fix has aged since could be held again by it).
  */
-async function withRequiredYoung(execution: Execution, units: ReadonlyArray<SecurityUnit>, base: PlanBase): Promise<HeldSplit> {
+async function withRequiredYoung(execution: Execution, units: ReadonlyArray<SecurityUnit>, base: PlanBase): Promise<YoungSplit> {
   const unchanged = { units: [...units], failures: new Map<SecurityUnit, Error>() };
-  const aged = units.find((unit) => unit.kind === "routine" && unit.held !== true);
+  const aged = units.find((unit) => unit.kind === "routine" && unit.young !== true);
   if (aged === undefined) return unchanged;
   let plan: ChangePlan;
   try {
@@ -686,9 +598,9 @@ async function withRequiredYoung(execution: Execution, units: ReadonlyArray<Secu
     for (const set of [...(plan.coupled ?? []), ...bridges]) if (set.some((key) => moved.has(key))) for (const key of set) moved.add(key);
     if (moved.size === size) break;
   }
-  const held = units.filter((unit) => unit.kind === "routine" && unit.held === true);
+  const held = units.filter((unit) => unit.kind === "routine" && unit.young === true);
   const stays = aged.work.filter((fix) => !moved.has(packageKey(fix)));
-  const joined = heldUnits(
+  const joined = youngUnits(
     [...held.flatMap((unit) => unit.work), ...aged.work.filter((fix) => moved.has(packageKey(fix)))],
     // The aged plan's sets, not only the unit's: they include what planning required npm discovered (a root that
     // needs another root's fix), which the held units keep for their own retries too.
@@ -700,109 +612,15 @@ async function withRequiredYoung(execution: Execution, units: ReadonlyArray<Secu
 }
 
 /**
- * Which open held PR each held unit of this run takes (topic → PR number): the one sharing the most of its packages,
- * strongest pairs first across all units, so the order units run in never decides which PR changes purpose. Ties go
- * to the pair whose lowest shared package sorts first, then to the lower PR number. Each PR goes to one unit at most;
- * a unit with none opens its own.
+ * A PR's content as ownership establishes it: the journal's saved publication when its state was removed, otherwise
+ * its current content; undefined when it isn't ours.
  */
-export function heldClaims(units: ReadonlyArray<SecurityUnit>, own: ReadonlyArray<GitHubPullRequest>): Map<string, number> {
-  return claimsAmong(units, heldPlansOf(own));
-}
-
-/** An open PR's held plan, as its body records it. */
-interface RecordedHeldPlan {
-  readonly number: number;
-  readonly plan: ChangePlan;
-}
-
-/** The held plans `own` record, read once for the claims and for what a claimed PR holds. */
-function heldPlansOf(own: ReadonlyArray<GitHubPullRequest>): RecordedHeldPlan[] {
-  return own.flatMap((pr) => {
-    const plan = planOf(pr.body);
-    return plan === undefined || !isHeldPlan(plan) ? [] : [{ number: pr.number, plan }];
-  });
-}
-
-/** `heldClaims` over plans already read. */
-function claimsAmong(units: ReadonlyArray<SecurityUnit>, plans: ReadonlyArray<RecordedHeldPlan>): Map<string, number> {
-  const held = units.filter(isHeldUnit);
-  const pairs = plans.flatMap(({ number, plan }) => held.flatMap((unit) => {
-    const match = heldOverlap(plan, unit);
-    return match === undefined ? [] : [{ topic: unit.topic, number, ...match }];
-  })).sort((a, b) => b.shared - a.shared || (a.lowest < b.lowest ? -1 : a.lowest > b.lowest ? 1 : 0) || a.number - b.number);
-  const claims = new Map<string, number>();
-  const taken = new Set<number>();
-  for (const pair of pairs) {
-    if (claims.has(pair.topic) || taken.has(pair.number)) continue;
-    claims.set(pair.topic, pair.number);
-    taken.add(pair.number);
-  }
-  return claims;
-}
-
-const isHeldUnit = (unit: SecurityUnit) => unit.kind === "routine" && isHeldTopic(unit.topic);
-
-/** The held units' claims (topic → PR number), and the held plan each claimable PR records. */
-interface HeldClaims {
-  readonly byTopic: ReadonlyMap<string, number>;
-  readonly plans: ReadonlyMap<number, ChangePlan>;
-}
-
-/** Whether a recorded plan moves npm packages: the held work a failed aged npm plan could join to it. */
-const hasNpmMoves = (plan: ChangePlan) => plan.moves.some((move) => move.ecosystem === "npm");
-
-/**
- * The held units' claims, read only when some unit is held (each other unit reads its own PRs, as before); what made
- * them unreadable (an own PR's journal, say) instead of a throw, so that fails the held units alone, not the run.
- */
-async function heldClaimsOf(publication: PublicationContext, units: ReadonlyArray<SecurityUnit>, own: ReadonlyArray<GitHubPullRequest>): Promise<HeldClaims | Error> {
-  if (!units.some(isHeldUnit)) return { byTopic: new Map(), plans: new Map() };
-  try {
-    const plans = heldPlansOf(await claimable(publication, own));
-    return { byTopic: claimsAmong(units, plans), plans: new Map(plans.map(({ number, plan }) => [number, plan])) };
-  } catch (err) {
-    return asError(err);
-  }
-}
-
-/**
- * The open PRs a held unit may claim, read-only (`inspectOwnership`): the head is still the tool's, and no person took
- * it over (a held PR marked ready, which review leaves alone). Otherwise a PR someone pushed to, or one a person took,
- * would keep its unit from the PR the tool opens or keeps instead. The chosen PR is repaired later, only if its unit
- * uses it, as any reused one is.
- */
-async function claimable(publication: PublicationContext, own: ReadonlyArray<GitHubPullRequest>): Promise<GitHubPullRequest[]> {
-  const claimable: GitHubPullRequest[] = [];
-  for (const pr of own) {
-    if (topicOf(RULES, pr.headRef) === undefined) continue;
-    const effective = claimView(await inspectOwnership(publication, pr));
-    if (effective === undefined) continue;
-    if ((planOf(effective.body)?.cooldown?.length ?? 0) > 0 && !effective.isDraft) continue;
-    claimable.push(effective);
-  }
-  return claimable;
-}
-
-/**
- * What a claim reads of a PR: its effective content, or for one whose state someone removed, what the journal validly
- * saved for its head when there is that (else the PR as it is, as for a legacy entry); undefined when it isn't ours.
- */
-function claimView(ownership: Ownership): GitHubPullRequest | undefined {
+function ownershipView(ownership: Ownership): GitHubPullRequest | undefined {
   if (ownership.kind !== "ours") return undefined;
   if (ownership.recovery === "state-removed" && ownership.saved !== undefined) {
     return { ...ownership.pr, title: ownership.saved.title, body: ownership.saved.body };
   }
   return ownership.pr;
-}
-
-/** How many of a held unit's packages a held plan shares, and the lowest shared one; undefined when none. */
-function heldOverlap(previous: ChangePlan, unit: SecurityUnit): { readonly shared: number; readonly lowest: string } | undefined {
-  const listed: unknown = heldMembers(previous);
-  // Read from a PR body: a plan whose members aren't names stands for no held unit, rather than failing every claim.
-  if (!Array.isArray(listed) || !listed.every((key) => typeof key === "string")) return undefined;
-  const members = new Set<string>(listed);
-  const shared = [...new Set(unit.work.map(packageKey))].filter((key) => members.has(key)).sort();
-  return shared.length === 0 ? undefined : { shared: shared.length, lowest: shared[0]! };
 }
 
 async function planUnit(execution: Execution, unit: SecurityUnit, base: PlanBase): Promise<ChangePlan> {
@@ -818,17 +636,19 @@ async function runUnit(
   unit: SecurityUnit,
   base: PlanBase,
   own: ReadonlyArray<GitHubPullRequest>,
-  claimed: number | undefined,
   undecided: ReadonlyMap<string, ReadonlyArray<string>>,
 ): Promise<Readonly<Record<string, unknown>>> {
-  const { context, publication } = execution;
+  const { publication } = execution;
   const plan = await planUnit(execution, unit, base);
-  const owned = await recognisedPlans(publication, own, plan, claimed);
+  const owned = await recognisedPlans(execution, own, { unit, plan });
   const already = owned.find((candidate) => samePlan(candidate.pr, planDigest(plan), digestOf));
-  // The PR this unit reuses (for a held unit, the one it claimed), checked before anything repairs, refreshes or redoes it.
+  // The reused PR is checked before anything repairs, refreshes or redoes it.
   const reused = already ?? owned[0];
-  if (reused !== undefined) assertNoUndecidedMoves(planOf(reused.pr.body), undecided);
   const details = { topic: plan.topic, packages: plan.packages, notes: plan.notes ?? [] };
+  if (reused !== undefined && !reused.pr.isDraft && await earlyPr(execution, reused.pr, plan)) {
+    return { ...details, outcome: "deferred", reason: "a person marked the early PR ready" };
+  }
+  if (reused !== undefined) assertNoUndecidedMoves(planOf(reused.pr.body), undecided);
   if (already !== undefined) {
     const pr = await repairOwnership(publication, already);
     await refreshText(execution, pr, plan);
@@ -840,18 +660,18 @@ async function runUnit(
   if (tracked === undefined) throw new Error("a version unit can't execute without its decision's issue");
   const attempt = tracked.attempt;
   if (attempt === undefined) return executeUnit(execution, plan, base, owned[0], own, details, tracked);
-  // A reused PR is the attempt's from the start (its preflight may have reserved another branch): recovery reads it.
-  if (owned[0] !== undefined && attempt.branch !== owned[0].pr.headRef) await settleAttempt(attemptClient(execution), tracked.issue, attempt.id, { pr: owned[0].pr.number });
-  // An early attempt ends here unless it published: one grant runs one attempt, whatever stopped it.
+  // One grant runs one attempt; every post-start failure is settled here or recovered next run.
   let result: Readonly<Record<string, unknown>>;
   try {
     result = await executeUnit(execution, plan, base, owned[0], own, details, tracked);
+    await settleAttempt(attemptClient(execution), tracked.issue, attempt.id, attemptPatchOf(result));
   } catch (error) {
     // A publication can fail after its PR exists (a label, say): that PR is the attempt's, still running.
-    await endAttempt(attemptClient(execution), tracked.issue, attempt.id);
+    await endAttempt(attemptClient(execution), tracked.issue, attempt.id).catch((failure: unknown) => {
+      execution.context.logger.warn("secure-it: an early attempt couldn't be ended", { issue: tracked.issue, error: asError(failure).message });
+    });
     throw error;
   }
-  await settleAttempt(attemptClient(execution), tracked.issue, attempt.id, attemptPatchOf(result));
   return result;
 }
 
@@ -1181,28 +1001,35 @@ async function npmSignals(registry: NpmRegistry, entry: HeldVersion): Promise<st
  * body lags behind its head is matched by the plan the journal saved for that head, not by its stale body. Read-only:
  * the caller repairs only the PR it uses. Every candidate is inspected, so an unreadable journal fails the unit.
  */
-async function recognisedPlans(
-  publication: PublicationContext,
-  own: ReadonlyArray<GitHubPullRequest>,
-  plan: ChangePlan,
-  claimed?: number,
-): Promise<Ours[]> {
+async function recognisedPlans(execution: Execution, own: ReadonlyArray<GitHubPullRequest>, target: { readonly plan: ChangePlan; readonly unit?: SecurityUnit }): Promise<Ours[]> {
   const owned: Ours[] = [];
-  const held = plan.kind === "routine" && isHeldTopic(plan.topic);
-  for (const candidate of own) {
-    if (topicOf(RULES, candidate.headRef) === undefined) continue;
-    const ownership = await inspectOwnership(publication, candidate);
-    // Someone else's push or rewrite is skipped. Legacy entries prove only the head: kept for reconciliation, never `samePlan`.
-    if (ownership.kind !== "ours") continue;
-    // The recorded plan names the unit, not the branch: branch topics are cut and made branch-safe, so two packages can
-    // share one (`@scope/foo` and `scope-foo`), and a numbered branch (`…-2`, next to one a human took over) is cut shorter.
-    const previous = planOf(ownership.pr.body);
-    if (previous === undefined || previous.kind !== plan.kind) continue;
-    // A held unit's PR is the one `heldClaims` gave it, whatever its topic says now.
-    if (held ? candidate.number !== claimed || !isHeldTopic(previous.topic) : previous.topic !== plan.topic) continue;
-    owned.push(ownership);
+  for (const pr of own) {
+    if (topicOf(RULES, pr.headRef) === undefined) continue;
+    const ownership = await inspectOwnership(execution.publication, pr);
+    const effective = ownershipView(ownership);
+    const plan = effective === undefined ? undefined : planOf(effective.body);
+    if (ownership.kind !== "ours" || effective === undefined || plan === undefined) continue;
+    if (matchesPlan(target, { pr: effective, plan, early: await earlyPr(execution, effective, plan) })) owned.push(ownership);
   }
   return owned;
+}
+
+/** Metadata ownership is shared by assessment and execution, without repeating issue reads for every unit. */
+function earlyPr(execution: Execution, pr: GitHubPullRequest, plan: ChangePlan): Promise<boolean> {
+  let read = execution.early.get(pr.number);
+  if (read === undefined) {
+    read = isEarlyPr({ issues: execution.context.issues, repo: execution.context.repo.repo }, pr, plan);
+    execution.early.set(pr.number, read);
+  }
+  return read;
+}
+
+/** Early PRs carry exact decisions; eligible ordinary PRs can reconcile their kind and full recorded topic. */
+function matchesPlan(target: { readonly plan: ChangePlan; readonly unit?: SecurityUnit }, candidate: { readonly pr: GitHubPullRequest; readonly plan: ChangePlan; readonly early: boolean }): boolean {
+  if (target.plan.kind !== candidate.plan.kind) return false;
+  if (candidate.early) return decisionIdOf(target.plan) === decisionIdOf(candidate.plan);
+  if (target.unit?.young === true || takenEarlyOf(candidate.pr.body)) return false;
+  return target.plan.topic === candidate.plan.topic;
 }
 
 /**
@@ -1261,20 +1088,18 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
   const { config } = await readSettings(await deps.trees.commit(context.workingCopy, context.workingCopy.headSha));
   const trusted = (pkg: { readonly ecosystem: SecurityFix["ecosystem"]; readonly name: string }) => isTrustedPackage(config.trustedPackages, pkg);
   const open = await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base);
-  // The decisions open PRs were taken early for (never reduced: a retry without some of it is another decision) and,
-  // of those, the ones whose grant stands now: the only young work review runs before verifying (held preflights).
+  // Decisions taken early are never reduced by review.
   // Read once per tick, when first asked.
   let early: ReturnType<typeof earlyDecisions> | undefined;
   const decisions = () => (early ??= earlyDecisions(issues, open));
   const governed: SecureItDeps = {
     ...deps,
     disposition: async (target) => {
-      if (target.kind === "preflight" && !(await decisions()).authorized.has(decisionIdOf(target.plan))) return { kind: "defer", reason: "review resolves young held work only for a PR taken early; a run decides the rest through its issue" };
-      if (target.kind === "retry" && target.of !== undefined && target.plan !== target.of && (await decisions()).taken.has(decisionIdOf(target.of))) return { kind: "defer", reason: "a decision taken early is retried whole or not at all" };
+      if (target.kind === "retry" && target.of !== undefined && target.plan !== target.of && (await decisions()).has(decisionIdOf(target.of))) return { kind: "defer", reason: "a decision taken early is retried whole or not at all" };
       return deps.disposition(target);
     },
   };
-  const execution = { context, deps: governed, env, inventories, publication, npmFiles: new Map<string, string>(), branches: new Set<string>(), heldReferences: new Map<string, Promise<ReadonlyArray<string>>>() };
+  const execution = { context, deps: governed, env, inventories, publication, npmFiles: new Map<string, string>(), branches: new Set<string>(), early: new Map<number, Promise<boolean>>() };
   const notes: Array<Readonly<Record<string, unknown>>> = [];
   const planFrom = (pr: GitHubPullRequest): ChangePlan => {
     const plan = planOf(pr.body);
@@ -1365,25 +1190,18 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       }
       if (blocked.length > 0) notes.push({ number: pr.number, blocked });
       // Split exactly as a run would, required-dependency moves included, before telling which unit is this PR's.
-      const held = await holdRequiredYoung(execution, units, { tree: base, gradle: baseGradle });
-      // An unknown grouping of held npm work can't tell which unit a held PR with npm moves is, nor retire it; a held PR
-      // without npm moves, or a non-held PR, doesn't depend on it.
-      if (held.ungrouped !== undefined && isHeldPlan(previous) && hasNpmMoves(previous)) throw held.ungrouped;
-      const split = held.units;
-      // A held PR is the unit a run would give it, so a run and a review never disagree on which PR is whose.
-      const open = isHeldPlan(previous) ? await claimable(publication, await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base)) : [];
-      const claims = heldClaims(split, open);
-      const unit = unitOf(previous, split, claims, pr.number);
-      if (unit === undefined) {
-        await closeAndDelete(publication, pr.number, pr.headSha, retirementOf(previous, split, claims, pr.number));
+      const prepared = await withRequiredYoung(execution, units, { tree: base, gradle: baseGradle });
+      // Only an early PR's standing grant supplies young coverage in this tick's disposition.
+      const early = allowedYoung.get(pr.number)!.length > 0;
+      // Failed aged npm planning leaves early npm grouping unknown, even if its roots now appear aged.
+      if (prepared.ungrouped !== undefined && early && previous.moves.some((move) => move.ecosystem === "npm")) throw prepared.ungrouped;
+      const selected = await reviewPlan(execution, previous, prepared, { tree: base, gradle: baseGradle }, early);
+      if (selected === undefined) {
+        await closeAndDelete(publication, pr.number, pr.headSha, "No actionable fixes remain for this security unit on the default branch. Blocked fixes are reported by secure-it.");
+        if (early) await reviewClosed(issues, pr, previous);
         return "retired";
       }
-      // This PR's unit failed its planning or preflight: the PR is kept as it is; the others' units are unaffected.
-      const failure = held.failures.get(unit);
-      if (failure !== undefined) throw failure;
-      const recomputed = await planUnit(execution, unit, { tree: base, gradle: baseGradle });
-      // Plans predating batches retain their package scope and branch topic until retired.
-      const plan = previous.kind === undefined ? { ...recomputed, kind: undefined, topic: previous.topic } : recomputed;
+      const { unit, plan } = selected;
       if (plan.notes !== undefined && plan.notes.length > 0) notes.push({ number: pr.number, notes: plan.notes });
       const changed = planDigest(plan) !== planDigest(previous);
       // Re-applying or verifying the plan on the new base executes it: asked first, and a PR taken early only as the
@@ -1460,7 +1278,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
   return { outcome: "reviewed", reviewed, notes };
 }
 
-/** New routine PRs recompute all non-majors; majors and legacy PRs retain their package scope. */
+/** Routine PRs recompute all non-majors; majors retain their package scope. */
 async function reviewUnits(previous: ChangePlan, fixes: ReadonlyArray<SecurityFix>, peers?: NpmPeerPlanner) {
   if (previous.kind !== "malware" && !previous.malware && fixes.some((fix) => fix.malicious)) {
     throw new Error("malware on the new base must be fixed together before this security unit can verify");
@@ -1470,37 +1288,26 @@ async function reviewUnits(previous: ChangePlan, fixes: ReadonlyArray<SecurityFi
   return coupledWork(scoped, peers);
 }
 
-/**
- * The recomputed unit an open PR stands for: several routine units can exist (the aged one and each held one). A held
- * PR (`number`) stands for the held unit `heldClaims` gives it among the open PRs, so a unit whose name changed keeps
- * its PR and no two PRs stand for one unit; the others, by topic.
- */
-export function unitOf(previous: ChangePlan, units: ReadonlyArray<SecurityUnit>, claims: ReadonlyMap<string, number>, number: number): SecurityUnit | undefined {
-  const kind = previous.malware ? "malware" : previous.kind;
-  if (kind === undefined) return units[0];
-  if (!isHeldPlan(previous)) return units.find((unit) => unit.kind === kind && (kind !== "routine" || unit.topic === previous.topic));
-  return units.find((unit) => unit.kind === "routine" && isHeldTopic(unit.topic) && claims.get(unit.topic) === number);
-}
-
-/**
- * Why review retires an open PR no unit is left for. A held one may only have lost its claim: the held work it
- * overlaps went to other PRs (a claim says which PR will carry it, not that it does yet) or to none yet (a run opens
- * one), or none of it is held any more, which doesn't mean nothing needs fixing (it may be in the aged batch now).
- */
-export function retirementOf(previous: ChangePlan, units: ReadonlyArray<SecurityUnit>, claims: ReadonlyMap<string, number>, number: number): string {
-  if (!isHeldPlan(previous)) return "No actionable fixes remain for this security unit on the default branch. Blocked fixes are reported by secure-it.";
-  const overlapping = units.filter((unit) => unit.kind === "routine" && isHeldTopic(unit.topic) && heldOverlap(previous, unit) !== undefined);
-  const others = [...new Set(overlapping.map((unit) => claims.get(unit.topic)).filter((claim): claim is number => claim !== undefined && claim !== number))].sort((a, b) => a - b);
-  const unassigned = overlapping.some((unit) => claims.get(unit.topic) === undefined);
-  if (others.length > 0) {
-    return `The remaining overlapping held work is assigned to ${others.map((claim) => `#${claim}`).join(", ")}${unassigned ? ", and a run opens a PR for the rest" : ""}; this draft is superseded.`;
+/** Match an early decision exactly; a related changed one reaches reviewExecution's notice rather than retirement. */
+async function reviewPlan(execution: Execution, previous: ChangePlan, prepared: YoungSplit, base: PlanBase, early: boolean): Promise<PlannedUnit | undefined> {
+  const related = prepared.units.filter((unit) => early
+    ? unit.work.some((fix) => previous.moves.some((move) => move.ecosystem === fix.ecosystem && move.name === fix.name))
+    : unit.kind === previous.kind && unit.topic === previous.topic);
+  let changed: PlannedUnit | undefined;
+  let failed: Error | undefined;
+  for (const unit of related) {
+    try {
+      const failure = failureOf(prepared, unit);
+      if (failure !== undefined) throw failure;
+      const plan = await planUnit(execution, unit, base);
+      if (!early || decisionIdOf(plan) === decisionIdOf(previous)) return { unit, plan };
+      changed ??= { unit, plan };
+    } catch (error) {
+      failed ??= asError(error);
+    }
   }
-  if (unassigned) return "The overlapping held work isn't assigned to an open PR yet; a run opens one for it, so this draft is superseded.";
-  return "None of this draft's fixes is held on the default branch any more; a run plans whatever still needs fixing. Blocked fixes are reported by secure-it.";
-}
-
-function isHeldPlan(plan: ChangePlan): boolean {
-  return !plan.malware && plan.kind === "routine" && isHeldTopic(plan.topic);
+  if (failed !== undefined) throw failed;
+  return changed;
 }
 
 /** What the run's issue flow reads: the shared scan, its units planned from metadata, and what blocked others. */
@@ -1509,22 +1316,20 @@ interface TrackingInputs {
   readonly scanned: ScanState;
   readonly complete: boolean;
   readonly units: ReadonlyArray<SecurityUnit>;
-  /** Every unit of the run, failed ones included, as the run's held claims take them. */
-  readonly claimants: ReadonlyArray<SecurityUnit>;
   readonly blocked: Selection["blocked"];
   readonly own: ReadonlyArray<GitHubPullRequest>;
   readonly base: PlanBase;
 }
 
 /**
- * The open PRs a unit's run could reuse, as their ownership reads them (`claimView`): one someone else pushed to, or
+ * The open PRs a unit's run could reuse, as their ownership reads them (`ownershipView`): one someone else pushed to, or
  * whose ownership can't be read, is left out (the run itself fails on the latter, alone), so no issue names it.
  */
 async function reusable(publication: PublicationContext, own: ReadonlyArray<GitHubPullRequest>): Promise<GitHubPullRequest[]> {
   const reusable: GitHubPullRequest[] = [];
   for (const pr of own) {
     if (topicOf(RULES, pr.headRef) === undefined) continue;
-    const effective = await inspectOwnership(publication, pr).then(claimView, () => undefined);
+    const effective = await inspectOwnership(publication, pr).then(ownershipView, () => undefined);
     if (effective !== undefined) reusable.push(effective);
   }
   return reusable;
@@ -1577,19 +1382,12 @@ async function trackIssues(execution: Execution, inputs: TrackingInputs): Promis
       context.logger.warn("secure-it: a unit can't be planned for its issue", { topic: unit.topic, error: asError(error).message });
     }
   }
-  // The PR an issue names is one the run would use: still the tool's (`inspectOwnership`), read as a claim reads it.
-  const recorded = (await reusable(execution.publication, inputs.own)).flatMap((pr) => {
+  // Assessment names the same effective PR execution can reuse, with the same early-decision boundary.
+  const recorded: Array<{ pr: GitHubPullRequest; plan: ChangePlan; early: boolean }> = [];
+  for (const pr of await reusable(execution.publication, inputs.own)) {
     const plan = planOf(pr.body);
-    return plan === undefined ? [] : [{ plan, id: decisionIdOf(plan), pr: { number: pr.number, url: pr.url } }];
-  });
-  // Without an exact one, the PR the unit's run reuses (`recognisedPlans`): a held unit's claimed one (the run's own
-  // claims, over every unit), any other's by its recorded topic, whatever decision it now carries: a retry that reduced
-  // the decision left part of it there, and the run redoes it whole.
-  const claims = await heldClaimsOf(execution.publication, inputs.claimants, inputs.own);
-  const claimed = (unit: SecurityUnit) => (claims instanceof Error ? undefined : claims.byTopic.get(unit.topic));
-  const reusedBy = ({ unit, plan }: PlannedUnit) => recorded.find((entry) => entry.plan.kind === plan.kind && (isHeldUnit(unit)
-    ? entry.pr.number === claimed(unit)
-    : entry.plan.topic === plan.topic));
+    if (plan !== undefined) recorded.push({ pr, plan, early: await earlyPr(execution, pr, plan) });
+  }
   const assessment = await assessmentOf({
     sha: inputs.tree.id,
     now: context.now,
@@ -1599,11 +1397,17 @@ async function trackIssues(execution: Execution, inputs: TrackingInputs): Promis
     blocked: inputs.blocked,
     trusted: (pkg) => isTrustedPackage(config.trustedPackages, pkg),
     eligibleAt: eligibleAtOf(execution, config),
-    prOf: (planned) => (recorded.find((entry) => entry.id === decisionIdOf(planned.plan)) ?? reusedBy(planned))?.pr,
+    prOf: (target) => {
+      const matches = recorded.filter((entry) => matchesPlan(target, entry));
+      const found = matches.find((entry) => decisionIdOf(entry.plan) === decisionIdOf(target.plan)) ?? matches[0];
+      return found === undefined ? undefined : { number: found.pr.number, url: found.pr.url };
+    },
   });
   const sync = await syncIssues({ issues: context.issues, repo: context.repo.repo, clean: issueCleaner(context), ...(execution.deps.clock === undefined ? {} : { clock: execution.deps.clock }) }, assessment);
   // Before any disposition: an attempt a previous run left running is settled from its PR, or ends as interrupted.
   const recovered = await recoverAttempts(attemptClient(execution), sync.tracked);
+  // Recovery can attach a PR to its attempt: execution must not reuse assessment's earlier ownership answer.
+  if (recovered.length > 0) execution.early.clear();
   for (const note of [...sync.notes, ...recovered]) context.logger.warn("secure-it: issues", { note });
   // Labels where they authorize nothing are said so too, whether or not anything here would execute.
   await inactiveLabelNotices({ issues: context.issues, repo: context.repo.repo, clean: issueCleaner(context) }, { assessment, sync });
@@ -1630,7 +1434,7 @@ function issueCleaner(context: ToolRunContext): (body: string) => string {
  * its unit's own plan; a reduced plan of a decision taken early is a different decision, never authorized as one);
  * floor removals and review steps keep the tool's default.
  */
-function trackedDisposition(execution: Execution, tracking: Tracking, started: Map<string, { readonly issue: number; readonly attempt: string }>): SecureItDeps["disposition"] {
+function trackedDisposition(execution: Execution, tracking: Tracking): SecureItDeps["disposition"] {
   const client = { issues: execution.context.issues, repo: execution.context.repo.repo, clean: issueCleaner(execution.context), now: execution.context.now };
   // An early attempt publishes to the branch of the PR its unit reuses, or to one reserved for its grant alone.
   const branches = attemptBranches((labelEventId) => branchFor(RULES, client.now, `take-early-${labelEventId}`));
@@ -1638,27 +1442,11 @@ function trackedDisposition(execution: Execution, tracking: Tracking, started: M
     if (target.kind === "removal" || target.kind === "review") return execution.deps.disposition(target);
     const own = target.of ?? target.plan;
     const decided = await issueDisposition(tracking, own, client, (labelEventId) => branches(labelEventId, target.branch));
-    if (decided.kind === "proceed" && decided.tracked?.attempt !== undefined) started.set(own.topic, { issue: decided.tracked.issue, attempt: decided.tracked.attempt.id });
     if (decided.kind === "defer" || target.of === undefined || target.plan === target.of) return decided;
     const id = subjectId({ kind: "decision", moves: decisionMoves(own) });
     const subject = tracking.assessment.subjects.find((entry) => subjectId(entry.subject) === id);
     return subject?.status.kind === "eligible" ? decided : { kind: "defer", reason: "a decision taken early is retried whole or not at all" };
   };
-}
-
-/**
- * Ends an early attempt this run started for a unit that then failed (its preflight, its claim, or after publishing
- * when recording the PR failed): one grant runs one attempt, and the issue says it ended rather than leaving it to read
- * as running, unless a PR from it exists (`endAttempt`). A failure to write it is logged; the next run's recovery
- * settles it from PR history.
- */
-async function endStarted(execution: Execution, started: { readonly issue: number; readonly attempt: string } | undefined): Promise<void> {
-  if (started === undefined) return;
-  try {
-    await endAttempt(attemptClient(execution), started.issue, started.attempt);
-  } catch (error) {
-    execution.context.logger.warn("secure-it: an early attempt couldn't be ended", { issue: started.issue, error: asError(error).message });
-  }
 }
 
 /**

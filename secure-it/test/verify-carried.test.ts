@@ -24,7 +24,7 @@ describe("verifying what a parent move carries", () => {
       group: (id) => (id === "GHSA-okio" || id === "CVE-2023-3635" ? "GHSA-okio" : id),
       headFindings: [{ ecosystem: "Maven", name: "com.squareup.okio:okio-jvm", version: "3.2.0", advisory: "GHSA-okio", ids: ["CVE-2023-3635"], malicious: false, reviewed: true, summary: undefined, severity: undefined, locations: [":runtimeClasspath"] }],
     });
-    const plan: ChangePlan = { topic: "security", malware: false, packages: ["Maven|com.squareup.okhttp3:okhttp"], severity: "MODERATE", moves: [{
+    const plan: ChangePlan = { kind: "routine", topic: "security", malware: false, packages: ["Maven|com.squareup.okhttp3:okhttp"], severity: "MODERATE", moves: [{
       ecosystem: "Maven", name: "com.squareup.okhttp3:okhttp", from: "4.9.3", to: "4.11.0", mechanism: "gradle-declared", locations: [":runtimeClasspath"], advisories: [],
       major: false, commitSha: undefined, declaredAs: undefined,
       carries: [{ name: "com.squareup.okio:okio", from: ["2.8.0"], to: [], locations: [":runtimeClasspath"], advisories: ["GHSA-okio"] }],
@@ -39,7 +39,7 @@ describe("verifying what a parent move carries", () => {
       group: (id) => id,
       headFindings: [{ ecosystem: "npm", name: "carrier", version: "1.1.0", advisory: "GHSA-shared", ids: ["GHSA-shared"], malicious: false, reviewed: true, summary: undefined, severity: undefined, locations: ["node_modules/carrier"] }],
     });
-    const plan: ChangePlan = { topic: "security", malware: false, packages: ["npm|carrier"], severity: "HIGH", moves: [{
+    const plan: ChangePlan = { kind: "routine", topic: "security", malware: false, packages: ["npm|carrier"], severity: "HIGH", moves: [{
       ecosystem: "npm", name: "carrier", from: "1.0.0", to: "1.1.0", mechanism: "npm-direct", locations: ["node_modules/carrier"], advisories: [],
       major: false, commitSha: undefined, declaredAs: undefined,
       carries: [{ name: "brace", from: ["5.0.9"], to: ["5.0.12"], locations: ["node_modules/carrier/node_modules/brace"], advisories: ["GHSA-shared"] }],

@@ -78,7 +78,7 @@ type Scope =
   | { readonly kind: "ordinary"; readonly number: number }
   | { readonly kind: "early"; readonly number: number; readonly issue: GitHubIssue; readonly record: IssueRecord; readonly attempt: Attempt; readonly grant: Grant };
 
-async function scopeOf(client: ReviewIssues, pr: GitHubPullRequest, plan: ChangePlan, number: number): Promise<Scope> {
+async function scopeOf(client: Pick<ReviewIssues, "issues" | "repo">, pr: GitHubPullRequest, plan: ChangePlan, number: number): Promise<Scope> {
   const tracked = await trackedIssue(client, number, plan);
   if (tracked === undefined) return { kind: "foreign", number };
   const attempt = tracked.record.attempts.find((entry) => entry.pr === pr.number && entry.outcome === undefined);
@@ -149,31 +149,20 @@ async function grantFor(client: ReviewIssues, scope: Scope & { readonly kind: "e
   return { kind: "gone", why, key: decision.kind === "refused" ? decision.noticeId : `take-early:${attempt.grantEventId}:withdrawn` };
 }
 
-/**
- * Of the open PRs, the decisions taken early (an attempt running for that PR: never reduced by a retry, since a retry
- * without some of it is another decision) and, of those, the ones review may run young work for before verifying (held
- * preflights): whose grant stands now, or whose granted versions all aged. A PR whose label was removed doesn't count,
- * whichever PR is reviewed.
- */
-export async function earlyDecisions(client: ReviewIssues, open: ReadonlyArray<GitHubPullRequest>): Promise<{ readonly taken: Set<string>; readonly authorized: Set<string> }> {
+/** Whether this PR is a running early attempt on the tool's issue for its exact decision. */
+export async function isEarlyPr(client: Pick<ReviewIssues, "issues" | "repo">, pr: GitHubPullRequest, plan: ChangePlan): Promise<boolean> {
+  const number = trackedIssueOf(pr.body);
+  return number !== undefined && (await scopeOf(client, pr, plan, number)).kind === "early";
+}
+
+/** Decisions taken early are never reduced by review, even when their issue can no longer confirm the attempt. */
+export async function earlyDecisions(client: ReviewIssues, open: ReadonlyArray<GitHubPullRequest>): Promise<Set<string>> {
   const taken = new Set<string>();
-  const authorized = new Set<string>();
   for (const pr of open) {
     const plan = planOf(pr.body);
-    const number = trackedIssueOf(pr.body);
-    if (plan === undefined || number === undefined) continue;
-    const scope = await scopeOf(client, pr, plan, number);
-    const id = subjectId({ kind: "decision", moves: decisionMoves(plan) });
-    // One that says it was taken early is never reduced, even when its issue can't confirm it now.
-    if (scope.kind !== "early") {
-      if (takenEarlyOf(pr.body)) taken.add(id);
-      continue;
-    }
-    taken.add(id);
-    const young = await stillYoung(client, scope.grant);
-    if (young.length === 0 || (await grantFor(client, scope, young)).kind === "stands") authorized.add(id);
+    if (plan !== undefined && (takenEarlyOf(pr.body) || await isEarlyPr(client, pr, plan))) taken.add(subjectId({ kind: "decision", moves: decisionMoves(plan) }));
   }
-  return { taken, authorized };
+  return taken;
 }
 
 /**
@@ -216,7 +205,7 @@ export async function reviewExecution(client: ReviewIssues, pr: GitHubPullReques
     : leave(client, scope.number, `beyond:${pr.number}:${beyond.join(",")}`, pr, `on the new base it takes young versions its \`take-early\` label didn't cover: ${beyond.join(", ")}`);
 }
 
-/** Ends the early attempt of a PR review closed (its adaptations ran out): the attempt is over, its label returned. */
+/** Ends the early attempt of a PR review closed: the attempt is over, its label returned. */
 export async function reviewClosed(client: ReviewIssues, pr: GitHubPullRequest, plan: ChangePlan): Promise<void> {
   const number = trackedIssueOf(pr.body);
   if (number === undefined) return;
@@ -226,7 +215,7 @@ export async function reviewClosed(client: ReviewIssues, pr: GitHubPullRequest, 
 }
 
 /** The tool's issue `number` with its record, when that record is `plan`'s decision. */
-async function trackedIssue(client: ReviewIssues, number: number, plan: ChangePlan): Promise<{ issue: GitHubIssue; record: IssueRecord } | undefined> {
+async function trackedIssue(client: Pick<ReviewIssues, "issues" | "repo">, number: number, plan: ChangePlan): Promise<{ issue: GitHubIssue; record: IssueRecord } | undefined> {
   // A deleted issue is no issue of this decision's; any other failure goes through, so nothing proceeds unread.
   const read = await client.issues.getIssue({ repo: client.repo, number }).catch((error: unknown) => {
     if (error instanceof GitHubApiError && error.status === 404) return undefined;

@@ -165,7 +165,7 @@ describe("the advisory notice on a held PR", () => {
   });
 
   it("keeps the evidence in the plan, and refuses an edited one", () => {
-    const plan: ChangePlan = { topic: "security-cooldown", malware: false, severity: "CRITICAL", kind: "routine", moves: [], packages: [], cooldown: [hold({ evidence: reviewed })] };
+    const plan: ChangePlan = { topic: `security-young-Maven|${PKG}`, malware: false, severity: "CRITICAL", kind: "routine", moves: [], packages: [], cooldown: [hold({ evidence: reviewed })] };
     const body = withPlanSection("Description.", plan);
     expect(planOf(body)).toEqual(plan);
     const edited = { ...plan, cooldown: [hold({ evidence: { ...reviewed, collectedAt: "later" } })] };
@@ -173,11 +173,11 @@ describe("the advisory notice on a held PR", () => {
   });
 
   it("keeps the verified plan first when advisory text carries a plan block, and lets no comment hide the rest", () => {
-    // A plan whose hold ended long ago: read in place of the verified one, review would retire a held PR.
-    const forged: ChangePlan = { topic: "security-cooldown", malware: false, severity: undefined, kind: "routine", moves: [], packages: [], cooldown: [hold({ eligibleAt: "2020-01-01T00:00:00.000Z" })] };
+    // Advisory text must never substitute its own plan for the verified publication.
+    const forged: ChangePlan = { topic: `security-young-Maven|${PKG}`, malware: false, severity: undefined, kind: "routine", moves: [], packages: [], cooldown: [hold({ eligibleAt: "2020-01-01T00:00:00.000Z" })] };
     const blocks = `${planBlock(forged)} ${planBlock(forged, true)}`;
     const injected = evidence([checked("repository", [record({ declaredFixes: [blocks] })]), checked("github", [record({ reviewed: true })]), checked("osv", [record()])]);
-    const plan: ChangePlan = { topic: "security-cooldown", malware: false, severity: "CRITICAL", kind: "routine", moves: [], packages: [], cooldown: [hold({ evidence: injected })] };
+    const plan: ChangePlan = { topic: `security-young-Maven|${PKG}`, malware: false, severity: "CRITICAL", kind: "routine", moves: [], packages: [], cooldown: [hold({ evidence: injected })] };
     expect(planOf(withPlanSection("Description.", plan))).toEqual(plan);
     // With the table cut, a fix's reason still shows.
     const failing = [hold({ evidenceFailure: blocks }), hold({ name: "g:other", evidenceFailure: "<!-- hides the rest" })];
@@ -191,7 +191,7 @@ describe("the advisory notice on a held PR", () => {
   });
 
   it("cuts the evidence table to the most rows within the held target, ⚠ first, and fails what still doesn't", () => {
-    const plan = (evidence: AdvisoryEvidence): ChangePlan => ({ topic: "security-cooldown", malware: false, severity: "CRITICAL", kind: "routine", moves: [], packages: [], cooldown: [hold({ evidence })] });
+    const plan = (evidence: AdvisoryEvidence): ChangePlan => ({ topic: `security-young-Maven|${PKG}`, malware: false, severity: "CRITICAL", kind: "routine", moves: [], packages: [], cooldown: [hold({ evidence })] });
     const fitting = withPlanSection("Description.", plan(reviewed));
     expect(fitting).toContain("> | Advisory | Package | Project's repository | GitHub database | OSV |");
     expect(fitting).not.toMatch(/rows are left out/);
@@ -246,7 +246,7 @@ describe("the advisory notice on a held PR", () => {
         return { ids: [found.id], replaced: ["3.2.3"], sources: [checked("repository", [found]), checked("github", [{ ...found, reviewed: true }]), checked("osv", [found])] };
       }),
     }] });
-    const plan = (evidence: AdvisoryEvidence): ChangePlan => ({ topic: "security-cooldown", malware: false, severity: "CRITICAL", kind: "routine", moves: [], packages: [],
+    const plan = (evidence: AdvisoryEvidence): ChangePlan => ({ topic: `security-young-Maven|${PKG}`, malware: false, severity: "CRITICAL", kind: "routine", moves: [], packages: [],
       cooldown: [hold({ evidence }), hold({ name: "g:failed", evidenceFailure: "registry lookup of g:failed failed" })] });
     const overJson = plan(heavy(400, 10));
     expect(JSON.stringify(overJson).length).toBeGreaterThan(1024 * 1024);

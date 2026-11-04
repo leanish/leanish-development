@@ -35,6 +35,12 @@
 
 ### Removed
 
+- secure-it's held-PR claims, package-overlap matching and extra Gradle preflight references. Young fixes still wait
+  as separate decisions, and every authorized edit is verified. Early PRs belong to an exact decision and its issue's
+  attempt; a changed decision is left with a notice instead of being reassigned by overlap or retired as gone.
+  Ordinary eligible PRs reconcile by kind and full recorded topic. Attempts start immediately before execution;
+  deferred decisions start none, and execution failures settle the attempt. Recorded plans now require their kind.
+
 - The `ownPackages` alias of `trustedPackages` in `.github/supply-chain.json`, as announced in 0.10.0. A config that
   still has it fails, saying to rename the field (or to delete it, next to `trustedPackages`); rename it before moving
   any reader to this release ([migration](docs/releasing.md#trustedpackages-migration)). The gate passes a PR making

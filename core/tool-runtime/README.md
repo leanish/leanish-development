@@ -35,7 +35,7 @@ package is the code around them. Setup and operation are in [Adopting the tools]
     entry can't restore it: review leaves the PR alone until a run recomputes and republishes.
   - **Ownership** (`ownership.ts`): `inspectOwnership` tells, read-only, whether an open PR is still the tool's and
     what its effective title and body are (the body's, or the journal's saved publication for the current head);
-    runs match their plans and secure-it claims held PRs by that content. `repairOwnership` writes a saved publication
+    runs match their plans and secure-it matches early decisions by that content. `repairOwnership` writes a saved publication
     back, with the race checks, only for the PR a unit or the tick goes on to use. `samePlan` tells an open PR already
     carrying a plan: only one whose body records its current head.
   - **Unit branches** (`branches.ts`): a unit reuses its open PR's branch with the base merged in, redone from a clean

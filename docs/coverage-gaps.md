@@ -116,8 +116,8 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   would accept. Publication checks every body as it sends it. Kept since 0.8.0.
 - **Held work that only plans together fails until it ages (secure-it)**: held groups that cannot be planned or
   resolved separately fail visibly until their versions age into the aged batch or a person moves them. An aged
-  batch planning failure can also block held npm work; existing affected PRs are kept. The coupling, preflight and
-  failure-propagation rules are in [secure-it](../secure-it/README.md#what-a-run-does), step 3. Narrowed in 0.9.0.
+  batch planning failure can also block young npm work; existing affected PRs are kept. References run only in final
+  verification after authorization. The coupling and failure-propagation rules are in [secure-it](../secure-it/README.md#what-a-run-does), step 3. Narrowed in 0.9.0.
 - **Ignored Gradle configurations' failures compared as text (secure-it, bump-it)**: when an ignored configuration
   resolves nothing, its failure text, declarations and constraints are all the reference can compare. A resolution
   rule that leaves those unchanged is unseen. Variable paths the inventory cannot normalize can also make equivalent

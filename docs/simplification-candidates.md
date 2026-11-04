@@ -40,8 +40,8 @@ says what was tried or measured, so the analysis needn't be repeated unless what
   650 lines, about 40 are the per-floor search with its drop-one-and-retry; the rest (the unlocked probe in a copy, the
   removal edit's verification, the plan's validation) is needed to remove any floor safely. Removing all or none would
   save about 25 lines and let one floor still needed block every other removal. The owner kept automatic removal.
-- **Required-young peers** (`holdRequiredYoung` in [`secure-it.ts`](../secure-it/src/secure-it.ts), about 34
-  lines): it moves a fix whose required dependency is still young into a held unit (with whatever it shares a companion with), and
+- **Required-young peers** (`withRequiredYoung` in [`secure-it.ts`](../secure-it/src/secure-it.ts)): it moves a fix
+  whose required dependency is still young into a young unit (with whatever it shares a companion with), and
   the requirement-age proof it relies on is needed by the gate anyway. Holding the whole fix for a person would save
   about 80 to 100 lines and make manual what now resolves itself when the wait ends.
 - **`landed` and `carriersShipped`** ([`verify.ts`](../secure-it/src/verify.ts)): not duplicates of the gate.

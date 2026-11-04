@@ -58,6 +58,7 @@ function environment(affected: Record<string, string[]>, extraRoutes: Record<str
 }
 
 const PLAN: ChangePlan = {
+  kind: "routine",
   topic: "lib",
   malware: false,
   packages: ["npm|lib"],
@@ -107,6 +108,7 @@ function npmRoutes(name: string, times: Record<string, string>, publishers: Reco
 
 async function verifyInduced(options: InducedOptions = {}): Promise<string[]> {
   const plan: ChangePlan = {
+    kind: "routine",
     topic: "postcss", malware: false, packages: ["npm|postcss"], severity: "HIGH",
     moves: [{ ...PLAN.moves[0]!, name: "postcss", from: "8.5.22", to: "8.5.23", mechanism: "npm-lock", locations: ["node_modules/postcss"], advisories: ["GHSA-postcss"] }],
   };
@@ -145,7 +147,7 @@ describe("verifying a carrier move", () => {
     "node_modules/carrier/node_modules/brace": { version: bundled, inBundle: true },
   } });
   const carried = { name: "brace", from: ["5.0.9"], locations: ["node_modules/carrier/node_modules/brace"], advisories: ["GHSA-brace"], to: ["5.0.12"] };
-  const plan: ChangePlan = { topic: "security", malware: false, packages: ["npm|carrier"], severity: "HIGH", moves: [
+  const plan: ChangePlan = { kind: "routine", topic: "security", malware: false, packages: ["npm|carrier"], severity: "HIGH", moves: [
     { ecosystem: "npm", name: "carrier", from: "1.0.0", to: "1.1.0", mechanism: "npm-direct", locations: ["node_modules/carrier"], advisories: [], major: false, commitSha: undefined, declaredAs: undefined, carries: [carried] },
   ] };
   const routes = {
@@ -329,6 +331,7 @@ describe("verifyPlan", () => {
       { id: ":runtimeClasspath", kind: "project", resolved: [{ group: "g", name: "lib", version: resolved }], unresolved: [], declared: [{ group: "g", name: "lib", version: declared, reason: undefined }], error: undefined },
     ] }] });
     const plan: ChangePlan = {
+      kind: "routine",
       topic: "g:lib", malware: false, packages: ["Maven|g:lib"], severity: "HIGH",
       moves: [{ ecosystem: "Maven", name: "g:lib", from: "1.0", to: "1.1", mechanism: "gradle-declared", locations: [":runtimeClasspath"], advisories: [], major: false, commitSha: undefined, declaredAs: undefined }],
     };
@@ -351,6 +354,7 @@ describe("verifyPlan", () => {
       { id: ":tool", kind: "project", resolved: [], unresolved: [], declared: [{ group: "g", name: "tool", version: "9.9", reason: undefined }], error: tool },
     ] }] });
     const plan: ChangePlan = {
+      kind: "routine",
       topic: "g:lib", malware: false, packages: ["Maven|g:lib"], severity: "HIGH",
       moves: [{ ecosystem: "Maven", name: "g:lib", from: "1.0", to: "1.1", mechanism: "gradle-declared", locations: [":runtimeClasspath"], advisories: [], major: false, commitSha: undefined, declaredAs: undefined }],
     };
@@ -386,6 +390,7 @@ describe("verifyPlan", () => {
       { id: ":compileClasspath", kind: "project", resolved: [], unresolved: [], declared: added.map((name) => ({ group: "g", name, version: "1.0", reason: undefined })), error: undefined },
     ] }] });
     const plan: ChangePlan = {
+      kind: "routine",
       topic: "fixture.plugin", malware: false, packages: [`Maven|${marker.group}:${marker.name}`], severity: "HIGH",
       moves: [{ ecosystem: "Maven", name: `${marker.group}:${marker.name}`, from: "2.0", to: "2.1", mechanism: "gradle-declared", locations: [":buildscript.classpath"], advisories: [], major: false, commitSha: undefined, declaredAs: undefined }],
     };
@@ -403,6 +408,7 @@ describe("verifyPlan", () => {
       { id: ":runtimeClasspath", kind: "project", resolved: [{ group: "g", name: "lib", version: lib }], unresolved: [], declared: [{ group: "g", name: "lib", version: lib, reason: undefined }, ...declared(other)], error: undefined },
     ] }] });
     const plan: ChangePlan = {
+      kind: "routine",
       topic: "g:lib", malware: false, packages: ["Maven|g:lib"], severity: "HIGH",
       moves: [{ ecosystem: "Maven", name: "g:lib", from: "1.0.0", to: "1.0.1", mechanism: "gradle-declared", locations: [":runtimeClasspath"], advisories: [], major: false, commitSha: undefined, declaredAs: undefined }],
     };
@@ -419,7 +425,7 @@ describe("verifyPlan", () => {
       { id: ":runtimeClasspath", kind: "project" as const, resolved: [], unresolved: [], declared: runtime.map((version) => ({ group: "g", name: "lib", version, reason: undefined })), error: undefined },
     ] }] });
     const plan = (mechanism: "gradle-declared" | "gradle-floor"): ChangePlan => ({
-      topic: "g:lib", malware: false, packages: ["Maven|g:lib"], severity: "HIGH",
+      kind: "routine", topic: "g:lib", malware: false, packages: ["Maven|g:lib"], severity: "HIGH",
       moves: [{ ecosystem: "Maven", name: "g:lib", from: "1.0.2", to: "1.0.3", mechanism, locations: [":runtimeClasspath"], advisories: ["GHSA-1"], major: false, commitSha: undefined, declaredAs: undefined }],
     });
     expect(referencePlan(plan("gradle-declared"), inventory(["1.0", undefined]))).toEqual({ moves: [{ name: "g:lib", from: "1.0", to: "1.0.3", locations: [":runtimeClasspath"] }], floors: [], problems: [] });
@@ -431,6 +437,7 @@ describe("verifyPlan", () => {
   it("rejects an action use that changed outside the plan", async () => {
     const workflow = (ref: string) => `on: push\njobs:\n  a:\n    runs-on: x\n    steps:\n      - uses: actions/cache@${ref} # v4.2.4\n`;
     const actionPlan: ChangePlan = {
+      kind: "routine",
       topic: "actions/checkout",
       malware: false,
       packages: ["GitHub Actions|actions/checkout"],
@@ -457,6 +464,7 @@ describe("verifyPlan", () => {
     const workflow = (trigger: string, ref: string, tag: string) =>
       `on: ${trigger}\njobs:\n  a:\n    runs-on: x\n    steps:\n      - uses: actions/checkout@${ref} # ${tag}\n`;
     const pinPlan: ChangePlan = {
+      kind: "routine",
       topic: "actions/checkout",
       malware: false,
       packages: ["GitHub Actions|actions/checkout"],
@@ -536,7 +544,7 @@ describe("full verification of additions at Maven security floors", () => {
 
   function fixture(plannedPlugin: boolean, resolved = floorVersion): VerifyInputs {
     const target = plannedPlugin ? "0.6.3" : "0.6.2";
-    const plan: ChangePlan = { topic: plugin, malware: false, packages: plannedPlugin ? [`Maven|${marker}`] : [], severity: "HIGH",
+    const plan: ChangePlan = { kind: "routine", topic: plugin, malware: false, packages: plannedPlugin ? [`Maven|${marker}`] : [], severity: "HIGH",
       moves: plannedPlugin ? [{ ecosystem: "Maven", name: marker, from: "0.6.2", to: "0.6.3", mechanism: "gradle-declared",
         locations: [":buildscript.classpath"], advisories: [], major: false, commitSha: undefined, declaredAs: undefined }] : [] };
     const expected = inventory(target, resolved);
