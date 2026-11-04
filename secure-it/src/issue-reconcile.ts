@@ -178,6 +178,14 @@ export function reconcile(assessment: Assessment, issues: ReadonlyArray<TrackedI
       }
       if (!assessment.complete) {
         notes.push(`#${issue.number}: its subject is gone, but the assessment is incomplete; it stays open`);
+        // Open, it mustn't keep promising what this run didn't confirm (a PR on the next run, a way to take it early):
+        // it says the run couldn't assess it, with the findings this run did see. Its record stays as it is: no closing,
+        // no absence, no attempt or grant settled because of this text.
+        const seen = [...new Map(assessment.subjects.flatMap((subject) => subject.findings)
+          .filter((finding) => record.findings.some((tracked) => sameFinding(tracked, finding)))
+          .map((finding) => [JSON.stringify(keyOf(finding)), finding])).values()];
+        const { body } = writer.render({ subject: record.subject, findings: seen, status: { kind: "blocked", reason: "unassessed", detail: notConfirmed(record, seen.length > 0) } }, record, assessment.sha);
+        if (body !== issue.body) operations.push({ kind: "update", number: issue.number, body });
         return;
       }
       const successors = successorsOf(record, assessment.subjects);
@@ -212,6 +220,18 @@ export function reconcile(assessment: Assessment, issues: ReadonlyArray<TrackedI
     });
   }
   return { operations, notes };
+}
+
+/**
+ * What an open issue says while an incomplete assessment no longer finds its subject: no promise the run didn't confirm,
+ * and, when the run saw none of its findings (so no table shows them), the advisories it tracks, from its own record.
+ */
+function notConfirmed(record: IssueRecord, seenAny: boolean): string {
+  const what = record.subject.kind === "decision"
+    ? "didn't confirm this decision; the moves below aren't queued for execution"
+    : seenAny ? "couldn't confirm this issue's current status" : "didn't find these advisories again";
+  const tracked = seenAny ? "" : `; it tracks ${record.findings.map((finding) => `${finding.name} ${finding.ids.join(", ")}`).join("; ")}`;
+  return `this run's assessment is incomplete and ${what}${tracked}. This issue stays open until an assessment settles it`;
 }
 
 /** Runs `step`, turning a failure into a note about `what`: one subject or issue never stops the others. */

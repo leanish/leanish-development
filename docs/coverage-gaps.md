@@ -57,7 +57,8 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   as not taken early (with a notice).
 - **A lasting gap keeps a fixed finding's issue open (secure-it)**: an issue closes as resolved only on a complete
   scan, so on a repository the gate always reports a gap for (an advisory range it can't read, say), an issue whose
-  findings are gone stays open, with the text of its last update, until that gap goes or a person closes it.
+  findings are gone stays open until that gap goes or a person closes it. It says meanwhile that the run couldn't assess
+  it, naming what it tracks, rather than its last status.
 - **A different token login (secure-it)**: issues are found by their creator, so a write PAT from another account
   starts over: it opens new issues, and the old ones' dismissals and attempts no longer count.
 
