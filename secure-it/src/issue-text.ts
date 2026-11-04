@@ -133,7 +133,7 @@ function essentialLines(assessment: SubjectAssessment, record: IssueRecord): str
       lines.push(
         "**Waiting for the release-age wait.** The fix takes versions published too recently; secure-it opens its PR once they're past the wait. Until then the vulnerable versions stay installed.",
         "",
-        "Nothing was applied, built or tested for this fix yet.",
+        "Its checks run on the PR secure-it opens then.",
       );
       break;
     case "eligible":

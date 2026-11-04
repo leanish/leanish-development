@@ -17,7 +17,10 @@ opens with the write PAT (it needs **Issues: read and write**, see
 [adopting the tools](../docs/adopting-tools.md)). An issue tracks one subject:
 
 - **A decision:** the exact moves a unit would make. Past the release-age wait, or a trusted package's ordinary fix
-  (said as a trusted exception), a run fixes it right away. Its PR says `Tracks #N.`, never a closing keyword.
+  (said as a trusted exception), a run fixes it right away. Its PR says `Tracks #N.`, never a closing keyword. A PR
+  may carry out only part of its decision (verification refused a package; the PR says what it left out), and the issue
+  stays open while a scan still finds the rest; review never turns a tracked PR into another decision: its next run does,
+  through that decision's issue.
 - **A decision waiting for the wait:** it takes a version younger than `releaseAgeDays`. No PR opens: the issue says
   when each young version is past the wait, and a run fixes it then. Age always counts from the version's registry
   publication, never from the author's repository. A malware fix's destination always waits, trusted packages included.

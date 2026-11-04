@@ -233,13 +233,16 @@ function isDismissed(finding: FindingKey, dismissed: ReadonlyArray<TrackedIssue>
 }
 
 /**
- * `record` with each of `shown` it doesn't track yet (overlapping ids count as tracked); the same object when none.
- * An issue shows its subject's current findings, so a finding that joined later is one it tracks too: closing it as
- * resolved, or a person's dismissal, then goes by that finding as well.
+ * `record` with each of `shown` it doesn't track yet (overlapping ids count as tracked), and without the absence of any
+ * finding shown again; the same object when nothing changes. An issue shows its subject's current findings, so a
+ * finding that joined later is one it tracks too, and one that came back after a complete scan missed it starts a new
+ * episode on this issue: closing it as resolved, or a person's dismissal, then goes by those findings as they are now.
  */
 function withFindings(record: IssueRecord, shown: ReadonlyArray<FindingKey>): IssueRecord {
   const joined = shown.filter((finding) => !record.findings.some((tracked) => sameFinding(tracked, finding))).map(keyOf);
-  return joined.length === 0 ? record : { ...record, findings: [...record.findings, ...joined] };
+  const absences = record.absences.filter((absence) => !shown.some((finding) => sameFinding(absence.finding, finding)));
+  if (joined.length === 0 && absences.length === record.absences.length) return record;
+  return { ...record, findings: [...record.findings, ...joined], absences };
 }
 
 /** `record` with an absence for each of its findings a complete assessment no longer has; the same object when none. */
