@@ -707,12 +707,13 @@ async function admitted(base: Tree, allowed: ReadonlyArray<PackageVersion>): Pro
 }
 
 /**
- * The PR an ordinary unit just published, shown on its issue now rather than at the next run's sync. The PR exists
+ * The PR an ordinary unit just published, or redid for its decision, shown on its issue now rather than at the next
+ * run's sync. The PR exists
  * either way, so a write that fails (a rate limit too: whatever the run does next meets it) is logged, never the unit's
  * failure.
  */
 async function showPublished(execution: Execution, tracked: TrackedExecution, result: Readonly<Record<string, unknown>>): Promise<void> {
-  if (result["outcome"] !== "published" || typeof result["number"] !== "number" || typeof result["pullRequest"] !== "string") return;
+  if ((result["outcome"] !== "published" && result["outcome"] !== "updated") || typeof result["number"] !== "number" || typeof result["pullRequest"] !== "string") return;
   const pr = { number: result["number"], url: result["pullRequest"] };
   await showPullRequest(attemptClient(execution), tracked.issue, pr, tracked.assessment).catch((error: unknown) => {
     execution.context.logger.warn("secure-it: a published PR couldn't be shown on its issue; the next run's sync shows it", { issue: tracked.issue, pr: pr.number, error: asError(error).message });
@@ -1397,8 +1398,7 @@ async function trackIssues(execution: Execution, inputs: TrackingInputs): Promis
     trusted: (pkg) => isTrustedPackage(config.trustedPackages, pkg),
     eligibleAt: eligibleAtOf(execution, config),
     prOf: (target) => {
-      const matches = recorded.filter((entry) => matchesPlan(target, entry));
-      const found = matches.find((entry) => decisionIdOf(entry.plan) === decisionIdOf(target.plan)) ?? matches[0];
+      const found = recorded.find((entry) => matchesPlan(target, entry) && decisionIdOf(entry.plan) === decisionIdOf(target.plan));
       return found === undefined ? undefined : { number: found.pr.number, url: found.pr.url };
     },
   });

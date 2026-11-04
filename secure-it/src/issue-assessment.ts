@@ -36,8 +36,8 @@ export interface AssessmentInputs {
   /** The assessment's time: a version a parent probe resolved counts as young until then. */
   readonly now: Date;
   /**
-   * The open PR carrying a unit's decision: the one recording exactly its moves, or else the one the unit's run reuses,
-   * whatever decision it records now (one a retry reduced to part of this one, say), since the run redoes it whole.
+   * The open PR carrying a unit's decision: only one recording exactly its moves. A PR the unit's run would reuse for
+   * another decision (one a retry reduced, say) carries none of it until the run redoes it, which shows it then.
    */
   readonly prOf: (planned: PlannedUnit) => { readonly number: number; readonly url: string } | undefined;
 }

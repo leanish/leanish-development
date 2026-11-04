@@ -88,9 +88,11 @@ Both tools are in this tree: [`secure-it`](../secure-it) and [`bump-it`](../bump
 - **Repository code never runs in the tool's process.** The Gradle inventory runs the build under `codex sandbox` with the agent's write profile. Under that profile, checked on macOS, the Keychain isn't reachable, the sensitive home paths (`~/.ssh`, `~/.aws`, the Codex and Claude logins, shell startup files…) can't be read, and writes land only in the working copy, the temp dirs and the build cache. Both tools compute npm changes in exported scratch copies under the same sandbox, with `--package-lock-only --ignore-scripts`, explicit release-age flags and trusted-scope exclusions. The tool protects exact lockfile bytes and manifest dependency fields; only major migrations may adapt other manifest fields.
 - **The Codex login source stays unreadable.** When a tool reuses a file-backed login, the sandbox denies the resolved `auth.json` and its canonical target when it is a symlink, including with a custom `CODEX_HOME`.
 - **npm's age exclusions do not waive verification.** secure-it excludes planned young or unreadable targets, plus young or unreadable versions already locked in the affected base lockfiles, retaining configured trusted-scope exclusions. This lets npm keep unrelated locked security fixes. It checks sandboxed npm >= 11.17.0 before tool-run npm uses these flags; agent check commands receive the same exclusions in every mode. Every exclusion is reported; exact target verification and `compare` still judge all induced changes, including their age and identity.
-- **secure-it's issues are output; one label is the only input.** The issues it opens are written by the tool alone,
-  from its own assessment, and its record in them is read back only from issues the token's login opened, at the end
-  of its own section. Issue text never selects versions: the code decides every move. A person's only input is the
+- **secure-it's issues are output, with two inputs.** The issues it opens are written by the tool alone, from its own
+  assessment, and its record in them is read back only from issues the token's login opened, at the end of its own
+  section. Issue text never selects versions: the code decides every move. A person has two inputs. Closing an issue
+  dismisses its findings: secure-it stops tracking and fixing them until a complete assessment records them gone
+  ([details](../secure-it/README.md#issues-decide-what-runs)), so closing one is a decision, not housekeeping. And the
   `take-early` label, which counts only when someone with write, maintain or admin access added it after their own
   `take-early: <reason>` comment, unedited since; it covers the exact young versions the decision took then, and one
   label runs one attempt ([details](../secure-it/README.md#taking-a-fix-early-take-early)). The issues client runs

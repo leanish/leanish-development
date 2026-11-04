@@ -343,7 +343,9 @@ The tick from [`core/tool-runtime`](../core/tool-runtime), with secure-it's step
   proceeds only while its grant stands (see [Issues](#issues-decide-what-runs)); verification admits only that grant's
   versions and trusted packages. The recorded cooldown is evidence, not authorization.
 - **Ordinary tracked PRs** need no early grant and become ready on green, unless the gate's cooldown alone holds
-  them. Trusted packages don't cause a gate hold. Verification refuses any non-trusted young version no grant covers.
+  them. Trusted packages don't cause a gate hold. Verification refuses any non-trusted young version no grant covers
+  among those the comparison sees as new; a Maven version already on the base elsewhere isn't one (see
+  [coverage gaps](../docs/coverage-gaps.md)).
 - **A version-fix PR without `Tracks`** is left to its owner; review does not migrate, rebase, adapt or mark it ready.
   Floor-removal PRs intentionally track no issue and retain their separate review path.
 
