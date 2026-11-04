@@ -12,12 +12,12 @@ import { takeSnapshot } from "@leanish/gate/take-snapshot";
 import { type Tree, workingTree } from "@leanish/gate/tree";
 import type { ToolRunContext } from "@leanish/tool-runtime/command";
 import { exportCommit } from "@leanish/tool-runtime/git-copies";
-import { assertLocalFile, removeLocalFile, writeLocalFile } from "@leanish/tool-runtime/local-files";
+import { assertLocalFile, removeLocalFile, safePath, writeLocalFile } from "@leanish/tool-runtime/local-files";
 import { requireNpmExcludes } from "@leanish/tool-runtime/npm-version";
 import { runSandboxed } from "@leanish/tool-runtime/sandboxed";
 
 import { unlockedGradle } from "./floor-gradle.ts";
-import { safeFile, type RemovalProbe, withoutFloorRecords, withoutOverrides } from "./floor-removal.ts";
+import { type RemovalProbe, withoutFloorRecords, withoutOverrides } from "./floor-removal.ts";
 
 export async function probeOnBase(context: ToolRunContext, base: Tree, floors: ReadonlyArray<Floor>, env: GateEnvironment): Promise<RemovalProbe> {
   const copy = await exportCommit(context.workingCopy, base.id);
@@ -32,7 +32,7 @@ export async function probeOnBase(context: ToolRunContext, base: Tree, floors: R
 export async function probeInCopy(context: ToolRunContext, dir: string, base: Tree, floors: ReadonlyArray<Floor>, env: GateEnvironment, run: RunProcess = runProcess): Promise<RemovalProbe> {
   const record = await base.read(FLOORS_PATH);
   if (record === undefined) throw new Error("floor removal needs recorded security floors");
-  if (floors.some((floor) => !safeFile(floor.declaredIn))) throw new Error("unsafe floor declaration path");
+  if (floors.some((floor) => !safePath(floor.declaredIn))) throw new Error("unsafe floor declaration path");
   if (floors.some((floor) => floor.ecosystem === "npm" && basename(floor.declaredIn) !== "package.json")) {
     throw new Error("npm security floors must be declared in package.json");
   }

@@ -4,7 +4,9 @@ import { isDeepStrictEqual } from "node:util";
 
 import type { Finding } from "@leanish/gate/findings";
 import { type Floor, FLOORS_PATH, parseFloors } from "@leanish/gate/floors";
+import { isObject } from "@leanish/gate/json";
 import type { Tree } from "@leanish/gate/tree";
+import { safePath } from "@leanish/tool-runtime/local-files";
 
 import type { ChangePlan } from "./plan.ts";
 
@@ -118,22 +120,22 @@ export function withoutOverrides(text: string, floors: ReadonlyArray<Floor>): st
     if (floor.ecosystem !== "npm" || floor.purpose !== "security") throw new Error("only npm security overrides can be removed");
     for (const path of floor.overridePaths) removeOverride(manifest["overrides"], path);
   }
-  if (object(manifest["overrides"]) && Object.keys(manifest["overrides"]).length === 0) delete manifest["overrides"];
+  if (isObject(manifest["overrides"]) && Object.keys(manifest["overrides"]).length === 0) delete manifest["overrides"];
   return formatJson(text, manifest);
 }
 
 function removeOverride(node: unknown, path: ReadonlyArray<string>): void {
   const [key, ...rest] = path;
-  if (!object(node) || key === undefined || !Object.hasOwn(node, key)) throw new Error(`missing override ${path.join(" > ")}`);
+  if (!isObject(node) || key === undefined || !Object.hasOwn(node, key)) throw new Error(`missing override ${path.join(" > ")}`);
   if (rest.length > 0) {
     removeOverride(node[key], rest);
-  } else if (object(node[key])) {
+  } else if (isObject(node[key])) {
     if (!Object.hasOwn(node[key], ".")) throw new Error(`override ${key} has no own version`);
     delete node[key]["."];
   } else {
     delete node[key];
   }
-  if (object(node[key]) && Object.keys(node[key]).length === 0) delete node[key];
+  if (isObject(node[key]) && Object.keys(node[key]).length === 0) delete node[key];
 }
 
 export function formatJson(text: string, value: unknown): string {
@@ -142,13 +144,9 @@ export function formatJson(text: string, value: unknown): string {
   return JSON.stringify(value, null, indent).replaceAll("\n", newline) + (text.endsWith("\n") ? newline : "");
 }
 
-function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
 /** The removal plan is untrusted PR data; round-trip through the gate's strict floor parser. */
 export function validRemoval(value: unknown): value is FloorRemoval {
-  if (!object(value) || Object.keys(value).some((key) => !["floors", "files", "notes"].includes(key))) return false;
+  if (!isObject(value) || Object.keys(value).some((key) => !["floors", "files", "notes"].includes(key))) return false;
   if (!Array.isArray(value["floors"]) || !Array.isArray(value["files"]) || !Array.isArray(value["notes"])) return false;
   try {
     return validFloors(value["floors"]) && validFiles(value["files"]) && value["notes"].every((note) => typeof note === "string");
@@ -166,7 +164,7 @@ function validFloors(values: ReadonlyArray<unknown>): boolean {
     purpose: floor.purpose, advisories: floor.advisories, reason: floor.reason, added: floor.added,
   }));
   if (!isDeepStrictEqual(parseFloors({ floors: records }), floors)) return false;
-  return floors.every((floor) => floor.purpose === "security" && safeFile(floor.declaredIn) &&
+  return floors.every((floor) => floor.purpose === "security" && safePath(floor.declaredIn) &&
     (floor.ecosystem !== "npm" || basename(floor.declaredIn) === "package.json"));
 }
 
@@ -177,12 +175,7 @@ function validFiles(files: ReadonlyArray<unknown>): boolean {
 }
 
 function validFile(file: unknown): file is { path: string; sha256: string } {
-  if (!object(file) || Object.keys(file).some((key) => !["path", "sha256"].includes(key))) return false;
-  if (!safeFile(file["path"]) || typeof file["sha256"] !== "string" || !/^[a-f0-9]{64}$/.test(file["sha256"])) return false;
+  if (!isObject(file) || Object.keys(file).some((key) => !["path", "sha256"].includes(key))) return false;
+  if (!safePath(file["path"]) || typeof file["sha256"] !== "string" || !/^[a-f0-9]{64}$/.test(file["sha256"])) return false;
   return file["path"] === FLOORS_PATH || ["package.json", "package-lock.json", "npm-shrinkwrap.json"].includes(basename(file["path"]));
-}
-
-export function safeFile(path: unknown): path is string {
-  return typeof path === "string" && path !== "" && !path.startsWith("/") && !path.includes("\\") && !path.includes("\0") &&
-    path.split("/").every((part) => part !== "" && part !== "." && part !== "..");
 }
