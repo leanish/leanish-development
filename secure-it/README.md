@@ -120,8 +120,8 @@ to create current decision issues. Nothing is migrated; waiting decisions need a
    - **Young fixes go apart, each group its own decision.** Fixes whose target is younger than the release-age wait,
      everything coupled to them, and any fix whose required npm dependency is young leave the aged batch, so the aged
      fixes aren't held back. They're then split as far as they can be, one held routine unit (topic
-     `security-cooldown-<package>`, after its lowest package) per group, so no young fix waits for another. Each group
-     is a [waiting decision](#issues-decide-what-runs): it runs once it ages, or on a `take-early` label:
+     `security-young-<ecosystem|name>`, after its lowest full package key) per group, so no young fix waits for
+     another. Each group is a [waiting decision](#issues-decide-what-runs): it runs once it ages, or on a `take-early` label:
      - **Always together, the couplings known when splitting:** coupled npm peers, a carrier and its carried package,
        and what planning the aged batch finds (a root that needs another root's fix). Planning a held group can find
        more; those don't rejoin groups already split, and each PR proves what it moves alone.
@@ -130,33 +130,19 @@ to create current decision issues. Nothing is migrated; waiting decisions need a
      - **Apart on purpose, young fixes that share a young companion:** joined, each would wait for the other's
        version too. Each PR chooses and verifies the companion version its own requirements prove; when one merges,
        the other's review rebases it.
-     - **Never regrouped by a failure:** with two or more held groups, each is planned alone before any agent work.
-       For a plan with Maven moves, Gradle also applies its declaration moves and floors to an exported base and
-       resolves the reference: a returned inventory must have the planned declarations and no resolution failures
-       (outside the gate's `gradle.ignoreConfigurations`).
-       A group whose planning fails, whose reference has problems, or whose Gradle run itself fails (sandbox failure,
-       timeout or OOM, or a missing reference inventory) fails on its own, with its error in the run's report; the
-       other groups keep their grouping, topics and PRs, and still run. Groups that can only be planned or resolved
-       together (two young Gradle fixes that conflict until both declarations move) therefore fail apart until they
-       age. That cost is accepted on purpose: a planning error or a reference problem can be transient (a registry
-       error, say), and when v0.8 regrouped on them, it could move the same fixes between PRs from one run to the
-       next, and a fix joined to another waited for that one's young version too; a Gradle execution error (a timeout)
-       failed every held routine group instead. A failure now affects only its own group and is reported for that
-       run. Groups that genuinely need to move together keep failing separately until a person moves the fixes or
-       their versions age into the aged batch. If the aged batch can't be planned, it fails with its error; when it has npm work, which of its roots
-       would join held work is unknown, so the held units with npm work (in their fixes or coupled sets) fail that run
-       too. Held work without npm still runs, since those roots can't join it, unless its claim is a held PR with npm
-       moves (a mixed one from v0.8's fallback or v0.7's single held PR): that PR is kept for its npm work and the unit
-       fails instead. A base-movement review reports an error for each PR whose unit failed, or for every held PR with
-       npm moves when the aged plan failed (even one whose fix has aged since, which that plan could hold again),
-       without closing it, while other PRs still rebase. The actual agent edit is still verified before publication.
-       Each failure is logged with its unit and reason.
-       One held unit skips this preflight; npm-only groups cost no extra Gradle resolution. Preflight results, including
-       execution errors, are shared by base commit and plan identity for one run or review tick; the next invocation
-       retries. K PRs reviewing identical K groups on the same base use K preflight resolutions rather than K²; final
-       verification always runs separately. Planning itself is still repeated. Runs and base-movement reviews split the
-       same way, before PR claims. A tick on an unchanged base keeps the recorded plan; the next regular run recomputes
-       grouping.
+     - **Never regrouped by a failure:** every group is planned alone from metadata, then its issue decides whether
+       it may execute. Planning failures are reported for that group; the others keep their grouping and still run.
+       Gradle builds no extra preflight reference. Final verification applies each authorized plan's declarations
+       and floors to an exported base and resolves its reference, checking the declarations and resolution failures
+       outside the gate's `gradle.ignoreConfigurations`. A reference problem, sandbox failure, timeout, OOM or missing
+       inventory fails that decision's attempt without joining it to another. Groups that only plan or resolve
+       together therefore fail apart until a person moves them or their versions age into the aged batch.
+       If aged planning fails, which of its npm roots would join young work is unknown: young units with npm work
+       (in their fixes or coupled sets) fail too. Young work without npm still runs. A base-movement review reports
+       the error and keeps affected PRs, including an early npm PR whose fix has aged since, which that plan could
+       make wait again. Unknown grouping is never used to match or retire an early npm PR. Other PRs still rebase.
+       Runs and base-movement reviews split the same way; an unchanged base keeps the recorded plan until a run
+       recomputes the decisions.
 
      A major or malware unit with a young version stays whole and is held. What the PR finally holds is the
      verifying comparison's call, not this prediction.
@@ -168,18 +154,23 @@ to create current decision issues. Nothing is migrated; waiting decisions need a
    - One with a different plan, while its head is still the tool's: that PR is reconciled. The default branch is
      prepared as a clean base checkout for the new plan, so nothing the old plan did lingers. After verification,
      the tool appends the verified tree to the existing PR history as a normal commit.
-   - One someone else pushed to: the fix goes in a PR of its own.
+   - One someone else pushed to: their PR is kept. An ordinary eligible fix goes in a PR of its own; an early
+     decision cannot start another attempt while its first is still running, even under a renewed label.
    - One whose plan moves a package (companions included) that can't be decided now (its publisher identity, its
      carrier move or its direct-peer set, because a check failed): the unit fails and the PR is kept as it is, rather
      than rewritten without that move. Other units still go on.
-   - A held unit is recognised by its packages, not its name (a group's lowest package can change as members age or
-     join): it takes the open held PR sharing most of its own packages (`members` in the plan; companions planning
-     adds don't count), strongest pairs first across all units, each PR going to one unit at most; a review gives a
-     held PR the same unit a run would. v0.7's single `security-cooldown` PR is taken over this way by one group; the
-     others open their own. A PR someone else pushed to, or one a person marked ready, is never claimed. A held PR
-     left without a unit (two groups merged, or none of its packages is held any more) is retired when a review
-     recomputes it, after the default branch moves; until then it waits or graduates as any held PR does. Its closing
-     comment names the PRs its held work went to, or says none of it is held any more.
+   - A PR taken early belongs to its exact decision and the running attempt on its issue. Sharing a package or
+     companion, or a sanitized branch name, cannot transfer that grant. Its descriptive topic can change without
+     changing the decision. An ordinary eligible PR is matched by its kind and full recorded topic, before branch
+     sanitization. Ownership is read from the current head's journal publication when needed; human pushes and a
+     person marking an early draft ready remain protected.
+   - If review finds an early decision changed on a moved base, it leaves the PR and says why on its issue; the next
+     run tracks the new decision through its own issue. If no actionable fixes remain, review retires the PR. Once
+     every granted version ages, graduation retires it so a run plans the work afresh.
+
+   An early attempt is recorded only when its unit is about to execute, before preparing a branch, writing files or
+   running an agent or verification reference. A deferred decision starts none. A failed execution ends the attempt;
+   an interrupted bookkeeping write is recovered from the PR history on the next run.
 5. **The tool resolves npm; the agent applies non-npm moves** (skill [`secure-it`](skills/secure-it/SKILL.md)).
    - **npm, by the tool.** In a sandboxed export of base, before any agent work, the tool pins every planned direct
      and peer companion to its exact target at once (unplanned directs keep base versions), installs, restores the

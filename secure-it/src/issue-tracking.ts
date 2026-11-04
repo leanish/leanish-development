@@ -57,7 +57,7 @@ export async function issueDisposition(
   if (instances.length > 1) return { kind: "defer", reason: `${instances.map((tracked) => `#${tracked.number}`).join(" and ")} both track this decision; a person closes one` };
 
   // Read fresh, by number: the sync's listing can lag a person's closing by seconds, and one run asks for the same plan
-  // more than once (preflight, the unit, its retries), so an attempt recorded by an earlier ask must be seen by the next,
+  // more than once (the unit and its retries), so an attempt recorded by an earlier ask must be seen by the next,
   // never started twice.
   const fresh = await client.issues.getIssue({ repo: client.repo, number: issue.number });
   const current = recordOf(fresh.body);

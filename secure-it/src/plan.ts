@@ -107,23 +107,16 @@ export interface PlannedHold extends HeldVersion {
 export interface ChangePlan {
   /**
    * Set from the verifying comparison, never from planning: what the gate's
-   * cooldown holds. Non-empty, the PR stays a draft with a warning until the
-   * last one ages, then it's retired (`cooldown.ts` in the gate).
+   * cooldown holds, retained with warning and evidence. The issue's grant governs
+   * the early PR's draft hold and graduation.
    */
   readonly cooldown?: ReadonlyArray<PlannedHold>;
   readonly requiredNpm?: ReadonlyArray<import("./npm-required-plan.ts").PlannedRequirement>;
   readonly notes?: ReadonlyArray<string>;
   readonly floorRemoval?: FloorRemoval;
-  /** Absent in plans published before batching; those PRs retain per-package reviews. */
-  readonly kind?: PlanKind;
-  /** For the branch name: `security`, `security-cooldown-<package>`, `<package>-major`, `malware`, or `floor-removal`. */
+  readonly kind: PlanKind;
+  /** For the branch name: `security`, `security-young-<package key>`, `<package>-major`, `malware`, or `floor-removal`. */
   readonly topic: string;
-  /**
-   * A held routine unit's `packages` as planned (`ecosystem|name` of its fixes and the npm peers selection adds), before
-   * `requiredNpmPlan` adds the required npm dependencies to `packages`: what tells which open PR stands for which held
-   * unit (`heldMembers`). A retry that leaves moves out keeps them: the PR still stands for the whole unit.
-   */
-  readonly members?: ReadonlyArray<string>;
   readonly malware: boolean;
   /** `ecosystem|name` of every package the plan moves or removes a floor for. */
   readonly packages: ReadonlyArray<string>;
@@ -153,29 +146,14 @@ export interface SecurityUnit {
   readonly work: ReadonlyArray<FixWork>;
   readonly coupled?: ReadonlyArray<ReadonlyArray<string>>;
   /** Predicted to take a version younger than the wait (the verifying comparison decides). */
-  readonly held?: boolean;
+  readonly young?: boolean;
 }
-
-/**
- * The prefix of the routine units for the fixes that can't wait: one PR per group of fixes that can be separated
- * (`heldUnits`), so neither the aged fixes nor each other wait for the youngest. v0.7's single one was this topic.
- */
-export const HELD_TOPIC = "security-cooldown";
-
-/**
- * Whether a routine topic is a held unit's: `security-cooldown-<package>`, or v0.7's single `security-cooldown`. A plan
- * read from a PR may have none: then it isn't.
- */
-export const isHeldTopic = (topic: unknown) => typeof topic === "string" && (topic === HELD_TOPIC || topic.startsWith(`${HELD_TOPIC}-`));
-
-/** A held plan's own packages: `members`, or `packages` for a plan recorded before them. */
-export const heldMembers = (plan: Pick<ChangePlan, "members" | "packages">): ReadonlyArray<string> => plan.members ?? plan.packages;
 
 /**
  * Complete each unit's direct-peer set before an agent sees it (an
  * unsatisfiable set is reported), then split the routine batch: fixes whose
  * target is younger than the wait, with every package coupled to them, go to
- * a held unit of their own.
+ * a young unit of their own.
  */
 export async function coupledWork(fixes: ReadonlyArray<SecurityFix>, peers?: NpmPeerPlanner): Promise<Selection> {
   const completed = await completedWork(fixes, peers);
@@ -183,12 +161,12 @@ export async function coupledWork(fixes: ReadonlyArray<SecurityFix>, peers?: Npm
 }
 
 /**
- * Young fixes and their coupled closure apart from the rest, one held unit per group that can be separated
- * (`heldUnits`); majors and malware stay whole, held if anything is young.
+ * Young fixes and their coupled closure apart from the rest, one young unit per group that can be separated
+ * (`youngUnits`); majors and malware stay whole, young if anything is young.
  */
 export function splitByAge(unit: SecurityUnit): SecurityUnit[] {
   const young = new Set(unit.work.filter(isYoungTarget).map(packageKey));
-  if (unit.kind !== "routine" || young.size === 0) return [{ ...unit, held: young.size > 0 }];
+  if (unit.kind !== "routine" || young.size === 0) return [{ ...unit, young: young.size > 0 }];
   for (;;) {
     const size = young.size;
     for (const set of unit.coupled ?? []) if (set.some((key) => young.has(key))) for (const key of set) young.add(key);
@@ -196,17 +174,17 @@ export function splitByAge(unit: SecurityUnit): SecurityUnit[] {
   }
   const work = unit.work.filter((fix) => !young.has(packageKey(fix)));
   const coupled = unit.coupled?.filter((set) => !set.some((key) => young.has(key)));
-  const aged: SecurityUnit[] = work.length === 0 ? [] : [{ kind: "routine", topic: unit.topic, work, held: false, ...(coupled === undefined ? {} : { coupled }) }];
+  const aged: SecurityUnit[] = work.length === 0 ? [] : [{ kind: "routine", topic: unit.topic, work, young: false, ...(coupled === undefined ? {} : { coupled }) }];
   const heldWork = unit.work.filter((fix) => young.has(packageKey(fix)));
-  return [...aged, ...heldUnits(heldWork, (unit.coupled ?? []).filter((set) => set.some((key) => young.has(key))))];
+  return [...aged, ...youngUnits(heldWork, (unit.coupled ?? []).filter((set) => set.some((key) => young.has(key))))];
 }
 
 /**
- * One held routine unit per connected group of `work`: packages a `coupled` set joins move together, and so do
+ * One young routine unit per connected group of `work`: packages a `coupled` set joins move together, and so do
  * packages a `bridges` set joins (keys there need no fix of their own: a companion two roots require). Each unit is
  * named after its lowest package key and keeps the coupled sets touching it.
  */
-export function heldUnits(work: ReadonlyArray<SecurityFix>, coupled: ReadonlyArray<ReadonlyArray<string>>, bridges: ReadonlyArray<ReadonlyArray<string>> = []): SecurityUnit[] {
+export function youngUnits(work: ReadonlyArray<SecurityFix>, coupled: ReadonlyArray<ReadonlyArray<string>>, bridges: ReadonlyArray<ReadonlyArray<string>> = []): SecurityUnit[] {
   const parent = new Map<string, string>();
   const root = (key: string): string => {
     const up = parent.get(key) ?? key;
@@ -222,7 +200,7 @@ export function heldUnits(work: ReadonlyArray<SecurityFix>, coupled: ReadonlyArr
     const keys = new Set(group.map(packageKey));
     const anchor = [...keys].sort()[0]!;
     const touching = coupled.filter((set) => set.some((key) => keys.has(key)));
-    return { kind: "routine", topic: `${HELD_TOPIC}-${anchor.slice(anchor.indexOf("|") + 1)}`, work: group, held: true, ...(touching.length === 0 ? {} : { coupled: touching }) };
+    return { kind: "routine", topic: `security-young-${anchor}`, work: group, young: true, ...(touching.length === 0 ? {} : { coupled: touching }) };
   }).sort((a, b) => (a.topic < b.topic ? -1 : a.topic > b.topic ? 1 : 0));
 }
 
@@ -430,8 +408,7 @@ export async function planFor(work: ReadonlyArray<FixWork>, inputs: PlanInputs, 
   const kind = unit?.kind ?? (malware ? "malware" : moves.some((move) => move.major) ? "major" : "routine");
   const topic = unit?.topic ?? (kind === "malware" ? "malware" : kind === "routine" ? "security" : `${work[0]!.name}-major`);
   const notes = [...new Set(work.flatMap((fix) => fix.notes ?? []))];
-  const members = kind === "routine" && isHeldTopic(topic) ? { members: packages } : {};
-  return { kind, topic, malware, packages, ...members, moves, severity, ...(coupled.length === 0 ? {} : { coupled }), ...(notes.length === 0 ? {} : { notes }) };
+  return { kind, topic, malware, packages, moves, severity, ...(coupled.length === 0 ? {} : { coupled }), ...(notes.length === 0 ? {} : { notes }) };
 }
 
 /**

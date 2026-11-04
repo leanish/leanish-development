@@ -224,8 +224,7 @@ function validMetadata(plan: ChangePlan): boolean {
   if (plan.cooldown !== undefined && !validHolds(plan.cooldown)) return false;
   if (plan.requiredNpm !== undefined && (!Array.isArray(plan.requiredNpm) || !plan.requiredNpm.every((target) =>
     target !== null && typeof target === "object" && typeof target.exempt === "boolean" && [target.name, target.version, target.path, target.lockfile, target.key, target.range, target.reason, target.parent?.name, target.parent?.version, target.parent?.path, target.root?.name, target.root?.version, target.root?.path].every((value) => typeof value === "string")))) return false;
-  if (plan.kind !== undefined && !["routine", "major", "malware"].includes(plan.kind)) return false;
-  if (plan.members !== undefined && (!Array.isArray(plan.members) || !plan.members.every((key: unknown) => typeof key === "string"))) return false;
+  if (!["routine", "major", "malware"].includes(plan.kind)) return false;
   if (plan.packages !== undefined && (!Array.isArray(plan.packages) || !plan.packages.every((key: unknown) => typeof key === "string"))) return false;
   if (plan.coupled !== undefined && (!Array.isArray(plan.coupled) || !plan.coupled.every((set) => Array.isArray(set) && set.every((name: unknown) => typeof name === "string")))) return false;
   if (plan.leftOut === undefined) return true;

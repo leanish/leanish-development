@@ -9,7 +9,7 @@ import type { ChangePlan } from "../src/plan.ts";
 const NOW = new Date("2026-10-07T12:00:00Z");
 
 function plan(...targets: Array<[string, string]>): ChangePlan {
-  return { topic: "malware", malware: true, packages: targets.map(([name]) => `npm|${name}`), severity: "HIGH",
+  return { kind: "malware", topic: "malware", malware: true, packages: targets.map(([name]) => `npm|${name}`), severity: "HIGH",
     moves: targets.map(([name, to]) => ({ ecosystem: "npm", name, from: "1.0.0", to, mechanism: "npm-lock",
       locations: [`node_modules/${name}`], advisories: [], major: false, commitSha: undefined, declaredAs: undefined })) };
 }
