@@ -9,6 +9,7 @@
  * are read from the workflows and resolved with GitHub.
  */
 import { type Config, DEFAULT_CONFIG, parseConfig } from "./config.ts";
+import { isObject } from "./json.ts";
 import { type Exceptions, NO_EXCEPTIONS, parseExceptions } from "./exceptions.ts";
 import { compareFindings, findingsOf, type Finding, type Located } from "./findings.ts";
 import { checkFloors, type Floor, FLOORS_PATH, parseFloors } from "./floors.ts";
@@ -114,9 +115,26 @@ export async function lenientSources(tree: Tree): Promise<Sources> {
   try {
     config = (await readSettings(tree)).config;
   } catch {
-    config = DEFAULT_CONFIG;
+    config = await removedTrustSources(tree) ?? DEFAULT_CONFIG;
   }
   return sourcesOf(tree, config, { allowShadowedLockfiles: true });
+}
+
+/**
+ * A base still on the removed `ownPackages` keeps its own lockfiles and Gradle builds, so the PR renaming it
+ * doesn't compare against a different baseline. Only sources come from here: the old trust block is dropped,
+ * never enforced.
+ */
+async function removedTrustSources(tree: Tree): Promise<Config | undefined> {
+  try {
+    const text = await tree.read(CONFIG_PATH);
+    const raw: unknown = text === undefined ? undefined : JSON.parse(text);
+    if (!isObject(raw) || !Object.hasOwn(raw, "ownPackages")) return undefined;
+    const { ownPackages: _removed, ...rest } = raw;
+    return parseConfig(rest);
+  } catch {
+    return undefined;
+  }
 }
 
 function parseJson(text: string, path: string): unknown {

@@ -41,6 +41,21 @@ describe("npm lockfile selection", () => {
     expect((await sourcesOf(head, parseConfig({}))).lockfiles).toEqual(["package-lock.json"]);
   });
 
+  it.each([
+    [{ gradle: { builds: ["app"] } }, ["app"]],
+    [{ gradle: { builds: [] } }, []],
+  ])("keeps a base's own Gradle builds while it's still on the removed ownPackages (%j)", async (sources, builds) => {
+    const config = JSON.stringify({ ...sources, npm: { lockfiles: ["tools/package-lock.json"] }, ownPackages: { npm: { scopes: ["@a"] } } });
+    const base = tree({ ".github/supply-chain.json": config, "settings.gradle.kts": "", "tools/package-lock.json": LOCK }, "base");
+    expect(await baseSources(base, { lockfiles: ["package-lock.json"], gradleBuilds: [] }))
+      .toEqual({ lockfiles: ["package-lock.json", "tools/package-lock.json"], gradleBuilds: builds });
+  });
+
+  it("falls back to the defaults for a base on the removed ownPackages whose other settings don't parse", async () => {
+    const base = tree({ ".github/supply-chain.json": JSON.stringify({ gradle: { builds: "app" }, ownPackages: {} }), "settings.gradle.kts": "" }, "base");
+    expect((await baseSources(base, { lockfiles: [], gradleBuilds: [] })).gradleBuilds).toEqual(["."]);
+  });
+
   it.each([true, false])("keeps baseline lockfile handling when the shadowed lock exists: %s", async (exists) => {
     const base = tree({ "npm-shrinkwrap.json": LOCK, ...(exists ? { "package-lock.json": LOCK } : {}) }, "base");
     const sources = await baseSources(base, { lockfiles: ["package-lock.json"], gradleBuilds: [] });

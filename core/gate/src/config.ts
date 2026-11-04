@@ -102,15 +102,15 @@ export function isTrustedPackage(trusted: TrustedPackages, pkg: PackageName): bo
 
 export function parseConfig(raw: unknown): Config {
   const where = "supply-chain.json";
-  const root = object(raw, where, ["npm", "gradle", "maven", "releaseAgeDays", "trustedPackages", "ownPackages", "repositories", "compatibleLines"]);
+  if (isObject(raw) && Object.hasOwn(raw, "ownPackages")) {
+    const fix = Object.hasOwn(raw, "trustedPackages") ? "delete it" : "rename the field";
+    throw new Error(`${where}: ownPackages was renamed trustedPackages in 0.10.0, and 0.11.0 removed the old name; ${fix}`);
+  }
+  const root = object(raw, where, ["npm", "gradle", "maven", "releaseAgeDays", "trustedPackages", "repositories", "compatibleLines"]);
   const npm = root["npm"] === undefined ? {} : object(root["npm"], `${where}: npm`, ["lockfiles", "registries"]);
   const gradle = root["gradle"] === undefined ? {} : object(root["gradle"], `${where}: gradle`, ["builds", "ignoreConfigurations"]);
   const maven = root["maven"] === undefined ? {} : object(root["maven"], `${where}: maven`, ["repositories"]);
-  if (Object.hasOwn(root, "trustedPackages") && Object.hasOwn(root, "ownPackages")) {
-    throw new Error(`${where}: trustedPackages and ownPackages cannot both be present`);
-  }
-  // Normalize the deprecated alias to the same trust policy.
-  const trustField = Object.hasOwn(root, "ownPackages") ? "ownPackages" : "trustedPackages";
+  const trustField = "trustedPackages";
   const trusted = root[trustField] === undefined ? {} : object(root[trustField], `${where}: ${trustField}`, ["npm", "Maven", "GitHub Actions"]);
   const trustedActions =
     trusted["GitHub Actions"] === undefined ? {} : object(trusted["GitHub Actions"], `${where}: ${trustField}["GitHub Actions"]`, ["owners"]);

@@ -77,7 +77,7 @@ describe("a note about changes to the policy judging the PR", () => {
     ["{}", json({ maven: { repositories: ["https://repo1.maven.org/maven2/", "https://plugins.gradle.org/m2/"] } })],
     [json({ npm: { registries: ["https://registry.npmjs.org", "https://mirror.example/npm"] } }),
       json({ npm: { registries: ["https://mirror.example/npm/", "https://registry.npmjs.org/"] } })],
-    [json({ ownPackages: { npm: { scopes: ["@b", "@a"] }, "GitHub Actions": { owners: ["ACME"] } } }),
+    [json({ trustedPackages: { npm: { scopes: ["@b", "@a"] }, "GitHub Actions": { owners: ["ACME"] } } }),
       json({ trustedPackages: { "GitHub Actions": { owners: ["acme"] }, npm: { scopes: ["@a", "@b"] } } })],
   ])("omits the note for equivalent policies (%s -> %s)", async (base, head) => {
     expect((await compare(base, head)).notes).toEqual([]);
@@ -98,6 +98,16 @@ describe("a note about changes to the policy judging the PR", () => {
     } }, tree(files(), "head"), environment({ affected: {} }).env);
     expect(outcome.failures).toEqual([]);
     expect(outcome.notes).toEqual([unknown]);
+  });
+
+  it.each([["@a"], ["@a", "@widened"]])("lets a PR rename a base still on the removed ownPackages, noting only that it can't read base's policy (%s)", async (...scopes) => {
+    const outcome = await compare(json({ ownPackages: { npm: { scopes: ["@a"] } } }), json({ trustedPackages: { npm: { scopes } } }));
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.notes).toEqual([unknown]);
+  });
+
+  it("fails a head still on the removed ownPackages", async () => {
+    await expect(compare("{}", json({ ownPackages: { npm: { scopes: ["@a"] } } }))).rejects.toThrow("ownPackages was renamed trustedPackages");
   });
 
   it("shows the note in the step summary with an empty held list", async () => {
