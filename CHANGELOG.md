@@ -42,6 +42,9 @@
   early a draft until every version its issue's grant covers is past the wait, which can be later.
 - An issue GitHub answers is deleted (410) counts as gone when secure-it reads a tracked PR's issue, as a transferred
   one (404) already did, instead of failing the run.
+- A PR's text and commit message defuse `GH-12` references and `http://` or `www.github.com` issue links after a
+  closing keyword too, so merging a PR never closes the issue it tracks. An ordinary unit's published PR shows on its
+  issue right away ("In progress"), not only after the next run's sync.
 - A first `take-early` label authorizes only the young versions its issue showed: one the issue never displayed (an
   update that couldn't be written, say) needs a new label once the issue shows it.
 - While an incomplete assessment (a lasting coverage gap, say) no longer finds an open issue's decision, the issue stays

@@ -735,7 +735,9 @@ describe("secure-it run", () => {
       for (const fixes of [[vite()], [vite(), leftPad()]]) {
         const h = harness({ prs: [await vitePr({ headSha: "9".repeat(40) })], fixes });
         expect(await flow(h, OLD).run(h.context)).toMatchObject({ outcome: "published", number: 42 });
-        expect(issuesOf(h).issues.get(1)!.body).toContain("**Ready.**");
+        // The issue names the PR the run just published, never the one someone else pushed to.
+        expect(issuesOf(h).issues.get(1)!.body).toContain("**In progress:** #42.");
+        expect(issuesOf(h).issues.get(1)!.body).not.toContain("#7");
         expect(h.github.prs.get(7)?.headSha).toBe("9".repeat(40));
         expect(h.github.prs.get(42)?.headRef).toBe("secure-it/2026-10-07-security");
         trackedRecord(h);

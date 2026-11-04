@@ -52,7 +52,7 @@ import { type ObservedFinding, type PackageVersion, subjectId } from "./issue-mo
 import { postNotice } from "./issue-notices.ts";
 import { syncIssues } from "./issue-sync.ts";
 import { attemptBranches, type Disposition, inactiveLabelNotices, issueDisposition, type Tracking, type TrackedExecution } from "./issue-tracking.ts";
-import { type AttemptClient, type AttemptPatch, endAttempt, recoverAttempts, settleAttempt } from "./issue-attempts.ts";
+import { type AttemptClient, type AttemptPatch, endAttempt, recoverAttempts, settleAttempt, showPullRequest } from "./issue-attempts.ts";
 import { EarlyPrs, takenEarlyOf, trackedIssueOf } from "./decision-issues.ts";
 import { earlyDecisions, reviewClosed, reviewDisposition, reviewExecution, type ReviewIssues, type ReviewPermit } from "./issue-review.ts";
 import { trackingContent } from "./issue-text.ts";
@@ -632,15 +632,19 @@ async function runUnit(
   const tracked = disposition.tracked;
   if (tracked === undefined) throw new Error("a version unit can't execute without its decision's issue");
   const attempt = tracked.attempt;
-  if (attempt === undefined) return executeUnit(execution, plan, base, owned[0], own, details, tracked);
+  if (attempt === undefined) {
+    const result = await executeUnit(execution, plan, base, owned[0], own, details, tracked);
+    await showPublished(execution, tracked, result);
+    return result;
+  }
   // One grant runs one attempt; every post-start failure is settled here or recovered next run.
   let result: Readonly<Record<string, unknown>>;
   try {
     result = await executeUnit(execution, plan, base, owned[0], own, details, tracked);
-    await settleAttempt(attemptClient(execution), tracked.issue, attempt.id, attemptPatchOf(result), attempt.assessment);
+    await settleAttempt(attemptClient(execution), tracked.issue, attempt.id, attemptPatchOf(result), tracked.assessment);
   } catch (error) {
     // A publication can fail after its PR exists (a label, say): that PR is the attempt's, still running.
-    await endAttempt(attemptClient(execution), tracked.issue, attempt.id, attempt.assessment).catch((failure: unknown) => {
+    await endAttempt(attemptClient(execution), tracked.issue, attempt.id, tracked.assessment).catch((failure: unknown) => {
       execution.context.logger.warn("secure-it: an early attempt couldn't be ended", { issue: tracked.issue, error: asError(failure).message });
     });
     throw error;
@@ -703,6 +707,20 @@ async function admitted(base: Tree, allowed: ReadonlyArray<PackageVersion>): Pro
 }
 
 /** How a unit's result ends (or continues) the early attempt it ran. */
+/**
+ * The PR an ordinary unit just published, shown on its issue now rather than at the next run's sync. The PR exists
+ * either way, so a write that fails is logged, never the unit's failure.
+ */
+async function showPublished(execution: Execution, tracked: TrackedExecution, result: Readonly<Record<string, unknown>>): Promise<void> {
+  if (result["outcome"] !== "published" || typeof result["number"] !== "number" || typeof result["pullRequest"] !== "string") return;
+  const pr = { number: result["number"], url: result["pullRequest"] };
+  await showPullRequest(attemptClient(execution), tracked.issue, pr, tracked.assessment).catch((error: unknown) => {
+    // A rate limit stops the run as anywhere else; it can't write the rest either.
+    if (error instanceof GitHubApiError && error.reason === "rate limited") throw error;
+    execution.context.logger.warn("secure-it: a published PR couldn't be shown on its issue; the next run's sync shows it", { issue: tracked.issue, pr: pr.number, error: asError(error).message });
+  });
+}
+
 function attemptPatchOf(result: Readonly<Record<string, unknown>>): AttemptPatch {
   switch (result["outcome"]) {
     case "published":

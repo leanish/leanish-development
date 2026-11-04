@@ -26,11 +26,10 @@ export interface TrackedExecution {
    * Anything else young that verification finds defers it.
    */
   readonly young: ReadonlyArray<PackageVersion>;
-  /**
-   * The attempt a `take-early` grant runs, the branch it publishes to (reserved when it was recorded), and the
-   * assessment its issue was written from, which settling the attempt renders the issue from again.
-   */
-  readonly attempt?: { readonly id: string; readonly branch: string; readonly assessment: Assessment };
+  /** The assessment its issue was written from: what execution writes to the issue afterwards renders from it. */
+  readonly assessment: Assessment;
+  /** The attempt a `take-early` grant runs, and the branch it publishes to (reserved when it was recorded). */
+  readonly attempt?: { readonly id: string; readonly branch: string };
 }
 
 export interface Tracking {
@@ -68,7 +67,7 @@ export async function issueDisposition(
   if (fresh.state !== "open" || current.pendingClose !== undefined || !fresh.labels.includes(ISSUE_LABEL)) {
     return { kind: "defer", reason: `its issue #${issue.number} is no longer open as secure-it's` };
   }
-  if (subject.status.kind === "eligible") return { kind: "proceed", tracked: { issue: issue.number, young: subject.status.trusted } };
+  if (subject.status.kind === "eligible") return { kind: "proceed", tracked: { issue: issue.number, young: subject.status.trusted, assessment: tracking.assessment } };
   if (subject.status.kind !== "waiting") return { kind: "defer", reason: `its issue #${issue.number} says it can't go ahead` };
   if (!fresh.labels.includes(TAKE_EARLY_LABEL)) return { kind: "defer", reason: `waiting for the release-age wait (#${issue.number})` };
 
@@ -80,7 +79,7 @@ export async function issueDisposition(
     return { kind: "defer", reason: `take-early refused on #${issue.number}: ${decision.reason}` };
   }
   const young = subject.status.young.map(({ ecosystem, name, version }) => ({ ecosystem, name, version }));
-  const early = (attempt: Attempt): Disposition => ({ kind: "proceed", tracked: { issue: issue.number, young, attempt: { id: attempt.id, branch: attempt.branch, assessment: tracking.assessment } } });
+  const early = (attempt: Attempt): Disposition => ({ kind: "proceed", tracked: { issue: issue.number, young, assessment: tracking.assessment, attempt: { id: attempt.id, branch: attempt.branch } } });
   const running = current.attempts.find((attempt) => attempt.outcome === undefined && attempt.grantEventId === decision.grant.labelEventId);
   if (running !== undefined) {
     if (!attemptBranchAllowed(running, branch(running.grantEventId))) {

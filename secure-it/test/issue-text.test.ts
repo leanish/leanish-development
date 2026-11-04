@@ -108,6 +108,8 @@ describe("withoutClosingKeywords", () => {
   it("defuses every reference form GitHub closes on, leaving other mentions alone", () => {
     expect(withoutClosingKeywords("Fixes #12. Closes: acme/widget#3, resolved https://github.com/acme/widget/issues/4; see #5"))
       .toBe("Fixes `#12`. Closes: `acme/widget#3`, resolved `https://github.com/acme/widget/issues/4`; see #5");
+    expect(withoutClosingKeywords("Fixes gh-12, closes GH-3, fixed http://www.github.com/acme/widget/issues/7; see GH-8"))
+      .toBe("Fixes `gh-12`, closes `GH-3`, fixed `http://www.github.com/acme/widget/issues/7`; see GH-8");
   });
 });
 
