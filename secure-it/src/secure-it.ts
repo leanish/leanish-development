@@ -367,13 +367,20 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
     }
   }
   if (!found.fixes.some((fix) => fix.malicious) && (await floorsOf(tree)).some((floor) => floor.purpose === "security")) {
-    try {
-      const removal = await computeRemoval(execution, base);
-      results.push(removal.plan === undefined
-        ? { topic: "floor-removal", outcome: "nothing-to-remove", notes: removal.notes }
-        : await runRemoval(execution, removal, base, own));
-    } catch (err) {
-      results.push({ topic: "floor-removal", outcome: "failed", detail: err instanceof Error ? err.message : String(err) });
+    // A run whose issues couldn't be synced, or didn't settle, executes nothing, a floor removal included.
+    const unsynced = tracking instanceof Error ? `the issues couldn't be synced: ${tracking.message}`
+      : tracking !== undefined && !tracking.sync.settled ? "the issues didn't settle this run" : undefined;
+    if (unsynced !== undefined) {
+      results.push({ topic: "floor-removal", outcome: "deferred", reason: unsynced });
+    } else {
+      try {
+        const removal = await computeRemoval(execution, base);
+        results.push(removal.plan === undefined
+          ? { topic: "floor-removal", outcome: "nothing-to-remove", notes: removal.notes }
+          : await runRemoval(execution, removal, base, own));
+      } catch (err) {
+        results.push({ topic: "floor-removal", outcome: "failed", detail: err instanceof Error ? err.message : String(err) });
+      }
     }
   }
   if (results.length === 0) return { ...report, outcome: "nothing-to-fix", waiting, blocked: selection.blocked, units: [], ...errors };
@@ -1566,7 +1573,10 @@ async function endStarted(execution: Execution, started: { readonly issue: numbe
   }
 }
 
-/** Every unit deferred: the issues that decide them couldn't be read or written this run. */
+/**
+ * Every unit deferred: the issues that decide them couldn't be read or written this run. Review steps keep the tool's
+ * default; a floor removal never gets here, since such a run defers it before computing it (`run`).
+ */
 function untracked(execution: Execution, failure: Error): SecureItDeps["disposition"] {
   return async (target) => (target.kind === "removal" || target.kind === "review"
     ? execution.deps.disposition(target)

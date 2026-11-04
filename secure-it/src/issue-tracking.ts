@@ -145,4 +145,3 @@ export async function inactiveLabelNotices(client: { readonly issues: GitHubIssu
     await postNotice(client, issue.number, `take-early:${label.id}:inactive`, `secure-it won't take this early: ${why}.`);
   }
 }
-
