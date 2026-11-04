@@ -27,6 +27,13 @@ opens with the write PAT (it needs **Issues: read and write**, see
 - **A package without a decision:** blocked (no fix, or the rule refused one), informational (only the project's own
   repository reports it: nothing is done), or unassessed (planning failed this run).
 
+An unassessed issue names a known planning failure on the affected roots, coupled or carried packages, including when
+failed aged planning leaves young npm grouping unknown. It shows only the error's first line, with URL userinfo,
+queries, fragments and recognizable credentials redacted. Local paths are cleaned before the detail is cut to 1,000
+characters, including a visible cut marker, before quoting; quoting and body cleaning can expand that text. Without a
+known cause (malware taking priority, say), it keeps the generic explanation. Reassessed issues use this run's causes;
+an issue left unchanged during an incomplete run still shows its earlier assessment.
+
 A run whose candidate planning fails, or whose inventory is incomplete, executes nothing and changes no issue; one unit
 failing to plan leaves its findings tracked and retires nothing.
 

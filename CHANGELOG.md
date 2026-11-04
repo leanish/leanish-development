@@ -4,6 +4,9 @@
 
 ### Changed
 
+- secure-it's unassessed package issues now name known planning failures for the affected packages, showing only the
+  first error line with recognizable credentials and URL secrets redacted. Local paths are cleaned before long details
+  are visibly cut. Unknown causes keep the generic explanation; later assessments use fresh causes.
 - secure-it tracks every finding it sees in an issue, and opens a PR only once the fix is past the release-age wait.
   A fix that takes a younger version waits in its issue, which says until when, instead of in a held draft PR; a
   trusted package's ordinary fix still goes ahead right away, as a trusted exception. A person with write access takes

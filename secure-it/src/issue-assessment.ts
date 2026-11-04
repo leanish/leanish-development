@@ -26,6 +26,8 @@ export interface AssessmentInputs {
   readonly observations: ReadonlyArray<ObservedFinding>;
   readonly units: ReadonlyArray<PlannedUnit>;
   readonly blocked: Selection["blocked"];
+  /** Known planning failures by full package key, for findings no decision covers this run. */
+  readonly planningCauses: ReadonlyMap<string, string>;
   readonly trusted: (pkg: { readonly ecosystem: Ecosystem; readonly name: string }) => boolean;
   /** When a young version is past the wait (UTC ISO), or undefined when its publication date can't be read. */
   readonly eligibleAt: (pkg: PackageVersion) => Promise<string | undefined>;
@@ -60,11 +62,14 @@ export async function assessmentOf(inputs: AssessmentInputs): Promise<Assessment
   for (const [key, findings] of rest) {
     const { ecosystem, name } = findings[0]!;
     const blocked = inputs.blocked.find((group) => group.packages.includes(key));
+    const cause = inputs.planningCauses.get(key);
     const status: SubjectAssessment["status"] = blocked !== undefined
       ? { kind: "blocked", reason: "refused", detail: blocked.reasons.join("; ") }
       : findings.every((finding) => !finding.reviewed && !finding.malicious)
         ? { kind: "informational" }
-        : { kind: "blocked", reason: "unassessed", detail: "no fix was planned for it this run (malware goes first, or its planning failed)" };
+        : { kind: "blocked", reason: "unassessed", detail: cause === undefined
+          ? "no fix was planned for it this run (malware goes first, or its planning failed)"
+          : `no fix was planned for it this run: ${cause}` };
     subjects.push({ subject: { kind: "package", ecosystem, name }, findings, status });
   }
   return { sha: inputs.sha, at: inputs.now.toISOString(), complete: inputs.complete, subjects };

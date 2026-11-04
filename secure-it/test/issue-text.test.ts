@@ -1,12 +1,61 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { MAX_ISSUE_BODY_CHARS } from "@leanish/tool-runtime/github-issues";
+import { cleanBody } from "@leanish/tool-runtime/publication-text";
+
 import type { IssueRecord, SubjectAssessment } from "../src/issue-model.ts";
 import { ISSUE_WRITER, issueWriter, recordOf, trackingContent, withoutClosingKeywords } from "../src/issue-text.ts";
 
 describe("issueWriter", () => {
-  it("cleans rendered and record-only bodies after writing their records, leaving the title and record intact", () => {
+  it.each(["", "<!-- leanish:plan "])("cleans a local path straddling the detail cut, including inside %s", (opening) => {
     const subject = { kind: "package" as const, ecosystem: "npm" as const, name: "lib" };
-    const assessment: SubjectAssessment = { subject, findings: [], status: { kind: "blocked", reason: "unassessed", detail: "couldn't read /work/repo/package-lock.json" } };
+    const before = "registry 502 ".padEnd(966 - opening.length, "x") + " " + opening;
+    const assessment: SubjectAssessment = { subject, findings: [], status: { kind: "blocked", reason: "unassessed",
+      detail: `${before}/Users/leandro.aguiar/private.txt${opening === "" ? "" : " -->"} ${"y".repeat(100)}` } };
+    const record: IssueRecord = { version: 1, subject, openedAt: "a".repeat(40), findings: [], absences: [], attempts: [] };
+    const writer = issueWriter((body) => cleanBody(body, { workingCopy: [], other: ["/Users/leandro.aguiar"] }));
+    const rendered = writer.render(assessment, record, record.openedAt);
+    expect(rendered.body).toContain("<local path>");
+    expect(rendered.body).not.toContain("/Users");
+    expect(rendered.body).toContain("[truncated]");
+    expect(recordOf(rendered.body)).toEqual(record);
+  });
+
+  it("cuts a planning detail without leaving half a surrogate pair", () => {
+    const subject = { kind: "package" as const, ecosystem: "npm" as const, name: "lib" };
+    const end = 1_000 - " ... [truncated]".length;
+    const assessment: SubjectAssessment = { subject, findings: [], status: { kind: "blocked", reason: "unassessed",
+      detail: `${"x".repeat(end - 1)}🚀${"y".repeat(100)}` } };
+    const record: IssueRecord = { version: 1, subject, openedAt: "a".repeat(40), findings: [], absences: [], attempts: [] };
+    const rendered = issueWriter((body) => body).render(assessment, record, record.openedAt);
+    expect(rendered.body).toContain("[truncated]");
+    expect(rendered.body.isWellFormed()).toBe(true);
+  });
+
+  it.each([
+    { kind: "backtick fences", tail: "`".repeat(100_000) },
+    { kind: "paths cleaning expands", tail: " /a".repeat(100_000) },
+  ])("visibly cuts an enormous planning cause with $kind without overflowing or losing the issue record", ({ tail }) => {
+    const subject = { kind: "package" as const, ecosystem: "npm" as const, name: "lib" };
+    const assessment: SubjectAssessment = { subject, findings: Array.from({ length: 1_000 }, (_, i) => ({ ecosystem: "npm", name: "lib", ids: [`GHSA-${i}`],
+      versions: ["1.0.0"], reviewed: true, malicious: false, severity: "HIGH" })),
+      status: { kind: "blocked", reason: "unassessed", detail: `registry 502 reading /work/repo/package-lock.json and /a/log ${tail} end of error` } };
+    const record: IssueRecord = { version: 1, subject, openedAt: "a".repeat(40), findings: [], absences: [], attempts: [] };
+    const writer = issueWriter((body) => cleanBody(body, { workingCopy: ["/work/repo"], other: ["/a"] }));
+    const rendered = writer.render(assessment, record, record.openedAt);
+    expect(rendered.body).toContain("registry 502 reading package-lock.json and <local path>");
+    expect(rendered.body).not.toContain("/work/repo");
+    expect(rendered.body).not.toContain("/a");
+    expect(rendered.body).toContain("[truncated]");
+    expect(rendered.body).not.toContain("end of error");
+    expect(rendered.body.length).toBeLessThanOrEqual(MAX_ISSUE_BODY_CHARS);
+    expect(recordOf(rendered.body)).toEqual(record);
+  });
+
+  it("cleans details before cutting and whole bodies after writing their records, leaving the title and record intact", () => {
+    const subject = { kind: "package" as const, ecosystem: "npm" as const, name: "lib" };
+    const detail = "couldn't read /work/repo/package-lock.json";
+    const assessment: SubjectAssessment = { subject, findings: [], status: { kind: "blocked", reason: "unassessed", detail } };
     const record: IssueRecord = { version: 1, subject, openedAt: "a".repeat(40), findings: [], absences: [], attempts: [] };
     const clean = vi.fn((body: string) => body.replaceAll("/work/repo", "<working copy>"));
     const writer = issueWriter(clean);
@@ -21,7 +70,7 @@ describe("issueWriter", () => {
     expect(rewritten).toContain("<working copy>/package-lock.json");
     expect(rewritten).not.toContain("/work/repo");
     expect(recordOf(rewritten)).toEqual(updated);
-    expect(clean.mock.calls).toEqual([[raw.body], [ISSUE_WRITER.withRecord(raw.body, updated)]]);
+    expect(clean.mock.calls).toEqual([[detail], [raw.body.replaceAll("/work/repo", "<working copy>")], [ISSUE_WRITER.withRecord(raw.body, updated)]]);
   });
 });
 
