@@ -31,6 +31,22 @@
       "paths": ["node_modules/vite"],
       "reason": "test tooling only (vitest's dev server is never started here); vitejs/vite repository advisory published 2026-10-06, fixed in 8.3.3, published the same day; bump once it's 7 days old (2026-10-13)",
       "expires": "2026-10-20"
+    },
+    {
+      "id": "GHSA-474x-hrwr-fgx4",
+      "package": "fast-xml-parser",
+      "version": "5.11.2",
+      "paths": ["node_modules/fast-xml-parser"],
+      "reason": "the gate reads Maven XML with it under a 5 MB cap and configures no stop nodes, the feature the quadratic scan needs; NaturalIntelligence/fast-xml-parser repository advisory published 2026-11-03 (no reviewed source lists it), every earlier version affected, fixed in 5.12.0, published 2026-11-03; bump once it's 7 days old (2026-11-10)",
+      "expires": "2026-11-10"
+    },
+    {
+      "id": "GHSA-cm2j-353h-9hw7",
+      "package": "is-unsafe",
+      "version": "2.0.2",
+      "paths": ["node_modules/is-unsafe"],
+      "reason": "only through fast-xml-parser; the gate reads Maven XML as data and never renders HTML or follows its URIs; NaturalIntelligence/is-unsafe repository advisory published 2026-11-03 (no reviewed source lists it), every earlier version affected, fixed in 2.0.3, published 2026-11-03; bump once it's 7 days old (2026-11-10)",
+      "expires": "2026-11-10"
     }
   ]
 }
