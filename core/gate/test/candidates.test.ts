@@ -287,6 +287,7 @@ describe("securityCandidates and repository-only advisories", () => {
       "lib@1.0.0", undefined,
       "lib@1.0.0 is affected by GHSA-repo, only in the project's repository advisories (not corroborated by the sources this decision used): no fix is proposed until a reviewed source lists it",
     ]]);
+    expect(found.fixes[0]?.unreviewedOnly).toBe(true);
   });
 
   it("notes another version's unreviewed advisory on the package's reviewed fix, without blocking it", async () => {
@@ -316,6 +317,7 @@ describe("securityCandidates and repository-only advisories", () => {
       expect.stringContaining("no version above 1.0.0 fixes"),
       "lib@1.0.0 is affected by GHSA-repo, only in the project's repository advisories (not corroborated by the sources this decision used): no fix is proposed until a reviewed source lists it",
     ]);
+    expect(reported.map((fix) => fix.unreviewedOnly)).toEqual([undefined, true]);
   });
 
   it("lets one rule a candidate out, records the veto, and may steer to a young version", async () => {

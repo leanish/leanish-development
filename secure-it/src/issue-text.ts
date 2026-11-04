@@ -151,9 +151,15 @@ function essentialLines(assessment: SubjectAssessment, record: IssueRecord): str
       break;
     }
     case "waiting":
-      if (record.attempts.length > 0) {
-        // Taken early: something ran, so the issue never says nothing did.
-        lines.push("**Taken early.** A `take-early` authorization let secure-it carry out these moves before the wait ends; see the attempts below. The versions still inside the wait are listed after the moves.");
+      // Taken early only while an attempt's PR stands (open or merged); one still running hasn't published yet. An
+      // attempt that ended before publishing, or whose PR was closed, changed nothing: the decision waits again, its
+      // attempts listed below.
+      if (record.attempts.some((attempt) => attempt.pr !== undefined && attempt.outcome !== "pr-closed")) {
+        lines.push("**Taken early.** A `take-early` authorization let secure-it carry out these moves in a PR before the wait ends; see the attempts below. The versions still inside the wait are listed after the moves.");
+        break;
+      }
+      if (record.attempts.some((attempt) => attempt.outcome === undefined)) {
+        lines.push("**Taking it early.** A `take-early` authorization started an attempt at these moves; it hasn't published a PR yet (see the attempts below). The versions still inside the wait are listed after the moves.");
         break;
       }
       lines.push(

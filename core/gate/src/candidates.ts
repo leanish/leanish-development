@@ -98,6 +98,11 @@ export interface SecurityFix {
   readonly vetoesLeftOut?: number;
   /** For people: what the fix leaves alone, such as another version's unreviewed advisories. */
   readonly notes?: ReadonlyArray<string>;
+  /**
+   * Set on a report of advisories only the package's own repository publishes: no move, by design, until a reviewed
+   * source lists them (`unreviewedReports`). Any other fix without `to` is a refusal or a failed check.
+   */
+  readonly unreviewedOnly?: true;
 }
 
 export interface SecurityCandidates {
@@ -115,6 +120,15 @@ export interface SecurityCandidates {
   /** Nonblocking snapshot reconciliation decisions, including when there are no fixes. */
   readonly notes?: ReadonlyArray<string>;
   readonly osvScannerVersion: string;
+}
+
+/**
+ * `fix` with its move replaced by `problem`: a refusal or a failed check, never a report of unreviewed-only advisories
+ * any more, whatever it was before (its `unreviewedOnly` marker goes).
+ */
+export function withProblem(fix: SecurityFix, problem: string): SecurityFix {
+  const { unreviewedOnly: _report, ...rest } = fix;
+  return { ...rest, to: undefined, problem };
 }
 
 /** A version a full scan fails on, with every advisory that fails it. */
@@ -275,7 +289,7 @@ function unreviewedReports(unreviewed: ReadonlyArray<Finding>, triggers: Readonl
     const problem = `${finding}: no fix is proposed until a reviewed source lists it`;
     const report: SecurityFix = {
       ecosystem: first.ecosystem as Ecosystem, name: first.name, from: first.version, locations: [...new Set(group.flatMap((finding) => finding.locations))].sort(),
-      targets: [], unfixable: [], malicious: false, severity: highestSeverity(group.map((finding) => finding.severity)), to: undefined, problem,
+      targets: [], unfixable: [], malicious: false, severity: highestSeverity(group.map((finding) => finding.severity)), to: undefined, problem, unreviewedOnly: true,
     };
     const pkg = `${first.ecosystem}|${first.name}`;
     if (!triggers.some((trigger) => `${trigger.ecosystem}|${trigger.name}` === pkg)) {
@@ -376,7 +390,7 @@ async function withUnitIdentity(fixes: ReadonlyArray<SecurityFix>, identity: Ide
     const problem = fix.carries === undefined
       ? `${fix.name}@${fix.from}'s publisher identity can't be decided: ${error}`
       : `${fix.name}@${fix.from}'s carrier move can't be decided: ${error}`;
-    return { ...fix, to: undefined, problem, undecided: true };
+    return { ...withProblem(fix, problem), undecided: true };
   });
 }
 

@@ -74,6 +74,36 @@ describe("issueWriter", () => {
   });
 });
 
+describe("an early attempt on a waiting decision", () => {
+  const subject = { kind: "decision" as const, moves: [{ ecosystem: "npm" as const, name: "lib", from: "1.0.0", to: "1.0.1" }] };
+  const assessment: SubjectAssessment = { subject, findings: [], status: { kind: "waiting", young: [{ ecosystem: "npm", name: "lib", version: "1.0.1", eligibleAt: "2026-11-10T00:00:00.000Z" }] } };
+  const attempt = { id: "7-1", grantEventId: 7, branch: "secure-it/2026-11-03-take-early-7", startedAt: "2026-11-03T08:02:00.000Z" };
+  const body = (attempts: IssueRecord["attempts"]) => ISSUE_WRITER.render(assessment, { version: 1, subject, openedAt: "a".repeat(40), findings: [], absences: [], attempts }, "a".repeat(40)).body;
+
+  it("says it was taken early only once an attempt published its PR", () => {
+    expect(body([{ ...attempt, pr: 9 }])).toContain("**Taken early.**");
+  });
+
+  it("says an attempt is running, not that it carried anything out, before it published", () => {
+    const text = body([attempt]);
+    expect(text).toContain("**Taking it early.**");
+    expect(text).not.toContain("**Taken early.**");
+  });
+
+  it("goes back to waiting when an attempt ended before publishing, listing it", () => {
+    const text = body([{ ...attempt, outcome: "failed" }]);
+    expect(text).toContain("**Waiting for the release-age wait.**");
+    expect(text).not.toContain("Taken early");
+    expect(text).toContain("Early attempt `7-1` started `2026-11-03T08:02:00.000Z`: failed.");
+  });
+
+  it("goes back to waiting when the attempt's PR was closed unmerged", () => {
+    const text = body([{ ...attempt, pr: 9, outcome: "pr-closed" }]);
+    expect(text).toContain("**Waiting for the release-age wait.**");
+    expect(text).not.toContain("Taken early");
+  });
+});
+
 describe("withoutClosingKeywords", () => {
   it("defuses every reference form GitHub closes on, leaving other mentions alone", () => {
     expect(withoutClosingKeywords("Fixes #12. Closes: acme/widget#3, resolved https://github.com/acme/widget/issues/4; see #5"))
