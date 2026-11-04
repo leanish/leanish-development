@@ -1,8 +1,8 @@
 /**
  * What a secure-it issue says: a title and a body written by the tool alone, with the issue's record in the hidden
  * block that plan sections use. External text (package names, versions, advisory ids, a blocked fix's reason) only
- * appears as `literal()` code spans; the caller still cleans local paths from the body before publishing it
- * (`cleanBody`), and the record holds only structured data, never free text, so nothing local can hide in it.
+ * appears as `literal()` code spans; `issueWriter` cleans local paths from the body before publishing it, and the
+ * record holds only structured data, never free text, so nothing local can hide in it.
  *
  * The part that authorizes `take-early` (the decision's exact moves and the young versions they take) comes first and
  * always shows whole: planSection shortens a section from its end, and a body that would lose any of it is refused
@@ -11,7 +11,6 @@
 import { planPayload, planSection, TooLargeError } from "@leanish/tool-runtime/plan-blocks";
 import { literal } from "@leanish/tool-runtime/pr-text";
 
-import type { IssueWriter } from "./issue-reconcile.ts";
 import { type IssueRecord, type ObservedFinding, parseRecord, type SubjectAssessment, subjectPackages } from "./issue-model.ts";
 
 const HEADING = "## secure-it";
@@ -23,7 +22,26 @@ export const TAKE_EARLY_LABEL = "take-early";
  */
 export const ISSUE_LABEL = "leanish:secure-it-issue";
 
+/** How issue text is written; reconciliation tests can replace a writer that fails one subject. */
+export interface IssueWriter {
+  /** The whole text for a subject this run assessed, with `record` in its hidden block. */
+  render(assessment: SubjectAssessment, record: IssueRecord, sha: string): { readonly title: string; readonly body: string };
+  /** `body` with `record` replacing its hidden block: what a closing or an ended episode changes on any issue. */
+  withRecord(body: string, record: IssueRecord): string;
+}
+
 export const ISSUE_WRITER: IssueWriter = { render, withRecord };
+
+/** Every issue body cleaned as publication will clean it, including record-only updates. */
+export function issueWriter(clean: (body: string) => string): IssueWriter {
+  return {
+    render: (assessment, record, sha) => {
+      const text = render(assessment, record, sha);
+      return { title: text.title, body: clean(text.body) };
+    },
+    withRecord: (body, record) => clean(withRecord(body, record)),
+  };
+}
 
 /**
  * GitHub closes an issue a merged PR's text or commit names after a closing keyword (`Fixes #12`, `closes

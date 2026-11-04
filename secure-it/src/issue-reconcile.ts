@@ -13,7 +13,7 @@
  *   - An incomplete assessment closes and resolves nothing.
  */
 import { type Assessment, type FindingKey, type IssueRecord, keyOf, type PackageVersion, sameFinding, SHOWN_PENDING, type SubjectAssessment, subjectId } from "./issue-model.ts";
-import { TAKE_EARLY_LABEL } from "./issue-text.ts";
+import { type IssueWriter, TAKE_EARLY_LABEL } from "./issue-text.ts";
 
 /** An issue the tool opened, with its record read back. */
 export interface TrackedIssue {
@@ -30,14 +30,6 @@ export interface TrackedIssue {
   readonly reopened: boolean;
   /** Its labels, where known: a duplicate a person labelled `take-early` is theirs to settle. */
   readonly labels?: ReadonlyArray<string>;
-}
-
-/** How issue text is written (`issue-text.ts`). */
-export interface IssueWriter {
-  /** The whole text for a subject this run assessed, with `record` in its hidden block. */
-  render(assessment: SubjectAssessment, record: IssueRecord, sha: string): { readonly title: string; readonly body: string };
-  /** `body` with `record` replacing its hidden block: what a closing or an ended episode changes on any issue. */
-  withRecord(body: string, record: IssueRecord): string;
 }
 
 export type IssueOperation =

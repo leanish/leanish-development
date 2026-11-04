@@ -14,8 +14,9 @@ import { GitHubApiError } from "@leanish/agent-runtime/github/github-client";
 import type { GitHubIssue, GitHubIssues } from "@leanish/tool-runtime/github-issues";
 
 import type { Assessment, PendingClose } from "./issue-model.ts";
-import { type IssueOperation, type IssueWriter, reconcile, type TrackedIssue } from "./issue-reconcile.ts";
-import { ISSUE_LABEL, ISSUE_WRITER, noticeMarker, recordOf } from "./issue-text.ts";
+import { postNotice } from "./issue-notices.ts";
+import { type IssueOperation, reconcile, type TrackedIssue } from "./issue-reconcile.ts";
+import { ISSUE_LABEL, type IssueWriter, issueWriter, noticeMarker, recordOf } from "./issue-text.ts";
 
 export interface IssueSync {
   readonly issues: GitHubIssues;
@@ -46,7 +47,7 @@ const ROUNDS = 4;
 export const SHOWN_MARGIN_MS = 120_000;
 
 export async function syncIssues(sync: IssueSync, assessment: Assessment): Promise<SyncResult> {
-  const writer = cleaned(sync.clean);
+  const writer = issueWriter(sync.clean);
   const login = await sync.issues.login();
   const notes: string[] = [];
   const clock = sync.clock ?? (() => new Date());
@@ -92,17 +93,6 @@ async function unchanged(sync: IssueSync, read: { readonly number: number; reado
   if (fresh === undefined) return false;
   const labels = (issue: { readonly labels: ReadonlyArray<string> }) => [...issue.labels].sort().join("\n");
   return fresh.body === read.body && fresh.state === read.state && labels(fresh) === labels(read);
-}
-
-/** The writer, with every text it produces cleaned as publication will clean it. */
-function cleaned(clean: (body: string) => string): IssueWriter {
-  return {
-    render: (assessment, record, sha) => {
-      const text = ISSUE_WRITER.render(assessment, record, sha);
-      return { title: text.title, body: clean(text.body) };
-    },
-    withRecord: (body, record) => clean(ISSUE_WRITER.withRecord(body, record)),
-  };
 }
 
 /**
@@ -189,23 +179,6 @@ async function apply(sync: IssueSync, operation: IssueOperation): Promise<number
       }
     }
   });
-}
-
-/** The notices each client (one per run) has posted, so a listing that lags its own comment never posts one twice. */
-const POSTED = new WeakMap<GitHubIssues, Set<string>>();
-
-/** Comments `text` on issue `number` unless a comment already carries notice `id`: each notice is posted once. */
-export async function postNotice(sync: Pick<IssueSync, "issues" | "repo" | "clean">, number: number, id: string, text: string): Promise<void> {
-  const posted = POSTED.get(sync.issues) ?? new Set<string>();
-  POSTED.set(sync.issues, posted);
-  const key = `${sync.repo}#${number}:${id}`;
-  if (posted.has(key)) return;
-  const marker = noticeMarker(id);
-  const comments = await sync.issues.listComments({ repo: sync.repo, number });
-  if (!comments.some((comment) => comment.body.includes(marker))) {
-    await sync.issues.createComment({ repo: sync.repo, number, body: `${sync.clean(text)}\n\n${marker}` });
-  }
-  posted.add(key);
 }
 
 /** Runs a write, turning GitHub's plain refusal into what to fix; a rate limit or anything else goes through as it is. */

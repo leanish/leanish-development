@@ -22,7 +22,7 @@ import type { AttemptClient } from "./issue-attempts.ts";
 import { settleAttempt } from "./issue-attempts.ts";
 import { grantOf } from "./issue-grant.ts";
 import { type Attempt, type Grant, type IssueRecord, subjectId, subjectPackages, type YoungVersion } from "./issue-model.ts";
-import { postNotice } from "./issue-sync.ts";
+import { postNotice } from "./issue-notices.ts";
 import { ISSUE_LABEL, recordOf } from "./issue-text.ts";
 import { planOf } from "./plan-block.ts";
 import type { ChangePlan } from "./plan.ts";
