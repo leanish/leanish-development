@@ -108,8 +108,9 @@ export function reconcile(assessment: Assessment, issues: ReadonlyArray<TrackedI
   const operations: IssueOperation[] = [];
   const notes: string[] = unreadable.map((number) => `#${number}: its record can't be read; secure-it creates no issue until it can (restore its hidden block, or close it)`);
   const observed = assessment.subjects.flatMap((subject) => subject.findings.map(keyOf));
-  // A complete assessment ends the episode of every tracked finding it no longer has, on every issue tracking it.
-  const records = new Map(issues.map((issue) => [issue.number, withAbsences(issue.record, observed, assessment)]));
+  // Every issue, open or closed, learns the aliases its findings have now, so one that later drops an id it had still
+  // matches them. A complete assessment then ends the episode of every tracked finding it no longer has.
+  const records = new Map(issues.map((issue) => [issue.number, withAbsences(withAliases(issue.record, observed), observed, assessment)]));
   const recordOf = (issue: TrackedIssue) => records.get(issue.number)!;
 
   const bySubject = new Map<string, TrackedIssue[]>();
@@ -283,6 +284,23 @@ function withFindings(record: IssueRecord, shown: ReadonlyArray<FindingKey>): Is
   const absences = record.absences.filter((absence) => !shown.some((finding) => sameFinding(absence.finding, finding)));
   if (joined.length === 0 && absences.length === record.absences.length) return record;
   return { ...record, findings: [...record.findings, ...joined], absences };
+}
+
+/**
+ * `record` with each tracked finding's ids grown by those of every observed finding it shares one with: sources add
+ * aliases over time and can drop the first one seen, and a finding tracked by an id nothing reports any more would read
+ * as gone (resolving its issue, or escaping a dismissal) while it's still there. The same object when nothing is new.
+ */
+function withAliases(record: IssueRecord, observed: ReadonlyArray<FindingKey>): IssueRecord {
+  let changed = false;
+  const findings = record.findings.map((tracked) => {
+    const ids = new Set(tracked.ids);
+    for (const finding of observed) if (sameFinding(tracked, finding)) for (const id of finding.ids) ids.add(id);
+    if (ids.size === tracked.ids.length) return tracked;
+    changed = true;
+    return { ...tracked, ids: [...ids].sort() };
+  });
+  return changed ? { ...record, findings } : record;
 }
 
 /** `record` with an absence for each of its findings a complete assessment no longer has; the same object when none. */

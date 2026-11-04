@@ -94,8 +94,12 @@ describe("reconcile", () => {
     const one = informational("lib", [finding("lib", ["GHSA-1"], { reviewed: false })]);
     const [issue] = converge(assessed([one])).issues;
     const dismissed: TrackedIssue = { ...issue!, state: "closed" };
-    // Still there: nothing reopens or recreates it, even under a new alias.
-    expect(reconcile(assessed([informational("lib", [finding("lib", ["GHSA-1", "CVE-1"], { reviewed: false })])]), [dismissed], ISSUE_WRITER).operations).toEqual([]);
+    // Still there: nothing reopens or recreates it, even under a new alias, which its record learns.
+    const aliased = converge(assessed([informational("lib", [finding("lib", ["GHSA-1", "CVE-1"], { reviewed: false })])]), [dismissed]);
+    expect(aliased.operations.flat().map((operation) => operation.kind)).toEqual(["update"]);
+    expect(aliased.issues[0]!.record.findings).toEqual([{ ecosystem: "npm", name: "lib", ids: ["CVE-1", "GHSA-1"] }]);
+    // Once only the new alias is reported, the dismissal still covers it.
+    expect(reconcile(assessed([informational("lib", [finding("lib", ["CVE-1"], { reviewed: false })])]), aliased.issues, ISSUE_WRITER).operations).toEqual([]);
     // A new advisory on the same package: a new issue.
     const withNew = informational("lib", [finding("lib", ["GHSA-1"], { reviewed: false }), finding("lib", ["GHSA-9"])]);
     expect(reconcile(assessed([withNew]), [dismissed], ISSUE_WRITER).operations.map((operation) => operation.kind)).toEqual(["create"]);
@@ -103,6 +107,19 @@ describe("reconcile", () => {
     const gone = converge(assessed([], true, LATER), [dismissed]);
     expect(gone.issues[0]!.record.absences).toEqual([{ finding: { ecosystem: "npm", name: "lib", ids: ["GHSA-1"] }, at: LATER }]);
     expect(reconcile(assessed([one]), gone.issues, ISSUE_WRITER).operations.map((operation) => operation.kind)).toEqual(["create"]);
+  });
+
+  it("supersedes an issue whose finding dropped the id it was first tracked by, never resolving it", () => {
+    const fixA = decision([move("lib", "1.0.1")], [finding("lib", ["GHSA-1"])]);
+    const start = converge(assessed([fixA])).issues;
+    const learned = converge(assessed([decision([move("lib", "1.0.1")], [finding("lib", ["CVE-1", "GHSA-1"])])], true, LATER), start).issues;
+    // The same advisory, now reported only by its other id, under another fix.
+    const fixB = decision([move("lib", "1.0.2")], [finding("lib", ["CVE-1"])]);
+    const after = converge(assessed([fixB], true, LATER), learned).issues;
+    const first = after.find((issue) => issue.number === 1)!;
+    expect(first.state).toBe("closed");
+    expect(first.record.pendingClose?.reason).toBe("superseded");
+    expect(first.record.absences).toEqual([]);
   });
 
   it("keeps a dismissal when the dismissed finding gets a different fix", () => {

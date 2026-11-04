@@ -352,8 +352,9 @@ The tick from [`core/tool-runtime`](../core/tool-runtime), with secure-it's step
 Whatever the verifying comparison holds goes into the plan, and the PR's description opens with a GitHub warning:
 the versions that came early (published, held until, and why: the rule-picked fix, required by it, an exception),
 plus provenance, publisher changes and new install scripts for npm, for information. It says that needing a version
-and passing every check doesn't rule out malware, that secure-it keeps the PR a draft until everything
-aged, and how a person takes it earlier: every other check green, the reason written on the PR, an admin merge. A PR
+and passing every check doesn't rule out malware, until when the gate's `cooldown` check stays red, that secure-it
+keeps the PR a draft until everything it may take aged (for a PR taken early, every version its issue's grant covers,
+which can outlast the gate's dates), and how a person takes it earlier: every other check green, the reason written on the PR, an admin merge. A PR
 whose verification finds a young version its issue didn't authorize is not published; the issue says why.
 A cooldown the comparison couldn't evaluate fails verification.
 
