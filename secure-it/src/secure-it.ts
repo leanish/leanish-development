@@ -106,8 +106,8 @@ export interface SecureItDeps {
   readonly gate: (context: ToolRunContext) => Promise<GateEnvironment>;
   readonly gradle: (context: ToolRunContext) => GradleInventories;
   readonly trees: { readonly commit: (workingCopy: WorkingCopy, sha: string) => Promise<Tree>; readonly working: (workingCopy: WorkingCopy) => Tree };
-  /** The tree's scan state (`readScanState`), read once and shared with candidate planning; absent, planning reads its own. */
-  readonly scan?: (tree: Tree, env: GateEnvironment, gradle: GradleInputs) => Promise<ScanState>;
+  /** The tree's scan state (`readScanState`), read once and shared with candidate planning and issue tracking. */
+  readonly scan: (tree: Tree, env: GateEnvironment, gradle: GradleInputs) => Promise<ScanState>;
   readonly candidates: (tree: Tree, env: GateEnvironment, gradle: GradleInputs, scanned?: ScanState) => Promise<SecurityCandidates>;
   /**
    * Whether a plan may execute now: asked right before every step that would run its versions (a branch prepared for
@@ -303,7 +303,7 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   const inventories = deps.gradle(context);
   const tree = await deps.trees.commit(context.workingCopy, context.workingCopy.headSha);
   const base = { tree, gradle: await inventories.ofCommit(tree) };
-  const scanned = await deps.scan?.(tree, env, { head: base.gradle });
+  const scanned = await deps.scan(tree, env, { head: base.gradle });
   const found = await deps.candidates(tree, env, { head: base.gradle }, scanned);
   // A fix that can't be decided (its publisher identity, a carrier's reads) is blocked like a refused one, but it's a
   // check that failed: reported as an error, so the run reads as one that broke, while the other units still go on.
@@ -326,13 +326,11 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   const results: Readonly<Record<string, unknown>>[] = [];
   // Metadata first (no Gradle): the units and their plans. Then the issues decide what may execute, before any preflight.
   const prepared = await withRequiredYoung(execution, selection.units, base);
-  let tracking: Tracking | Error | undefined;
+  let tracking: Tracking | Error;
   // Early attempts this run recorded, by topic: a unit failing after one (its preflight asked, say) ends it.
   const started = new Map<string, { readonly issue: number; readonly attempt: string }>();
   try {
-    tracking = scanned === undefined
-      ? undefined
-      : await trackIssues(execution, { tree, scanned, complete: found.incomplete.length === 0 && found.gaps.length === 0 && prepared.failures.size === 0, units: prepared.units.filter((unit) => failureOf(prepared, unit) === undefined), claimants: prepared.units, blocked: selection.blocked, own: listed, base });
+    tracking = await trackIssues(execution, { tree, scanned, complete: found.incomplete.length === 0 && found.gaps.length === 0 && prepared.failures.size === 0, units: prepared.units.filter((unit) => failureOf(prepared, unit) === undefined), claimants: prepared.units, blocked: selection.blocked, own: listed, base });
   } catch (error) {
     // Nothing executes without its issue: a sync that failed defers every unit this run, saying why.
     tracking = asError(error);
@@ -340,15 +338,13 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   }
   // A PR taken early whose granted versions all aged is retired before any unit runs, as review would: this run plans
   // that work afresh, so no second PR for it opens beside it.
-  const retired = tracking === undefined || tracking instanceof Error || scanned === undefined
+  const retired = tracking instanceof Error
     ? { own: listed, stuck: new Set<string>() }
     : await withoutAgedEarly(execution, listed, tracking, scanned.settings.config);
   const own = retired.own;
   // A unit with a package of an early PR that couldn't be retired waits this run, so no second PR opens beside that one.
   const waits = (unit: SecurityUnit) => unit.work.some((fix) => retired.stuck.has(packageKey(fix)));
-  const governed = tracking === undefined
-    ? execution
-    : { ...execution, deps: { ...deps, disposition: tracking instanceof Error ? untracked(execution, tracking) : trackedDisposition(execution, tracking, started) } };
+  const governed = { ...execution, deps: { ...deps, disposition: tracking instanceof Error ? untracked(execution, tracking) : trackedDisposition(execution, tracking, started) } };
   const pending = prepared.units.filter((unit) => !prepared.failures.has(unit) && !waits(unit));
   const { units, ungrouped } = prepared;
   const failures = new Map([...prepared.failures, ...await heldPreflight(governed, pending, base)]);
@@ -381,7 +377,7 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   if (!found.fixes.some((fix) => fix.malicious) && (await floorsOf(tree)).some((floor) => floor.purpose === "security")) {
     // A run whose issues couldn't be synced, or didn't settle, executes nothing, a floor removal included.
     const unsynced = tracking instanceof Error ? `the issues couldn't be synced: ${tracking.message}`
-      : tracking !== undefined && !tracking.sync.settled ? "the issues didn't settle this run" : undefined;
+      : !tracking.sync.settled ? "the issues didn't settle this run" : undefined;
     if (unsynced !== undefined) {
       results.push({ topic: "floor-removal", outcome: "deferred", reason: unsynced });
     } else {
@@ -841,8 +837,9 @@ async function runUnit(
   const disposition = await execution.deps.disposition({ kind: "unit", plan, ...(owned[0] === undefined ? {} : { branch: owned[0].pr.headRef }) });
   if (disposition.kind === "defer") return { ...details, outcome: "deferred", reason: disposition.reason };
   const tracked = disposition.tracked;
-  const attempt = tracked?.attempt;
-  if (tracked === undefined || attempt === undefined) return executeUnit(execution, plan, base, owned[0], own, details, tracked);
+  if (tracked === undefined) throw new Error("a version unit can't execute without its decision's issue");
+  const attempt = tracked.attempt;
+  if (attempt === undefined) return executeUnit(execution, plan, base, owned[0], own, details, tracked);
   // A reused PR is the attempt's from the start (its preflight may have reserved another branch): recovery reads it.
   if (owned[0] !== undefined && attempt.branch !== owned[0].pr.headRef) await settleAttempt(attemptClient(execution), tracked.issue, attempt.id, { pr: owned[0].pr.number });
   // An early attempt ends here unless it published: one grant runs one attempt, whatever stopped it.
@@ -858,7 +855,7 @@ async function runUnit(
   return result;
 }
 
-/** A unit the issues (or the tool's default) let execute: applied, verified and published. */
+/** A unit its issue lets execute: applied, verified and published. */
 async function executeUnit(
   execution: Execution,
   plan: ChangePlan,
@@ -866,22 +863,22 @@ async function executeUnit(
   owned: Ours | undefined,
   own: ReadonlyArray<GitHubPullRequest>,
   details: Readonly<Record<string, unknown>>,
-  tracked: TrackedExecution | undefined,
+  tracked: TrackedExecution,
 ): Promise<Readonly<Record<string, unknown>>> {
   const { context, publication } = execution;
   const reusable = owned === undefined ? undefined : await repairOwnership(publication, owned);
-  const prepared = await preparePlan(execution, plan, reusable, own, base.tree.id, reusable === undefined ? tracked?.attempt?.branch : undefined);
+  const prepared = await preparePlan(execution, plan, reusable, own, base.tree.id, reusable === undefined ? tracked.attempt?.branch : undefined);
   const input = await agentInput(execution, plan, base.tree, "apply");
   const answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({ entrypoint: "secure-it", input });
   if (answer.outcome !== "applied" || answer.publication == null) return { ...details, outcome: "cannot-apply", summary: answer.summary };
   assertNoPlanMarker(answer.publication.body);
-  const admits = tracked === undefined ? undefined : await admitted(base.tree, tracked.young);
-  const verified = await verifyWithRetry(execution, base, plan, answer.publication, { retryRejected: true, ...(admits === undefined ? {} : { admits }) });
+  const admits = await admitted(base.tree, tracked.young);
+  const verified = await verifyWithRetry(execution, base, plan, answer.publication, { retryRejected: true, admits });
   const checked = {
     ...details, notes: verified.plan.notes ?? [], packages: verified.plan.packages, named: verified.named, leftOut: verified.leftOut,
     ...(verified.rejected === undefined ? {} : { rejected: verified.rejected }),
   };
-  if (tracked !== undefined && verified.unplanned !== undefined) {
+  if (verified.unplanned !== undefined) {
     // Verification found a young version planning didn't choose (a transitive move, say): its issue never allowed it.
     const unplanned = verified.unplanned;
     const next = tracked.attempt === undefined
@@ -893,7 +890,7 @@ async function executeUnit(
   }
   if (verified.deferred !== undefined) return { ...checked, outcome: "deferred", reason: verified.deferred, problems: verified.problems };
   if (verified.problems.length > 0) return { ...checked, outcome: "verification-failed", problems: verified.problems };
-  const published = tracked === undefined ? verified.content : trackingContent(verified.content, tracked.issue, tracked.attempt !== undefined);
+  const published = trackingContent(verified.content, tracked.issue, tracked.attempt !== undefined);
   const content = { ...published, body: withPlanSection(published.body, verified.plan) };
   if (reusable !== undefined) {
     const { pr } = await publishUpdate(publication, prepared, reusable.number, content, 0);
@@ -1340,7 +1337,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       // Recomputed on the new base first: it may already have the fix, or need a different one.
       const base = await deps.trees.commit(context.workingCopy, baseSha);
       const baseGradle = await inventories.ofCommit(base);
-      const scanned = await deps.scan?.(base, env, { head: baseGradle });
+      const scanned = await deps.scan(base, env, { head: baseGradle });
       const found = await deps.candidates(base, env, { head: baseGradle }, scanned);
       if (found.incomplete.length > 0) throw new Error(`the new base's inventory is incomplete: ${found.incomplete.join("; ")}`);
       // A fix without a move because a check failed (its identity, a carrier's reads) isn't one the base no longer
@@ -1581,7 +1578,8 @@ async function trackIssues(execution: Execution, inputs: TrackingInputs): Promis
   const today = context.now.toISOString().slice(0, 10);
   const { config } = inputs.scanned.settings;
   // A unit whose planning fails is left out, and the assessment is incomplete: its findings stay tracked (as
-  // unassessed) and no issue is retired for it. The unit itself fails when it runs, with that error.
+  // unassessed) and no issue is retired for it. The unit plans again when it runs: it fails there only if the error
+  // persists, so a transient one leaves just this warning and the unassessed issue.
   const planned: PlannedUnit[] = [];
   let complete = inputs.complete;
   for (const unit of inputs.units) {

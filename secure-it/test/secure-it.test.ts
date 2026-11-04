@@ -9,6 +9,10 @@ import { ConsoleLogger } from "@leanish/agent-runtime/logger/console-logger";
 import type { GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
 import type { WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
 import { InMemoryWorkspace } from "@leanish/agent-runtime/working-copy/in-memory-workspace";
+import { ActionsGitHub } from "@leanish/gate/actions-github";
+import { located, readInventory, sourcesOf } from "@leanish/gate/inventory";
+import { versionKey } from "@leanish/gate/package-version";
+import { type Advisory, Snapshot } from "@leanish/gate/snapshot";
 import { gradleResolutionProblems, type GradleInventory } from "@leanish/gate/gradle";
 import type { AdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import { securityCandidates, type SecurityFix } from "@leanish/gate/candidates";
@@ -20,10 +24,10 @@ import { assertAgentWorkspace, type ToolRunContext } from "@leanish/tool-runtime
 import { retargetRepository } from "@leanish/tool-runtime/test/retarget-repository";
 import { readScanState, readSettings, runCompare, type GateEnvironment } from "@leanish/gate/gate";
 import { ISSUE_LABEL, ISSUE_WRITER, recordOf } from "../src/issue-text.ts";
-import type { Attempt, IssueRecord } from "../src/issue-model.ts";
+import type { Attempt, IssueRecord, ObservedFinding } from "../src/issue-model.ts";
 import { decisionMoves } from "../src/issue-assessment.ts";
 import { recoverAttempts } from "../src/issue-attempts.ts";
-import { reviewExecution } from "../src/issue-review.ts";
+import { reviewExecution, trackedIssueOf } from "../src/issue-review.ts";
 import { fakeFetch } from "@leanish/gate/test/fake-fetch";
 import { archive, manifest, serving } from "@leanish/gate/test/tarballs";
 import { parseToolConfig } from "@leanish/tool-runtime/config";
@@ -103,7 +107,25 @@ interface Harness {
   readonly journal: MemoryJournal;
 }
 
-function harness(options: { prs?: GitHubPullRequest[]; fixes?: SecurityFix[]; candidateNotes?: string[]; answer?: unknown; problems?: string[]; baseSha?: string; files?: Record<string, string>; links?: string[] } = {}): Harness {
+/** Scan observations are independent of the fixes a candidate planner happens to return. */
+const VITE_FINDING: ObservedFinding = { ecosystem: "npm", name: "vite", ids: ["GHSA-rq7h-c2jc-7f22"], versions: ["8.3.1"], reviewed: true, malicious: false, severity: "MODERATE" };
+
+async function scanFixture(base: Tree, env: GateEnvironment, gradle: Parameters<SecureItDeps["scan"]>[2], observations: ReadonlyArray<ObservedFinding>): Promise<ScanState> {
+  const settings = await readSettings(base);
+  const inventory = await readInventory(base, await sourcesOf(base, settings.config), { gradle: gradle.head });
+  const packages = located(inventory);
+  const advisories = new Map<string, Advisory[]>(packages.map((pkg) => [versionKey(pkg), []]));
+  for (const finding of observations) {
+    for (const version of finding.versions) {
+      const key = versionKey({ ...finding, version });
+      advisories.set(key, [...advisories.get(key) ?? [], { id: finding.ids[0]!, ids: finding.ids, source: finding.reviewed ? "osv" : "repository", malicious: finding.malicious, severity: finding.severity, summary: undefined }]);
+    }
+  }
+  return { settings, inventory, packages,
+    resolutions: new Map(), github: new ActionsGitHub(env.fetch, env.githubToken), snapshot: new Snapshot(advisories, [], NOW), osvScannerVersion: "2.6.0" };
+}
+
+function harness(options: { prs?: GitHubPullRequest[]; fixes?: SecurityFix[]; observations?: ReadonlyArray<ObservedFinding>; candidateNotes?: string[]; answer?: unknown; problems?: string[]; baseSha?: string; files?: Record<string, string>; links?: string[] } = {}): Harness {
   const github = new FakeGitHub(...(options.prs ?? []));
   const workspace = new InMemoryWorkspace();
   const workingCopy: WorkingCopy = { projectId: REPO, path: "/synthetic/leanish/widget", branch: "main", headSha: options.baseSha ?? BASE_SHA, gitDir: "/synthetic/.git" };
@@ -140,6 +162,7 @@ function harness(options: { prs?: GitHubPullRequest[]; fixes?: SecurityFix[]; ca
     gate: async () => ({ run: async () => ({ code: 0, stdout: "", stderr: "" }), fetch: async () => ({ ok: false, status: 404, headers: { get: () => null }, json: async () => ({}), text: async () => "" }), now: () => NOW, osvScanner: "osv-scanner", githubToken: "read-token" }),
     gradle: () => ({ ofCommit: async () => undefined, ofWorkingTree: async () => undefined }),
     trees: { commit: async (_wc, sha) => tree(sha, options.files), working: () => tree("worktree", options.files) },
+    scan: (base, env, gradle) => scanFixture(base, env, gradle, options.observations ?? [VITE_FINDING]),
     npm: async () => ({ code: 0, stdout: "11.20.0\n", stderr: "" }),
     candidates: async () => ({ fixes: options.fixes ?? [vite()], incomplete: [], gaps: [], notes: options.candidateNotes ?? [], osvScannerVersion: "2.6.0" }),
     verify: async () => options.problems ?? [],
@@ -161,8 +184,40 @@ function harness(options: { prs?: GitHubPullRequest[]; fixes?: SecurityFix[]; ca
   return { context, deps, github, workspace, agentCalls, written, reverted, journal };
 }
 
+/** Publishable young decisions must first be shown by a run and then authorized by the owner. */
+async function grantWaiting(tool: ReturnType<typeof secureIt>, h: Harness, names?: ReadonlyArray<string>): Promise<void> {
+  await tool.run(h.context);
+  const issues = h.context.issues as FakeIssues;
+  const waiting = [...issues.issues.values()].filter((issue) => {
+    const record = recordOf(issue.body);
+    return issue.state === "open" && record?.subject.kind === "decision" && issue.body.includes("**Waiting for the release-age wait.**")
+      && (names === undefined || record.subject.moves.some((move) => names.includes(move.name)));
+  });
+  expect(waiting.length).toBeGreaterThan(0);
+  issues.permissions.set("owner", "admin");
+  for (const issue of waiting) {
+    expect(recordOf(issue.body)!.shown?.young.length).toBeGreaterThan(0);
+    issues.comment(issue.number, "owner", "take-early: tested this exact decision");
+    issues.label(issue.number, "owner", "take-early");
+  }
+}
+
+function trackedRecord(h: Harness, number = 42): IssueRecord {
+  const pr = h.github.prs.get(number)!;
+  const issue = trackedIssueOf(pr.body);
+  expect(issue).toBeDefined();
+  const record = recordOf((h.context.issues as FakeIssues).issues.get(issue!)!.body)!;
+  expect(record.subject.kind).toBe("decision");
+  return record;
+}
+
 function leftPad(overrides: Partial<SecurityFix> = {}): SecurityFix {
   return vite({ name: "left-pad", from: "1.0.0", locations: ["node_modules/left-pad"], severity: "LOW", to: { version: "1.0.1", line: "1", aged: true, major: false, blockers: [] }, ...overrides });
+}
+
+function requirement(name: string, version: string, rootName: string, rootVersion: string, exempt = true) {
+  const root = { name: rootName, version: rootVersion, path: `node_modules/${rootName}` };
+  return { name, version, exempt, path: `node_modules/${name}`, lockfile: "package-lock.json", key: name, range: version, reason: `required by ${rootName}`, parent: root, root };
 }
 
 async function batchPr(fixes: SecurityFix[], overrides: Partial<GitHubPullRequest> = {}): Promise<GitHubPullRequest> {
@@ -240,10 +295,12 @@ describe("secure-it run", () => {
     const actual = await vi.importActual<typeof import("@leanish/gate/gate")>("@leanish/gate/gate");
     vi.mocked(runCompare).mockImplementation(actual.runCompare);
     try {
-      const result = await secureIt({ ...h.deps, gate: async () => env, candidates: async () => found, verify: verifyPlan,
+      const tool = secureIt({ ...h.deps, gate: async () => env, scan: readScanState, candidates: async () => found, verify: verifyPlan,
         materializeNpm: async () => new Map(Object.entries(files("1.0.2"))),
         trees: { commit: async (_wc, sha) => sha === BASE_SHA ? base : head, working: () => head },
-      }).run(h.context);
+      });
+      await grantWaiting(tool, h);
+      const result = await tool.run(h.context);
       expect(result).toMatchObject({ outcome: "verification-failed", problems: [expect.stringContaining("1.0.1 fixes GHSA-own too and is at least 7 days old")] });
       expect(h.github.prs.size).toBe(0);
       expect(h.workspace.pushes).toEqual([]);
@@ -514,12 +571,6 @@ describe("secure-it run", () => {
     expect(h.agentCalls).toEqual([]);
   });
 
-  it("doesn't take a PR someone else pushed to as covering the same plan", async () => {
-    const h = harness({ prs: [await vitePr({ headSha: "9".repeat(40) })] });
-    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "published" });
-    expect(h.github.prs.get(42)?.headRef).toBe("secure-it/2026-10-07-security");
-  });
-
   it("opens a separate PR for a changed plan when someone else pushed to the package's PR", async () => {
     const older = vite({ to: { version: "8.3.2", line: "8", aged: true, major: false, blockers: [] } });
     const h = harness({ prs: [await vitePr({ headSha: "9".repeat(40), headRef: "secure-it/2026-10-07-security" }, older)] });
@@ -530,7 +581,7 @@ describe("secure-it run", () => {
 
   it("reports reconciliation notes when the reviewed ranges leave nothing to fix", async () => {
     const notes = ["GHSA-netty: its reviewed ranges clear this version; the reviewed ranges apply"];
-    const h = harness({ fixes: [], candidateNotes: notes });
+    const h = harness({ fixes: [], observations: [], candidateNotes: notes });
     expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "nothing-to-fix", notes });
     expect(h.agentCalls).toEqual([]);
   });
@@ -539,40 +590,55 @@ describe("secure-it run", () => {
     const h = harness();
     const state = { marker: "the run's one scan" } as unknown as ScanState;
     const seen: unknown[] = [];
-    const deps = { ...h.deps, scan: async () => state, candidates: async (...args: Parameters<SecureItDeps["candidates"]>) => {
+    const scan = vi.fn(async () => state);
+    const deps = { ...h.deps, scan, candidates: async (...args: Parameters<SecureItDeps["candidates"]>) => {
       seen.push(args[3]);
       return h.deps.candidates(...args);
     } };
     // That state isn't a real scan, so the issues can't be synced from it: nothing executes, and the run says why.
     expect(await secureIt(deps).run(h.context)).toMatchObject({ outcome: "deferred", reason: expect.stringContaining("the issues couldn't be synced") });
     expect(seen).toEqual([state]);
+    expect(scan).toHaveBeenCalledOnce();
     expect(h.agentCalls).toHaveLength(0);
   });
 
-  it("asks before executing, and a deferred unit stops before its branch, npm files, agent and verification", async () => {
-    const asked: string[] = [];
-    const h = harness();
-    const deps = { ...h.deps, disposition: async (target: ExecutionTarget) => {
-      asked.push(target.kind);
-      return { kind: "defer" as const, reason: "waiting for the release-age wait" };
-    } };
-    expect(await secureIt(deps).run(h.context)).toMatchObject({ outcome: "deferred", reason: "waiting for the release-age wait" });
-    expect(asked).toEqual(["unit"]);
-    expect(h.agentCalls).toHaveLength(0);
-    expect(h.written).toEqual([]);
-    expect(h.github.calls.some((call) => call.startsWith("createPullRequest"))).toBe(false);
+  it("stops a failed scan before candidates, floor proofs or execution", async () => {
+    const h = harness({ files: removalFixture().base });
+    const scan = vi.fn(async () => { throw new Error("scanner unavailable"); });
+    const candidates = vi.fn(h.deps.candidates);
+    const floorProbe = vi.fn(h.deps.floorProbe);
+    const verify = vi.fn(h.deps.verify);
+    await expect(secureIt({ ...h.deps, scan, candidates, floorProbe, verify }).run(h.context)).rejects.toThrow("scanner unavailable");
+    expect(scan).toHaveBeenCalledOnce();
+    expect(candidates).not.toHaveBeenCalled();
+    expect(floorProbe).not.toHaveBeenCalled();
+    expect(verify).not.toHaveBeenCalled();
+    expect([h.agentCalls, h.written, h.workspace.preparations, h.workspace.publications]).toEqual([[], [], [], []]);
+    expect((h.context.issues as FakeIssues).issues.size).toBe(0);
   });
 
-  it("asks again before each retry's agent call, and a deferred retry keeps the first refusal without another agent call", async () => {
-    const asked: string[] = [];
-    const h = harness({ problems: ["vite at node_modules/vite is 8.3.2, not 8.3.3"] });
-    const deps = { ...h.deps, disposition: async (target: ExecutionTarget) => {
-      asked.push(target.kind);
-      return target.kind === "retry" ? { kind: "defer" as const, reason: "deferred" } : { kind: "proceed" as const };
-    } };
-    expect(await secureIt(deps).run(h.context)).toMatchObject({ outcome: "deferred", reason: "deferred", problems: ["vite at node_modules/vite is 8.3.2, not 8.3.3"] });
-    expect(asked).toEqual(["unit", "retry"]);
-    expect(h.agentCalls).toHaveLength(1);
+  it("publishes trusted young work as a draft tracking its eligible issue without asking for a grant", async () => {
+    const name = "@acme/lib";
+    // The gate marks a trusted ordinary target eligible even while its registry date is young.
+    const h = harness({ fixes: [vite({ name, locations: [`node_modules/${name}`] })],
+      observations: [{ ...VITE_FINDING, name }], files: {
+        "package-lock.json": JSON.stringify({ lockfileVersion: 3, packages: { "": { dependencies: { [name]: "^8.3.0" } }, [`node_modules/${name}`]: { version: "8.3.1" } } }),
+        ".github/supply-chain.json": JSON.stringify({ trustedPackages: { npm: { scopes: ["@acme"] } } }),
+      } });
+    const env = await h.deps.gate(h.context);
+    const gate = async () => ({ ...env, fetch: fakeFetch({ "https://registry.npmjs.org/@acme%2flib": { body: { time: { "8.3.3": "2026-10-06T00:00:00Z" }, versions: { "8.3.3": {} } } } }) });
+    const issues = h.context.issues as FakeIssues;
+    const permission = vi.spyOn(issues, "permission");
+    expect(await secureIt({ ...h.deps, gate }).run(h.context)).toMatchObject({ outcome: "published" });
+    const record = trackedRecord(h);
+    expect(record.attempts).toEqual([]);
+    expect(record.grant).toBeUndefined();
+    const issue = issues.issues.get(trackedIssueOf(h.github.prs.get(42)!.body)!)!;
+    expect(issue.body).toContain("Trusted-package exception");
+    expect(issue.body).not.toContain("**Waiting for the release-age wait.**");
+    expect(permission).not.toHaveBeenCalled();
+    expect(h.github.prs.get(42)!.isDraft).toBe(true);
+    expect(planOf(h.github.prs.get(42)!.body)?.cooldown ?? []).toEqual([]);
   });
 
   describe("issue flow", () => {
@@ -604,14 +670,19 @@ describe("secure-it run", () => {
 
     it("opens an issue for a young fix and runs nothing until the wait ends, then leaves the issue alone", async () => {
       const h = harness({ fixes: [young] });
-      expect(await flow(h).run(h.context)).toMatchObject({ outcome: "deferred", reason: "waiting for the release-age wait (#1)" });
+      const verify = vi.fn(h.deps.verify);
+      const tool = secureIt({ ...h.deps, gate: async () => scanned("2026-10-05T00:00:00Z"), scan: readScanState, verify });
+      expect(await tool.run(h.context)).toMatchObject({ outcome: "deferred", reason: "waiting for the release-age wait (#1)" });
       const issue = issuesOf(h).issues.get(1)!;
       expect(recordOf(issue.body)).toMatchObject({ subject: { kind: "decision", moves: [{ name: "vite", from: "8.3.1", to: "8.3.3" }] }, attempts: [] });
       expect(issue.body).toContain("2026-10-12");
       expect(h.agentCalls).toEqual([]);
+      expect(h.workspace.preparations).toEqual([]);
+      expect(h.written).toEqual([]);
+      expect(verify).not.toHaveBeenCalled();
       expect(h.github.calls.some((call) => call.startsWith("createPullRequest"))).toBe(false);
       issuesOf(h).calls.length = 0;
-      expect(await flow(h).run(h.context)).toMatchObject({ outcome: "deferred" });
+      expect(await tool.run(h.context)).toMatchObject({ outcome: "deferred" });
       expect(issuesOf(h).calls).toEqual([]);
     });
 
@@ -637,6 +708,9 @@ describe("secure-it run", () => {
         const h = harness({ prs: [await vitePr({ headSha: "9".repeat(40) })], fixes });
         expect(await flow(h, OLD).run(h.context)).toMatchObject({ outcome: "published", number: 42 });
         expect(issuesOf(h).issues.get(1)!.body).toContain("**Ready.**");
+        expect(h.github.prs.get(7)?.headSha).toBe("9".repeat(40));
+        expect(h.github.prs.get(42)?.headRef).toBe("secure-it/2026-10-07-security");
+        trackedRecord(h);
       }
     });
 
@@ -881,8 +955,12 @@ describe("secure-it run", () => {
       // The aged plan decides which of its roots join the young work; without it the young decision isn't known yet,
       // so its finding stays tracked unassessed, like any unit that can't be planned.
       const h = harness({ fixes: [young, leftPad()] });
+      let agedPlans = 0;
       const failing = secureIt({ ...h.deps, gate: async () => scanned("2026-10-05T00:00:00Z"), scan: readScanState, requiredNpm: async (_base, plan) => {
-        if (plan.topic === "security") throw new Error("registry 502");
+        if (plan.topic === "security") {
+          agedPlans++;
+          throw new Error("registry 502");
+        }
         return plan;
       } });
       expect(await failing.run(h.context)).toMatchObject({ units: expect.arrayContaining([
@@ -892,6 +970,7 @@ describe("secure-it run", () => {
       const issues = [...issuesOf(h).issues.values()];
       expect(issues.map((issue) => recordOf(issue.body)?.subject)).toEqual([{ kind: "package", ecosystem: "npm", name: "vite" }]);
       expect(issues[0]!.body).toContain("no fix was planned for it this run");
+      expect(agedPlans).toBe(1);
       expect(h.agentCalls).toEqual([]);
     });
 
@@ -1754,7 +1833,7 @@ async function removalPr(f: ReturnType<typeof removalFixture>, overrides: Partia
 describe("secure-it floor-removal units", () => {
   it("opens an independent tool-written npm removal PR when there are no findings, without a model", async () => {
     const f = removalFixture();
-    const h = harness({ fixes: [], files: f.base });
+    const h = harness({ fixes: [], observations: [], files: f.base });
     let proofs = 0;
     const result = await secureIt({ ...h.deps, floorProbe: async () => { proofs++; return f.probe(); } }).run(h.context);
     expect(result).toMatchObject({ outcome: "published", topic: "floor-removal", units: [{ outcome: "published" }] });
@@ -1765,10 +1844,12 @@ describe("secure-it floor-removal units", () => {
     const pr = [...h.github.prs.values()][0]!;
     expect(pr.headRef).toBe("secure-it/2026-10-07-floor-removal");
     expect(planOf(pr.body)?.kind).toBe("floor-removal");
+    expect(trackedIssueOf(pr.body)).toBeUndefined();
+    expect((h.context.issues as FakeIssues).issues.size).toBe(0);
   });
   it("defers a floor removal too when the run's issues couldn't be synced: such a run executes nothing", async () => {
     const f = removalFixture();
-    const h = harness({ fixes: [], files: f.base });
+    const h = harness({ fixes: [], observations: [], files: f.base });
     let proofs = 0;
     // A state that isn't a real scan: the issues can't be synced from it.
     const deps = { ...h.deps, scan: async () => ({ marker: "not a scan" }) as unknown as ScanState, floorProbe: async () => { proofs++; return f.probe(); } };
@@ -1787,7 +1868,7 @@ describe("secure-it floor-removal units", () => {
     const f = removalFixture("Maven");
     const inventory: GradleInventory = { schemaVersion: 3, tree: "base", builds: [{ build: ".", configurations: [{ id: ":runtimeClasspath", kind: "project",
       declared: [{ group: "g", name: "lib", version: "1.0", reason: "CVE-2026-12345: fixed", strict: true }], resolved: [{ group: "g", name: "lib", version: "1.0" }], unresolved: [], error: undefined }] }] };
-    const h = harness({ fixes: [], files: f.base });
+    const h = harness({ fixes: [], observations: [], files: f.base });
     const floorProbe = async () => { throw new Error("must not probe a strictly pinned floor"); };
     const result = await secureIt({ ...h.deps, floorProbe, gradle: () => ({ ofCommit: async () => inventory, ofWorkingTree: async () => inventory }) }).run(h.context);
     expect(result).toMatchObject({ units: [{ topic: "floor-removal", outcome: "nothing-to-remove", notes: [expect.stringContaining("g:lib is pinned with strictly(...) at :runtimeClasspath")] }] });
@@ -1804,7 +1885,7 @@ describe("secure-it floor-removal units", () => {
     const f = removalFixture();
     const { plan } = await f.computed();
     const pr = await removalPr(f, { body: withMarker(RULES, planSection({ ...plan!, floorRemoval: { ...plan!.floorRemoval!, notes: ["an outdated reason"] } }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
-    const h = harness({ fixes: [], files: f.base, prs: [pr] });
+    const h = harness({ fixes: [], observations: [], files: f.base, prs: [pr] });
     expect(await secureIt({ ...h.deps, floorProbe: f.probe }).run(h.context)).toMatchObject({ outcome: "already-open" });
     expect(h.github.prs.get(pr.number)!.body).not.toContain("an outdated reason");
     expect(h.workspace.publications).toEqual([]);
@@ -1813,10 +1894,10 @@ describe("secure-it floor-removal units", () => {
   it("suppresses a recognised identical removal and updates a changed plan by reverting", async () => {
     const f = removalFixture();
     const pr = await removalPr(f);
-    const h = harness({ fixes: [], files: f.base, prs: [pr] });
+    const h = harness({ fixes: [], observations: [], files: f.base, prs: [pr] });
     expect(await secureIt({ ...h.deps, floorProbe: f.probe }).run(h.context)).toMatchObject({ outcome: "already-open" });
     expect(h.workspace.publications).toEqual([]);
-    const changed = harness({ fixes: [], files: f.base, prs: [pr] });
+    const changed = harness({ fixes: [], observations: [], files: f.base, prs: [pr] });
     const newFiles = new Map(f.files);
     newFiles.set("package-lock.json", "new exact bytes");
     expect(await secureIt({ ...changed.deps, floorProbe: async () => ({ files: newFiles, findings: [], problems: [] }) }).run(changed.context)).toMatchObject({ outcome: "updated" });
@@ -1826,28 +1907,30 @@ describe("secure-it floor-removal units", () => {
   it("leaves a human-pushed removal PR alone and opens a separate suffixed branch", async () => {
     const f = removalFixture();
     const pr = await removalPr(f, { headRef: "secure-it/2026-10-07-floor-removal", headSha: PUSHED_SHA });
-    const h = harness({ fixes: [], files: f.base, prs: [pr] });
+    const h = harness({ fixes: [], observations: [], files: f.base, prs: [pr] });
     expect(await secureIt({ ...h.deps, floorProbe: f.probe }).run(h.context)).toMatchObject({ outcome: "published" });
     expect(h.workspace.publications[0]?.prepared.branch).toBe("secure-it/2026-10-07-floor-removal-2");
     expect(h.github.prs.get(pr.number)?.headSha).toBe(PUSHED_SHA);
   });
   it("uses the agent only for the selected Gradle declarations and never publishes a failed verification", async () => {
     const f = removalFixture("Maven");
-    const h = harness({ fixes: [], files: f.base });
-    expect(await secureIt({ ...h.deps, floorProbe: f.probe }).run(h.context)).toMatchObject({ outcome: "published" });
+    const inventory: GradleInventory = { schemaVersion: 3, tree: BASE_SHA, builds: [{ build: ".", configurations: [{ id: ":runtimeClasspath", kind: "project", error: undefined, unresolved: [], declared: [], resolved: [] }] }] };
+    const gradle: SecureItDeps["gradle"] = () => ({ ofCommit: async () => inventory, ofWorkingTree: async () => inventory });
+    const h = harness({ fixes: [], observations: [], files: f.base });
+    expect(await secureIt({ ...h.deps, gradle, floorProbe: f.probe }).run(h.context)).toMatchObject({ outcome: "published" });
     expect(h.agentCalls).toMatchObject([{ input: { moves: [], floorRemovals: [{ package: "g:lib", version: "1.0", declaredIn: "build.gradle.kts", locations: [":runtimeClasspath"] }], toolWritten: [FLOORS_PATH] } }]);
-    const failed = harness({ fixes: [], files: f.base, problems: ["floor declaration remains"] });
-    expect(await secureIt({ ...failed.deps, floorProbe: f.probe }).run(failed.context)).toMatchObject({ outcome: "verification-failed", problems: ["floor declaration remains"] });
+    const failed = harness({ fixes: [], observations: [], files: f.base, problems: ["floor declaration remains"] });
+    expect(await secureIt({ ...failed.deps, gradle, floorProbe: f.probe }).run(failed.context)).toMatchObject({ outcome: "verification-failed", problems: ["floor declaration remains"] });
     expect(failed.workspace.publications).toEqual([]);
     expect(failed.agentCalls).toHaveLength(1);
   });
   it("reports unavailable proofs instead of publishing or losing an existing PR during review", async () => {
     const f = removalFixture();
     const blocked = async () => { throw new Error("unlocked resolution unavailable"); };
-    const h = harness({ fixes: [], files: f.base });
+    const h = harness({ fixes: [], observations: [], files: f.base });
     expect(await secureIt({ ...h.deps, floorProbe: blocked }).run(h.context)).toMatchObject({ outcome: "nothing-to-remove", notes: [expect.stringContaining("unlocked resolution unavailable")] });
     const pr = await removalPr(f);
-    const moved = harness({ fixes: [], files: f.base, prs: [pr], baseSha: "f".repeat(40) });
+    const moved = harness({ fixes: [], observations: [], files: f.base, prs: [pr], baseSha: "f".repeat(40) });
     expect(await secureIt({ ...moved.deps, floorProbe: blocked }).review(moved.context)).toMatchObject({ reviewed: [{ outcome: "error", detail: expect.stringContaining("keeping the PR") }] });
     expect(moved.github.prs.get(pr.number)?.state).toBe("open");
     expect(moved.workspace.publications).toEqual([]);
@@ -1855,16 +1938,16 @@ describe("secure-it floor-removal units", () => {
   it("recomputes jointly and republishes on a new base; retires only when the floors already disappeared", async () => {
     const f = removalFixture();
     const pr = await removalPr(f);
-    const h = harness({ fixes: [], files: f.base, prs: [pr], baseSha: "f".repeat(40) });
+    const h = harness({ fixes: [], observations: [], files: f.base, prs: [pr], baseSha: "f".repeat(40) });
     expect(await secureIt({ ...h.deps, floorProbe: f.probe }).review(h.context)).toMatchObject({ reviewed: [{ outcome: "rebased" }] });
     expect(h.reverted).toEqual(["f".repeat(40)]);
     expect(h.agentCalls).toEqual([]);
-    const retired = harness({ fixes: [], prs: [pr], files: { ...f.base, [FLOORS_PATH]: '{"floors":[]}' }, baseSha: "f".repeat(40) });
+    const retired = harness({ fixes: [], observations: [], prs: [pr], files: { ...f.base, [FLOORS_PATH]: '{"floors":[]}' }, baseSha: "f".repeat(40) });
     expect(await secureIt({ ...retired.deps, floorProbe: f.probe }).review(retired.context)).toMatchObject({ reviewed: [{ outcome: "retired" }] });
   });
   it("does not let failed CI adapt the proof or invoke an agent", async () => {
     const f = removalFixture();
-    const h = harness({ fixes: [], files: f.base, prs: [await removalPr(f)] });
+    const h = harness({ fixes: [], observations: [], files: f.base, prs: [await removalPr(f)] });
     h.github.checks = RED;
     expect(await secureIt({ ...h.deps, floorProbe: f.probe }).review(h.context)).toMatchObject({ reviewed: [{ outcome: "adaptation-unchanged" }] });
     expect(h.agentCalls).toEqual([]);
@@ -1949,8 +2032,12 @@ describe("the cooldown hold", () => {
 
   it("opens young fixes in a held PR of their own, warned, while the aged ones go out as usual", async () => {
     const h = harness({ fixes: [YOUNG_VITE(), leftPad()] });
-    const result = await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context);
-    expect(result).toMatchObject({ outcome: "completed", units: [{ topic: "security", outcome: "published" }, { topic: "security-cooldown-vite", outcome: "published" }] });
+    const tool = secureIt({ ...h.deps, verify: holdingVerify });
+    await grantWaiting(tool, h, ["vite"]);
+    expect(h.agentCalls.map((call) => call.input["moves"])).toMatchObject([[{ name: "left-pad" }]]);
+    expect(h.github.prs.size).toBe(1);
+    const result = await tool.run(h.context);
+    expect(result).toMatchObject({ outcome: "completed", units: [{ topic: "security", outcome: "already-open" }, { topic: "security-cooldown-vite", outcome: "published" }] });
     expect(h.agentCalls.map((call) => (call.input["moves"] as Array<{ name: string }>).map((move) => move.name))).toEqual([["left-pad"], ["vite"]]);
     const [aged, held] = [...h.github.prs.values()];
     expect(aged!.body).not.toContain("[!WARNING]");
@@ -1959,16 +2046,21 @@ describe("the cooldown hold", () => {
     expect(held!.body).toContain("> | npm `vite` | `8.3.1` → `8.3.3` | 2026-10-06 00:00 | 2026-10-13 00:00 | the security fix the version rule picks | `registry metadata unreadable` |");
     expect(held!.isDraft).toBe(true);
     expect(planOf(held!.body)?.cooldown).toEqual([{ ...HELD, signals: ["registry metadata unreadable"] }]);
+    expect(trackedRecord(h, aged!.number).attempts).toEqual([]);
+    expect(trackedRecord(h, held!.number).attempts).toMatchObject([{ pr: held!.number }]);
   });
 
   it("records where the advisories behind a held fix appear, and opens the warning with it", async () => {
-    const h = harness({ fixes: [vite()] });
+    const h = harness({ fixes: [YOUNG_VITE()] });
     const targeted = { ...HELD, targets: [{ name: "vite", bundled: false, replaced: ["8.3.1"], proposed: ["8.3.3"], groups: [{ ids: ["GHSA-vite-0001"], replaced: ["8.3.1"] }] }] };
     const verify = async (inputs: VerifyInputs) => {
       inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: [targeted] });
       return [];
     };
-    expect(await secureIt({ ...h.deps, verify }).run(h.context)).toMatchObject({ outcome: "published" });
+    const tool = secureIt({ ...h.deps, verify });
+    await grantWaiting(tool, h);
+    expect(await tool.run(h.context)).toMatchObject({ outcome: "published" });
+    trackedRecord(h);
     const body = h.github.prs.get(42)!.body;
     const [hold] = planOf(body)!.cooldown!;
     // The harness answers every lookup with a 404: checked and not found, never failed.
@@ -1988,8 +2080,11 @@ describe("the cooldown hold", () => {
       inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: [targeted] });
       return [];
     };
-    const h = harness({ fixes: [vite()], answer: { ...APPLIED, publication: { ...APPLIED.publication, body: "x".repeat(40_000) } } });
-    expect(await secureIt({ ...h.deps, verify }).run(h.context)).toMatchObject({ outcome: "published" });
+    const h = harness({ fixes: [YOUNG_VITE()], answer: { ...APPLIED, publication: { ...APPLIED.publication, body: "x".repeat(40_000) } } });
+    const tool = secureIt({ ...h.deps, verify });
+    await grantWaiting(tool, h);
+    expect(await tool.run(h.context)).toMatchObject({ outcome: "published" });
+    trackedRecord(h);
     const pr = h.github.prs.get(42)!;
     expect(pr.isDraft).toBe(true);
     expect(pr.body.length).toBeLessThanOrEqual(65_536);
@@ -2010,14 +2105,16 @@ describe("the cooldown hold", () => {
       return [];
     };
     const description = `${"/tmp/x ".repeat(400)}${"x".repeat(51_000)}`;
-    const h = harness({ fixes: [vite()], answer: { ...APPLIED, publication: { ...APPLIED.publication, body: description } } });
-    expect(await secureIt({ ...h.deps, verify }).run(h.context)).toMatchObject({ outcome: "published" });
+    const h = harness({ fixes: [YOUNG_VITE()], answer: { ...APPLIED, publication: { ...APPLIED.publication, body: description } } });
+    const tool = secureIt({ ...h.deps, verify });
+    await grantWaiting(tool, h);
+    expect(await tool.run(h.context)).toMatchObject({ outcome: "published" });
+    trackedRecord(h);
     const pr = h.github.prs.get(42)!;
     expect(pr.body.match(/<local path>/g)).toHaveLength(400);
     expect(pr.body.length).toBeGreaterThan(61_440);
     expect(pr.body.length).toBeLessThanOrEqual(65_536);
     expect(planOf(pr.body)!.cooldown![0]).toMatchObject({ targets: targeted.targets });
-    const tool = secureIt({ ...h.deps, verify });
     const calls = h.github.calls.length;
     expect(await tool.run(h.context)).toMatchObject({ outcome: "already-open" });
     expect(h.github.calls.slice(calls).some((call) => call.startsWith("updatePullRequest"))).toBe(false);
@@ -2044,20 +2141,26 @@ describe("the cooldown hold", () => {
       return [];
     };
     // Collect the same evidence as the update, then choose a description whose full warning fits raw but not marked.
-    const seed = harness({ fixes: [vite()] });
-    expect(await secureIt({ ...seed.deps, verify }).run(seed.context)).toMatchObject({ outcome: "published" });
+    const seed = harness({ fixes: [YOUNG_VITE()] });
+    const seedTool = secureIt({ ...seed.deps, verify });
+    await grantWaiting(seedTool, seed);
+    expect(await seedTool.run(seed.context)).toMatchObject({ outcome: "published" });
     const planned = planOf(seed.github.prs.get(42)!.body)!;
     const full = (description: string) => `${cooldownWarning(planned.cooldown!)!}\n\n${description}\n\n${planSection(planned)}`;
     const description = "x".repeat(65_500 - full("").length);
     expect(full(description)).toHaveLength(65_500);
     expect(withMarker(RULES, full(description), { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 }).length).toBeGreaterThan(65_536);
-    const stale = await vitePr({}, vite({ to: { version: "8.3.2", line: "8", aged: true, major: false, blockers: [] } }));
-    const h = harness({ prs: [stale], fixes: [vite()], answer: { ...APPLIED, publication: { ...APPLIED.publication, body: description } } });
+    // Fresh advisory metadata changes the plan digest, but not the exact moves the issue authorizes.
+    const previous = { ...planned, moves: planned.moves.map((move) => ({ ...move, advisories: ["GHSA-old"] })) };
+    const stale = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite", body: withMarker(RULES, withPlanSection("Fixes vite.", previous), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [stale], fixes: [YOUNG_VITE()], answer: { ...APPLIED, publication: { ...APPLIED.publication, body: description } } });
     h.workspace.setRemoteHead(stale.headRef, stale.headSha);
     const tool = secureIt({ ...h.deps, verify });
     if (command === "run") {
+      await grantWaiting(tool, h);
       expect(await tool.run(h.context)).toMatchObject({ outcome: "updated" });
     } else {
+      await early(h, stale);
       expect(await tool.review({ ...h.context, workingCopy: { ...h.context.workingCopy, headSha: "f".repeat(40) } }))
         .toMatchObject({ reviewed: [{ number: 7, outcome: "rebased" }] });
     }
@@ -2065,27 +2168,26 @@ describe("the cooldown hold", () => {
     expect(body.length).toBeLessThanOrEqual(65_536);
     expect(body).toContain("rows are left out");
     expect(planOf(body)?.cooldown?.[0]?.evidence).toBeDefined();
+    trackedRecord(h, 7);
   });
 
   it("records the evidence of a required version that fixes advisories itself, so the warning checks it too", async () => {
-    const h = harness({ fixes: [vite()] });
+    const h = harness({ fixes: [YOUNG_VITE()] });
     const target = (name: string, from: string, to: string, id: string) => ({ name, bundled: false, replaced: [from], proposed: [to], groups: [{ ids: [id], replaced: [from] }] });
     const required = { ...HELD, name: "postcss", version: "8.5.29", replaced: ["8.5.28"], justification: "required" as const, targets: [target("postcss", "8.5.28", "8.5.29", "GHSA-postcss-0001")] };
     const verify = async (inputs: VerifyInputs) => {
       inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: [{ ...HELD, targets: [target("vite", "8.3.1", "8.3.3", "GHSA-vite-0001")] }, required] });
       return [];
     };
-    expect(await secureIt({ ...h.deps, verify }).run(h.context)).toMatchObject({ outcome: "published" });
+    const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => ({ ...plan, requiredNpm: [requirement("postcss", "8.5.29", "vite", "8.3.3")] });
+    const tool = secureIt({ ...h.deps, requiredNpm, verify });
+    await grantWaiting(tool, h);
+    expect(await tool.run(h.context)).toMatchObject({ outcome: "published" });
+    expect(trackedRecord(h).grant?.young.map((pkg) => pkg.name)).toEqual(["vite", "postcss"]);
     const body = h.github.prs.get(42)!.body;
     expect(planOf(body)!.cooldown![1]!.evidence).toMatchObject({ targets: [{ name: "postcss", groups: [{ ids: ["GHSA-postcss-0001"] }] }] });
     expect(body).toContain("| ⚠ `GHSA-postcss-0001` | `postcss` `8.5.28` → `8.5.29` |");
     expect(body).toContain(`> ${EVIDENCE_DIFFERS}`);
-  });
-
-  it("holds whatever the comparison holds, even in a PR planned as aged", async () => {
-    const h = harness({ fixes: [vite()] });
-    expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({ topic: "security", outcome: "published" });
-    expect(planOf(h.github.prs.get(42)!.body)?.cooldown).toHaveLength(1);
   });
 
   it("doesn't publish when the comparison couldn't evaluate the cooldown", async () => {
@@ -2098,48 +2200,72 @@ describe("the cooldown hold", () => {
     expect(h.github.prs.size).toBe(0);
   });
 
+  const requiredVerify: SecureItDeps["verify"] = async (inputs) => {
+    inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: (inputs.plan.requiredNpm ?? []).filter((target) => target.exempt)
+      .map((target) => ({ ...HELD, name: target.name, version: target.version, justification: "required" as const })) });
+    return [];
+  };
+
   it("moves a fix whose required dependency is young into the held PR, with its coupled packages", async () => {
     const h = harness({ fixes: [vite(), leftPad()] });
     const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => plan.packages.includes("npm|vite")
-      ? { ...plan, requiredNpm: [{ exempt: true, name: "postcss", version: "8.5.29", root: { name: "vite", version: "8.3.3", path: "node_modules/vite" } }] as never }
+      ? { ...plan, requiredNpm: [requirement("postcss", "8.5.29", "vite", "8.3.3")] }
       : plan;
-    const result = await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context);
-    expect(result).toMatchObject({ units: [{ topic: "security", packages: ["npm|left-pad"] }, { topic: "security-cooldown-vite", packages: ["npm|vite"] }] });
+    const tool = secureIt({ ...h.deps, requiredNpm, verify: requiredVerify });
+    await grantWaiting(tool, h, ["vite"]);
+    const result = await tool.run(h.context);
+    expect(result).toMatchObject({ units: [{ topic: "security", packages: ["npm|left-pad"], outcome: "already-open" }, { topic: "security-cooldown-vite", packages: ["npm|vite"], outcome: "published" }] });
+    const young = [...(h.context.issues as FakeIssues).issues.values()].map((issue) => recordOf(issue.body)!).find((record) => record.grant !== undefined)!;
+    expect(young.grant!.young).toEqual([{ ecosystem: "npm", name: "postcss", version: "8.5.29" }]);
   });
 
   it("holds an aged fix with the aged fix it requires when that one requires a young dependency", async () => {
     // As requiredNpmPlan proves it (npm-required-plan.test.ts, chainBatch): vite requires left-pad's fix, which requires young c,
     // so both roots carry an exempt target for c.
     const h = harness({ fixes: [vite(), leftPad()] });
-    const target = (root: string, version: string, path: string) => ({ exempt: true, name: "c", version: "1.0.1", root: { name: root, version, path } });
+    const target = (root: string, version: string) => requirement("c", "1.0.1", root, version);
     const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => ({ ...plan, requiredNpm: [
-      ...plan.packages.includes("npm|vite") ? [target("vite", "8.3.3", "node_modules/vite")] : [],
-      ...plan.packages.includes("npm|left-pad") ? [target("left-pad", "1.0.1", "node_modules/left-pad")] : [],
-    ] as never });
-    const result = await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context);
-    expect(result).toMatchObject({ units: [{ topic: "security-cooldown-left-pad", packages: ["npm|left-pad", "npm|vite"] }] });
+      ...plan.packages.includes("npm|vite") ? [target("vite", "8.3.3")] : [],
+      ...plan.packages.includes("npm|left-pad") ? [target("left-pad", "1.0.1")] : [],
+    ] });
+    const tool = secureIt({ ...h.deps, requiredNpm, verify: requiredVerify });
+    await grantWaiting(tool, h, ["vite"]);
+    const result = await tool.run(h.context);
+    expect(result).toMatchObject({ units: [{ topic: "security-cooldown-left-pad", packages: ["npm|left-pad", "npm|vite"], outcome: "published" }] });
+    expect(trackedRecord(h).subject).toMatchObject({ moves: expect.arrayContaining([{ ecosystem: "npm", name: "vite", from: "8.3.1", to: "8.3.3" }, { ecosystem: "npm", name: "left-pad", from: "1.0.0", to: "1.0.1" }]) });
+    const young = [...(h.context.issues as FakeIssues).issues.values()].map((issue) => recordOf(issue.body)!).find((record) => record.grant !== undefined)!;
+    expect(young.grant!.young).toEqual([{ ecosystem: "npm", name: "c", version: "1.0.1" }]);
   });
 
   it("keeps a coupling planning discovers in the held unit: a root that needs another root's fix", async () => {
     // vite's young requirement moves it to a held unit; planning found it needs left-pad's fix too.
     const h = harness({ fixes: [vite(), leftPad()] });
     const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => plan.packages.includes("npm|vite") && plan.packages.includes("npm|left-pad")
-      ? { ...plan, coupled: [["npm|vite", "npm|left-pad"]], requiredNpm: [{ exempt: true, name: "postcss", version: "8.5.29", root: { name: "vite", version: "8.3.3", path: "node_modules/vite" } }] as never }
+      ? { ...plan, coupled: [["npm|vite", "npm|left-pad"]], requiredNpm: [requirement("postcss", "8.5.29", "vite", "8.3.3")] }
       : plan;
-    const result = await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context);
-    expect(result).toMatchObject({ units: [{ topic: "security-cooldown-left-pad", packages: ["npm|left-pad", "npm|vite"] }] });
+    const tool = secureIt({ ...h.deps, requiredNpm, verify: requiredVerify });
+    await grantWaiting(tool, h, ["vite"]);
+    const result = await tool.run(h.context);
+    expect(result).toMatchObject({ units: [{ topic: "security-cooldown-left-pad", packages: ["npm|left-pad", "npm|vite"], outcome: "published" }] });
+    expect(trackedRecord(h).subject).toMatchObject({ moves: expect.arrayContaining([{ ecosystem: "npm", name: "vite", from: "8.3.1", to: "8.3.3" }, { ecosystem: "npm", name: "left-pad", from: "1.0.0", to: "1.0.1" }]) });
+    const young = [...(h.context.issues as FakeIssues).issues.values()].map((issue) => recordOf(issue.body)!).find((record) => record.grant !== undefined)!;
+    expect(young.grant!.young).toEqual([{ ecosystem: "npm", name: "postcss", version: "8.5.29" }]);
   });
 
   it("doesn't hold an aged fix because it shares an aged companion with a held one", async () => {
     // Only vite's requirement of c is young; left-pad's is aged, so left-pad goes out with the aged batch.
     const h = harness({ fixes: [vite(), leftPad()] });
-    const target = (root: string, version: string, exempt: boolean) => ({ exempt, name: "c", version: "1.0.1", root: { name: root, version, path: `node_modules/${root}` } });
+    const target = (root: string, version: string, exempt: boolean) => requirement("c", "1.0.1", root, version, exempt);
     const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => ({ ...plan, requiredNpm: [
       ...plan.packages.includes("npm|vite") ? [target("vite", "8.3.3", true)] : [],
       ...plan.packages.includes("npm|left-pad") ? [target("left-pad", "1.0.1", false)] : [],
-    ] as never });
-    const result = await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context);
-    expect(result).toMatchObject({ units: [{ topic: "security", packages: ["npm|left-pad"] }, { topic: "security-cooldown-vite", packages: ["npm|vite"] }] });
+    ] });
+    const tool = secureIt({ ...h.deps, requiredNpm, verify: requiredVerify });
+    await grantWaiting(tool, h, ["vite"]);
+    const result = await tool.run(h.context);
+    expect(result).toMatchObject({ units: [{ topic: "security", packages: ["npm|left-pad"], outcome: "already-open" }, { topic: "security-cooldown-vite", packages: ["npm|vite"], outcome: "published" }] });
+    const young = [...(h.context.issues as FakeIssues).issues.values()].map((issue) => recordOf(issue.body)!).find((record) => record.grant !== undefined)!;
+    expect(young.grant!.young).toEqual([{ ecosystem: "npm", name: "c", version: "1.0.1" }]);
   });
 
   /** Base declarations are independent to the planner; Gradle refuses either half of this aligned pair. */
@@ -2202,31 +2328,9 @@ describe("the cooldown hold", () => {
     expect(h.agentCalls).toEqual([]);
   });
 
-  it("fails held Gradle fixes whose references only resolve together, each alone, instead of joining them", async () => {
-    const h = heldGradle();
-    const result = await secureIt(h.deps).run(h.context);
-    expect(result, JSON.stringify(result)).toMatchObject({ units: [
-      { topic: "security-cooldown-g:a", outcome: "failed", detail: expect.stringContaining("conflict between g:b:1.0.0 and g:b:1.0.1") },
-      { topic: "security-cooldown-g:b", outcome: "failed", detail: expect.stringContaining("conflict between g:b:1.0.0 and g:b:1.0.1") },
-    ] });
-    expect(h.probes).toEqual([["g:a"], ["g:b"]]);
-    expect(h.agentCalls).toEqual([]);
-    expect(h.github.prs.size).toBe(0);
-  });
-
-  it("fails only the held Gradle groups whose references fail, while a third one publishes", async () => {
-    const h = heldGradle({ extra: true });
-    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ units: [
-      { topic: "security-cooldown-g:a", outcome: "failed" }, { topic: "security-cooldown-g:b", outcome: "failed" },
-      { topic: "security-cooldown-g:c", packages: ["Maven|g:c"], outcome: "published" },
-    ] });
-    expect(h.probes).toEqual([["g:a"], ["g:b"], ["g:c"], ["g:c"]]);
-    expect(h.agentCalls).toHaveLength(1);
-  });
-
   it.each(["aged", "major", "malware"] as const)("resolves only verification references for %s units, jointly except for majors", async (kind) => {
     const h = heldGradle({ independent: true });
-    const fixes = h.fixes.map((fix) => ({ ...fix, malicious: kind === "malware", to: { ...fix.to!, aged: kind !== "major", major: kind === "major" } }));
+    const fixes = h.fixes.map((fix) => ({ ...fix, malicious: kind === "malware", to: { ...fix.to!, aged: true, major: kind === "major" } }));
     const found = await h.deps.candidates(tree(BASE_SHA), await h.deps.gate(h.context), {});
     await secureIt({ ...h.deps, candidates: async () => ({ ...found, fixes }) }).run(h.context);
     expect(h.probes).toEqual(kind === "major" ? [["g:a"], ["g:b"]] : [["g:a", "g:b"]]);
@@ -2234,107 +2338,52 @@ describe("the cooldown hold", () => {
 
   it("keeps independent held Gradle fixes apart", async () => {
     const h = heldGradle({ independent: true });
-    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ units: [
-      { topic: "security-cooldown-g:a", outcome: "published" }, { topic: "security-cooldown-g:b", outcome: "published" },
+    const tool = secureIt(h.deps);
+    await grantWaiting(tool, h, ["g:a"]);
+    expect(h.agentCalls).toEqual([]);
+    expect(await tool.run(h.context)).toMatchObject({ units: [
+      { topic: "security-cooldown-g:a", outcome: "published" }, { topic: "security-cooldown-g:b", outcome: "deferred" },
     ] });
-    expect(h.probes).toEqual([["g:a"], ["g:b"], ["g:a"], ["g:b"]]);
-    expect(h.agentCalls).toHaveLength(2);
+    expect(trackedRecord(h).subject).toMatchObject({ moves: [{ name: "g:a" }] });
+    expect(h.agentCalls).toHaveLength(1);
   });
 
-  it.each(["unresolved", "declarations"] as const)("fails a held Gradle fix whose %s reference fails before agent work, leaving the healthy one independent", async (broken) => {
-    const h = heldGradle({ independent: true, broken });
-    const warn = vi.spyOn(h.context.logger, "warn");
-    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ units: [
-      { topic: "security-cooldown-g:a", outcome: "failed", detail: expect.stringContaining("the held plan's Gradle reference doesn't resolve") },
+  it("publishes the healthy young Gradle decision when another fails final verification", async () => {
+    const h = heldGradle({ independent: true });
+    const verify: SecureItDeps["verify"] = async (inputs) => inputs.plan.packages.includes("Maven|g:a")
+      ? ["g:a's edited declaration does not verify"] : h.deps.verify(inputs);
+    const tool = secureIt({ ...h.deps, verify });
+    await grantWaiting(tool, h);
+    expect(await tool.run(h.context)).toMatchObject({ units: [
+      { topic: "security-cooldown-g:a", outcome: "verification-failed", problems: ["g:a's edited declaration does not verify"] },
       { topic: "security-cooldown-g:b", outcome: "published" },
     ] });
-    expect(h.probes).toEqual([["g:a"], ["g:b"], ["g:b"]]);
-    expect(h.agentCalls).toHaveLength(1);
-    expect(warn).toHaveBeenCalledWith("secure-it: a held unit's preflight failed", expect.objectContaining({ topic: "security-cooldown-g:a", error: expect.any(String) }));
-    expect([...h.github.prs.values()].map((pr) => planOf(pr.body)?.packages)).toEqual([["Maven|g:b"]]);
-  });
-
-  it("passes a held Gradle fix's preflight when its reference fails to resolve only in a configuration the gate ignores", async () => {
-    const h = heldGradle({ independent: true, broken: "unresolved", ignored: [":runtimeClasspath"] });
-    const warn = vi.spyOn(h.context.logger, "warn");
-    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ units: [
-      { topic: "security-cooldown-g:a", outcome: "published" }, { topic: "security-cooldown-g:b", outcome: "published" },
-    ] });
-    expect(h.probes).toEqual([["g:a"], ["g:b"], ["g:a"], ["g:b"]]); // No joint preflight: g:a's own one passed.
-    expect(warn).not.toHaveBeenCalledWith("secure-it: a held unit's preflight failed", expect.anything());
+    expect(h.github.prs.size).toBe(1);
+    expect(trackedRecord(h).subject).toMatchObject({ moves: [{ name: "g:b" }] });
+    const failed = [...(h.context.issues as FakeIssues).issues.values()].map((issue) => recordOf(issue.body)!)
+      .find((record) => record.subject.kind === "decision" && record.subject.moves.some((move) => move.name === "g:a"))!;
+    expect(failed.attempts).toMatchObject([{ outcome: "failed" }]);
   });
 
   it.each([
-    { broken: "unresolved", ignored: ":testRuntimeClasspath", error: "couldn't resolve g:a:1.0.1" },
-    { broken: "declarations", ignored: ":runtimeClasspath", error: "the plan's reference declares g:a 1.0.0 at :runtimeClasspath, not 1.0.1" },
-  ] as const)("still fails a held Gradle fix's preflight on a $broken reference when the gate ignores $ignored", async ({ broken, ignored, error }) => {
-    const h = heldGradle({ independent: true, broken, ignored: [ignored] });
-    const warn = vi.spyOn(h.context.logger, "warn");
-    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ units: [
-      { topic: "security-cooldown-g:a", outcome: "failed" }, { topic: "security-cooldown-g:b", outcome: "published" },
-    ] });
-    expect(h.probes.slice(0, 2)).toEqual([["g:a"], ["g:b"]]); // No joint preflight: a failure fails its own unit.
-    expect(warn).toHaveBeenCalledWith("secure-it: a held unit's preflight failed", expect.objectContaining({ topic: "security-cooldown-g:a", error: expect.stringContaining(error) }));
-  });
-
-  it.each(["throw", "missing"] as const)("fails only the held unit whose Gradle preflight is %s; an unrelated held unit and the aged unit still run", async (broken) => {
-    const h = heldGradle({ independent: true, broken, extra: true });
-    const found = await h.deps.candidates(tree(BASE_SHA), await h.deps.gate(h.context), {});
-    const fixes = h.fixes.map((fix) => fix.name === "g:c" ? { ...fix, to: { ...fix.to!, aged: true } } : fix);
-    expect(await secureIt({ ...h.deps, candidates: async () => ({ ...found, fixes }) }).run(h.context)).toMatchObject({ units: [
-      { topic: "security", outcome: "published" },
-      { topic: "security-cooldown-g:a", outcome: "failed", detail: broken === "throw" ? "reference unavailable" : "the held plan has no Gradle reference inventory" },
-      { topic: "security-cooldown-g:b", outcome: "published" },
-    ] });
-    expect(h.probes).toEqual([["g:a"], ["g:b"], ["g:c"], ["g:b"]]);
-    expect(h.agentCalls).toHaveLength(2);
-    expect([...h.github.prs.values()].map((pr) => planOf(pr.body)?.packages)).toEqual([["Maven|g:c"], ["Maven|g:b"]]);
-  });
-
-  it("fails only the Maven held unit on its Gradle execution error; the npm-only held unit and the aged unit still run", async () => {
-    const h = heldGradle({ single: true, broken: "throw" });
-    const found = await h.deps.candidates(tree(BASE_SHA), await h.deps.gate(h.context), {});
-    const fixes = [...h.fixes, YOUNG_VITE(), leftPad()];
-    const withLockfile = (base: Tree): Tree => ({ ...base,
-      read: async (path) => path === "package-lock.json" ? LOCK : base.read(path),
-      list: async (dir) => [...await base.list(dir), "package-lock.json"],
-    });
-    const trees: SecureItDeps["trees"] = {
-      commit: async (wc, sha) => withLockfile(await h.deps.trees.commit(wc, sha)),
-      working: (wc) => withLockfile(h.deps.trees.working(wc)),
-    };
-    const result = await secureIt({ ...h.deps, trees, candidates: async () => ({ ...found, fixes }), verify: holdingVerify }).run(h.context);
-    expect(result).toMatchObject({ units: [
-      { topic: "security", outcome: "published" },
-      { topic: "security-cooldown-g:a", outcome: "failed", detail: "reference unavailable" },
-      { topic: "security-cooldown-vite", outcome: "published" },
-    ] });
-    expect(h.probes).toEqual([["g:a"]]);
-    expect(h.agentCalls).toHaveLength(2);
-    expect([...h.github.prs.values()].map((pr) => planOf(pr.body)?.packages)).toEqual([["npm|left-pad"], ["npm|vite"]]);
-    expect(h.workspace.pushes).toHaveLength(2); // The Maven held unit never reaches the agent.
-    expect(h.workspace.deletions).toEqual([]);
-    expect(h.github.calls.some((call) => call.startsWith("closePullRequest"))).toBe(false);
-  });
-
-  it("does no extra Gradle reference resolution for a single held unit or npm-only held units", async () => {
-    const single = heldGradle({ independent: true, single: true });
-    expect(await secureIt(single.deps).run(single.context)).toMatchObject({ outcome: "published" });
-    expect(single.probes).toEqual([["g:a"]]); // Verification's reference only.
-    const npm = harness({ fixes: [YOUNG_VITE(), leftPad({ to: { version: "1.0.1", line: "1", aged: false, major: false, blockers: [] } })] });
-    const inventories = single.deps.gradle(single.context);
-    await secureIt({ ...npm.deps, gradle: () => inventories, verify: holdingVerify }).run(npm.context);
-    expect(single.probes).toEqual([["g:a"]]);
-    expect(npm.agentCalls).toHaveLength(2);
-  });
-
-  it("still verifies the actual edit after the Gradle preflight passes", async () => {
-    const h = heldGradle({ independent: true });
-    expect(await secureIt({ ...h.deps, verify: async () => ["verification refused the edit"] }).run(h.context)).toMatchObject({ units: [
-      { outcome: "verification-failed" }, { outcome: "verification-failed" },
-    ] });
-    expect(h.workspace.pushes).toEqual([]);
-    expect(h.github.prs.size).toBe(0);
+    ["unresolved", [":runtimeClasspath"], "published"],
+    ["unresolved", [":testRuntimeClasspath"], "verification-failed"],
+    ["declarations", [":runtimeClasspath"], "verification-failed"],
+  ] as const)("checks a single young Gradle decision with %s and ignored %j at verification", async (broken, ignored, outcome) => {
+    const h = heldGradle({ single: true, independent: true, broken, ignored: [...ignored] });
+    const tool = secureIt(h.deps);
+    await grantWaiting(tool, h);
+    const result = await tool.run(h.context);
+    expect(result).toMatchObject({ outcome });
+    expect(h.agentCalls.length).toBeGreaterThan(0);
+    if (outcome === "published") {
+      expect(trackedRecord(h).subject).toMatchObject({ moves: [{ name: "g:a" }] });
+    } else {
+      expect(result).toMatchObject({ problems: expect.arrayContaining([expect.stringContaining(broken === "unresolved" ? "not found" : "g:a")]) });
+      expect(h.github.prs.size).toBe(0);
+      const decision = [...(h.context.issues as FakeIssues).issues.values()].map((issue) => recordOf(issue.body)!).find((record) => record.subject.kind === "decision")!;
+      expect(decision.attempts).toMatchObject([{ outcome: "failed" }]);
+    }
   });
 
   async function seedSplitGradlePrs(h: ReturnType<typeof heldGradle>): Promise<void> {
@@ -2441,50 +2490,40 @@ describe("the cooldown hold", () => {
     expect(h.probes).toEqual([["g:a"], ["g:b"], ["g:a"], ["g:a"], ["g:b"], ["g:b"]]);
   });
 
-  /** Three held Gradle units with an open PR each; `alone` makes g:a's reference record a failure only when it moves alone. */
-  async function threeHeldGradle(alone: boolean) {
-    const h = heldGradle({ independent: true, extra: true });
-    await seedSplitGradlePrs(h);
-    const inventories = h.deps.gradle(h.context);
-    const gradle: SecureItDeps["gradle"] = () => ({ ...inventories, ofCommit: async (tree, change) => {
-      const reference = await inventories.ofCommit(tree, change);
-      const { moves } = (change?.transform?.content("/fixture") ?? { moves: [] }) as { moves: Array<{ name: string }> };
-      if (!alone || reference === undefined || moves.map((move) => move.name).join() !== "g:a") return reference;
-      return { ...reference, builds: reference.builds.map((build) => ({ ...build, configurations: build.configurations.map((configuration) => ({ ...configuration, error: "g:a needs a sibling moved" })) })) };
-    } });
-    return { h, result: await secureIt({ ...h.deps, gradle }).run(h.context) };
-  }
-
-  it("keeps the other held units' topics, members and PRs when one held Gradle reference records a failure", async () => {
-    const healthy = await threeHeldGradle(false);
-    const failing = await threeHeldGradle(true);
-    // Before 0.9.0, the failing unit was tried with every held unit, and the joint reference passed: one PR for all three.
-    const others = (result: Readonly<Record<string, unknown>>) => (result["units"] as Array<Record<string, unknown>>)
-      .filter((unit) => unit["topic"] !== "security-cooldown-g:a").map(({ topic, packages, outcome, pullRequest }) => ({ topic, packages, outcome, pullRequest }));
-    expect(others(failing.result)).toEqual(others(healthy.result));
-    expect(others(healthy.result)).toEqual([
-      { topic: "security-cooldown-g:b", packages: ["Maven|g:b"], outcome: "already-open", pullRequest: "https://github.com/leanish/widget/pull/8" },
-      { topic: "security-cooldown-g:c", packages: ["Maven|g:c"], outcome: "already-open", pullRequest: "https://github.com/leanish/widget/pull/9" },
-    ]);
-    expect((failing.result["units"] as unknown[])[0]).toMatchObject({ topic: "security-cooldown-g:a", outcome: "failed", detail: expect.stringContaining("g:a needs a sibling moved") });
-    expect(failing.h.github.prs.get(7)?.state).toBe("open");
-    expect(failing.h.workspace.pushes).toEqual([]);
-  });
-
   const YOUNG_PAD = () => leftPad({ to: { version: "1.0.1", line: "1", aged: false, major: false, blockers: [] } });
+
+  it("keeps whole-plan feedback in one early attempt and refuses to execute a reduced decision", async () => {
+    const induced = { ...vite(), induced: [{ name: "g:young", version: "2.0.0" }] };
+    const h = harness({ fixes: [induced, leftPad()] });
+    const refusal = "compare: new: left-pad@1.0.1: GHSA-new has no exception";
+    const tool = secureIt({ ...h.deps, verify: async () => [refusal] });
+    await grantWaiting(tool, h);
+    const issues = h.context.issues as FakeIssues;
+    const decision = [...issues.issues.values()].find((issue) => recordOf(issue.body)?.subject.kind === "decision")!;
+    expect(await tool.run(h.context)).toMatchObject({ outcome: "deferred", reason: "a decision taken early is retried whole or not at all" });
+    expect(h.agentCalls.map((call) => (call.input["moves"] as Array<{ name: string }>).map((move) => move.name).sort())).toEqual([["left-pad", "vite"], ["left-pad", "vite"]]);
+    expect(h.agentCalls.map((call) => call.input["rejected"])).toEqual([undefined, [refusal]]);
+    expect(h.github.prs.size).toBe(0);
+    expect(recordOf(issues.issues.get(decision.number)!.body)!.attempts).toMatchObject([{ outcome: "deferred" }]);
+    expect([...issues.issues.values()].filter((issue) => recordOf(issue.body)?.subject.kind === "decision")).toHaveLength(1);
+  });
 
   it("opens one held PR per young fix that can be separated, so none waits for another", async () => {
     const h = harness({ fixes: [YOUNG_VITE(), YOUNG_PAD()] });
-    const result = await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context);
+    const tool = secureIt({ ...h.deps, verify: holdingVerify });
+    await grantWaiting(tool, h);
+    expect(h.github.prs.size).toBe(0);
+    const result = await tool.run(h.context);
     expect(result).toMatchObject({ outcome: "completed", units: [
       { topic: "security-cooldown-left-pad", packages: ["npm|left-pad"], outcome: "published" },
       { topic: "security-cooldown-vite", packages: ["npm|vite"], outcome: "published" },
     ] });
     const prs = [...h.github.prs.values()];
-    expect(prs.map((pr) => [pr.headRef, planOf(pr.body)?.members])).toEqual([
-      ["secure-it/2026-10-07-security-cooldown-left-pad", ["npm|left-pad"]],
-      ["secure-it/2026-10-07-security-cooldown-vite", ["npm|vite"]],
+    expect(new Set(prs.map((pr) => pr.headRef)).size).toBe(2);
+    expect(prs.map((pr) => trackedRecord(h, pr.number).subject)).toMatchObject([
+      { moves: [{ name: "left-pad" }] }, { moves: [{ name: "vite" }] },
     ]);
+    for (const pr of prs) expect(trackedRecord(h, pr.number).attempts).toMatchObject([{ branch: pr.headRef, pr: pr.number }]);
   });
 
   /** Planning a held unit that holds one of vite and left-pad without the other fails: each keeps the other's old requirement. */
@@ -2538,59 +2577,44 @@ describe("the cooldown hold", () => {
       if (plan.packages.includes("npm|vite") && !plan.packages.includes("npm|left-pad")) throw new Error("vite needs left-pad's fix");
       return plan;
     };
-    expect(await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context)).toMatchObject({ units: [
+    const tool = secureIt({ ...h.deps, requiredNpm, verify: holdingVerify });
+    await grantWaiting(tool, h);
+    expect(await tool.run(h.context)).toMatchObject({ units: [
       { topic: "security-cooldown-left-pad", packages: ["npm|left-pad"], outcome: "published" },
       { topic: "security-cooldown-other", packages: ["npm|other"], outcome: "published" },
       { topic: "security-cooldown-vite", outcome: "failed", detail: "vite needs left-pad's fix" },
     ] });
   });
 
-  it("keeps the other held units' topics, members and PRs when a transient npm planning error hits one", async () => {
+  it("keeps the other young decisions and PRs when a transient planning failure leaves one unassessed", async () => {
     const other = leftPad({ name: "other", locations: ["node_modules/other"], to: { version: "1.0.1", line: "1", aged: false, major: false, blockers: [] } });
-    const fixes = () => [YOUNG_VITE(), YOUNG_PAD(), other];
-    const runWith = async (transient: boolean) => {
-      const prs = await Promise.all(fixes().map(async (fix, i) => ownPr({ number: 7 + i, nodeId: `node${7 + i}`, url: `https://github.com/leanish/widget/pull/${7 + i}`, headRef: `secure-it/2026-10-05-security-cooldown-${fix.name}`,
-        body: withMarker(RULES, withPlanSection(`Fixes ${fix.name}.`, await heldPlan(fix)), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) })));
-      const h = harness({ prs, fixes: fixes() });
-      for (const pr of prs) h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
-      let failures = transient ? 1 : 0;
-      // Only left-pad's first planning fails, as a registry blip would; a later plan would succeed.
-      const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => {
-        if (plan.packages.includes("npm|left-pad") && failures-- > 0) throw new Error("registry 502");
-        return plan;
-      };
-      return { h, result: await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context) };
-    };
-    const healthy = await runWith(false);
-    const failing = await runWith(true);
-    // Before 0.9.0, the failing unit was tried with every held unit, and that plan passed: one PR for all three.
-    const others = (result: Readonly<Record<string, unknown>>) => (result["units"] as Array<Record<string, unknown>>)
-      .filter((unit) => unit["topic"] !== "security-cooldown-left-pad").map(({ topic, packages, outcome, pullRequest }) => ({ topic, packages, outcome, pullRequest }));
-    expect(others(failing.result)).toEqual(others(healthy.result));
-    expect(others(healthy.result)).toEqual([
-      { topic: "security-cooldown-other", packages: ["npm|other"], outcome: "already-open", pullRequest: "https://github.com/leanish/widget/pull/9" },
-      { topic: "security-cooldown-vite", packages: ["npm|vite"], outcome: "already-open", pullRequest: "https://github.com/leanish/widget/pull/7" },
-    ]);
-    expect((failing.result["units"] as unknown[])[0]).toMatchObject({ topic: "security-cooldown-left-pad", outcome: "failed", detail: "registry 502" });
-    expect(failing.h.github.prs.get(8)?.state).toBe("open");
-    expect(failing.h.workspace.pushes).toEqual([]);
-  });
-
-  it("fails the aged unit and the held units on a failed aged plan, instead of grouping held work without it", async () => {
-    // The aged plan decides which of its roots a young requirement holds; without it, the held grouping is unknown.
-    const h = harness({ fixes: [YOUNG_VITE(), leftPad()] });
-    let plans = 0;
+    const h = harness({ fixes: [YOUNG_VITE(), YOUNG_PAD(), other], observations: [VITE_FINDING, { ...VITE_FINDING, name: "left-pad", versions: ["1.0.0"] }, { ...VITE_FINDING, name: "other", versions: ["1.0.0"] }] });
+    const tool = secureIt({ ...h.deps, verify: holdingVerify });
+    await grantWaiting(tool, h);
+    await tool.run(h.context);
+    const prs = [...h.github.prs.values()];
+    const others = prs.filter((pr) => !planOf(pr.body)!.packages.includes("npm|left-pad"));
+    let failures = 1;
     const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, plan) => {
-      if (plan.topic === "security") throw new Error(`registry 502 (${++plans})`);
+      if (plan.packages.includes("npm|left-pad") && failures-- > 0) throw new Error("registry 502");
       return plan;
     };
-    expect(await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context)).toMatchObject({ units: [
-      { topic: "security", outcome: "failed", detail: "registry 502 (1)" },
-      { topic: "security-cooldown-vite", outcome: "failed", detail: expect.stringContaining("the aged unit's plan, which decides which of its fixes join held work, failed: registry 502 (1)") },
+    const result = await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context);
+    expect(result).toMatchObject({ units: [
+      { topic: "security-cooldown-left-pad", outcome: "already-open" },
+      { topic: "security-cooldown-other", outcome: "already-open" },
+      { topic: "security-cooldown-vite", outcome: "already-open" },
     ] });
-    expect(plans).toBe(1); // Not planned again: a lucky retry could send a root that must wait out aged.
-    expect(h.github.prs.size).toBe(0);
-    expect(h.agentCalls).toEqual([]);
+    for (const pr of others) expect(h.github.prs.get(pr.number)).toEqual(pr);
+    expect(h.github.prs.size).toBe(3);
+    const issues = h.context.issues as FakeIssues;
+    const unassessed = [...issues.issues.values()].find((issue) => {
+      const subject = recordOf(issue.body)!.subject;
+      return subject.kind === "package" && subject.name === "left-pad";
+    });
+    expect(unassessed?.body).toContain("no fix was planned for it this run");
+    for (const pr of prs) expect(issues.issues.get(trackedIssueOf(pr.body)!)!.state).toBe("open");
+    expect(prs.map((pr) => h.github.prs.get(pr.number)!.state)).toEqual(["open", "open", "open"]);
   });
 
   it("keeps a held PR on a failed aged plan rather than retiring it against a grouping without it", async () => {
@@ -2650,6 +2674,7 @@ describe("the cooldown hold", () => {
 
   it("keeps a held unit without npm work running, and its PR reviewed, when the aged npm plan fails", async () => {
     const { h, tool } = await heldGradleBesideFailedAgedNpm();
+    await grantWaiting(tool, h, ["g:a"]);
     expect(await tool.run(h.context)).toMatchObject({ units: [
       { topic: "security", outcome: "failed", detail: "registry 502" },
       { topic: "security-cooldown-g:a", outcome: "published" },
@@ -2660,27 +2685,7 @@ describe("the cooldown hold", () => {
     expect(await seeded.tool.review({ ...seeded.h.context, workingCopy: { ...seeded.h.context.workingCopy, headSha: "f".repeat(40) } })).toMatchObject({ reviewed: [
       { number: 7, outcome: "rebased" },
     ] });
-    expect(planOf(seeded.h.github.prs.get(7)!.body)?.members).toEqual(["Maven|g:a"]);
-  });
-
-  it("keeps a mixed held PR for its npm work when a held unit without npm work would claim it on a failed aged npm plan", async () => {
-    const { h, tool } = await heldGradleBesideFailedAgedNpm();
-    // As v0.8's all-held fallback or v0.7's single held PR left it: g:a and vite in one held PR, which g:a claims.
-    const topic = "security-cooldown-g:a";
-    const mixed = await planFor([h.fixes[0]!, YOUNG_VITE()], { lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: h.base, named: () => true, tagCommit: async () => undefined },
-      { kind: "routine", topic });
-    const pr = ownPr({ headRef: branchFor(RULES, new Date("2026-10-05T00:00:00Z"), topic), body: withMarker(RULES, withPlanSection("Fixes both.", mixed), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
-    h.github.prs.set(pr.number, pr);
-    h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
-    expect(await tool.run(h.context)).toMatchObject({ units: [
-      { topic: "security", outcome: "failed", detail: "registry 502" },
-      { topic: "security-cooldown-g:a", outcome: "failed", detail: expect.stringContaining("the aged unit's plan, which decides which of its fixes join held work, failed") },
-      { topic: "security-cooldown-vite", outcome: "failed", detail: expect.stringContaining("the aged unit's plan") },
-    ] });
-    expect([...h.github.prs.values()]).toEqual([pr]);
-    expect(h.workspace.pushes).toEqual([]);
-    expect(h.workspace.deletions).toEqual([]);
-    expect(h.agentCalls).toEqual([]);
+    expect(planOf(seeded.h.github.prs.get(7)!.body)?.packages).toEqual(["Maven|g:a"]);
   });
 
   it("keeps held units running when an aged unit without npm work can't be planned", async () => {
@@ -2691,7 +2696,9 @@ describe("the cooldown hold", () => {
       if (plan.topic === "security") throw new Error("actions lookup failed");
       return h.deps.requiredNpm(base, plan, env);
     };
-    expect(await secureIt({ ...h.deps, requiredNpm, candidates: async () => ({ ...found, fixes }) }).run(h.context)).toMatchObject({ units: [
+    const tool = secureIt({ ...h.deps, requiredNpm, candidates: async () => ({ ...found, fixes }) });
+    await grantWaiting(tool, h);
+    expect(await tool.run(h.context)).toMatchObject({ units: [
       { topic: "security", outcome: "failed", detail: "actions lookup failed" },
       { topic: "security-cooldown-g:a", outcome: "published" },
       { topic: "security-cooldown-g:b", outcome: "published" },
@@ -2704,7 +2711,9 @@ describe("the cooldown hold", () => {
       if (plan.packages.includes("npm|vite")) throw new Error("vite's requirement can't be met");
       return plan;
     };
-    expect(await secureIt({ ...h.deps, requiredNpm, verify: holdingVerify }).run(h.context)).toMatchObject({ outcome: "completed", units: [
+    const tool = secureIt({ ...h.deps, requiredNpm, verify: holdingVerify });
+    await grantWaiting(tool, h);
+    expect(await tool.run(h.context)).toMatchObject({ outcome: "completed", units: [
       { topic: "security-cooldown-left-pad", packages: ["npm|left-pad"], outcome: "published" },
       { topic: "security-cooldown-vite", outcome: "failed", detail: "vite's requirement can't be met" },
     ] });
@@ -2720,20 +2729,6 @@ describe("the cooldown hold", () => {
       { number: 7, outcome: "error", detail: "security-cooldown-vite keeps the other root's requirement" },
     ] });
     expect(h.github.prs.get(7)).toEqual(tracked);
-  });
-
-  it("reuses v0.7's single held PR for the unit holding its lowest package, and opens the other", async () => {
-    const legacy = await planFor([YOUNG_PAD(), YOUNG_VITE()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined },
-      { kind: "routine", topic: "security-cooldown" });
-    const { members: _members, ...recorded } = legacy;
-    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown", body: withMarker(RULES, withPlanSection("Fixes both.", recorded), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
-    const h = harness({ prs: [pr], fixes: [YOUNG_VITE(), YOUNG_PAD()] });
-    h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
-    expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({ units: [
-      { topic: "security-cooldown-left-pad", outcome: "updated", pullRequest: "https://github.com/leanish/widget/pull/7" },
-      { topic: "security-cooldown-vite", outcome: "published" },
-    ] });
-    expect(planOf(h.github.prs.get(7)!.body)).toMatchObject({ topic: "security-cooldown-left-pad", members: ["npm|left-pad"] });
   });
 
   it("keeps the held PR a unit claimed when it moves a package whose publisher identity can't be decided now", async () => {
@@ -2757,10 +2752,14 @@ describe("the cooldown hold", () => {
       { kind: "routine", topic: "security-cooldown-vite" });
     const pushed = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite", headSha: "9".repeat(40), body: withMarker(RULES, withPlanSection("Fixes vite.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pushed], fixes: [YOUNG_VITE()] });
-    expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({ topic: "security-cooldown-vite", outcome: "published" });
+    const tool = secureIt({ ...h.deps, verify: holdingVerify });
+    await grantWaiting(tool, h);
+    expect(await tool.run(h.context)).toMatchObject({ topic: "security-cooldown-vite", outcome: "published" });
     expect(h.github.prs.size).toBe(2);
-    expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({ topic: "security-cooldown-vite", outcome: "already-open" });
+    expect(await tool.run(h.context)).toMatchObject({ topic: "security-cooldown-vite", outcome: "already-open" });
     expect(h.github.prs.size).toBe(2);
+    trackedRecord(h);
+    expect(h.github.prs.get(7)).toEqual(pushed);
   });
 
   const heldPlan = (fix: SecurityFix) => planFor([fix], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined },
@@ -2771,35 +2770,49 @@ describe("the cooldown hold", () => {
     const taken = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite", isDraft: false,
       body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [taken], fixes: [YOUNG_VITE()] });
-    expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({ topic: "security-cooldown-vite", outcome: "published" });
+    const tool = secureIt({ ...h.deps, verify: holdingVerify });
+    await grantWaiting(tool, h);
+    expect(await tool.run(h.context)).toMatchObject({ topic: "security-cooldown-vite", outcome: "published" });
     expect(h.github.prs.get(7)!.body).toBe(taken.body);
+    trackedRecord(h);
   });
 
-  it("claims by the plan the journal published when the body lags behind the head", async () => {
+  it("reuses the tracked plan the journal published when the body lags behind the head", async () => {
     // #7's body still records left-pad's plan at an older head; the journal holds vite's plan at its current head.
     const stale = await heldPlan(YOUNG_PAD());
     const current = withMarker(RULES, withPlanSection("Fixes vite.", await heldPlan(YOUNG_VITE())), { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 });
     const pr = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite", headSha: PUSHED_SHA, body: withMarker(RULES, withPlanSection("Fixes left-pad.", stale), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr], fixes: [YOUNG_VITE(), YOUNG_PAD()] });
-    await h.journal.pushed(REPO, 7, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: "moving vite", body: current, adaptations: 0 } });
-    expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({ units: [
+    const tracked = await early(h, { ...pr, body: current }, [{ ecosystem: "npm", name: "vite", version: "8.3.3", eligibleAt: HELD.eligibleAt }]);
+    h.github.prs.set(7, pr);
+    await h.journal.pushed(REPO, 7, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: "moving vite", body: tracked.body, adaptations: 0 } });
+    const tool = secureIt({ ...h.deps, verify: holdingVerify });
+    await grantWaiting(tool, h, ["left-pad"]);
+    expect(await tool.run(h.context)).toMatchObject({ units: [
       { topic: "security-cooldown-left-pad", outcome: "published" },
       { topic: "security-cooldown-vite", outcome: "already-open", pullRequest: "https://github.com/leanish/widget/pull/7" },
     ] });
+    expect(h.github.prs.get(7)!.body).toContain("Tracks #1.");
+    trackedRecord(h, 7);
   });
 
-  it("claims a held PR whose state someone removed by the members the journal saved for it, not its stale body", async () => {
+  it("restores a tracked PR whose state was removed from the journal publication, not its stale body", async () => {
     // #7's body lost its state and still lists left-pad; the journal saved vite's plan for its current head.
     const saved = withMarker(RULES, withPlanSection("Fixes vite.", await heldPlan(YOUNG_VITE())), { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 });
     const pr = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite", headSha: PUSHED_SHA, body: `${withPlanSection("Fixes left-pad.", await heldPlan(YOUNG_PAD()))}\n\n${RULES.marker}\n` });
     const h = harness({ prs: [pr], fixes: [YOUNG_VITE(), YOUNG_PAD()] });
     h.workspace.setRemoteHead(pr.headRef, PUSHED_SHA);
-    await h.journal.pushed(REPO, 7, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: "moving vite", body: saved, adaptations: 0 } });
-    expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({ units: [
+    const tracked = await early(h, { ...pr, body: saved }, [{ ecosystem: "npm", name: "vite", version: "8.3.3", eligibleAt: HELD.eligibleAt }]);
+    h.github.prs.set(7, pr);
+    await h.journal.pushed(REPO, 7, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: "moving vite", body: tracked.body, adaptations: 0 } });
+    const tool = secureIt({ ...h.deps, verify: holdingVerify });
+    await grantWaiting(tool, h, ["left-pad"]);
+    expect(await tool.run(h.context)).toMatchObject({ units: [
       { topic: "security-cooldown-left-pad", outcome: "published" },
-      { topic: "security-cooldown-vite", outcome: "updated", pullRequest: "https://github.com/leanish/widget/pull/7" },
+      { topic: "security-cooldown-vite", outcome: "already-open", pullRequest: "https://github.com/leanish/widget/pull/7" },
     ] });
-    expect(planOf(h.github.prs.get(7)!.body)).toMatchObject({ topic: "security-cooldown-vite", members: ["npm|vite"] });
+    expect(planOf(h.github.prs.get(7)!.body)).toMatchObject({ topic: "security-cooldown-vite", packages: ["npm|vite"] });
+    trackedRecord(h, 7);
   });
 
   it("doesn't claim a held PR whose state someone removed once a person marked it ready, as its saved plan holds versions", async () => {
@@ -2810,8 +2823,11 @@ describe("the cooldown hold", () => {
     const h = harness({ prs: [taken], fixes: [YOUNG_VITE()] });
     h.workspace.setRemoteHead(taken.headRef, PUSHED_SHA);
     await h.journal.pushed(REPO, 7, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: "moving vite", body: saved, adaptations: 0 } });
-    expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({ topic: "security-cooldown-vite", outcome: "published" });
+    const tool = secureIt({ ...h.deps, verify: holdingVerify });
+    await grantWaiting(tool, h);
+    expect(await tool.run(h.context)).toMatchObject({ topic: "security-cooldown-vite", outcome: "published" });
     expect(h.github.prs.get(7)).toEqual(taken);
+    trackedRecord(h);
   });
 
   it("refuses to claim a held PR whose state someone removed when its saved publication doesn't match, never reading its raw body", async () => {
@@ -2848,15 +2864,6 @@ describe("the cooldown hold", () => {
     broken(aged);
     expect(await secureIt(aged.deps).run(aged.context)).toMatchObject({ topic: "security", outcome: "failed", detail: "leanish__widget/7.json isn't a journal", units: [{ topic: "security" }] });
     expect([aged.agentCalls, aged.workspace.preparations, aged.github.prs.size]).toEqual([[], [], 1]);
-  });
-
-  it("gives two held units whose topics cut to one branch name a branch each", async () => {
-    const lock = JSON.stringify({ lockfileVersion: 3, packages: { "": { name: "widget" }, "node_modules/a/b": { version: "1.0.0" }, "node_modules/a-b": { version: "1.0.0" } } });
-    const young = (name: string) => leftPad({ name, locations: [`node_modules/${name}`], to: { version: "1.0.1", line: "1", aged: false, major: false, blockers: [] } });
-    // Synthetic names: `a/b` and `a-b` both cut to the branch topic `security-cooldown-a-b`.
-    const h = harness({ fixes: [young("a/b"), young("a-b")], files: { "package-lock.json": lock } });
-    expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({ outcome: "completed" });
-    expect([...h.github.prs.values()].map((pr) => pr.headRef)).toEqual(["secure-it/2026-10-07-security-cooldown-a-b", "secure-it/2026-10-07-security-cooldown-a-b-2"]);
   });
 
   it("keeps a PR taken early a draft on green CI while its versions are young, and retires it once they aged, ending its attempt", async () => {
