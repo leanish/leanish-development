@@ -50,11 +50,11 @@ export function issueWriter(clean: (body: string) => string): IssueWriter {
 }
 
 /**
- * GitHub closes an issue a merged PR's text or commit names after a closing keyword (`Fixes #12`, `closes
- * owner/repo#12`, `resolves https://github.com/owner/repo/issues/12`). The tool's issues resolve only through an
+ * GitHub closes an issue a merged PR's text or commit names after a closing keyword (`Fixes #12`, `fixes GH-12`,
+ * `closes owner/repo#12`, `resolves https://github.com/owner/repo/issues/12`). The tool's issues resolve only through an
  * assessment, so such a reference, an agent's say, becomes a code span, which GitHub neither links nor acts on.
  */
-const CLOSING = /\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)(:\s*|\s+(?::\s*)?)((?:[\w.-]+\/[\w.-]+)?#\d+|https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/issues\/\d+)/gi;
+const CLOSING = /\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)(:\s*|\s+(?::\s*)?)((?:[\w.-]+\/[\w.-]+)?#\d+|gh-\d+|https?:\/\/(?:www\.)?github\.com\/[\w.-]+\/[\w.-]+\/issues\/\d+)/gi;
 
 export function withoutClosingKeywords(text: string): string {
   return text.replace(CLOSING, (_match, keyword: string, separator: string, reference: string) => `${keyword}${separator}\`${reference}\``);

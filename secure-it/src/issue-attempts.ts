@@ -98,6 +98,24 @@ export async function recoverAttempts(client: AttemptClient, tracked: ReadonlyAr
 }
 
 /**
+ * Shows `pr`, which an ordinary unit just published for issue `number`'s eligible decision, on that issue: rendered
+ * again from `assessment` with the PR as its decision's, as the next run's sync would (`bodyWith`'s conditions); an
+ * issue that isn't open as its subject's, or no longer reads, is left alone.
+ */
+export async function showPullRequest(client: AttemptClient, number: number, pr: { readonly number: number; readonly url: string }, assessment: Assessment): Promise<void> {
+  const issue = await client.issues.getIssue({ repo: client.repo, number });
+  const record = recordOf(issue.body);
+  if (record === undefined || issue.state !== "open" || record.pendingClose !== undefined) return;
+  const id = subjectId(record.subject);
+  const shown: Assessment = {
+    ...assessment,
+    subjects: assessment.subjects.map((subject) => (subjectId(subject.subject) === id && subject.status.kind === "eligible" ? { ...subject, status: { ...subject.status, pr } } : subject)),
+  };
+  const body = bodyWith(client, issue.body, record, shown);
+  if (body !== issue.body) await client.issues.updateIssue({ repo: client.repo, number, body });
+}
+
+/**
  * `body` with `record`, its text rendered again from `assessment` while that still assesses the issue's subject: the
  * headline and the attempts it lists then say what the record now does. Otherwise (no assessment: a review, or an
  * issue that isn't open as its subject's; a subject the run no longer assesses; a record that doesn't track yet what

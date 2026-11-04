@@ -24,7 +24,7 @@ describe("issueDisposition", () => {
   it("lets a decision past the wait go ahead through its open issue", async () => {
     const issues = new FakeIssues();
     const sync = await syncIssues({ issues, repo: "acme/widget", clean: (body: string) => body }, assessment);
-    expect(await issueDisposition({ assessment, sync }, plan, clientOf(issues), () => "unused")).toEqual({ kind: "proceed", tracked: { issue: 1, young: [] } });
+    expect(await issueDisposition({ assessment, sync }, plan, clientOf(issues), () => "unused")).toEqual({ kind: "proceed", tracked: { issue: 1, young: [], assessment } });
   });
 
   it("reads the issue again before anything runs: one a person closed after the sync read it stops the decision", async () => {
