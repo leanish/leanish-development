@@ -203,7 +203,7 @@ export function cooldownWarning(held: ReadonlyArray<PlannedHold>, options: { rea
     ...rows,
     ">",
     ...(notice.details.length === 0 ? [] : [...quoted(notice.details), ">"]),
-    `> secure-it keeps this PR a draft, and the supply-chain gate's \`cooldown\` check stays red, until ${minute(until)} UTC. Then secure-it closes it and its next run opens a freshly verified PR (held again only if something in it is still young).`,
+    `> The supply-chain gate's \`cooldown\` check stays red until ${minute(until)} UTC. secure-it keeps a PR taken early a draft until every version its issue's \`take-early\` grant covers is past the wait (the issue lists them; that can be after this table's dates); then it closes it, and its next run opens a freshly verified PR (held again only if something in it is still young).`,
     ">",
     "> To take it earlier, a person decides: every other check green, the reason written in a PR comment, then an admin merge past the red `cooldown` check (where no ruleset enforces it, a merge with the same written reason).",
     WARNING_END,

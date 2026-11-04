@@ -74,9 +74,9 @@ Verification can find a young version planning didn't choose (a transitive move,
 the wait or taken early, the run then publishes nothing, names the versions on the issue and tries again next run.
 
 Review leaves a version-fix PR without a `Tracks` line to its owner; a run still matches one to a fix it plans by its
-kind and topic alone, keeping it, refreshing only its plan notes, when the plan is unchanged or redoing it, then with a `Tracks` line, when the
-plan changed. Before upgrading from 0.10.x, close secure-it's open version-fix PRs by hand, keeping any human changes
-you need: the first run assesses the findings and opens the corresponding issues. Don't close secure-it's issues to
+kind and topic alone, keeping it, refreshing only its plan notes, when the plan is unchanged, or redoing it, then with
+a `Tracks` line, when the plan changed. Before upgrading from 0.10.x, close secure-it's open version-fix PRs by hand,
+keeping any human changes you need: the first run assesses the findings and opens the corresponding issues. Don't close secure-it's issues to
 start over: closing an issue dismisses its tracked findings. A new advisory finding can open a new issue; a dismissed
 finding can open one again after a complete assessment records it absent and it later returns.
 
@@ -352,8 +352,9 @@ The tick from [`core/tool-runtime`](../core/tool-runtime), with secure-it's step
 Whatever the verifying comparison holds goes into the plan, and the PR's description opens with a GitHub warning:
 the versions that came early (published, held until, and why: the rule-picked fix, required by it, an exception),
 plus provenance, publisher changes and new install scripts for npm, for information. It says that needing a version
-and passing every check doesn't rule out malware, that secure-it keeps the PR a draft until everything
-aged, and how a person takes it earlier: every other check green, the reason written on the PR, an admin merge. A PR
+and passing every check doesn't rule out malware, until when the gate's `cooldown` check stays red, that secure-it
+keeps a PR taken early a draft until every version its issue's grant covers aged (which can be after the gate's
+dates), and how a person takes it earlier: every other check green, the reason written on the PR, an admin merge. A PR
 whose verification finds a young version its issue didn't authorize is not published; the issue says why.
 A cooldown the comparison couldn't evaluate fails verification.
 

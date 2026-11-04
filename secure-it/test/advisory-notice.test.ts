@@ -164,6 +164,13 @@ describe("the advisory notice on a held PR", () => {
     expect(sources).toBeGreaterThan(holds);
   });
 
+  it("dates the gate's red check only, never promising secure-it's retirement for then", () => {
+    const warning = cooldownWarning([hold()])!;
+    expect(warning).toContain("> The supply-chain gate's `cooldown` check stays red until 2026-10-25 23:01 UTC.");
+    expect(warning).toContain("secure-it keeps a PR taken early a draft until every version its issue's `take-early` grant covers is past the wait");
+    expect(warning).not.toContain("a draft, and the supply-chain gate's `cooldown` check stays red, until");
+  });
+
   it("keeps the evidence in the plan, and refuses an edited one", () => {
     const plan: ChangePlan = { topic: `security-young-Maven|${PKG}`, malware: false, severity: "CRITICAL", kind: "routine", moves: [], packages: [], cooldown: [hold({ evidence: reviewed })] };
     const body = withPlanSection("Description.", plan);
