@@ -92,8 +92,10 @@ function fold(work: ReadonlyArray<FixWork>, fix: FixWork, floored: ReadonlyArray
   const carrier: FixWork = own === undefined
     ? { ecosystem: "Maven", name: parent.name, from: parent.from, locations: parent.locations, targets: [], unfixable: [], malicious: false, severity: fix.severity, to, problem: undefined, carries: parent.carries }
     : { ...withoutVetoes(own), locations: [...new Set([...own.locations, ...parent.locations])], to, carries: parent.carries };
-  const induced = new Map([...(own?.induced ?? []), ...parent.induced].map((entry) => [`${entry.name}@${entry.version}`, entry]));
-  const proved: FixWork = induced.size === 0 ? carrier : { ...carrier, induced: [...induced.values()] };
+  // The probe that chose this move resolved all of it against the base, so its induced versions replace any an earlier
+  // fold recorded: a version only a discarded probe brought is one the move doesn't take.
+  const { induced: _earlier, ...unproved } = carrier;
+  const proved: FixWork = parent.induced.length === 0 ? unproved : { ...unproved, induced: parent.induced };
   return work.flatMap((entry) => {
     if (entry === fix) return rest.length === 0 ? [] : [{ ...fix, locations: rest }];
     if (entry === own) return [proved];

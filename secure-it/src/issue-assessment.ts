@@ -31,8 +31,11 @@ export interface AssessmentInputs {
   readonly eligibleAt: (pkg: PackageVersion) => Promise<string | undefined>;
   /** The assessment's time: a version a parent probe resolved counts as young until then. */
   readonly now: Date;
-  /** The open PR carrying a decision, by its subject's moves. */
-  readonly prOf: (moves: ReadonlyArray<DecisionMove>) => { readonly number: number; readonly url: string } | undefined;
+  /**
+   * The open PR carrying a unit's decision: the one recording exactly its moves, or else the one the unit's run reuses,
+   * whatever decision it records now (one a retry reduced to part of this one, say), since the run redoes it whole.
+   */
+  readonly prOf: (planned: PlannedUnit) => { readonly number: number; readonly url: string } | undefined;
 }
 
 export async function assessmentOf(inputs: AssessmentInputs): Promise<Assessment> {
@@ -47,7 +50,7 @@ export async function assessmentOf(inputs: AssessmentInputs): Promise<Assessment
     const young = await youngOf(unit, plan, inputs);
     const status: SubjectAssessment["status"] = young.length > 0
       ? { kind: "waiting", young }
-      : { kind: "eligible", trusted: trustedOf(unit, inputs), ...prField(inputs.prOf(moves)) };
+      : { kind: "eligible", trusted: trustedOf(unit, inputs), ...prField(inputs.prOf({ unit, plan })) };
     subjects.push({ subject: { kind: "decision", moves }, findings, status });
   }
 

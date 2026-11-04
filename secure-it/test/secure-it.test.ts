@@ -622,6 +622,24 @@ describe("secure-it run", () => {
       expect(h.agentCalls).toHaveLength(1);
     });
 
+    it("shows a PR carrying part of the decision (a retry reduced it) as that decision's PR, which the run then redoes whole", async () => {
+      const h = harness({ prs: [await vitePr()], fixes: [vite(), leftPad()] });
+      h.workspace.setRemoteHead("secure-it/2026-10-05-security", HEAD_SHA);
+      expect(await flow(h, OLD).run(h.context)).toMatchObject({ outcome: "updated", number: 7 });
+      const issue = issuesOf(h).issues.get(1)!;
+      expect(recordOf(issue.body)!.subject).toMatchObject({ kind: "decision", moves: [{ name: "vite" }, { name: "left-pad" }] });
+      expect(issue.body).toContain("**In progress:** #7.");
+      expect(issue.body).not.toContain("**Ready.**");
+    });
+
+    it("never names a PR someone else pushed to as the decision's, even one recording exactly its moves", async () => {
+      for (const fixes of [[vite()], [vite(), leftPad()]]) {
+        const h = harness({ prs: [await vitePr({ headSha: "9".repeat(40) })], fixes });
+        expect(await flow(h, OLD).run(h.context)).toMatchObject({ outcome: "published", number: 42 });
+        expect(issuesOf(h).issues.get(1)!.body).toContain("**Ready.**");
+      }
+    });
+
     it("defers a floor removal too when the issues didn't settle this run", async () => {
       const f = removalFixture();
       const h = harness({ fixes: [young], files: f.base });

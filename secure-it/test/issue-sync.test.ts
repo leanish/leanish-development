@@ -184,6 +184,30 @@ describe("syncIssues", () => {
     await expect(syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]))).rejects.toThrow("the write PAT needs Issues: read and write");
   });
 
+  it("keeps an issue open while its successor's update, skipped because a person changed that issue, isn't published", async () => {
+    const issues = new FakeIssues();
+    const joining = finding("lib", "GHSA-A");
+    const fix: SubjectAssessment = { ...waiting("other", "2.0.1"), findings: [finding("other", "GHSA-B")] };
+    await syncIssues(sync(issues), assessed([{ subject: { kind: "package", ecosystem: "npm", name: "lib" }, findings: [joining], status: { kind: "informational" } }, fix]));
+    expect([...issues.issues.keys()]).toEqual([1, 2]);
+    // Between this sync's listing and its write to #2, a person removes #2's hidden record: the tool skips that write.
+    const get = issues.getIssue.bind(issues);
+    let edited = false;
+    issues.getIssue = async (args) => {
+      if (args.number === 2 && !edited) {
+        edited = true;
+        const two = issues.issues.get(2)!;
+        issues.issues.set(2, { ...two, body: two.body.replace("<!-- leanish:plan", "<!-- edited") });
+      }
+      return get(args);
+    };
+    const result = await syncIssues(sync(issues), assessed([{ ...fix, findings: [...fix.findings, joining] }]));
+    expect(edited).toBe(true);
+    expect(result.unreadable).toEqual([2]);
+    expect(issues.issues.get(1)!.state).toBe("open");
+    expect(recordOf(issues.issues.get(1)!.body)!.pendingClose).toBeUndefined();
+  });
+
   it("blocks creates while one of its open issues can't be read", async () => {
     const issues = new FakeIssues();
     await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));

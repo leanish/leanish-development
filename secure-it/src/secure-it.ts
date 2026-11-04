@@ -330,7 +330,7 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   try {
     tracking = scanned === undefined
       ? undefined
-      : await trackIssues(execution, { tree, scanned, complete: found.incomplete.length === 0 && found.gaps.length === 0 && prepared.failures.size === 0, units: prepared.units.filter((unit) => !prepared.failures.has(unit)), blocked: selection.blocked, own: listed, base });
+      : await trackIssues(execution, { tree, scanned, complete: found.incomplete.length === 0 && found.gaps.length === 0 && prepared.failures.size === 0, units: prepared.units.filter((unit) => !prepared.failures.has(unit)), claimants: prepared.units, blocked: selection.blocked, own: listed, base });
   } catch (error) {
     // Nothing executes without its issue: a sync that failed defers every unit this run, saying why.
     tracking = asError(error);
@@ -1518,9 +1518,25 @@ interface TrackingInputs {
   readonly scanned: ScanState;
   readonly complete: boolean;
   readonly units: ReadonlyArray<SecurityUnit>;
+  /** Every unit of the run, failed ones included, as the run's held claims take them. */
+  readonly claimants: ReadonlyArray<SecurityUnit>;
   readonly blocked: Selection["blocked"];
   readonly own: ReadonlyArray<GitHubPullRequest>;
   readonly base: PlanBase;
+}
+
+/**
+ * The open PRs a unit's run could reuse, as their ownership reads them (`claimView`): one someone else pushed to, or
+ * whose ownership can't be read, is left out (the run itself fails on the latter, alone), so no issue names it.
+ */
+async function reusable(publication: PublicationContext, own: ReadonlyArray<GitHubPullRequest>): Promise<GitHubPullRequest[]> {
+  const reusable: GitHubPullRequest[] = [];
+  for (const pr of own) {
+    if (topicOf(RULES, pr.headRef) === undefined) continue;
+    const effective = await inspectOwnership(publication, pr).then(claimView, () => undefined);
+    if (effective !== undefined) reusable.push(effective);
+  }
+  return reusable;
 }
 
 /** Observes, assesses and syncs the tool's issues for this run (`issue-tracking.ts`). */
@@ -1540,10 +1556,19 @@ async function trackIssues(execution: Execution, inputs: TrackingInputs): Promis
       context.logger.warn("secure-it: a unit can't be planned for its issue", { topic: unit.topic, error: asError(error).message });
     }
   }
-  const recorded = inputs.own.flatMap((pr) => {
+  // The PR an issue names is one the run would use: still the tool's (`inspectOwnership`), read as a claim reads it.
+  const recorded = (await reusable(execution.publication, inputs.own)).flatMap((pr) => {
     const plan = planOf(pr.body);
-    return plan === undefined ? [] : [{ id: subjectId({ kind: "decision", moves: decisionMoves(plan) }), pr: { number: pr.number, url: pr.url } }];
+    return plan === undefined ? [] : [{ plan, id: decisionIdOf(plan), pr: { number: pr.number, url: pr.url } }];
   });
+  // Without an exact one, the PR the unit's run reuses (`recognisedPlans`): a held unit's claimed one (the run's own
+  // claims, over every unit), any other's by its recorded topic, whatever decision it now carries: a retry that reduced
+  // the decision left part of it there, and the run redoes it whole.
+  const claims = await heldClaimsOf(execution.publication, inputs.claimants, inputs.own);
+  const claimed = (unit: SecurityUnit) => (claims instanceof Error ? undefined : claims.byTopic.get(unit.topic));
+  const reusedBy = ({ unit, plan }: PlannedUnit) => recorded.find((entry) => entry.plan.kind === plan.kind && (isHeldUnit(unit)
+    ? entry.pr.number === claimed(unit)
+    : entry.plan.topic === plan.topic));
   const assessment = await assessmentOf({
     sha: inputs.tree.id,
     now: context.now,
@@ -1553,7 +1578,7 @@ async function trackIssues(execution: Execution, inputs: TrackingInputs): Promis
     blocked: inputs.blocked,
     trusted: (pkg) => isTrustedPackage(config.trustedPackages, pkg),
     eligibleAt: eligibleAtOf(execution, config),
-    prOf: (moves) => recorded.find((entry) => entry.id === subjectId({ kind: "decision", moves }))?.pr,
+    prOf: (planned) => (recorded.find((entry) => entry.id === decisionIdOf(planned.plan)) ?? reusedBy(planned))?.pr,
   });
   const sync = await syncIssues({ issues: context.issues, repo: context.repo.repo, clean: issueCleaner(context), ...(execution.deps.clock === undefined ? {} : { clock: execution.deps.clock }) }, assessment);
   // Before any disposition: an attempt a previous run left running is settled from its PR, or ends as interrupted.

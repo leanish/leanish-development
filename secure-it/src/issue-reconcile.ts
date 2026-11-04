@@ -117,11 +117,12 @@ export function reconcile(assessment: Assessment, issues: ReadonlyArray<TrackedI
   const wanted = new Map(assessment.subjects.map((subject) => [subjectId(subject.subject), subject]));
 
   // Phase 1: every subject has its current instance, up to date.
-  const instances = new Map<string, number>();
+  // Each subject's current issue, as read.
+  const instances = new Map<string, TrackedIssue>();
   const coveredByDismissal = new Set<string>();
   for (const [id, subject] of wanted) {
     const current = bySubject.get(id)?.[0];
-    if (current !== undefined) instances.set(id, current.number);
+    if (current !== undefined) instances.set(id, current);
     // One subject's text failing (a decision too large to show whole) is noted and leaves the others going.
     isolated(notes, current === undefined ? `${id}` : `#${current.number}`, () => {
       if (current !== undefined) {
@@ -175,7 +176,8 @@ export function reconcile(assessment: Assessment, issues: ReadonlyArray<TrackedI
         const first = bySubject.get(id)![0]!;
         if (first === issue) return;
         const authorized = (issue.labels ?? []).includes(TAKE_EARLY_LABEL) || record.attempts.some((attempt) => attempt.outcome === undefined);
-        const covered = record.findings.every((finding) => recordOf(first).findings.some((kept) => sameFinding(finding, kept)));
+        // Covered as GitHub shows the survivor, not by an update this round only schedules (sync may skip it).
+        const covered = record.findings.every((finding) => first.record.findings.some((kept) => sameFinding(finding, kept)));
         if (authorized) notes.push(`#${issue.number}: duplicates #${first.number} but carries an authorization; a person closes one of them`);
         else if (assessment.complete || covered) operations.push(closing(issue, record, writer, "superseded", [first.number], assessment.sha));
         return;
@@ -198,7 +200,20 @@ export function reconcile(assessment: Assessment, issues: ReadonlyArray<TrackedI
         notes.push(`#${issue.number}: a successor has no issue yet`);
         return;
       }
-      const numbers = [...new Set(successors.flatMap((successor) => instances.get(successor) ?? []))].sort((a, b) => a - b);
+      // A successor counts once GitHub shows it tracking the findings that moved there: its record as read, never an
+      // update this round only schedules (sync skips one whose issue a person changed meanwhile, and a text that can't
+      // be written schedules none). The closing then waits for a round that reads that update back.
+      const unshown = successors.flatMap((successor) => {
+        const current = instances.get(successor);
+        if (current === undefined) return [];
+        const moved = record.findings.filter((tracked) => wanted.get(successor)!.findings.some((finding) => sameFinding(tracked, finding)));
+        return moved.every((tracked) => current.record.findings.some((shown) => sameFinding(tracked, shown))) ? [] : [current.number];
+      });
+      if (unshown.length > 0) {
+        notes.push(`#${issue.number}: closes once ${unshown.map((number) => `#${number}`).join(", ")} shows its findings`);
+        return;
+      }
+      const numbers = [...new Set(successors.flatMap((successor) => instances.get(successor)?.number ?? []))].sort((a, b) => a - b);
       operations.push(closing(issue, record, writer, "superseded", numbers, assessment.sha));
     });
   }
