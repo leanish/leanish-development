@@ -30,9 +30,10 @@ opens with the write PAT (it needs **Issues: read and write**, see
 A run whose candidate planning fails, or whose inventory is incomplete, executes nothing and changes no issue; one unit
 failing to plan leaves its findings tracked and retires nothing.
 
-Every issue the tool opens carries the `leanish:secure-it-issue` label, and the tool reads only issues with it, so the
-login's PRs and other issues never crowd its listing. Removing the label takes an issue out of the tool's sight: a run
-opens another for what it tracked.
+Every issue the tool opens carries the `leanish:secure-it-issue` label, and a run lists only issues with it, so the
+login's PRs and other issues never crowd its listing. Removing the label takes an issue out of a run's listing: the run
+opens another for what it tracked. Review still reads the issue a PR names (`Tracks #N.`) by its number, label or not,
+so a PR taken early goes on under its recorded attempt and grant.
 
 Issues don't change subject: when a decision changes (another version, another grouping), the run opens the new issue
 first, then closes the old one as superseded by it. Once a complete scan no longer sees a finding, its issue closes as
