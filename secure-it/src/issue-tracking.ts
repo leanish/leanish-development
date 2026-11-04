@@ -11,7 +11,7 @@ import { grantOf } from "./issue-grant.ts";
 import type { Assessment, Attempt, IssueRecord, PackageVersion, SubjectAssessment } from "./issue-model.ts";
 import { subjectId } from "./issue-model.ts";
 import { postNotice, type SyncResult } from "./issue-sync.ts";
-import { ISSUE_WRITER, recordOf, TAKE_EARLY_LABEL } from "./issue-text.ts";
+import { ISSUE_LABEL, ISSUE_WRITER, recordOf, TAKE_EARLY_LABEL } from "./issue-text.ts";
 import type { ChangePlan } from "./plan.ts";
 
 /** Whether a target may execute now; `defer` says why not, and stops it before anything runs. */
@@ -49,21 +49,29 @@ export async function issueDisposition(
   const id = subjectId({ kind: "decision", moves: decisionMoves(plan) });
   const subject = tracking.assessment.subjects.find((entry) => subjectId(entry.subject) === id);
   if (subject === undefined) return { kind: "defer", reason: "no assessed decision matches this plan" };
-  const issue = tracking.sync.tracked.find((tracked) => tracked.state === "open" && tracked.record.pendingClose === undefined && subjectId(tracked.record.subject) === id);
+  const instances = tracking.sync.tracked.filter((tracked) => tracked.state === "open" && tracked.record.pendingClose === undefined && subjectId(tracked.record.subject) === id);
+  const issue = instances[0];
   if (issue === undefined) return { kind: "defer", reason: "no issue tracks this decision yet" };
+  // Duplicates the sync left open carry a person's authorization (`reconcile`): which one stands is theirs to say.
+  if (instances.length > 1) return { kind: "defer", reason: `${instances.map((tracked) => `#${tracked.number}`).join(" and ")} both track this decision; a person closes one` };
+
+  // Read fresh, by number: the sync's listing can lag a person's closing by seconds, and one run asks for the same plan
+  // more than once (preflight, the unit, its retries), so an attempt recorded by an earlier ask must be seen by the next,
+  // never started twice.
+  const fresh = await client.issues.getIssue({ repo: client.repo, number: issue.number });
+  const current = recordOf(fresh.body);
+  if (current === undefined || subjectId(current.subject) !== id) return { kind: "defer", reason: `its issue #${issue.number} can't be read any more` };
+  if (fresh.state !== "open" || current.pendingClose !== undefined || !fresh.labels.includes(ISSUE_LABEL)) {
+    return { kind: "defer", reason: `its issue #${issue.number} is no longer open as secure-it's` };
+  }
   if (subject.status.kind === "eligible") return { kind: "proceed", tracked: { issue: issue.number, young: subject.status.trusted } };
   if (subject.status.kind !== "waiting") return { kind: "defer", reason: `its issue #${issue.number} says it can't go ahead` };
-  if (!issue.labels.includes(TAKE_EARLY_LABEL)) return { kind: "defer", reason: `waiting for the release-age wait (#${issue.number})` };
+  if (!fresh.labels.includes(TAKE_EARLY_LABEL)) return { kind: "defer", reason: `waiting for the release-age wait (#${issue.number})` };
 
-  // Read fresh: one run asks for the same plan more than once (preflight, the unit, its retries), and an attempt recorded
-  // by an earlier ask must be seen by the next, never started twice.
-  const [fresh, events, comments] = await Promise.all([
-    client.issues.getIssue({ repo: client.repo, number: issue.number }),
+  const [events, comments] = await Promise.all([
     client.issues.listEvents({ repo: client.repo, number: issue.number }),
     client.issues.listComments({ repo: client.repo, number: issue.number }),
   ]);
-  const current = recordOf(fresh.body);
-  if (current === undefined || subjectId(current.subject) !== id) return { kind: "defer", reason: `its issue #${issue.number} can't be read any more` };
   const actors = [...new Set(events.flatMap((event) => (event.actor === null ? [] : [event.actor])))];
   const permissions = new Map(await Promise.all(actors.map(async (actor) => [actor, await client.issues.permission({ repo: client.repo, login: actor })] as const)));
   const decision = grantOf({ state: fresh.state, labels: fresh.labels, record: current, status: subject.status, events, comments, permissions });
@@ -76,7 +84,12 @@ export async function issueDisposition(
   const young = subject.status.young.map(({ ecosystem, name, version }) => ({ ecosystem, name, version }));
   const early = (attempt: Attempt): Disposition => ({ kind: "proceed", tracked: { issue: issue.number, young, attempt: { id: attempt.id, branch: attempt.branch } } });
   const running = current.attempts.find((attempt) => attempt.outcome === undefined && attempt.grantEventId === decision.grant.labelEventId);
-  if (running !== undefined) return early(running);
+  if (running !== undefined) {
+    if (!attemptBranchAllowed(running, branch(running.grantEventId))) {
+      return { kind: "defer", reason: `the attempt recorded on #${issue.number} names a branch secure-it didn't reserve for it` };
+    }
+    return early(running);
+  }
   // One grant, one attempt, recorded before anything executes.
   const attempt: Attempt = {
     id: `${decision.grant.labelEventId}-${client.now.getTime()}`, grantEventId: decision.grant.labelEventId, branch: branch(decision.grant.labelEventId), startedAt: client.now.toISOString(),
@@ -84,6 +97,28 @@ export async function issueDisposition(
   const record: IssueRecord = { ...current, grant: decision.grant, attempts: [...current.attempts, attempt] };
   await client.issues.updateIssue({ repo: client.repo, number: issue.number, body: client.clean(ISSUE_WRITER.render(subject as SubjectAssessment, record, tracking.assessment.sha).body) });
   return early(attempt);
+}
+
+/**
+ * A run's branch for each grant's attempt: the reused PR's head a unit named for it (`named`), remembered so the run's
+ * later asks for the same grant (a retry names none) get that same branch, else the one `reserve` gives the grant.
+ */
+export function attemptBranches(reserve: (labelEventId: number) => string): (named: string | undefined) => (labelEventId: number) => string {
+  const reused = new Map<number, string>();
+  return (named) => (labelEventId) => {
+    if (named !== undefined) reused.set(labelEventId, named);
+    return reused.get(labelEventId) ?? reserve(labelEventId);
+  };
+}
+
+/**
+ * Whether a recorded attempt's branch may be used. It comes from the issue's body, which a person can edit, and a run
+ * deletes and republishes it: it must be the one its grant reserved (`secure-it/<date>-take-early-<label event>`, on any
+ * day) or `expected`, this run's branch for it (the head of the PR the unit reuses, when it reuses one).
+ */
+export function attemptBranchAllowed(attempt: Pick<Attempt, "branch" | "grantEventId">, expected: string): boolean {
+  if (attempt.branch === expected) return true;
+  return new RegExp(`^secure-it/\\d{4}-\\d{2}-\\d{2}-take-early-${attempt.grantEventId}$`).test(attempt.branch);
 }
 
 /**

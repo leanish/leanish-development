@@ -43,6 +43,19 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   then, and may still need adapting.
 - **Held drafts from before issues (secure-it)**: review leaves one alone until an issue tracks one of its packages,
   then closes it with a link; until then a run whose plan is unchanged still refreshes its text.
+- **GitHub's lagging issue listing (secure-it)**: the filtered listing a run reads its issues from shows a write only
+  seconds later. A run reads back by number every issue it wrote, and every issue before executing through it, but a
+  run starting within seconds of another's writes can open a duplicate; the next run closes it as superseded (on an
+  incomplete scan, only when the issue kept covers every finding the duplicate was opened for). A duplicate a person
+  labelled `take-early`, or one running an early attempt, stays open, and the decision runs through neither until a
+  person closes one. A notice is posted once
+  per run even if the comment listing lags; whether label events and comments can lag the same way, which grants read,
+  isn't established.
+- **An early attempt whose PR the listing doesn't show yet (secure-it)**: when publication fails after its PR was
+  created, the attempt ends as failed if the PR listing doesn't show that PR yet, and review then leaves the PR alone
+  as not taken early (with a notice).
+- **A different token login (secure-it)**: issues are found by their creator, so a write PAT from another account
+  starts over: it opens new issues, and the old ones' dismissals and attempts no longer count.
 
 - **An action with no immutable release, newly used (gate)**: a new or additional occurrence fails unless its
   owner is listed in `trustedPackages["GitHub Actions"].owners`. Existing uses do not authorize more copies.

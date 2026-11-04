@@ -11,6 +11,12 @@ export class FakeIssues implements GitHubIssues {
   readonly calls: string[] = [];
   /** Operations GitHub refuses as forbidden (a PAT without Issues write). */
   readonly forbidden = new Set<string>();
+  /**
+   * As GitHub's filtered listing does, list issues as they were at the previous listing: a write shows up one listing
+   * late (a new issue missing, an edited one with its old body). Reading an issue by its number is never late.
+   */
+  lagging = false;
+  #listed = new Map<number, GitHubIssue>();
   #next = 1;
   #ids = 1000;
 
@@ -21,7 +27,9 @@ export class FakeIssues implements GitHubIssues {
   }
 
   async listIssues({ creator, label }: { repo: string; creator: string; label: string }): Promise<ReadonlyArray<GitHubIssue>> {
-    return [...this.issues.values()].filter((issue) => issue.author === creator && issue.labels.includes(label));
+    const seen = this.lagging ? this.#listed : this.issues;
+    this.#listed = new Map(this.issues);
+    return [...seen.values()].filter((issue) => issue.author === creator && issue.labels.includes(label));
   }
 
   async getIssue({ number }: { repo: string; number: number }): Promise<GitHubIssue> {
