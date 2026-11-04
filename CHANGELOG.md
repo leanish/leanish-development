@@ -38,8 +38,8 @@
   assesses nothing, only the record changes, and the next run's sync renders it.
 - An issue's findings learn every alias their advisories gain, on open and closed issues alike, so a finding a source
   later reports only by another id still matches: it doesn't read as resolved, and a person's dismissal still covers
-  it. A held PR's cooldown warning dates only the gate's red `cooldown` check; secure-it keeps a PR taken early a draft
-  until every version its issue's grant covers is past the wait, which can be later.
+  it. A held PR's cooldown warning dates only the gate's red `cooldown` check, and says that secure-it keeps a PR taken
+  early a draft until every version its issue's grant covers is past the wait, which can be later.
 - A first `take-early` label authorizes only the young versions its issue showed: one the issue never displayed (an
   update that couldn't be written, say) needs a new label once the issue shows it.
 - While an incomplete assessment (a lasting coverage gap, say) no longer finds an open issue's decision, the issue stays
