@@ -75,6 +75,17 @@ function withShown(record: IssueRecord, subject: SubjectAssessment, at: string):
 }
 
 /**
+ * Whether `record` already tracks what rendering `subject` shows: every finding (`withFindings` would add none) and, for
+ * a waiting decision, every young version (`withShown` would record none). Only then may a body be rendered from it
+ * outside a sync, which alone records what an issue shows and confirms it.
+ */
+export function recordShows(record: IssueRecord, subject: SubjectAssessment): boolean {
+  if (withFindings(record, subject.findings) !== record) return false;
+  if (subject.status.kind !== "waiting") return true;
+  return subject.status.young.every((young) => record.shown?.young.some((entry) => versionKey(entry) === versionKey(young)) === true);
+}
+
+/**
  * How a tracked issue stands: the subject's current instance, a closing still to finish, closed by the tool, reopened by
  * a person after that (retired, left alone), or dismissed.
  */

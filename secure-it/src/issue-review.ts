@@ -107,7 +107,7 @@ export async function reviewDisposition(client: ReviewIssues, pr: GitHubPullRequ
 async function graduated(client: ReviewIssues, pr: GitHubPullRequest, scope: Scope & { readonly kind: "early" }): Promise<ReviewDisposition> {
   const retired = await client.retire(pr, "Every version this PR was taken early for is now past the release-age wait. secure-it retires this draft: its next run plans that work again from the default branch, with fresh checks.");
   if (retired === "not-draft") return { kind: "leave", reason: "a person marked the held PR ready" };
-  await settleAttempt(client, scope.number, scope.attempt.id, { outcome: "pr-closed" });
+  await settleAttempt(client, scope.number, scope.attempt.id, { outcome: "pr-closed" }, undefined);
   return { kind: "graduated", reason: "every version it was taken early for aged" };
 }
 
@@ -188,7 +188,7 @@ export async function reviewClosed(client: ReviewIssues, pr: GitHubPullRequest, 
   if (number === undefined) return;
   const issue = await decisionIssue(client, number, plan);
   const attempt = issue?.record.attempts.find((entry) => entry.pr === pr.number && entry.outcome === undefined);
-  if (attempt !== undefined) await settleAttempt(client, number, attempt.id, { outcome: "pr-closed" });
+  if (attempt !== undefined) await settleAttempt(client, number, attempt.id, { outcome: "pr-closed" }, undefined);
 }
 
 async function leave(client: ReviewIssues, number: number, noticeId: string, pr: GitHubPullRequest, why: string): Promise<Left> {

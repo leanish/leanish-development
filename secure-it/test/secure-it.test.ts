@@ -775,6 +775,10 @@ describe("secure-it run", () => {
       expect(record.attempts[0]!.outcome).toBeUndefined();
       expect(h.github.prs.get(42)).toMatchObject({ headRef: branch, body: expect.stringContaining("Tracks #1, taken early.") });
       expect(h.agentCalls).toHaveLength(1);
+      // The issue says so once the PR is attached, not only in its record.
+      const body = issuesOf(h).issues.get(1)!.body;
+      expect(body).toContain("**Taken early.**");
+      expect(body).not.toContain("Taking it early");
     });
 
     it("keeps an early attempt running on the PR it opened when a later publication step fails", async () => {
@@ -934,6 +938,8 @@ describe("secure-it run", () => {
       expect(await flow(h).run(h.context)).toMatchObject({ outcome: "already-open", pullRequest: pr.url });
       expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 7 }]);
       expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts[0]!.outcome).toBeUndefined();
+      // Recovery runs after the sync rendered the issue: its own write renders it again, with the PR.
+      expect(issuesOf(h).issues.get(1)!.body).toContain("**Taken early.**");
       expect(h.github.prs.get(7)).toEqual(tracked);
       expect(h.workspace.preparations).toEqual([]);
       expect(h.workspace.publications).toEqual([]);
@@ -956,7 +962,20 @@ describe("secure-it run", () => {
       await flow(h).run(h.context);
       expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 7, outcome: "pr-closed" }]);
       expect(issuesOf(h).issues.get(1)!.labels).not.toContain("take-early");
+      expect(issuesOf(h).issues.get(1)!.body).toContain("**Waiting for the release-age wait.**");
       expect(h.agentCalls).toEqual([]);
+    });
+
+    it("ends the attempt of an issue a person closed without rendering its text again", async () => {
+      const h = harness({ fixes: [young] });
+      const branch = await granted(h, (id) => ({ ...started(() => "")(id), branch: `secure-it/2026-10-07-take-early-${id}`, pr: 7 }));
+      h.github.prs.set(7, ownPr({ number: 7, headRef: branch, state: "closed", merged: false }));
+      issuesOf(h).setState(1, "closed", "owner");
+      const text = (body: string) => body.slice(0, body.indexOf("<!-- leanish:plan"));
+      const before = text(issuesOf(h).issues.get(1)!.body);
+      await flow(h).run(h.context);
+      expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 7, outcome: "pr-closed" }]);
+      expect(text(issuesOf(h).issues.get(1)!.body)).toBe(before);
     });
 
     it("defers a decision whose verification finds a young version planning didn't choose, without retrying the agent", async () => {
@@ -1075,6 +1094,9 @@ describe("secure-it run", () => {
       issuesOf(h).label(1, "owner", "take-early");
       expect(await flow(h).run(h.context)).toMatchObject({ outcome: "cannot-apply" });
       expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toMatchObject([{ outcome: "agent-refused" }]);
+      // Its issue waits again, in its text too, from the moment the attempt ends.
+      expect(issuesOf(h).issues.get(1)!.body).toContain("**Waiting for the release-age wait.**");
+      expect(issuesOf(h).issues.get(1)!.body).not.toContain("Taking it early");
       expect(await flow(h).run(h.context)).toMatchObject({ outcome: "deferred" });
       expect(h.agentCalls).toHaveLength(1);
     });
@@ -3149,18 +3171,19 @@ describe("the cooldown hold", () => {
     expect(aged.workspace.preparations).toEqual([]);
     expect(aged.github.calls.some((call) => call.startsWith("headChecks"))).toBe(false);
     expect(recordOf(issues.issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 7, outcome: "pr-closed" }]);
-    // Recovery retries the label cleanup after graduation recorded the attempt's end.
+    // Recovery retries the label cleanup after graduation recorded the attempt's end. No subject assessed: only records change.
+    const NO_SUBJECTS = { sha: "f".repeat(40), at: "2026-10-07T06:00:00.000Z", complete: true, subjects: [] };
     const client = { issues, github: aged.github, repo: REPO, clean: (body: string) => body, ours: () => true };
     // The label's removal fails the first time: the attempt's end is recorded anyway, and the next recovery returns it.
-    await recoverAttempts(client, await syncedIssues(aged));
+    await recoverAttempts(client, await syncedIssues(aged), NO_SUBJECTS);
     expect(recordOf(issues.issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 7, outcome: "pr-closed" }]);
     expect(issues.issues.get(1)!.labels).toContain("take-early");
     issues.forbidden.delete("removeLabel");
-    await recoverAttempts(client, await syncedIssues(aged));
+    await recoverAttempts(client, await syncedIssues(aged), NO_SUBJECTS);
     expect(issues.issues.get(1)!.labels).not.toContain("take-early");
     // Only the event that attempt consumed: a newer label is a new grant, and stays.
     issues.label(1, "owner", "take-early");
-    await recoverAttempts(client, await syncedIssues(aged));
+    await recoverAttempts(client, await syncedIssues(aged), NO_SUBJECTS);
     expect(issues.issues.get(1)!.labels).toContain("take-early");
   });
 
