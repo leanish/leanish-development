@@ -1563,6 +1563,8 @@ describe("secure-it run", () => {
     expect(planOf(pr.body)?.packages).toEqual(["npm|vite"]);
     expect(planOf(pr.body)?.leftOut?.[0]?.moves[0]?.name).toBe("left-pad");
     expect(h.workspace.publications).toHaveLength(1);
+    // A PR that carries only part of the decision is not shown as the decision's.
+    expect((h.context.issues as FakeIssues).issues.get(1)!.body).not.toContain("#42");
   });
 
   it("does not retry a second time or guess a parent for an induced/global failure", async () => {

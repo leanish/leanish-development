@@ -47,7 +47,8 @@ Issues don't change subject: when a decision changes (another version, another g
 first, then closes the old one as superseded by it. Once a complete scan no longer sees a finding, its issue closes as
 resolved; a scan with coverage gaps closes nothing. An issue a person closes is dismissed: the run doesn't reopen it
 for the same findings, and only a finding that comes back after it was gone opens a new one. Issue text never selects
-versions: the code decides, and the only thing a person's input changes is whether a waiting decision runs early.
+versions: the code decides. A person's input changes two things: closing an issue dismisses its findings, and a
+`take-early` label lets a waiting decision run early.
 
 ### Taking a fix early: `take-early`
 
