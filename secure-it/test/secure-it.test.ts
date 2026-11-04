@@ -1449,7 +1449,8 @@ describe("secure-it review", () => {
     const major = vite({ to: { version: "9.0.1", line: "9", aged: true, major: true, blockers: [] } });
     const previous = await vitePr({}, major);
     const pr = { ...previous, body: `Fixes vite.\n\nTracks #1.\n${previous.body}` };
-    const younger = vite({ to: { version: "9.0.2", line: "9", aged: false, major: true, blockers: [] } });
+    // The same decision (the move to 9.0.1), whose version now counts as young on the new base.
+    const younger = vite({ to: { version: "9.0.1", line: "9", aged: false, major: true, blockers: [] } });
     const h = harness({ prs: [pr], baseSha: NEW_BASE, fixes: [younger] });
     h.workspace.setRemoteHead("secure-it/2026-10-05-vite-major", HEAD_SHA);
     const issues = h.context.issues as FakeIssues;
@@ -1457,7 +1458,31 @@ describe("secure-it review", () => {
     expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "deferred" }] });
     expect(h.agentCalls).toEqual([]);
     expect(h.workspace.publications).toEqual([]);
-    expect(issues.comments.get(1)!.map((comment) => comment.body)).toEqual([expect.stringContaining("would take young versions no grant covers: `vite@9.0.2`")]);
+    expect(issues.comments.get(1)!.map((comment) => comment.body)).toEqual([expect.stringContaining("would take young versions no grant covers: `vite@9.0.1`")]);
+  });
+
+  it("never rebases a tracked PR into another decision: the next run moves it through that decision's issue", async () => {
+    const major = vite({ to: { version: "9.0.1", line: "9", aged: true, major: true, blockers: [] } });
+    const previous = await vitePr({}, major);
+    const pr = { ...previous, body: `Fixes vite.\n\nTracks #1.\n${previous.body}` };
+    const issue = { number: 1, url: "https://github.com/acme/widget/issues/1", title: "secure-it: vite", body: "## secure-it", state: "open" as const, stateReason: null, author: "leanish", labels: [ISSUE_LABEL] };
+    const review = async (to: string) => {
+      const h = harness({ prs: [pr], baseSha: NEW_BASE, fixes: [vite({ to: { version: to, line: "9", aged: true, major: true, blockers: [] } })] });
+      h.workspace.setRemoteHead("secure-it/2026-10-05-vite-major", HEAD_SHA);
+      const issues = h.context.issues as FakeIssues;
+      issues.issues.set(1, issue);
+      return { h, issues, result: await secureIt(h.deps).review(h.context) };
+    };
+    // #1 tracks the move to 9.0.1: on the new base the PR would move to 9.0.2, another decision.
+    const changed = await review("9.0.2");
+    expect(changed.result).toMatchObject({ reviewed: [{ number: 7, outcome: "deferred" }] });
+    expect(changed.h.workspace.publications).toEqual([]);
+    expect(changed.h.github.prs.get(7)!.body).toBe(pr.body);
+    expect(changed.issues.comments.get(1)!.map((comment) => comment.body)).toEqual([expect.stringContaining("a different decision than this issue tracks")]);
+    // The same decision on the new base rebases as before, still tracking #1.
+    const same = await review("9.0.1");
+    expect(same.result).toMatchObject({ reviewed: [{ number: 7, outcome: "rebased" }] });
+    expect(same.h.github.prs.get(7)!.body).toContain("Tracks #1.");
   });
 
   it("retries a rebased routine and records omissions in its updated plan", async () => {

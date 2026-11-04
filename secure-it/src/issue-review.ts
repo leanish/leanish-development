@@ -185,14 +185,23 @@ export async function earlyDecisions(client: ReviewIssues, open: ReadonlyArray<G
  * Whether review may execute `plan`, recomputed on a new base. A PR taken early, while any of its granted versions is
  * young, only as the exact decision its grant covered and with no young version beyond the grant's: otherwise it's left
  * to the owner, which the issue says once. Any other PR only while the recomputed plan takes no young version (`young`,
- * non-trusted): no grant covers one, so it waits, said on its issue, and a later review tries again.
+ * non-trusted): no grant covers one, so it waits, said on its issue, and a later review tries again. A tracked PR only as
+ * the decision its issue tracks: another one waits for the next run, which updates it through that decision's issue.
  */
 export async function reviewExecution(client: ReviewIssues, pr: GitHubPullRequest, previous: ChangePlan, plan: ChangePlan, young: ReadonlyArray<string>): Promise<ReviewDisposition> {
   const number = trackedIssueOf(pr.body);
   const scope = number === undefined ? undefined : await scopeOf(client, pr, previous, number);
   const granted = scope?.kind === "early" ? await stillYoung(client, scope.grant) : [];
   if (scope !== undefined && scope.kind !== "early" && takenEarlyOf(pr.body)) return { kind: "leave", reason: `its early attempt can't be confirmed on #${scope.number}` };
+  const same = subjectId({ kind: "decision", moves: decisionMoves(plan) }) === subjectId({ kind: "decision", moves: decisionMoves(previous) });
   if (scope?.kind !== "early" || granted.length === 0) {
+    // `Tracks #N.` names the issue of the decision the PR makes: review never turns a tracked PR into another decision
+    // (its link would then say something false). The next run moves it through the new decision's own issue.
+    if (number !== undefined && !same) {
+      await postNotice(client, number, `decision:${pr.number}:${pr.headSha}`,
+        `secure-it didn't update #${pr.number} on review: on the new base it's a different decision than this issue tracks. Its next run updates it through that decision's issue.`);
+      return { kind: "leave", reason: `on the new base it's a different decision than #${number} tracks` };
+    }
     if (young.length === 0) return { kind: "proceed" };
     const why = `on the new base it would take young versions no grant covers: ${young.join(", ")}`;
     if (number !== undefined) {
@@ -201,7 +210,6 @@ export async function reviewExecution(client: ReviewIssues, pr: GitHubPullReques
     }
     return { kind: "leave", reason: why };
   }
-  const same = subjectId({ kind: "decision", moves: decisionMoves(plan) }) === subjectId({ kind: "decision", moves: decisionMoves(previous) });
   if (!same) return leave(client, scope.number, `changed:${pr.number}:${pr.headSha}`, pr, "on the new base it's a different decision than the one `take-early` authorized");
   // The same moves can still take more young versions (one a parent probe now brings in): only the grant's may run.
   const standing = await grantFor(client, scope, granted);

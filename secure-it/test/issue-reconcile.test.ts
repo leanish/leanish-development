@@ -197,6 +197,20 @@ describe("reconcile", () => {
     expect(fixed[0]!.record.pendingClose).toMatchObject({ reason: "superseded", successors: [2] });
   });
 
+  it("starts a new episode for a finding shown again, so a person's later closing dismisses it as it is now", () => {
+    const a = finding("lib", ["GHSA-A"], { reviewed: false });
+    const b = finding("lib", ["GHSA-B"], { reviewed: false });
+    const opened = converge(assessed([informational("lib", [a, b])])).issues;
+    // A complete scan misses A (its absence is recorded) while B keeps the issue open; then A comes back.
+    const missed = converge(assessed([informational("lib", [b])]), opened).issues;
+    expect(missed[0]!.record.absences.map((absence) => absence.finding.ids)).toEqual([["GHSA-A"]]);
+    const back = converge(assessed([informational("lib", [a, b])]), missed).issues;
+    expect(back[0]!.record.absences).toEqual([]);
+    // A person closes it: nothing came back after that, so no new issue opens.
+    const after = converge(assessed([informational("lib", [a, b])]), [{ ...back[0]!, state: "closed" }]).issues;
+    expect(open(after)).toEqual([]);
+  });
+
   it("keeps a duplicate opened for a finding the survivor lacks while the assessment is incomplete", () => {
     const [first] = converge(assessed([informational("lib", [finding("lib", ["GHSA-A"], { reviewed: false })])])).issues;
     const [wider] = converge(assessed([informational("lib", [finding("lib", ["GHSA-A"], { reviewed: false }), finding("lib", ["GHSA-B"], { reviewed: false })])])).issues;
@@ -257,7 +271,8 @@ describe("issue text", () => {
     // Taken early: the text never claims nothing ran.
     const taken = ISSUE_WRITER.render(subject, { ...record, attempts: [{ id: "a1", grantEventId: 7, branch: "b", startedAt: "2026-11-03T09:00:00Z", pr: 42 }] }, SHA).body;
     expect(taken).toContain("Taken early");
-    expect(taken).not.toContain("Nothing was applied, built or tested");
+    expect(taken).not.toContain("Its checks run on the PR secure-it opens then.");
+    expect(body).toContain("secure-it opens its PR once they're past the wait. Until then the vulnerable versions stay installed.\n\nIts checks run on the PR secure-it opens then.");
   });
 
   it("refuses a body that would cut the decision a label authorizes", () => {
