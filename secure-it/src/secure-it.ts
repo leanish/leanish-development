@@ -67,6 +67,7 @@ import { npmWindowFor } from "./npm-window.ts";
 import { assertNoPlanMarker } from "@leanish/tool-runtime/plan-blocks";
 import { planDigest, planOf, planSection, withPlanSection } from "./plan-block.ts";
 import { type ChangePlan, coupledWork, type FixWork, youngUnits, packageKey, planFor, type PlannedHold, type SecurityUnit, type Selection, withUnsupportedCarriers } from "./plan.ts";
+import { planningCause } from "./planning-cause.ts";
 import { namedProblems, retryWithoutNamed, type ProblemMoves } from "./retry.ts";
 import { referencePlan, verifyPlan, type VerifyInputs } from "./verify.ts";
 
@@ -328,7 +329,7 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   const prepared = await withRequiredYoung(execution, selection.units, base);
   let tracking: Tracking | Error;
   try {
-    tracking = await trackIssues(execution, { tree, scanned, complete: found.incomplete.length === 0 && found.gaps.length === 0 && prepared.failures.size === 0, units: prepared.units.filter((unit) => failureOf(prepared, unit) === undefined), blocked: selection.blocked, own: listed, base });
+    tracking = await trackIssues(execution, { tree, scanned, complete: found.incomplete.length === 0 && found.gaps.length === 0, prepared, blocked: selection.blocked, own: listed, base });
   } catch (error) {
     // Nothing executes without its issue: a sync that failed defers every unit this run, saying why.
     tracking = asError(error);
@@ -1315,7 +1316,7 @@ interface TrackingInputs {
   readonly tree: Tree;
   readonly scanned: ScanState;
   readonly complete: boolean;
-  readonly units: ReadonlyArray<SecurityUnit>;
+  readonly prepared: YoungSplit;
   readonly blocked: Selection["blocked"];
   readonly own: ReadonlyArray<GitHubPullRequest>;
   readonly base: PlanBase;
@@ -1373,13 +1374,27 @@ async function trackIssues(execution: Execution, inputs: TrackingInputs): Promis
   // unassessed) and no issue is retired for it. The unit plans again when it runs: it fails there only if the error
   // persists, so a transient one leaves just this warning and the unassessed issue.
   const planned: PlannedUnit[] = [];
+  const planningCauses = new Map<string, string>();
   let complete = inputs.complete;
-  for (const unit of inputs.units) {
+  const failed = (unit: SecurityUnit, error: Error) => {
+    complete = false;
+    const packages = [...unit.work.map(packageKey), ...(unit.coupled ?? []).flat(),
+      ...unit.work.flatMap((fix) => (fix.carries ?? []).map((carried) => `${fix.ecosystem}|${carried.name}`))];
+    const cause = planningCause(error.message);
+    for (const key of packages) if (!planningCauses.has(key)) planningCauses.set(key, cause);
+  };
+  for (const unit of inputs.prepared.units) {
+    const failure = failureOf(inputs.prepared, unit);
+    if (failure !== undefined) {
+      failed(unit, failure);
+      continue;
+    }
     try {
       planned.push({ unit, plan: await planUnit(execution, unit, inputs.base) });
     } catch (error) {
-      complete = false;
-      context.logger.warn("secure-it: a unit can't be planned for its issue", { topic: unit.topic, error: asError(error).message });
+      const failure = asError(error);
+      failed(unit, failure);
+      context.logger.warn("secure-it: a unit can't be planned for its issue", { topic: unit.topic, error: failure.message });
     }
   }
   // Assessment names the same effective PR execution can reuse, with the same early-decision boundary.
@@ -1395,6 +1410,7 @@ async function trackIssues(execution: Execution, inputs: TrackingInputs): Promis
     observations: observationsOf(inputs.scanned, today),
     units: planned,
     blocked: inputs.blocked,
+    planningCauses,
     trusted: (pkg) => isTrustedPackage(config.trustedPackages, pkg),
     eligibleAt: eligibleAtOf(execution, config),
     prOf: (target) => {

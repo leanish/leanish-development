@@ -994,6 +994,54 @@ describe("secure-it run", () => {
       expect(h.agentCalls).toEqual([]);
     });
 
+    it("names and cleans a failed aged plan only on its package's issue, and drops the cause once planning succeeds", async () => {
+      const h = harness({ observations: [VITE_FINDING, { ...VITE_FINDING, name: "left-pad", versions: ["1.0.0"] }] });
+      let failing = true;
+      const cause = "registry 502 reading /synthetic/leanish/widget/package-lock.json and /tmp/worker/log from https://reader:password@registry.example/pkg?token=query-secret#private-fragment ghp_fake123\nprivate file contents: some-secret";
+      const tool = secureIt({ ...h.deps, requiredNpm: async (_base, plan) => {
+        if (failing) throw new Error(cause);
+        return plan;
+      } });
+      expect(await tool.run(h.context)).toMatchObject({ outcome: "failed", detail: cause });
+      const issues = issuesOf(h);
+      const unassessed = [...issues.issues.values()].find((issue) => recordOf(issue.body)?.subject.kind === "package" && issue.title.includes("vite"))!;
+      const unrelated = [...issues.issues.values()].find((issue) => issue.title.includes("left-pad"))!;
+      expect(unassessed.body).toContain("no fix was planned for it this run: registry 502 reading package-lock.json and <local path>");
+      expect(unassessed.body).not.toContain("/synthetic/leanish/widget");
+      expect(unassessed.body).not.toContain("/tmp/worker");
+      expect(unassessed.body).toContain("https://registry.example/pkg [redacted]");
+      for (const secret of ["password", "query-secret", "private-fragment", "ghp_fake123", "some-secret"]) expect(unassessed.body).not.toContain(secret);
+      expect(unrelated.body).toContain("no fix was planned for it this run (malware goes first, or its planning failed)");
+      expect(unrelated.body).not.toContain("registry 502");
+      failing = false;
+      expect(await tool.run(h.context)).toMatchObject({ outcome: "published" });
+      expect(issues.issues.get(unassessed.number)!.state).toBe("closed");
+      expect(recordOf(issues.issues.get(trackedIssueOf(h.github.prs.get(42)!.body)!)!.body)!.subject.kind).toBe("decision");
+      for (const issue of issues.issues.values()) if (issue.state === "open") expect(issue.body).not.toContain("registry 502");
+    });
+
+    it("names a young unit's planning failure on its roots, coupled and carried packages without blaming other findings", async () => {
+      const lock = JSON.parse(LOCK);
+      for (const name of ["brace", "unrelated"]) lock.packages[`node_modules/${name}`] = { version: "1.0.0" };
+      const carried = { name: "brace", from: ["1.0.0"], to: ["1.0.1"], locations: ["node_modules/brace"], advisories: ["GHSA-brace"] };
+      const h = harness({ fixes: [{ ...young, carries: [carried] }], files: { "package-lock.json": JSON.stringify(lock) },
+        observations: [VITE_FINDING, ...["left-pad", "brace", "unrelated"].map((name) => ({ ...VITE_FINDING, name, versions: ["1.0.0"] }))] });
+      const found = await h.deps.candidates(tree(BASE_SHA), await h.deps.gate(h.context), {});
+      // The unchanged installed peer is coupled to vite but has no move of its own.
+      const npmPeers = { resolve: async () => ({ additions: [], blocked: [], sets: [["vite", "left-pad"]] }) };
+      const tool = secureIt({ ...h.deps, candidates: async () => ({ ...found, npmPeers }), requiredNpm: async () => { throw new Error("registry 503"); } });
+      expect(await tool.run(h.context)).toMatchObject({ outcome: "failed", detail: "registry 503" });
+      const issues = [...issuesOf(h).issues.values()];
+      expect(issues).toHaveLength(4);
+      for (const name of ["vite", "left-pad", "brace"]) {
+        const issue = issues.find((issue) => { const subject = recordOf(issue.body)!.subject; return subject.kind === "package" && subject.name === name; });
+        expect(issue?.body).toContain("no fix was planned for it this run: registry 503");
+      }
+      expect(issues.find((issue) => issue.title.includes("unrelated"))!.body).not.toContain("registry 503");
+      expect(h.agentCalls).toEqual([]);
+      expect(h.workspace.publications).toEqual([]);
+    });
+
     it("tracks young npm work whose grouping a failed aged plan leaves unknown by package, not as a decision", async () => {
       // The aged plan decides which of its roots join the young work; without it the young decision isn't known yet,
       // so its finding stays tracked unassessed, like any unit that can't be planned.
@@ -1012,7 +1060,8 @@ describe("secure-it run", () => {
       ]) });
       const issues = [...issuesOf(h).issues.values()];
       expect(issues.map((issue) => recordOf(issue.body)?.subject)).toEqual([{ kind: "package", ecosystem: "npm", name: "vite" }]);
-      expect(issues[0]!.body).toContain("no fix was planned for it this run");
+      expect(issues[0]!.body).toContain("no fix was planned for it this run: the aged unit");
+      expect(issues[0]!.body).toContain("registry 502");
       expect(agedPlans).toBe(1);
       expect(h.agentCalls).toEqual([]);
     });
@@ -1118,10 +1167,12 @@ describe("secure-it run", () => {
   it("keeps malware together and does not bypass its already-open group", async () => {
     const malware = vite({ malicious: true });
     const other = vite({ name: "left-pad", from: "1.0.0", locations: ["node_modules/left-pad"], to: { version: "1.0.1", line: "1", aged: true, major: false, blockers: [] } });
-    const h = harness({ prs: [await vitePr({ headRef: "secure-it/2026-10-05-malware" }, malware)], fixes: [other, malware] });
+    const h = harness({ prs: [await vitePr({ headRef: "secure-it/2026-10-05-malware" }, malware)], fixes: [other, malware], observations: [VITE_FINDING, { ...VITE_FINDING, name: "left-pad", versions: ["1.0.0"] }] });
     expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "already-open", packages: ["npm|vite"] });
     expect(h.agentCalls).toEqual([]);
     expect(h.workspace.publications).toEqual([]);
+    const issue = [...(h.context.issues as FakeIssues).issues.values()].find((issue) => issue.title.includes("left-pad"));
+    expect(issue?.body).toContain("no fix was planned for it this run (malware goes first, or its planning failed)");
   });
 
   it("checks exclusion support before the agent, and leaves publication untouched on old npm", async () => {
@@ -2669,7 +2720,10 @@ describe("the cooldown hold", () => {
       const subject = recordOf(issue.body)!.subject;
       return subject.kind === "package" && subject.name === "left-pad";
     });
-    expect(unassessed?.body).toContain("no fix was planned for it this run");
+    expect(unassessed?.body).toContain("no fix was planned for it this run: registry 502");
+    for (const pr of others) expect(issues.issues.get(trackedIssueOf(pr.body)!)!.body).not.toContain("registry 502");
+    expect(await tool.run(h.context)).toMatchObject({ units: [{ outcome: "already-open" }, { outcome: "already-open" }, { outcome: "already-open" }] });
+    for (const issue of issues.issues.values()) if (issue.state === "open") expect(issue.body).not.toContain("registry 502");
     for (const pr of prs) expect(issues.issues.get(trackedIssueOf(pr.body)!)!.state).toBe("open");
     expect(prs.map((pr) => h.github.prs.get(pr.number)!.state)).toEqual(["open", "open", "open"]);
   });

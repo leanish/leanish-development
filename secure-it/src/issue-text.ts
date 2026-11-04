@@ -8,12 +8,15 @@
  * always shows whole: planSection shortens a section from its end, and a body that would lose any of it is refused
  * rather than published with a shorter scope than the one a label would authorize.
  */
-import { planPayload, planSection, TooLargeError } from "@leanish/tool-runtime/plan-blocks";
+import { defused, planPayload, planSection, TooLargeError } from "@leanish/tool-runtime/plan-blocks";
 import { literal } from "@leanish/tool-runtime/pr-text";
 
 import { type IssueRecord, type ObservedFinding, parseRecord, type SubjectAssessment, subjectPackages } from "./issue-model.ts";
 
 const HEADING = "## secure-it";
+/** Cleaned detail before quoting, including the cut marker; fences can expand it to 3,004 of a section's 43,000 characters. */
+const MAX_UNASSESSED_DETAIL_CHARS = 1_000;
+const DETAIL_CUT = " ... [truncated]";
 /** The label a person adds, after a `take-early: <reason>` comment, to let secure-it fix a waiting decision now. */
 export const TAKE_EARLY_LABEL = "take-early";
 /**
@@ -32,11 +35,14 @@ export interface IssueWriter {
 
 export const ISSUE_WRITER: IssueWriter = { render, withRecord };
 
-/** Every issue body cleaned as publication will clean it, including record-only updates. */
+/** Diagnostics cleaned before cutting, so no partial local path escapes; whole bodies cleaned after their records. */
 export function issueWriter(clean: (body: string) => string): IssueWriter {
   return {
     render: (assessment, record, sha) => {
-      const text = render(assessment, record, sha);
+      const status = assessment.status;
+      const prepared = status.kind === "blocked" && status.reason === "unassessed"
+        ? { ...assessment, status: { ...status, detail: clean(defused(status.detail)) } } : assessment;
+      const text = render(prepared, record, sha);
       return { title: text.title, body: clean(text.body) };
     },
     withRecord: (body, record) => clean(withRecord(body, record)),
@@ -139,9 +145,11 @@ function essentialLines(assessment: SubjectAssessment, record: IssueRecord): str
     case "informational":
       lines.push("**Reported only.** Only the package's own repository publishes these advisories: secure-it doesn't act on them until GitHub's advisory database or OSV does.");
       break;
-    case "blocked":
-      lines.push(`**Blocked:** ${blockedReason(status.reason)} ${literal(status.detail)}`);
+    case "blocked": {
+      const detail = status.reason === "unassessed" ? shortenedDetail(status.detail) : status.detail;
+      lines.push(`**Blocked:** ${blockedReason(status.reason)} ${literal(detail)}`);
       break;
+    }
     case "waiting":
       if (record.attempts.length > 0) {
         // Taken early: something ran, so the issue never says nothing did.
@@ -176,6 +184,14 @@ function essentialLines(assessment: SubjectAssessment, record: IssueRecord): str
     );
   }
   return lines;
+}
+
+function shortenedDetail(detail: string): string {
+  if (detail.length <= MAX_UNASSESSED_DETAIL_CHARS) return detail;
+  let end = MAX_UNASSESSED_DETAIL_CHARS - DETAIL_CUT.length;
+  const last = detail.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end--;
+  return `${detail.slice(0, end)}${DETAIL_CUT}`;
 }
 
 function blockedReason(reason: "no-fix" | "refused" | "unassessed"): string {
