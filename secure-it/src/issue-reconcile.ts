@@ -287,20 +287,26 @@ function withFindings(record: IssueRecord, shown: ReadonlyArray<FindingKey>): Is
 }
 
 /**
- * `record` with each tracked finding's ids grown by those of every observed finding it shares one with: sources add
- * aliases over time and can drop the first one seen, and a finding tracked by an id nothing reports any more would read
- * as gone (resolving its issue, or escaping a dismissal) while it's still there. The same object when nothing is new.
+ * `record` with each tracked finding's ids grown by those of every observed finding it shares one with, and each
+ * recorded absence's alike: sources add aliases over time and can drop the first one seen, and a finding tracked by an
+ * id nothing reports any more would read as gone (resolving its issue, or escaping a dismissal) while it's still there,
+ * or its ended episode as still running (a dismissal covering it again). The same object when nothing is new.
  */
 function withAliases(record: IssueRecord, observed: ReadonlyArray<FindingKey>): IssueRecord {
   let changed = false;
-  const findings = record.findings.map((tracked) => {
-    const ids = new Set(tracked.ids);
-    for (const finding of observed) if (sameFinding(tracked, finding)) for (const id of finding.ids) ids.add(id);
-    if (ids.size === tracked.ids.length) return tracked;
+  const grown = (key: FindingKey): FindingKey => {
+    const ids = new Set(key.ids);
+    for (const finding of observed) if (sameFinding(key, finding)) for (const id of finding.ids) ids.add(id);
+    if (ids.size === key.ids.length) return key;
     changed = true;
-    return { ...tracked, ids: [...ids].sort() };
+    return { ...key, ids: [...ids].sort() };
+  };
+  const findings = record.findings.map(grown);
+  const absences = record.absences.map((absence) => {
+    const finding = grown(absence.finding);
+    return finding === absence.finding ? absence : { ...absence, finding };
   });
-  return changed ? { ...record, findings } : record;
+  return changed ? { ...record, findings, absences } : record;
 }
 
 /** `record` with an absence for each of its findings a complete assessment no longer has; the same object when none. */

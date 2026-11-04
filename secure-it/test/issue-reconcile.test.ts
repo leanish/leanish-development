@@ -122,6 +122,20 @@ describe("reconcile", () => {
     expect(first.record.absences).toEqual([]);
   });
 
+  it("keeps a dismissed finding's ended episode ended once it's reported only by an alias it gained after it returned", () => {
+    const one = informational("lib", [finding("lib", ["GHSA-1"], { reviewed: false })]);
+    const [issue] = converge(assessed([one])).issues;
+    const dismissed: TrackedIssue = { ...issue!, state: "closed" };
+    const gone = converge(assessed([], true, LATER), [dismissed]).issues;
+    // It returns with a new alias: a new issue, as for any return after an ended episode.
+    const back = converge(assessed([informational("lib", [finding("lib", ["CVE-1", "GHSA-1"], { reviewed: false })])], true, LATER), gone).issues;
+    expect(open(back)).toHaveLength(1);
+    // Then only the alias is reported: the dismissal still doesn't cover it, and the new issue stays open.
+    const aliasOnly = converge(assessed([informational("lib", [finding("lib", ["CVE-1"], { reviewed: false })])], true, LATER), back).issues;
+    expect(open(aliasOnly)).toHaveLength(1);
+    expect(aliasOnly[0]!.record.absences).toEqual([{ finding: { ecosystem: "npm", name: "lib", ids: ["CVE-1", "GHSA-1"] }, at: LATER }]);
+  });
+
   it("keeps a dismissal when the dismissed finding gets a different fix", () => {
     const fixA = decision([move("lib", "1.0.1")], [finding("lib", ["GHSA-1"])]);
     const [issue] = converge(assessed([fixA])).issues;
