@@ -240,6 +240,15 @@ describe("Gradle parents, regressions", () => {
     ] })]);
   });
 
+  it("records only what the chosen move brings when a later fold moves the parent again", async () => {
+    // x's fold takes d 1.1 (bringing x 2.0); y's then takes d 1.2, which brings x 1.1: x 2.0 came only with the discarded 1.1.
+    const brings: Brings = { "1.0": { x: "1.0", y: "1.0" }, "1.1": { x: "2.0", y: "1.0" }, "1.2": { x: "1.1", y: "2.0" } };
+    const affected = { "g:x@1.0": ["GHSA-x"], "g:y@1.0": ["GHSA-y"] };
+    const fixes = await run([fixOf(X, "1.0", "GHSA-x"), fixOf(Y, "1.0", "GHSA-y")], brings, affected);
+    expect(fixes).toEqual([expect.objectContaining({ name: D, to: expect.objectContaining({ version: "1.2" }) })]);
+    expect(fixes[0]!.induced).toEqual([{ name: X, version: "1.1" }, { name: Y, version: "2.0" }]);
+  });
+
   it("doesn't take a dependency that no longer resolves for one that's gone", async () => {
     const brings: Brings = { "1.0": { x: "1.0" }, "1.1": { unresolved: true }, "1.2": { x: "2.0" } };
     const fixes = await run([fixOf(X, "1.0", "GHSA-x")], brings, { "g:x@1.0": ["GHSA-x"] });

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { type Assessment, type DecisionMove, type IssueRecord, type ObservedFinding, parseRecord, type SubjectAssessment, subjectId } from "../src/issue-model.ts";
-import { type IssueOperation, reconcile, type TrackedIssue } from "../src/issue-reconcile.ts";
+import { type IssueOperation, type IssueWriter, reconcile, type TrackedIssue } from "../src/issue-reconcile.ts";
 import { ISSUE_WRITER, recordOf } from "../src/issue-text.ts";
 
 const SHA = "a".repeat(40);
@@ -164,6 +164,24 @@ describe("reconcile", () => {
     const closed = reconcile(assessed([], true, LATER), [edited], ISSUE_WRITER).operations[0]!;
     expect(closed.kind).toBe("close");
     expect(recordOf((closed as { body: string }).body)?.pendingClose?.reason).toBe("resolved");
+  });
+
+  it("closes an issue for its successor only once the successor's text shows the findings that moved there", () => {
+    const joining = finding("lib", ["GHSA-A"], { reviewed: false });
+    const fix = decision([move("other")], [finding("other", ["GHSA-2"])]);
+    const issues = converge(assessed([informational("lib", [joining]), fix])).issues;
+    const joined = decision([move("other")], [...fix.findings, joining]);
+    // The successor's update can't be written (too large, say): it doesn't show the joining finding, so #1 stays open.
+    const failing: IssueWriter = { ...ISSUE_WRITER, render: (subject, record, sha) => {
+      if (subjectId(subject.subject) === subjectId(fix.subject)) throw new Error("the decision doesn't fit");
+      return ISSUE_WRITER.render(subject, record, sha);
+    } };
+    const result = reconcile(assessed([joined]), issues, failing);
+    expect(result.operations).toEqual([]);
+    expect(result.notes).toEqual(["#2: the decision doesn't fit", "#1: closes once #2 shows its findings"]);
+    const written = converge(assessed([joined]), issues).issues;
+    expect(written[0]!.record.pendingClose).toMatchObject({ reason: "superseded", successors: [2] });
+    expect(written[1]!.record.findings.map((tracked) => tracked.ids)).toEqual([["GHSA-2"], ["GHSA-A"]]);
   });
 
   it("opens an issue for a subject without findings rather than taking it for dismissed", () => {
