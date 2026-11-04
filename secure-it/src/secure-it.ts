@@ -1,6 +1,5 @@
 /** Security fixes and a separate proved floor-removal unit; malware first, every publication verified. */
 import { createHash } from "node:crypto";
-import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
 
 import { GitHubApiError } from "@leanish/agent-runtime/github/github-client";
@@ -33,8 +32,7 @@ import { candidateTree, changedBetween, fileState, type FileState, linkProblems,
 import { referenceTransform } from "@leanish/tool-runtime/gradle-reference";
 import { type GradleInventories, lockfilesOf, sandboxedGradleInventories } from "@leanish/tool-runtime/inventories";
 import { FileJournal, type PublicationJournal } from "@leanish/tool-runtime/journal";
-import { formatManifest } from "@leanish/tool-runtime/manifest-format";
-import { NPM_DEPENDENCY_FIELDS } from "@leanish/tool-runtime/npm-file-checks";
+import { withPlannedDependencyFields } from "@leanish/tool-runtime/npm-file-checks";
 import { requireNpmExcludes } from "@leanish/tool-runtime/npm-version";
 import { runSandboxed, sandboxWritable } from "@leanish/tool-runtime/sandboxed";
 import { ensureOsvScanner, verifyingRun } from "@leanish/tool-runtime/osv-scanner";
@@ -263,16 +261,7 @@ async function prepareNpmFiles(execution: Execution, plan: ChangePlan, base: Tre
     let output = text;
     if (path.endsWith("package.json") && plan.moves.some((move) => move.major)) {
       const current = await deps.trees.working(context.workingCopy).read(path);
-      if (current !== undefined) {
-        const manifest = JSON.parse(current) as Record<string, unknown>;
-        const original = structuredClone(manifest);
-        const planned = JSON.parse(text) as Record<string, unknown>;
-        for (const field of NPM_DEPENDENCY_FIELDS) {
-          if (planned[field] === undefined) delete manifest[field];
-          else manifest[field] = planned[field];
-        }
-        output = isDeepStrictEqual(original, manifest) ? current : formatManifest(current, manifest);
-      }
+      if (current !== undefined) output = withPlannedDependencyFields(current, text);
     }
     await deps.writeFile(context.workingCopy, path, output);
     const restored = restoredFiles?.get(path);
