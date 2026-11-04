@@ -187,6 +187,16 @@ describe("reconcile", () => {
     }
   });
 
+  it("tracks a finding that joined an issue: once its first one is gone, the issue is superseded by the joiner's fix, never resolved", () => {
+    const a = finding("lib", ["GHSA-A"], { reviewed: false });
+    const b = finding("lib", ["GHSA-B"]);
+    const opened = converge(assessed([informational("lib", [a])])).issues;
+    const joined = converge(assessed([informational("lib", [a, b])]), opened).issues;
+    expect(joined[0]!.record.findings.map((tracked) => tracked.ids)).toEqual([["GHSA-A"], ["GHSA-B"]]);
+    const fixed = converge(assessed([decision([move("lib")], [b])]), joined).issues;
+    expect(fixed[0]!.record.pendingClose).toMatchObject({ reason: "superseded", successors: [2] });
+  });
+
   it("keeps a duplicate opened for a finding the survivor lacks while the assessment is incomplete", () => {
     const [first] = converge(assessed([informational("lib", [finding("lib", ["GHSA-A"], { reviewed: false })])])).issues;
     const [wider] = converge(assessed([informational("lib", [finding("lib", ["GHSA-A"], { reviewed: false }), finding("lib", ["GHSA-B"], { reviewed: false })])])).issues;
@@ -247,7 +257,7 @@ describe("issue text", () => {
     // Taken early: the text never claims nothing ran.
     const taken = ISSUE_WRITER.render(subject, { ...record, attempts: [{ id: "a1", grantEventId: 7, branch: "b", startedAt: "2026-11-03T09:00:00Z", pr: 42 }] }, SHA).body;
     expect(taken).toContain("Taken early");
-    expect(taken).not.toContain("nothing was resolved");
+    expect(taken).not.toContain("Nothing was applied, built or tested");
   });
 
   it("refuses a body that would cut the decision a label authorizes", () => {

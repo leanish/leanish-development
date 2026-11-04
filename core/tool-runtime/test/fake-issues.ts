@@ -105,10 +105,10 @@ export class FakeIssues implements GitHubIssues {
   }
 
   /** A person closing or reopening an issue. */
-  setState(number: number, state: "open" | "closed", actor = this.me): void {
+  setState(number: number, state: "open" | "closed", actor = this.me, at?: string): void {
     const issue = this.issues.get(number)!;
     this.issues.set(number, { ...issue, state });
-    this.#event(number, { event: state === "open" ? "reopened" : "closed", actor });
+    this.#event(number, { event: state === "open" ? "reopened" : "closed", actor, ...(at === undefined ? {} : { createdAt: at }) });
   }
 
   #event(number: number, event: { event: string; actor: string; label?: string; createdAt?: string }): void {

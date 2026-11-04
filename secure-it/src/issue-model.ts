@@ -131,6 +131,11 @@ export interface PendingClose {
   readonly successors: ReadonlyArray<number>;
   /** The commit whose assessment decided it. */
   readonly at: string;
+  /**
+   * The id of the issue's last event when the tool recorded this closing (0 with none): its own closing is the first
+   * `closed` event after it, so a person's earlier closing and reopening never read as coming after the tool's.
+   */
+  readonly afterEvent?: number;
 }
 
 /** A finding seen absent by a complete assessment while this issue tracked it: its episode ended. */
@@ -145,7 +150,7 @@ export interface IssueRecord {
   readonly subject: Subject;
   /** The assessed commit the issue was opened at. */
   readonly openedAt: string;
-  /** The findings it was opened for: what a person's closing dismisses. */
+  /** The findings it was opened for, and each one that joined while it was current: what a person's closing dismisses. */
   readonly findings: ReadonlyArray<FindingKey>;
   readonly absences: ReadonlyArray<Absence>;
   readonly grant?: Grant;
@@ -284,7 +289,9 @@ function parsePendingClose(value: unknown): PendingClose | undefined {
   const successors = arrayOf(value["successors"], (number) => (isId(number) ? number : undefined));
   // A resolved issue has no successors; claiming some is a record no release writes.
   if (successors === undefined || (value["reason"] === "resolved" && successors.length > 0)) return undefined;
-  return { id: value["id"], reason: value["reason"], successors, at: value["at"] };
+  const afterEvent = value["afterEvent"];
+  if (afterEvent !== undefined && !(typeof afterEvent === "number" && Number.isSafeInteger(afterEvent) && afterEvent >= 0)) return undefined;
+  return { id: value["id"], reason: value["reason"], successors, at: value["at"], ...(afterEvent === undefined ? {} : { afterEvent }) };
 }
 
 /** Every element parsed, or undefined when the value isn't an array or any element doesn't parse. */

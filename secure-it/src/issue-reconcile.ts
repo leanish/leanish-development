@@ -125,7 +125,11 @@ export function reconcile(assessment: Assessment, issues: ReadonlyArray<TrackedI
     // One subject's text failing (a decision too large to show whole) is noted and leaves the others going.
     isolated(notes, current === undefined ? `${id}` : `#${current.number}`, () => {
       if (current !== undefined) {
-        const { body } = writer.render(subject, withShown(recordOf(current), subject, assessment.at), assessment.sha);
+        // The record keeps every finding the issue has shown: its successors, closing and dismissal go by all of them.
+        // It takes them only along with a text that shows them: a render that fails leaves the record as it was.
+        const record = withFindings(recordOf(current), subject.findings);
+        const { body } = writer.render(subject, withShown(record, subject, assessment.at), assessment.sha);
+        records.set(current.number, record);
         if (body !== current.body) operations.push({ kind: "update", number: current.number, body });
         return;
       }
@@ -171,7 +175,7 @@ export function reconcile(assessment: Assessment, issues: ReadonlyArray<TrackedI
         const first = bySubject.get(id)![0]!;
         if (first === issue) return;
         const authorized = (issue.labels ?? []).includes(TAKE_EARLY_LABEL) || record.attempts.some((attempt) => attempt.outcome === undefined);
-        const covered = record.findings.every((finding) => first.record.findings.some((kept) => sameFinding(finding, kept)));
+        const covered = record.findings.every((finding) => recordOf(first).findings.some((kept) => sameFinding(finding, kept)));
         if (authorized) notes.push(`#${issue.number}: duplicates #${first.number} but carries an authorization; a person closes one of them`);
         else if (assessment.complete || covered) operations.push(closing(issue, record, writer, "superseded", [first.number], assessment.sha));
         return;
@@ -226,6 +230,16 @@ function isDismissed(finding: FindingKey, dismissed: ReadonlyArray<TrackedIssue>
     const record = recordOf(issue);
     return record.findings.some((tracked) => sameFinding(tracked, finding)) && !record.absences.some((absence) => sameFinding(absence.finding, finding));
   });
+}
+
+/**
+ * `record` with each of `shown` it doesn't track yet (overlapping ids count as tracked); the same object when none.
+ * An issue shows its subject's current findings, so a finding that joined later is one it tracks too: closing it as
+ * resolved, or a person's dismissal, then goes by that finding as well.
+ */
+function withFindings(record: IssueRecord, shown: ReadonlyArray<FindingKey>): IssueRecord {
+  const joined = shown.filter((finding) => !record.findings.some((tracked) => sameFinding(tracked, finding))).map(keyOf);
+  return joined.length === 0 ? record : { ...record, findings: [...record.findings, ...joined] };
 }
 
 /** `record` with an absence for each of its findings a complete assessment no longer has; the same object when none. */

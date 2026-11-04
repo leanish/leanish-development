@@ -13,7 +13,7 @@
 import { GitHubApiError } from "@leanish/agent-runtime/github/github-client";
 import type { GitHubIssue, GitHubIssues } from "@leanish/tool-runtime/github-issues";
 
-import type { Assessment } from "./issue-model.ts";
+import type { Assessment, PendingClose } from "./issue-model.ts";
 import { type IssueOperation, type IssueWriter, reconcile, type TrackedIssue } from "./issue-reconcile.ts";
 import { ISSUE_LABEL, ISSUE_WRITER, noticeMarker, recordOf } from "./issue-text.ts";
 
@@ -68,9 +68,21 @@ export async function syncIssues(sync: IssueSync, assessment: Assessment): Promi
         written.add(operation.number);
         continue;
       }
-      written.add(await apply(sync, operation));
+      written.add(await apply(sync, operation.kind === "close" ? await withEventBoundary(sync, writer, operation) : operation));
     }
   }
+}
+
+/**
+ * A closing whose record names the issue's last event before it (`PendingClose.afterEvent`), so a later reading tells
+ * the tool's own `closed` event from a person's earlier ones by event order. A closing already recorded keeps its own.
+ */
+async function withEventBoundary(sync: IssueSync, writer: IssueWriter, operation: Extract<IssueOperation, { kind: "close" }>): Promise<IssueOperation> {
+  const record = recordOf(operation.body);
+  if (record?.pendingClose === undefined || record.pendingClose.afterEvent !== undefined) return operation;
+  const events = await sync.issues.listEvents({ repo: sync.repo, number: operation.number });
+  const afterEvent = events.reduce((last, event) => Math.max(last, event.id), 0);
+  return { ...operation, body: writer.withRecord(operation.body, { ...record, pendingClose: { ...record.pendingClose, afterEvent } }) };
 }
 
 /** Whether `read` is still what GitHub has: the same body, state and labels, read by its number. */
@@ -115,11 +127,34 @@ async function readTracked(sync: IssueSync, login: string, written: ReadonlySet<
       continue;
     }
     // A reopening only matters where the tool recorded a closing: read the events there alone.
-    const reopened = record.pendingClose !== undefined
-      && (await sync.issues.listEvents({ repo: sync.repo, number: issue.number })).some((event) => event.event === "reopened");
+    const reopened = record.pendingClose !== undefined && await reopenedAfterClosing(sync, issue.number, record.pendingClose);
     tracked.push({ number: issue.number, state: issue.state, body: issue.body, record, reopened, labels: issue.labels });
   }
   return { tracked, unreadable };
+}
+
+/**
+ * Whether a person reopened issue `number` after the tool's own closing `pending`, not merely at some time before it
+ * (closed and reopened by hand, then superseded by the tool). The tool's closing is the first `closed` event after the
+ * last one it saw when it recorded the closing (`afterEvent`), and only a `reopened` after that counts. A closing
+ * recorded before `afterEvent` existed goes by its notice comment, which the tool posts right before closing, at a
+ * second's precision; without the notice (deleted, or not listed), any reopening counts, so a person's is never lost.
+ */
+async function reopenedAfterClosing(sync: IssueSync, number: number, pending: PendingClose): Promise<boolean> {
+  const events = await sync.issues.listEvents({ repo: sync.repo, number });
+  const reopenings = events.filter((event) => event.event === "reopened");
+  if (reopenings.length === 0) return false;
+  const closings = events.filter((event) => event.event === "closed");
+  let toolClosing: number | undefined;
+  if (pending.afterEvent !== undefined) {
+    toolClosing = closings.filter((event) => event.id > pending.afterEvent!).sort((a, b) => a.id - b.id)[0]?.id;
+  } else {
+    const marker = noticeMarker(pending.id);
+    const notice = (await sync.issues.listComments({ repo: sync.repo, number })).find((comment) => comment.body.includes(marker));
+    if (notice === undefined) return true;
+    toolClosing = closings.filter((event) => Date.parse(event.createdAt) >= Date.parse(notice.createdAt)).sort((a, b) => a.id - b.id)[0]?.id;
+  }
+  return toolClosing !== undefined && reopenings.some((event) => event.id > toolClosing);
 }
 
 /** Issue `number` as GitHub has it now, or undefined once it's gone: transferred away (404) or deleted (410). */

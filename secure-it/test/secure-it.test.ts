@@ -621,6 +621,25 @@ describe("secure-it run", () => {
       expect(h.agentCalls).toHaveLength(1);
     });
 
+    it("defers a floor removal too when the issues didn't settle this run", async () => {
+      const f = removalFixture();
+      const h = harness({ fixes: [young], files: f.base });
+      // Every issue the sync opens is gone when read back, so the rounds run out without settling.
+      const issues = issuesOf(h);
+      const create = issues.createIssue.bind(issues);
+      issues.createIssue = async (args) => {
+        const issue = await create(args);
+        issues.issues.delete(issue.number);
+        return issue;
+      };
+      let proofs = 0;
+      const deps = { ...h.deps, floorProbe: async () => { proofs++; return f.probe(); }, gate: async () => scanned("2026-10-05T00:00:00Z"), scan: readScanState };
+      const result = await secureIt(deps).run(h.context);
+      expect(result).toMatchObject({ units: expect.arrayContaining([{ topic: "floor-removal", outcome: "deferred", reason: "the issues didn't settle this run" }]) });
+      expect(proofs).toBe(0);
+      expect(h.workspace.publications).toHaveLength(0);
+    });
+
     it("takes a young decision early on a writer's reason and label, recording one attempt before anything runs", async () => {
       const h = harness({ fixes: [young] });
       await flow(h).run(h.context);
@@ -1652,6 +1671,16 @@ describe("secure-it floor-removal units", () => {
     const pr = [...h.github.prs.values()][0]!;
     expect(pr.headRef).toBe("secure-it/2026-10-07-floor-removal");
     expect(planOf(pr.body)?.kind).toBe("floor-removal");
+  });
+  it("defers a floor removal too when the run's issues couldn't be synced: such a run executes nothing", async () => {
+    const f = removalFixture();
+    const h = harness({ fixes: [], files: f.base });
+    let proofs = 0;
+    // A state that isn't a real scan: the issues can't be synced from it.
+    const deps = { ...h.deps, scan: async () => ({ marker: "not a scan" }) as unknown as ScanState, floorProbe: async () => { proofs++; return f.probe(); } };
+    expect(await secureIt(deps).run(h.context)).toMatchObject({ outcome: "deferred", topic: "floor-removal", reason: expect.stringContaining("the issues couldn't be synced") });
+    expect(proofs).toBe(0);
+    expect(h.workspace.publications).toHaveLength(0);
   });
   it("runs alongside the ordinary security batch and cannot be blocked by its open PR", async () => {
     const f = removalFixture();

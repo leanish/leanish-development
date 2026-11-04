@@ -104,6 +104,23 @@ describe("syncIssues", () => {
     expect(issues.comments.get(1)![0]!.body).toContain("superseded by #2");
   });
 
+  it.each([
+    ["earlier", "2026-11-03T07:00:00Z", "2026-11-03T07:01:00Z"],
+    // The tool's closing notice is posted at 08:00 in the fake: the same second as the person's close and reopen.
+    ["in the same second as the tool's closing notice", "2026-11-03T08:00:00Z", "2026-11-03T08:00:00Z"],
+  ])("doesn't take a reopening from before the tool's closing (%s) for a person's dismissal of what the tool closed", async (_, closedAt, reopenedAt) => {
+    const issues = new FakeIssues();
+    await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+    issues.setState(1, "closed", "owner", closedAt);
+    issues.setState(1, "open", "owner", reopenedAt);
+    await syncIssues(sync(issues), assessed([waiting("lib", "1.0.2")], LATER));
+    expect(issues.issues.get(1)!.state).toBe("closed");
+    expect(recordOf(issues.issues.get(1)!.body)!.pendingClose?.afterEvent).toBeGreaterThan(0);
+    // Back to the first decision: closed by the tool, not dismissed, so it gets a fresh issue.
+    const back = await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+    expect(back.tracked.filter((issue) => issue.state === "open" && recordOf(issue.body)!.pendingClose === undefined).map((issue) => issue.number)).toEqual([3]);
+  });
+
   it("takes an issue a person reopened after the tool closed it for retired, and opens a fresh one for its subject", async () => {
     const issues = new FakeIssues();
     await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
