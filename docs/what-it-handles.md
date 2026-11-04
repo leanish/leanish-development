@@ -247,7 +247,9 @@ Each tool reviews its own open PRs on later runs:
   tool-state marker was removed, makes the tool leave that PR alone. Editing the
   rest of the description doesn't.
 - **The base moved:** the tool recomputes the plan and updates the PR, merging the
-  new base or redoing the change if the plan changed.
+  new base or redoing the change if the plan changed. A secure-it PR that tracks an
+  issue is updated only as that issue's decision: a different decision waits for the
+  next run, which handles it through that decision's own issue.
 - **CI is green:** the draft is marked ready. **Held by the cooldown:** it waits.
   secure-it opens no PR for a fix that waits: its [issue](../secure-it/README.md#issues-decide-what-runs)
   tracks it until it ages or a person labels it `take-early`.

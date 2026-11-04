@@ -28,6 +28,8 @@
   after a complete assessment records it absent and it later returns. If you ran a release candidate, keep its issues
   open and run secure-it again; if you closed them following an earlier version of this note, reopen those issues.
   Floor-removal PRs intentionally track no issue and keep their separate review behavior.
+- A first `take-early` label authorizes only the young versions its issue showed: one the issue never displayed (an
+  update that couldn't be written, say) needs a new label once the issue shows it.
 - While an incomplete assessment (a lasting coverage gap, say) no longer finds an open issue's decision, the issue stays
   open but says the run couldn't assess it, instead of keeping a promise the run didn't confirm (a PR on the next run,
   a way to take it early). Its record, grant and attempts are kept as they are.

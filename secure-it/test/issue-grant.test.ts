@@ -41,6 +41,17 @@ describe("grantOf", () => {
     });
   });
 
+  it("never grants a first label for a young version its issue didn't show, even when the times allow it", () => {
+    // The issue showed only lib@1.0.1 (an update adding lib-dep couldn't be written); the decision now takes both.
+    const status: SubjectStatus = { kind: "waiting", young: [young("1.0.1"), { ecosystem: "npm", name: "lib-dep", version: "2.0.1", eligibleAt: "2026-11-10T00:00:00Z" }] };
+    expect(grantOf(input({ status }))).toEqual({
+      kind: "refused", noticeId: "take-early:7:young-unshown",
+      reason: "the decision takes npm lib-dep@2.0.1, which its issue didn't show when it was labeled; label it again once it shows that",
+    });
+    // Only versions it showed still grant, as before.
+    expect(grantOf(input())).toMatchObject({ kind: "granted" });
+  });
+
   it("doesn't let a first label cover young versions the issue showed only after it was added", () => {
     // The same moves now also take lib-dep@2.0.1 (a probe brought it in), shown by the run after the label.
     const later = { ...record, shown: { young: [{ ecosystem: "npm" as const, name: "lib", version: "1.0.1" }, { ecosystem: "npm" as const, name: "lib-dep", version: "2.0.1" }], since: "2026-11-03T09:00:00.000Z" } };
