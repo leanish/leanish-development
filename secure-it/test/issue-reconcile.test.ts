@@ -112,10 +112,70 @@ describe("reconcile", () => {
     expect(reconcile(assessed([decision([move("lib", "1.0.2")], [finding("lib", ["GHSA-1"])])]), [dismissed], ISSUE_WRITER).operations).toEqual([]);
   });
 
+  it.each([
+    { status: "waiting", promise: "Waiting for the release-age wait" },
+    { status: "eligible", promise: "**Ready.**" },
+  ])("stops a $status issue promising anything while an incomplete assessment doesn't confirm its decision", ({ status, promise }) => {
+    const lib = finding("lib", ["GHSA-1"]);
+    const subject: SubjectAssessment = status === "waiting" ? decision([move("lib")], [lib]) : { ...decision([move("lib")], [lib]), status: { kind: "eligible", trusted: [] } };
+    const before = converge(assessed([subject])).issues;
+    expect(before[0]!.body).toContain(promise);
+    // An incomplete run that still sees the finding, now under another decision it couldn't plan.
+    const elsewhere = informational("lib", [lib]);
+    const after = converge(assessed([elsewhere], false, LATER), before);
+    const issue = after.issues.find((tracked) => tracked.number === before[0]!.number)!;
+    expect(issue.state).toBe("open");
+    expect(issue.body).not.toContain(promise);
+    expect(issue.body).not.toContain("take-early: <reason>");
+    expect(issue.body).toContain("**Blocked:** the fix couldn't be assessed this run.");
+    expect(issue.body).toContain("GHSA-1");
+    // Its record is untouched: no absence, no closing, the same subject and findings.
+    expect(issue.record).toEqual(before[0]!.record);
+    // The same incomplete assessment again changes nothing more.
+    expect(reconcile(assessed([elsewhere], false, LATER), after.issues, ISSUE_WRITER).operations).toEqual([]);
+    // A later complete assessment that confirms it again gives it its status back.
+    const confirmed = converge(assessed([subject], true, LATER), after.issues);
+    expect(confirmed.issues.find((tracked) => tracked.number === before[0]!.number)!.body).toContain(promise);
+  });
+
+  it("says a package issue's advisories weren't found again, without moves it never had", () => {
+    const [issue] = converge(assessed([informational("lib", [finding("lib", ["GHSA-1"], { reviewed: false })])])).issues;
+    const after = converge(assessed([], false, LATER), [issue!]).issues[0]!;
+    expect(after.body).toContain("didn't find these advisories again; it tracks lib GHSA-1");
+    expect(after.body).not.toContain("moves below");
+    expect(after.record).toEqual(issue!.record);
+  });
+
+  it("doesn't say a package issue's advisories are gone when an incomplete run sees them under a new decision", () => {
+    const lib = finding("lib", ["GHSA-1"]);
+    const [issue] = converge(assessed([{ subject: { kind: "package", ecosystem: "npm", name: "lib" }, findings: [lib], status: { kind: "blocked", reason: "no-fix", detail: "none yet" } }])).issues;
+    const after = converge(assessed([decision([move("lib")], [lib])], false, LATER), [issue!]).issues;
+    const old = after.find((tracked) => tracked.number === issue!.number)!;
+    expect(old.state).toBe("open");
+    expect(old.body).toContain("couldn't confirm this issue's current status");
+    expect(old.body).not.toContain("didn't find these advisories again");
+    expect(old.body).toContain("| `lib` | `GHSA-1` |");
+    expect(old.record).toEqual(issue!.record);
+    expect(after.some((tracked) => tracked.number !== issue!.number && tracked.record.subject.kind === "decision")).toBe(true);
+  });
+
+  it("keeps an unconfirmed early attempt's grant and attempt recorded while it says it couldn't assess it", () => {
+    const [issue] = converge(assessed([decision([move("lib")], [finding("lib", ["GHSA-1"])])])).issues;
+    const grant = { labelEventId: 7, reasonCommentId: 6, actor: "owner", at: "2026-11-03T08:01:00Z", young: [{ ecosystem: "npm" as const, name: "lib", version: "1.0.1" }] };
+    const attempt = { id: "7-1", grantEventId: 7, branch: "secure-it/2026-11-03-take-early-7", startedAt: "2026-11-03T08:02:00.000Z", pr: 9 };
+    const record = { ...issue!.record, grant, attempts: [attempt] };
+    const early: TrackedIssue = { ...issue!, body: ISSUE_WRITER.withRecord(issue!.body, record), record };
+    const after = converge(assessed([], false, LATER), [early]).issues[0]!;
+    expect(after.record).toEqual(record);
+    expect(after.body).toContain("**Blocked:** the fix couldn't be assessed this run.");
+  });
+
   it("resolves an issue only on a complete assessment, recording where its findings went away", () => {
     const issues = converge(assessed([decision([move("lib")], [finding("lib", ["GHSA-1"])])])).issues;
     const incomplete = reconcile(assessed([], false, LATER), issues, ISSUE_WRITER);
-    expect(incomplete.operations).toEqual([]);
+    expect(incomplete.operations.map((operation) => operation.kind)).toEqual(["update"]);
+    // The run saw none of its findings, so no table shows them: the text names what it tracks, from its record.
+    expect((incomplete.operations[0] as { body: string }).body).toContain("it tracks lib GHSA-1");
     expect(incomplete.notes).toEqual(["#1: its subject is gone, but the assessment is incomplete; it stays open"]);
     const resolved = converge(assessed([], true, LATER), issues);
     const closed = resolved.issues[0]!;

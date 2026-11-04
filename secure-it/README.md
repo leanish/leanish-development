@@ -31,8 +31,9 @@ An unassessed issue names a known planning failure on the affected roots, couple
 failed aged planning leaves young npm grouping unknown. It shows only the error's first line, with URL userinfo,
 queries, fragments and recognizable credentials redacted. Local paths are cleaned before the detail is cut to 1,000
 characters, including a visible cut marker, before quoting; quoting and body cleaning can expand that text. Without a
-known cause (malware taking priority, say), it keeps the generic explanation. Reassessed issues use this run's causes;
-an issue left unchanged during an incomplete run still shows its earlier assessment.
+known cause (malware taking priority, say), it keeps the generic explanation. Reassessed issues use this run's causes.
+An open issue whose decision an incomplete run no longer finds stays open and says the run couldn't assess it, with the
+findings the run did see, instead of its earlier status; its record, grant and attempts stay as they are.
 
 A run whose candidate planning fails, or whose inventory is incomplete, executes nothing and changes no issue; one unit
 failing to plan leaves its findings tracked and retires nothing.
@@ -72,9 +73,11 @@ fixes that work afresh, in the batch it now belongs to.
 Verification can find a young version planning didn't choose (a transitive move, say). Whether the decision was past
 the wait or taken early, the run then publishes nothing, names the versions on the issue and tries again next run.
 
-A version-fix PR without a `Tracks` line is left to its owner. Before upgrading from earlier versions or release
-candidates, close obsolete version-fix PRs and issues by hand, keeping any human changes you need, then run secure-it
-to create current decision issues. Nothing is migrated; waiting decisions need a fresh authorization.
+A version-fix PR without a `Tracks` line is left to its owner. Before upgrading from 0.10.x, close secure-it's open
+version-fix PRs by hand, keeping any human changes you need: nothing migrates them, and the first run assesses the
+findings and opens the corresponding issues. Don't close secure-it's issues to start over: closing an issue dismisses
+its tracked findings. A new advisory finding can open a new issue; a dismissed finding can open one again after a
+complete assessment records it absent and it later returns.
 
 ## What a run does
 

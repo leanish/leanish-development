@@ -21,10 +21,16 @@
   plan. Graduation closes the draft and settles its attempt before branch or CI work. Verification admits only the
   grant's young versions and trusted packages; recorded cooldown warnings and evidence remain visible. bump-it and
   ordinary PRs still wait when only the gate's cooldown holds them.
-- Before upgrading from earlier versions or release candidates, close obsolete secure-it version-fix PRs and issues
-  by hand, keeping any human changes you need, then run secure-it to create current decision issues. Nothing is
-  migrated; authorize waiting decisions again if needed. Review leaves version-fix PRs without `Tracks` to the owner.
+- Before upgrading from 0.10.x, close secure-it's open version-fix PRs by hand, keeping any human changes you need:
+  nothing migrates them, and review leaves a version-fix PR without `Tracks` to its owner. The first run then assesses
+  the findings and opens the corresponding issues. Don't close secure-it's issues to start over: closing an issue
+  dismisses its tracked findings. A new advisory finding can open a new issue; a dismissed finding can open one again
+  after a complete assessment records it absent and it later returns. If you ran a release candidate, keep its issues
+  open and run secure-it again; if you closed them following an earlier version of this note, reopen those issues.
   Floor-removal PRs intentionally track no issue and keep their separate review behavior.
+- While an incomplete assessment (a lasting coverage gap, say) no longer finds an open issue's decision, the issue stays
+  open but says the run couldn't assess it, instead of keeping a promise the run didn't confirm (a PR on the next run,
+  a way to take it early). Its record, grant and attempts are kept as they are.
 - `setup verify-tokens` checks secure-it's Issues permission, and probes write-level permissions with a read where one
   exists (all but Workflows), on private repositories as before: a read GitHub denies (401, 403 or 404) now fails there
   instead of at the first real run. A read that succeeds leaves the write grant unverified, for the real test run to
