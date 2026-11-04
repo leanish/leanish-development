@@ -55,7 +55,8 @@ import { postNotice } from "./issue-notices.ts";
 import { syncIssues } from "./issue-sync.ts";
 import { attemptBranches, type Disposition, inactiveLabelNotices, issueDisposition, type Tracking, type TrackedExecution } from "./issue-tracking.ts";
 import { type AttemptClient, type AttemptPatch, endAttempt, recoverAttempts, settleAttempt } from "./issue-attempts.ts";
-import { earlyDecisions, isEarlyPr, reviewClosed, reviewDisposition, reviewExecution, type ReviewIssues, takenEarlyOf, trackedIssueOf } from "./issue-review.ts";
+import { EarlyPrs, takenEarlyOf, trackedIssueOf } from "./decision-issues.ts";
+import { earlyDecisions, reviewClosed, reviewDisposition, reviewExecution, type ReviewIssues, type ReviewPermit } from "./issue-review.ts";
 import { trackingContent } from "./issue-text.ts";
 import { removalTransform } from "./floor-gradle.ts";
 import { probeOnBase } from "./floor-probe.ts";
@@ -291,8 +292,8 @@ interface Execution {
   readonly npmFiles: Map<string, string>;
   /** Branches this run created, on top of the open PRs' ones: two units' topics can cut to the same branch name. */
   readonly branches: Set<string>;
-  /** Confirmed early ownership, read once per PR in this run/tick; execution still asks its issue afresh. */
-  readonly early: Map<number, Promise<boolean>>;
+  /** Whether the issue records a PR as a running early attempt, read once per PR in this run/tick; execution still asks its issue afresh. */
+  readonly early: EarlyPrs;
 }
 
 interface PlanBase {
@@ -325,7 +326,7 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
     ...(selection.undecided ?? []).flatMap((set) => set.packages.map((key) => [key, "direct-peer set"] as const)),
   ]);
 
-  const execution = { context, deps, env, inventories, publication: publicationOf(context, deps), npmFiles: new Map<string, string>(), branches: new Set<string>(), early: new Map<number, Promise<boolean>>() };
+  const execution = { context, deps, env, inventories, publication: publicationOf(context, deps), npmFiles: new Map<string, string>(), branches: new Set<string>(), early: new EarlyPrs({ issues: context.issues, repo: context.repo.repo }) };
   const listed = await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base);
   const results: Readonly<Record<string, unknown>>[] = [];
   // Metadata first (no Gradle): the units and their plans. Then the issues decide what may execute.
@@ -649,7 +650,7 @@ async function runUnit(
   // The reused PR is checked before anything repairs, refreshes or redoes it.
   const reused = already ?? owned[0];
   const details = { topic: plan.topic, packages: plan.packages, notes: plan.notes ?? [] };
-  if (reused !== undefined && !reused.pr.isDraft && await earlyPr(execution, reused.pr, plan)) {
+  if (reused !== undefined && !reused.pr.isDraft && await execution.early.is(reused.pr, plan)) {
     return { ...details, outcome: "deferred", reason: "a person marked the early PR ready" };
   }
   if (reused !== undefined) assertNoUndecidedMoves(planOf(reused.pr.body), undecided);
@@ -1013,19 +1014,9 @@ async function recognisedPlans(execution: Execution, own: ReadonlyArray<GitHubPu
     const effective = ownershipView(ownership);
     const plan = effective === undefined ? undefined : planOf(effective.body);
     if (ownership.kind !== "ours" || effective === undefined || plan === undefined) continue;
-    if (matchesPlan(target, { pr: effective, plan, early: await earlyPr(execution, effective, plan) })) owned.push(ownership);
+    if (matchesPlan(target, { pr: effective, plan, early: await execution.early.is(effective, plan) })) owned.push(ownership);
   }
   return owned;
-}
-
-/** Metadata ownership is shared by assessment and execution, without repeating issue reads for every unit. */
-function earlyPr(execution: Execution, pr: GitHubPullRequest, plan: ChangePlan): Promise<boolean> {
-  let read = execution.early.get(pr.number);
-  if (read === undefined) {
-    read = isEarlyPr({ issues: execution.context.issues, repo: execution.context.repo.repo }, pr, plan);
-    execution.early.set(pr.number, read);
-  }
-  return read;
 }
 
 /** Early PRs carry exact decisions; eligible ordinary PRs can reconcile their kind and full recorded topic. */
@@ -1092,10 +1083,11 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
   const { config } = await readSettings(await deps.trees.commit(context.workingCopy, context.workingCopy.headSha));
   const trusted = (pkg: { readonly ecosystem: SecurityFix["ecosystem"]; readonly name: string }) => isTrustedPackage(config.trustedPackages, pkg);
   const open = await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base);
-  // Decisions taken early are never reduced by review.
-  // Read once per tick, when first asked.
-  let early: ReturnType<typeof earlyDecisions> | undefined;
-  const decisions = () => (early ??= earlyDecisions(issues, open));
+  // Which PRs the issues record as early attempts, for this tick: dispositions, matching and retries share the answers.
+  const early = new EarlyPrs({ issues: context.issues, repo: context.repo.repo });
+  // Decisions taken early are never reduced by review. Read once per tick, when first asked.
+  let taken: ReturnType<typeof earlyDecisions> | undefined;
+  const decisions = () => (taken ??= earlyDecisions(open, early));
   const governed: SecureItDeps = {
     ...deps,
     disposition: async (target) => {
@@ -1103,7 +1095,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       return deps.disposition(target);
     },
   };
-  const execution = { context, deps: governed, env, inventories, publication, npmFiles: new Map<string, string>(), branches: new Set<string>(), early: new Map<number, Promise<boolean>>() };
+  const execution = { context, deps: governed, env, inventories, publication, npmFiles: new Map<string, string>(), branches: new Set<string>(), early };
   const notes: Array<Readonly<Record<string, unknown>>> = [];
   const planFrom = (pr: GitHubPullRequest): ChangePlan => {
     const plan = planOf(pr.body);
@@ -1114,9 +1106,14 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
     ...attemptClient(execution), now: context.now, trusted, eligibleAt: eligibleAtOf(execution, config),
     retire: (pr, comment) => closeAndDelete(publication, pr.number, pr.headSha, comment, { onlyDraft: true }),
   };
-  // The young versions each version PR's grant covered when its disposition was asked this tick: one snapshot per PR,
-  // so verification needs no second issue read (a grant withdrawn meanwhile leaves the PR on the next tick).
-  const allowedYoung = new Map<number, ReadonlyArray<PackageVersion>>();
+  // What each version PR's disposition allowed this tick: one snapshot per PR, so verification needs no second issue
+  // read (a grant withdrawn meanwhile leaves the PR on the next tick).
+  const permits = new Map<number, ReviewPermit>();
+  const permitOf = (pr: GitHubPullRequest): ReviewPermit => {
+    const permit = permits.get(pr.number);
+    if (permit === undefined) throw new Error("a version PR can't be verified without its review disposition");
+    return permit;
+  };
   /**
    * Verifies a reviewed PR's new content and publishes it with its plan section; what verification left out is noted.
    * A PR tracking an issue keeps its `Tracks #N.` line whatever the agent rewrote, and publishes no young version
@@ -1125,9 +1122,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
   const verifyAndPublish = async (pr: GitHubPullRequest, prepared: PreparedBranch, base: PlanBase, plan: ChangePlan, content: Content, failure: string, attempt?: number) => {
     const tracked = trackedIssueOf(pr.body);
     if (tracked === undefined) throw new Error("a version PR can't be published without its decision's issue");
-    const allowed = allowedYoung.get(pr.number);
-    if (allowed === undefined) throw new Error("a version PR can't be verified without its review disposition");
-    const admits = await admitted(base.tree, allowed);
+    const admits = await admitted(base.tree, permitOf(pr).young);
     const verified = await verifyWithRetry(execution, base, plan, content, { admits });
     if (verified.unplanned !== undefined) {
       const unplanned = verified.unplanned;
@@ -1145,8 +1140,8 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
     disposition: async (pr) => {
       const plan = planFrom(pr);
       if (plan.kind === "floor-removal") return { kind: "proceed" };
-      const decided = await reviewDisposition(issues, pr, plan);
-      if (decided.kind === "proceed") allowedYoung.set(pr.number, decided.young ?? []);
+      const decided = await reviewDisposition(issues, pr, plan, early);
+      if (decided.kind === "proceed") permits.set(pr.number, decided.permit);
       return decided;
     },
     closed: async (pr) => {
@@ -1195,14 +1190,14 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       if (blocked.length > 0) notes.push({ number: pr.number, blocked });
       // Split exactly as a run would, required-dependency moves included, before telling which unit is this PR's.
       const prepared = await withRequiredYoung(execution, units, { tree: base, gradle: baseGradle });
-      // Only an early PR's standing grant supplies young coverage in this tick's disposition.
-      const early = allowedYoung.get(pr.number)!.length > 0;
+      // Taken early under a grant that stood at this tick's disposition.
+      const { early: takenEarly } = permitOf(pr);
       // Failed aged npm planning leaves early npm grouping unknown, even if its roots now appear aged.
-      if (prepared.ungrouped !== undefined && early && previous.moves.some((move) => move.ecosystem === "npm")) throw prepared.ungrouped;
-      const selected = await reviewPlan(execution, previous, prepared, { tree: base, gradle: baseGradle }, early);
+      if (prepared.ungrouped !== undefined && takenEarly && previous.moves.some((move) => move.ecosystem === "npm")) throw prepared.ungrouped;
+      const selected = await reviewPlan(execution, previous, prepared, { tree: base, gradle: baseGradle }, takenEarly);
       if (selected === undefined) {
         await closeAndDelete(publication, pr.number, pr.headSha, "No actionable fixes remain for this security unit on the default branch. Blocked fixes are reported by secure-it.");
-        if (early) await reviewClosed(issues, pr, previous);
+        if (takenEarly) await reviewClosed(issues, pr, previous);
         return "retired";
       }
       const { unit, plan } = selected;
@@ -1404,7 +1399,7 @@ async function trackIssues(execution: Execution, inputs: TrackingInputs): Promis
   const recorded: Array<{ pr: GitHubPullRequest; plan: ChangePlan; early: boolean }> = [];
   for (const pr of await reusable(execution.publication, inputs.own)) {
     const plan = planOf(pr.body);
-    if (plan !== undefined) recorded.push({ pr, plan, early: await earlyPr(execution, pr, plan) });
+    if (plan !== undefined) recorded.push({ pr, plan, early: await execution.early.is(pr, plan) });
   }
   const assessment = await assessmentOf({
     sha: inputs.tree.id,
@@ -1426,7 +1421,7 @@ async function trackIssues(execution: Execution, inputs: TrackingInputs): Promis
   // Before any disposition: an attempt a previous run left running is settled from its PR, or ends as interrupted.
   const recovered = await recoverAttempts(attemptClient(execution), sync.tracked);
   // Recovery can attach a PR to its attempt: execution must not reuse assessment's earlier ownership answer.
-  if (recovered.length > 0) execution.early.clear();
+  if (recovered.length > 0) execution.early.forget();
   for (const note of [...sync.notes, ...recovered]) context.logger.warn("secure-it: issues", { note });
   // Labels where they authorize nothing are said so too, whether or not anything here would execute.
   await inactiveLabelNotices({ issues: context.issues, repo: context.repo.repo, clean: issueCleaner(context) }, { assessment, sync });

@@ -6,8 +6,8 @@
  */
 import type { GitHubIssues } from "@leanish/tool-runtime/github-issues";
 
+import { grantStanding } from "./decision-issues.ts";
 import { decisionMoves } from "./issue-assessment.ts";
-import { grantOf } from "./issue-grant.ts";
 import type { Assessment, Attempt, IssueRecord, PackageVersion } from "./issue-model.ts";
 import { subjectId } from "./issue-model.ts";
 import { postNotice } from "./issue-notices.ts";
@@ -69,13 +69,7 @@ export async function issueDisposition(
   if (subject.status.kind !== "waiting") return { kind: "defer", reason: `its issue #${issue.number} says it can't go ahead` };
   if (!fresh.labels.includes(TAKE_EARLY_LABEL)) return { kind: "defer", reason: `waiting for the release-age wait (#${issue.number})` };
 
-  const [events, comments] = await Promise.all([
-    client.issues.listEvents({ repo: client.repo, number: issue.number }),
-    client.issues.listComments({ repo: client.repo, number: issue.number }),
-  ]);
-  const actors = [...new Set(events.flatMap((event) => (event.actor === null ? [] : [event.actor])))];
-  const permissions = new Map(await Promise.all(actors.map(async (actor) => [actor, await client.issues.permission({ repo: client.repo, login: actor })] as const)));
-  const decision = grantOf({ state: fresh.state, labels: fresh.labels, record: current, status: subject.status, events, comments, permissions });
+  const decision = await grantStanding(client, issue.number, { state: fresh.state, labels: fresh.labels, record: current, status: subject.status });
   if (decision.kind === "none") return { kind: "defer", reason: `waiting for the release-age wait (#${issue.number})` };
   if (decision.kind === "refused") {
     // Every refusal shows on the issue, once per label event and reason.
