@@ -48,11 +48,11 @@ describe("attemptBranchAllowed", () => {
 describe("attemptBranches", () => {
   it("gives a grant's later asks (a retry names no branch) the reused PR branch its unit named", () => {
     const branches = attemptBranches((id) => `secure-it/2026-11-04-take-early-${id}`);
-    expect(branches(undefined)(7)).toBe("secure-it/2026-11-04-take-early-7");
-    expect(branches("secure-it/2026-11-03-security-cooldown-lib")(7)).toBe("secure-it/2026-11-03-security-cooldown-lib");
-    expect(branches(undefined)(7)).toBe("secure-it/2026-11-03-security-cooldown-lib");
-    expect(attemptBranchAllowed({ branch: "secure-it/2026-11-03-security-cooldown-lib", grantEventId: 7 }, branches(undefined)(7))).toBe(true);
-    expect(branches(undefined)(8)).toBe("secure-it/2026-11-04-take-early-8");
+    expect(branches(7)).toBe("secure-it/2026-11-04-take-early-7");
+    expect(branches(7, "secure-it/2026-11-03-security-cooldown-lib")).toBe("secure-it/2026-11-03-security-cooldown-lib");
+    expect(branches(7)).toBe("secure-it/2026-11-03-security-cooldown-lib");
+    expect(attemptBranchAllowed({ branch: "secure-it/2026-11-03-security-cooldown-lib", grantEventId: 7 }, branches(7))).toBe(true);
+    expect(branches(8)).toBe("secure-it/2026-11-04-take-early-8");
   });
 });
 

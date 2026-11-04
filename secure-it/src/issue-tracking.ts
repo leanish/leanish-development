@@ -8,10 +8,11 @@ import type { GitHubIssues } from "@leanish/tool-runtime/github-issues";
 
 import { decisionMoves } from "./issue-assessment.ts";
 import { grantOf } from "./issue-grant.ts";
-import type { Assessment, Attempt, IssueRecord, PackageVersion, SubjectAssessment } from "./issue-model.ts";
+import type { Assessment, Attempt, IssueRecord, PackageVersion } from "./issue-model.ts";
 import { subjectId } from "./issue-model.ts";
-import { postNotice, type SyncResult } from "./issue-sync.ts";
-import { ISSUE_LABEL, ISSUE_WRITER, recordOf, TAKE_EARLY_LABEL } from "./issue-text.ts";
+import { postNotice } from "./issue-notices.ts";
+import type { SyncResult } from "./issue-sync.ts";
+import { ISSUE_LABEL, issueWriter, recordOf, TAKE_EARLY_LABEL } from "./issue-text.ts";
 import type { ChangePlan } from "./plan.ts";
 
 /** Whether a target may execute now; `defer` says why not, and stops it before anything runs. */
@@ -95,7 +96,7 @@ export async function issueDisposition(
     id: `${decision.grant.labelEventId}-${client.now.getTime()}`, grantEventId: decision.grant.labelEventId, branch: branch(decision.grant.labelEventId), startedAt: client.now.toISOString(),
   };
   const record: IssueRecord = { ...current, grant: decision.grant, attempts: [...current.attempts, attempt] };
-  await client.issues.updateIssue({ repo: client.repo, number: issue.number, body: client.clean(ISSUE_WRITER.render(subject as SubjectAssessment, record, tracking.assessment.sha).body) });
+  await client.issues.updateIssue({ repo: client.repo, number: issue.number, body: issueWriter(client.clean).render(subject, record, tracking.assessment.sha).body });
   return early(attempt);
 }
 
@@ -103,9 +104,9 @@ export async function issueDisposition(
  * A run's branch for each grant's attempt: the reused PR's head a unit named for it (`named`), remembered so the run's
  * later asks for the same grant (a retry names none) get that same branch, else the one `reserve` gives the grant.
  */
-export function attemptBranches(reserve: (labelEventId: number) => string): (named: string | undefined) => (labelEventId: number) => string {
+export function attemptBranches(reserve: (labelEventId: number) => string): (labelEventId: number, named?: string) => string {
   const reused = new Map<number, string>();
-  return (named) => (labelEventId) => {
+  return (labelEventId, named) => {
     if (named !== undefined) reused.set(labelEventId, named);
     return reused.get(labelEventId) ?? reserve(labelEventId);
   };

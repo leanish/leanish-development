@@ -11,7 +11,7 @@ import type { GitHubIssues } from "@leanish/tool-runtime/github-issues";
 
 import type { Attempt, IssueRecord } from "./issue-model.ts";
 import type { TrackedIssue } from "./issue-reconcile.ts";
-import { ISSUE_WRITER, recordOf, TAKE_EARLY_LABEL } from "./issue-text.ts";
+import { issueWriter, recordOf, TAKE_EARLY_LABEL } from "./issue-text.ts";
 
 export interface AttemptClient {
   readonly issues: GitHubIssues;
@@ -34,7 +34,7 @@ export async function settleAttempt(client: AttemptClient, number: number, id: s
   if (attempt === undefined || attempt.outcome !== undefined) return;
   const settled: Attempt = { ...attempt, ...patch };
   const updated: IssueRecord = { ...record, attempts: record.attempts.map((entry) => (entry.id === id ? settled : entry)) };
-  await client.issues.updateIssue({ repo: client.repo, number, body: client.clean(ISSUE_WRITER.withRecord(issue.body, updated)) });
+  await client.issues.updateIssue({ repo: client.repo, number, body: issueWriter(client.clean).withRecord(issue.body, updated) });
   if (settled.outcome !== "pr-closed") return;
   try {
     await returnLabel(client, number, settled.grantEventId);

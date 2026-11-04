@@ -3,8 +3,8 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { type Assessment, type DecisionMove, type IssueRecord, type ObservedFinding, parseRecord, type SubjectAssessment, subjectId } from "../src/issue-model.ts";
-import { type IssueOperation, type IssueWriter, reconcile, type TrackedIssue } from "../src/issue-reconcile.ts";
-import { ISSUE_WRITER, recordOf } from "../src/issue-text.ts";
+import { type IssueOperation, reconcile, type TrackedIssue } from "../src/issue-reconcile.ts";
+import { ISSUE_WRITER, type IssueWriter, recordOf } from "../src/issue-text.ts";
 
 const SHA = "a".repeat(40);
 const LATER = "b".repeat(40);
