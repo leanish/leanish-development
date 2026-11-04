@@ -46,6 +46,14 @@ describe("strict pins in secure-it", () => {
     expect(selection.blocked).toEqual([{ packages: ["Maven|g:shared"], reasons: [expect.stringContaining("g:shared is pinned with strictly(...) at :compileClasspath")] }]);
   });
 
+  it("blocks a repository-only report of a pinned coordinate as the pin, no longer as a report", () => {
+    const report: SecurityFix = { ...maven("g:pinned"), to: undefined, problem: "g:pinned@1.0 is affected by GHSA-repo, only in the project's repository advisories", unreviewedOnly: true };
+    const [blocked] = withStrictPinsBlocked([report], gradle);
+    expect(blocked).toEqual(expect.objectContaining({ problem: expect.stringContaining("g:pinned is pinned with strictly(...)") }));
+    expect(blocked!.unreviewedOnly).toBeUndefined();
+    expect(selectWork([blocked!]).blocked).toEqual([{ packages: ["Maven|g:pinned"], reasons: [expect.stringContaining("pinned with strictly(...)")] }]);
+  });
+
   it("keeps a floor the owner declares with strictly(...) and still proves removing the others", async () => {
     const floor = (pkg: string): Floor => ({ ecosystem: "Maven", package: pkg, version: "2.0", declaredIn: "build.gradle.kts", locations: [":runtimeClasspath"],
       overridePaths: [], purpose: "security", advisories: ["GHSA-a"], reason: "fix", added: "2026-10-01" });

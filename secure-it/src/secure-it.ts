@@ -8,7 +8,7 @@ import type { PreparedBranch, WorkingCopy } from "@leanish/agent-runtime/types/w
 import { ActionsGitHub } from "@leanish/gate/actions-github";
 import { eligibleAt } from "@leanish/gate/age";
 import type { Floor } from "@leanish/gate/floors";
-import { type SecurityCandidates, type SecurityFix, securityCandidates, severityRank } from "@leanish/gate/candidates";
+import { type SecurityCandidates, type SecurityFix, securityCandidates, severityRank, withProblem } from "@leanish/gate/candidates";
 import type { CooldownEvaluation } from "@leanish/gate/cooldown";
 import type { NpmPeerPlanner } from "@leanish/gate/npm-peers";
 import { type EvidenceOptions, heldEvidence } from "@leanish/gate/advisory-evidence";
@@ -448,7 +448,7 @@ export function withStrictPinsBlocked(fixes: ReadonlyArray<SecurityFix>, gradle:
   const pins = strictPins(gradle);
   return fixes.map((fix) => {
     const pinned = fix.ecosystem === "Maven" ? pinnedAmong(pins, fix.name, [...fix.locations, ...declaringLocations(gradle, fix.name)]) : [];
-    return pinned.length === 0 ? fix : { ...fix, to: undefined, problem: strictPinNote(fix.name, pinned) };
+    return pinned.length === 0 ? fix : withProblem(fix, strictPinNote(fix.name, pinned));
   });
 }
 

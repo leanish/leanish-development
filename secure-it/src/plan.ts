@@ -257,7 +257,11 @@ async function completedWork(fixes: ReadonlyArray<SecurityFix>, peers?: NpmPeerP
 
 export interface Selection {
   readonly units: ReadonlyArray<SecurityUnit>;
-  readonly blocked: ReadonlyArray<{ readonly packages: ReadonlyArray<string>; readonly reasons: ReadonlyArray<string> }>;
+  /**
+   * Packages no unit takes and why. `reportsOnly`: everything holding the package back is a report of advisories only
+   * its own repository publishes (`SecurityFix.unreviewedOnly`), not a refusal.
+   */
+  readonly blocked: ReadonlyArray<{ readonly packages: ReadonlyArray<string>; readonly reasons: ReadonlyArray<string>; readonly reportsOnly?: true }>;
   /**
    * Direct-peer sets left out because a check failed (`PeerResolution`'s `undecided`), not because the rules refused
    * them: the packages each leaves out (also in `blocked`) and why. A failure to report, never "nothing to do".
@@ -296,11 +300,16 @@ export function selectWork(fixes: ReadonlyArray<SecurityFix>): Selection {
     return { units: [], blocked: [{ packages: [...packages].sort(), reasons: [...stuck.map(reasonOf), ...notesOf(others, stuck)] }] };
   }
   const groups = rankedGroups(fixes);
-  const blocked: Array<{ packages: string[]; reasons: string[] }> = [];
+  const blocked: Array<{ packages: string[]; reasons: string[]; reportsOnly?: true }> = [];
   const actionable = new Map<string, SecurityFix[]>();
   for (const [key, group] of groups) {
     const stuck = group.filter((fix) => !isActionable(fix));
-    if (stuck.length > 0) blocked.push({ packages: [key], reasons: [...stuck.map(reasonOf), ...notesOf(group.filter(isActionable), stuck)] });
+    if (stuck.length > 0) {
+      blocked.push({
+        packages: [key], reasons: [...stuck.map(reasonOf), ...notesOf(group.filter(isActionable), stuck)],
+        ...(stuck.every((fix) => fix.unreviewedOnly === true) ? { reportsOnly: true as const } : {}),
+      });
+    }
     else actionable.set(key, group);
   }
   // Packages tied by a carried target land together or not at all: verification checks every copy of it.

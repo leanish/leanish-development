@@ -65,10 +65,14 @@ export async function assessmentOf(inputs: AssessmentInputs): Promise<Assessment
     const { ecosystem, name } = findings[0]!;
     const blocked = inputs.blocked.find((group) => group.packages.includes(key));
     const cause = inputs.planningCauses.get(key);
-    const status: SubjectAssessment["status"] = blocked !== undefined
-      ? { kind: "blocked", reason: "refused", detail: blocked.reasons.join("; ") }
-      : findings.every((finding) => !finding.reviewed && !finding.malicious)
-        ? { kind: "informational" }
+    // Only the package's own repository publishing them: reported, never a candidate the rule refused, when all that
+    // holds the package back is that report. Any other block (a strict pin, an undecided carrier) is shown as one.
+    const reportedOnly = findings.every((finding) => !finding.reviewed && !finding.malicious)
+      && (blocked === undefined || blocked.reportsOnly === true);
+    const status: SubjectAssessment["status"] = reportedOnly
+      ? { kind: "informational" }
+      : blocked !== undefined
+        ? { kind: "blocked", reason: "refused", detail: blocked.reasons.join("; ") }
         : { kind: "blocked", reason: "unassessed", detail: cause === undefined
           ? "no fix was planned for it this run (malware goes first, or its planning failed)"
           : `no fix was planned for it this run: ${cause}` };

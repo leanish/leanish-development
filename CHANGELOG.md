@@ -28,6 +28,10 @@
   after a complete assessment records it absent and it later returns. If you ran a release candidate, keep its issues
   open and run secure-it again; if you closed them following an earlier version of this note, reopen those issues.
   Floor-removal PRs intentionally track no issue and keep their separate review behavior.
+- A package whose advisories only its own repository publishes is reported as informational, never as a candidate the
+  rule refused, unless something else blocks it too. A waiting issue says it was taken early only while an attempt's PR
+  is open or merged: while an attempt runs it says it is taking it early, and an attempt that ended before publishing,
+  or whose PR was closed, leaves the issue waiting again, with the attempt listed.
 - A first `take-early` label authorizes only the young versions its issue showed: one the issue never displayed (an
   update that couldn't be written, say) needs a new label once the issue shows it.
 - While an incomplete assessment (a lasting coverage gap, say) no longer finds an open issue's decision, the issue stays
