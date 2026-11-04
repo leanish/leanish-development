@@ -39,9 +39,10 @@ export function takenEarlyOf(body: string): boolean {
 
 /** The tool's issue `number` with its record, when that record is `plan`'s decision. */
 export async function decisionIssue(client: IssueReader, number: number, plan: ChangePlan): Promise<{ issue: GitHubIssue; record: IssueRecord } | undefined> {
-  // A deleted issue is no issue of this decision's; any other failure goes through, so nothing proceeds unread.
+  // An issue gone (transferred away: 404; deleted: 410) is no issue of this decision's; any other failure goes through,
+  // so nothing proceeds unread.
   const read = await client.issues.getIssue({ repo: client.repo, number }).catch((error: unknown) => {
-    if (error instanceof GitHubApiError && error.status === 404) return undefined;
+    if (error instanceof GitHubApiError && (error.status === 404 || error.status === 410)) return undefined;
     throw error;
   });
   if (read === undefined) return undefined;

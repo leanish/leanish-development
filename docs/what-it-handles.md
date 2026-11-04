@@ -64,8 +64,10 @@ the update. A new package has no previous version to compare its publisher with.
 For an ordinary fix, it tries the current compatible version line first.
 For npm this normally means versions allowed by a caret range. It chooses the
 lowest fixing version past the wait. If none has aged, it chooses the lowest
-fixing version and holds the PR. It tries a higher line only when the earlier
-line has no fix. A move outside the line gets a separate major PR.
+fixing version and its issue waits: the PR opens once that version is past the
+wait, or earlier when a person authorizes it with `take-early`. It tries a
+higher line only when the earlier line has no fix. A move outside the line gets
+a separate major PR.
 The candidate must fix the targeted advisories without adding new ones or malware.
 Advisories with no available fix remain reported; other fixes can still proceed.
 
@@ -100,7 +102,8 @@ the bundle they actually ship. A young bundled fix needs the gate's own proof to
 Required peer updates are planned together. A peer is a package that another
 package expects the project to provide. Some security fixes also need young
 dependencies: the gate can prove the lowest required npm version when there is
-no aged alternative. These versions remain held by cooldown.
+no aged alternative. Such a version makes the decision wait in its issue like
+any young target: its PR opens once it ages, or earlier on a `take-early`.
 
 ### What bump-it updates
 
