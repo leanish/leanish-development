@@ -253,7 +253,8 @@ every version a PR adds or changes that is younger than `releaseAgeDays` is **he
   the check (no ruleset, e.g. a private repository on the free plan), the same: a merge with the reason written.
 - Open PRs aren't rescanned: the cooldown is judged when the PR is opened, pushed to, reopened or retargeted.
   secure-it opens a PR with young versions only when a person asked for it (`take-early` on its issue) or for a
-  trusted package, and retires it once its own versions aged and plans fresh ones (bump-it never publishes held versions).
+  trusted package. A PR taken early stays a draft until the versions its issue's grant covered aged; secure-it then
+  retires it and plans afresh. Trusted ordinary PRs follow normal readiness. bump-it never publishes held versions.
   For a person's PR, re-run the **whole** workflow after the time it gives (a re-run of the `cooldown` job alone
   reads the old report and stays red), or push. A base that raises its wait later doesn't re-hold a PR that was
   already green. A re-run uses the original merge commit; a new PR event compares with the current base.

@@ -18,14 +18,9 @@
  *      per PR, each attempt counted in its body before the agent starts (a
  *      failed attempt counts too); after that, close it with a comment.
  *
- * A PR the cooldown holds (`steps.cooldown`: it takes versions younger than
- * the release-age wait) never becomes ready on the tool's say: green CI, or
- * only the gate's cooldown failing, leaves it a draft. Once every held version
- * has aged, the draft is retired before anything else, and the tool's next run
- * plans again from scratch, with fresh checks. A person who marked it ready
- * owns it: the tick leaves it alone. Any other PR that only the gate's
- * cooldown holds (say, after the base's wait grew and its checks re-ran) waits as a
- * draft too: no adaptation can make a version older.
+ * A tool may keep a PR a draft through its disposition, until the display time it supplies. A person who marked
+ * that PR ready owns it: the tick leaves it alone. The tool also reports any graduation it completed there, before
+ * branch or CI work. A PR held only by the gate's cooldown waits too: no adaptation can make a version older.
  *
  * Steps 1 and 3 need no model.
  */
@@ -87,25 +82,18 @@ export interface ReviewSteps {
    */
   adapt(pr: GitHubPullRequest, prepared: PreparedBranch, context: PublicationContext, attempt: number, failingChecks: ReadonlyArray<string>): Promise<boolean | "deferred">;
   /**
-   * Whether the PR's recorded plan takes versions younger than the wait, and
-   * whether they've all aged by now; undefined when it holds none. Throws on
-   * a recorded hold it can't read, so such a PR is never marked ready.
-   */
-  cooldown?(pr: GitHubPullRequest): CooldownState | undefined;
-  /**
    * Whether the tick may act on the PR at all, asked once its ownership is settled and before anything else: retiring
-   * a held draft, preparing its branch, a rebase, readiness or an adaptation. `leave` reports it and does nothing.
+   * a draft, preparing its branch, a rebase, readiness or an adaptation. `leave` reports it and does nothing.
+   * A proceed result may carry a draft hold with a display time; `graduated` reports a retirement the tool completed.
    * Absent, every PR the tool owns is acted on.
    */
-  disposition?(pr: GitHubPullRequest): Promise<{ readonly kind: "proceed" } | { readonly kind: "leave"; readonly reason: string }>;
+  disposition?(pr: GitHubPullRequest): Promise<
+    | { readonly kind: "proceed"; readonly held?: { readonly until: string } }
+    | { readonly kind: "leave"; readonly reason: string }
+    | { readonly kind: "graduated"; readonly reason: string }
+  >;
   /** Told after the tick closed a PR whose CI kept failing past its adaptations, for the tool's own bookkeeping. */
   closed?(pr: GitHubPullRequest): Promise<void>;
-}
-
-/** A held PR's versions: some still `waiting`, or all `aged`; `until` is when the last one turns old enough. */
-export interface CooldownState {
-  readonly kind: "waiting" | "aged";
-  readonly until: string;
 }
 
 /** The PR's branch with the new base merged in, or with the merge in progress and its conflicted paths. */
@@ -162,18 +150,9 @@ async function reviewOne(context: ReviewContext, steps: ReviewSteps, pr: GitHubP
 
   const disposition = await steps.disposition?.(pr);
   if (disposition?.kind === "leave") return result("left-alone", disposition.reason);
-  const cooldown = steps.cooldown?.(pr);
-  if (cooldown !== undefined && !pr.isDraft) return result("left-alone", "a person marked the held PR ready");
-  if (cooldown?.kind === "aged") {
-    const closed = await closeAndDelete(
-      publication,
-      pr.number,
-      pr.headSha,
-      `Every version this PR took before the release-age wait ended has now aged past it (the last on ${cooldown.until}). ${context.rules.tool} retires this draft instead of promoting it: its next run plans again from the current default branch and opens a PR with fresh checks, held again only if something in it is still young.`,
-      { onlyDraft: true },
-    );
-    return closed === "closed" ? result("graduated", `held until ${cooldown.until}`) : result("left-alone", "a person marked the held PR ready");
-  }
+  if (disposition?.kind === "graduated") return result("graduated", disposition.reason);
+  const held = disposition?.held;
+  if (held !== undefined && !pr.isDraft) return result("left-alone", "a person marked the held PR ready");
 
   const checkedOut = await context.workspace.prepareBranch(context.workingCopy, { branch: pr.headRef, start: "remote" });
   if (checkedOut.kind !== "prepared") throw new Error(`${pr.headRef} couldn't be checked out`);
@@ -199,7 +178,7 @@ async function reviewOne(context: ReviewContext, steps: ReviewSteps, pr: GitHubP
   if (ci === "pending") return result("pending");
   if (ci === "none") return result("no-checks", "no check has passed or failed on the head yet");
   // Green, or red only because the gate's cooldown holds it: waiting, not ready and not broken.
-  if (cooldown !== undefined && (ci === "success" || onlyCooldownHolds(checks))) return result("held", `until ${cooldown.until}`);
+  if (held !== undefined && (ci === "success" || onlyCooldownHolds(checks))) return result("held", `until ${held.until}`);
   // Held by the gate although it took nothing young itself: the base's wait grew past one of its versions.
   if (onlyCooldownHolds(checks)) return result("held", "by the gate's cooldown under the base's current wait");
   if (ci === "success") {

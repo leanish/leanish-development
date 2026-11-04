@@ -211,6 +211,26 @@ function trackedRecord(h: Harness, number = 42): IssueRecord {
   return record;
 }
 
+/** A current ordinary PR and the decision issue it tracks. */
+async function track(h: Harness): Promise<void> {
+  const issues = h.context.issues as FakeIssues;
+  for (const pr of h.github.prs.values()) {
+    const plan = planOf(pr.body);
+    if (plan === undefined || plan.kind === "floor-removal") continue;
+    const number = trackedIssueOf(pr.body);
+    if (number !== undefined && recordOf(issues.issues.get(number)?.body ?? "") !== undefined) continue;
+    const subject = { kind: "decision" as const, moves: decisionMoves(plan) };
+    const record: IssueRecord = { version: 1, subject, openedAt: BASE_SHA, findings: [], absences: [], attempts: [] };
+    const body = ISSUE_WRITER.render({ subject, findings: [], status: { kind: "eligible", trusted: [] } }, record, BASE_SHA).body;
+    if (number !== undefined) {
+      issues.issues.set(number, { number, url: `https://github.com/acme/widget/issues/${number}`, title: "secure-it: fix", body, state: "open", stateReason: null, author: "leanish", labels: [ISSUE_LABEL] });
+    } else {
+      const issue = await issues.createIssue({ repo: REPO, title: "secure-it: fix", body, labels: [ISSUE_LABEL] });
+      h.github.prs.set(pr.number, { ...pr, body: `Tracks #${issue.number}.\n\n${pr.body}` });
+    }
+  }
+}
+
 function leftPad(overrides: Partial<SecurityFix> = {}): SecurityFix {
   return vite({ name: "left-pad", from: "1.0.0", locations: ["node_modules/left-pad"], severity: "LOW", to: { version: "1.0.1", line: "1", aged: true, major: false, blockers: [] }, ...overrides });
 }
@@ -336,6 +356,7 @@ describe("secure-it run", () => {
       const previous = await planFor([fix], { named: undefined, lockfiles: new Map(), gradle: undefined, tagCommit: async () => "1".repeat(40) }, unit);
       const pr = ownPr({ headRef: branch, labels: [RULES.label], headSha: oldHead, body: withMarker(RULES, planSection(previous), { head: oldHead, base: oldBase, adaptations: 0 }) });
       const h = harness({ prs: [pr], fixes: [fix] });
+      await track(h);
       h.workspace.prepareBranch = fixture.workspace.prepareBranch.bind(fixture.workspace);
       h.workspace.publishBranch = fixture.publishBranch;
       const actual = defaultDeps();
@@ -375,7 +396,7 @@ describe("secure-it run", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
-  it.each(["run", "review"] as const)("retargets an open major from a clean base in %s, dropping old adaptations and publishing the verified tree on the PR history", async (command) => {
+  it.each(["run", "review"] as const)("retargets an open major from a clean base in %s, deferring changed review decisions and publishing the verified tree from a run", async (command) => {
     const root = await mkdtemp(fileURLToPath(new URL("../../.secure-retarget-test-", import.meta.url)));
     try {
       const path = ".github/workflows/supply-chain.yml";
@@ -412,8 +433,15 @@ describe("secure-it run", () => {
         return h.context.agent(call);
       };
       vi.mocked(runCompare).mockReset().mockResolvedValue({ headFindings: [], failures: [], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, group: (id: string) => id, cooldown: { evaluated: true, releaseAgeDays: 7, held: [] } });
-      const result = await secureIt(deps)[command]({ ...h.context, workingCopy: wc, agent });
-      expect(result, JSON.stringify(result)).toMatchObject(command === "run" ? { units: [{ outcome: "updated" }] } : { reviewed: [{ outcome: "rebased" }] });
+      if (command === "review") {
+        await track(h);
+        expect(await secureIt(deps).review({ ...h.context, workingCopy: wc, agent })).toMatchObject({ reviewed: [{ outcome: "deferred" }] });
+        expect(h.agentCalls).toEqual([]);
+        expect(fixture.publications).toEqual([]);
+        expect(h.github.prs.get(7)!.headSha).toBe(oldHead);
+      }
+      const result = await secureIt(deps).run({ ...h.context, workingCopy: wc, agent });
+      expect(result, JSON.stringify(result)).toMatchObject({ units: [{ outcome: "updated" }] });
       expect(h.agentCalls).toHaveLength(1);
       expect(verified).toHaveLength(1);
       expect(verified[0]!.base.id).toBe(baseSha);
@@ -1490,6 +1518,7 @@ describe("secure-it review", () => {
     };
     const pr = ownPr({ headRef: "secure-it/2026-10-05-security", body: withMarker(RULES, planSection(plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr], baseSha: NEW_BASE, files: baseFiles, fixes: [fix] });
+    await track(h);
     h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
     const dir = await mkdtemp(join(process.cwd(), ".review-materialize-"));
     try {
@@ -1528,6 +1557,7 @@ describe("secure-it review", () => {
 
   it("recomputes on the moved base: retires a PR whose fix the base already has, before any agent", async () => {
     const fixedOnBase = harness({ prs: [await vitePr()], baseSha: NEW_BASE, fixes: [] });
+    await track(fixedOnBase);
     fixedOnBase.workspace.setRemoteHead("secure-it/2026-10-05-security", HEAD_SHA);
     expect(await secureIt(fixedOnBase.deps).review(fixedOnBase.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "retired" }] });
     expect(fixedOnBase.github.prs.get(7)?.state).toBe("closed");
@@ -1535,35 +1565,22 @@ describe("secure-it review", () => {
 
     // Fixes remain on the new base, but the re-applied edit doesn't verify: an error, never a quiet retirement.
     const lost = harness({ prs: [await vitePr()], baseSha: NEW_BASE, problems: ["vite at node_modules/vite is 8.3.1, not 8.3.3"] });
+    await track(lost);
     lost.workspace.setRemoteHead("secure-it/2026-10-05-security", HEAD_SHA);
     expect(await secureIt(lost.deps).review(lost.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "error", detail: expect.stringContaining("after merging the default branch") }] });
     expect(lost.github.prs.get(7)?.state).toBe("open");
 
     const merged = harness({ prs: [await vitePr()], baseSha: NEW_BASE });
+    await track(merged);
     merged.workspace.setRemoteHead("secure-it/2026-10-05-security", HEAD_SHA);
     expect(await secureIt(merged.deps).review(merged.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "rebased" }] });
     expect(stateOf(merged.github.prs.get(7)!.body)).toEqual({ head: PUSHED_SHA, base: NEW_BASE, adaptations: 0 });
     expect(merged.agentCalls).toEqual([]);
   });
 
-  it("reconciles a PR whose plan the moved base changed: reverted to the base, the new plan applied and recorded", async () => {
-    const h = harness({ prs: [await vitePr()], baseSha: NEW_BASE, fixes: [vite({ to: { version: "8.3.4", line: "8", aged: true, major: false, blockers: [] } })] });
-    h.workspace.setRemoteHead("secure-it/2026-10-05-security", HEAD_SHA);
-    h.workspace.setPrepareConflict("secure-it/2026-10-05-security");
-    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "rebased" }] });
-    // Reverting resolves the conflicts too: nothing is taken file by file, and the agent applies on the base.
-    expect(h.reverted).toEqual([NEW_BASE]);
-    expect(h.written).toEqual([]);
-    expect(h.agentCalls.map((call) => call.input["mode"])).toEqual(["apply"]);
-    expect(h.agentCalls[0]?.input["npmAgeExclusions"]).toEqual(["left-pad", "vite"]);
-    const pr = h.github.prs.get(7)!;
-    expect(pr.title).toBe("moving vite to 8.3.3");
-    expect(planOf(pr.body)?.moves[0]?.to).toBe("8.3.4");
-    expect(pr.body.match(/What secure-it moved/g)).toHaveLength(1);
-  });
-
   it("takes the base's side of a conflicted lockfile and has the agent re-apply, or resolve code conflicts", async () => {
     const h = harness({ prs: [await vitePr()], baseSha: NEW_BASE });
+    await track(h);
     h.workspace.setRemoteHead("secure-it/2026-10-05-security", HEAD_SHA);
     h.workspace.setPrepareConflict("secure-it/2026-10-05-security");
     expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "rebased" }] });
@@ -1572,22 +1589,15 @@ describe("secure-it review", () => {
     expect(h.agentCalls[0]?.input["npmAgeExclusions"]).toEqual(["left-pad", "vite"]);
   });
 
-  it("recomputes the whole routine on a moved base, adding new packages and retiring old fixes", async () => {
-    const h = harness({ prs: [await vitePr()], baseSha: NEW_BASE, fixes: [leftPad()] });
-    h.workspace.setRemoteHead("secure-it/2026-10-05-security", HEAD_SHA);
-    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ outcome: "rebased" }] });
-    expect(h.reverted).toEqual([NEW_BASE]);
-    expect(planOf(h.github.prs.get(7)!.body)?.packages).toEqual(["npm|left-pad"]);
-    expect(h.agentCalls[0]?.input).toMatchObject({ moves: [{ name: "left-pad" }] });
-  });
-
   it("reviews only a major's package and retires it when only non-major work remains", async () => {
     const major = vite({ to: { version: "9.0.1", line: "9", aged: true, major: true, blockers: [] } });
     const h = harness({ prs: [await vitePr({}, major)], baseSha: NEW_BASE, fixes: [major, leftPad()] });
+    await track(h);
     h.workspace.setRemoteHead("secure-it/2026-10-05-vite-major", HEAD_SHA);
     expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ outcome: "rebased" }] });
     expect(planOf(h.github.prs.get(7)!.body)?.packages).toEqual(["npm|vite"]);
     const retired = harness({ prs: [await vitePr({}, major)], baseSha: NEW_BASE, fixes: [vite(), leftPad()] });
+    await track(retired);
     retired.workspace.setRemoteHead("secure-it/2026-10-05-vite-major", HEAD_SHA);
     expect(await secureIt(retired.deps).review(retired.context)).toMatchObject({ reviewed: [{ outcome: "retired" }] });
     expect(retired.agentCalls).toEqual([]);
@@ -1603,6 +1613,7 @@ describe("secure-it review", () => {
     h.workspace.setRemoteHead("secure-it/2026-10-05-vite-major", HEAD_SHA);
     const issues = h.context.issues as FakeIssues;
     issues.issues.set(1, { number: 1, url: "https://github.com/acme/widget/issues/1", title: "secure-it: vite", body: "## secure-it", state: "open", stateReason: null, author: "leanish", labels: [ISSUE_LABEL] });
+    await track(h);
     expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "deferred" }] });
     expect(h.agentCalls).toEqual([]);
     expect(h.workspace.publications).toEqual([]);
@@ -1619,6 +1630,7 @@ describe("secure-it review", () => {
       h.workspace.setRemoteHead("secure-it/2026-10-05-vite-major", HEAD_SHA);
       const issues = h.context.issues as FakeIssues;
       issues.issues.set(1, issue);
+      await track(h);
       return { h, issues, result: await secureIt(h.deps).review(h.context) };
     };
     // #1 tracks the move to 9.0.1: on the new base the PR would move to 9.0.2, another decision.
@@ -1631,20 +1643,37 @@ describe("secure-it review", () => {
     const same = await review("9.0.1");
     expect(same.result).toMatchObject({ reviewed: [{ number: 7, outcome: "rebased" }] });
     expect(same.h.github.prs.get(7)!.body).toContain("Tracks #1.");
+    // Routine targets and membership change through a run too, never by rewriting the reviewed decision.
+    for (const fixes of [[vite({ to: { version: "8.3.4", line: "8", aged: true, major: false, blockers: [] } })], [leftPad()], [vite(), leftPad()]]) {
+      const h = harness({ prs: [await vitePr()], baseSha: NEW_BASE, fixes });
+      await track(h);
+      const before = h.github.prs.get(7)!;
+      h.workspace.setRemoteHead(before.headRef, before.headSha);
+      const tool = secureIt(h.deps);
+      expect(await tool.review(h.context)).toMatchObject({ reviewed: [{ outcome: "deferred" }] });
+      expect(h.github.prs.get(7)).toEqual(before);
+      expect(h.agentCalls).toEqual([]);
+      expect(h.workspace.publications).toEqual([]);
+      expect(await tool.run(h.context)).toMatchObject({ outcome: "updated", number: 7 });
+      expect(h.reverted).toEqual([NEW_BASE]);
+      expect(trackedRecord(h, 7).subject).toEqual({ kind: "decision", moves: fixes.map((fix) => ({ ecosystem: fix.ecosystem, name: fix.name, from: fix.from, to: fix.to!.version })) });
+    }
   });
 
   it("retries a rebased routine and records omissions in its updated plan", async () => {
-    const h = harness({ prs: [await vitePr()], baseSha: NEW_BASE, fixes: [vite(), leftPad()] });
+    const h = harness({ prs: [await batchPr([vite(), leftPad()])], baseSha: NEW_BASE, fixes: [vite(), leftPad()] });
+    await track(h);
     h.workspace.setRemoteHead("secure-it/2026-10-05-security", HEAD_SHA);
     const deps = { ...h.deps, verify: async (input: VerifyInputs) => input.plan.packages.includes("npm|left-pad") ? ["left-pad at node_modules/left-pad is gone, not 1.0.1"] : [] };
     expect(await secureIt(deps).review(h.context)).toMatchObject({ reviewed: [{ outcome: "rebased" }], notes: [{ leftOut: [{ moves: [{ name: "left-pad" }] }] }] });
-    expect(h.agentCalls).toHaveLength(2);
-    expect(h.reverted).toEqual([NEW_BASE, NEW_BASE]);
+    expect(h.agentCalls).toHaveLength(1);
+    expect(h.reverted).toEqual([NEW_BASE]);
     expect(planOf(h.github.prs.get(7)!.body)?.leftOut?.[0]?.moves[0]?.name).toBe("left-pad");
   });
 
   it("retires malware when it is gone rather than turning that PR into an ordinary batch", async () => {
     const h = harness({ prs: [await vitePr({}, vite({ malicious: true }))], baseSha: NEW_BASE, fixes: [leftPad()] });
+    await track(h);
     h.workspace.setRemoteHead("secure-it/2026-10-05-malware", HEAD_SHA);
     expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ outcome: "retired" }] });
     expect(h.agentCalls).toEqual([]);
@@ -1663,12 +1692,14 @@ describe("secure-it review", () => {
   ])("keeps a PR, untouched, while a fix's publisher identity can't be decided on the new base: $which", async ({ malware, fixes, detail }) => {
     const pr = malware ? await vitePr({ headRef: "secure-it/2026-10-05-malware" }, vite({ malicious: true })) : await vitePr();
     const h = harness({ prs: [pr], baseSha: NEW_BASE, fixes: fixes() });
+    await track(h);
+    const tracked = h.github.prs.get(7);
     h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
     h.github.branches.add(pr.headRef);
     expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [
       { number: 7, outcome: "error", detail: `a fix can't be decided on the new base; keeping the PR: ${detail}` },
     ] });
-    expect(h.github.prs.get(7)).toEqual(pr);
+    expect(h.github.prs.get(7)).toEqual(tracked);
     expect(h.github.branches.has(pr.headRef)).toBe(true);
     expect(h.github.calls.filter((call) => call.startsWith("closePullRequest") || call.startsWith("updatePullRequest"))).toEqual([]);
     expect([h.workspace.deletions, h.workspace.publications, h.agentCalls, h.reverted]).toEqual([[], [], [], []]);
@@ -1682,25 +1713,19 @@ describe("secure-it review", () => {
   ])("keeps a PR, untouched, while $which can't be decided on the new base", async ({ fixes, peers, detail }) => {
     const pr = await batchPr([vite(), leftPad()]);
     const h = harness({ prs: [pr], baseSha: NEW_BASE });
+    await track(h);
+    const tracked = h.github.prs.get(7);
     h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
     h.github.branches.add(pr.headRef);
     const deps = { ...h.deps, candidates: async () => ({ fixes: fixes(), incomplete: [], gaps: [], osvScannerVersion: "2.6.0", ...(peers === undefined ? {} : { npmPeers: peers }) }) };
     expect(await secureIt(deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "error", detail }] });
-    expect(h.github.prs.get(7)).toEqual(pr);
+    expect(h.github.prs.get(7)).toEqual(tracked);
     expect(h.github.branches.has(pr.headRef)).toBe(true);
     expect(h.github.calls.filter((call) => call.startsWith("closePullRequest") || call.startsWith("updatePullRequest"))).toEqual([]);
     expect([h.workspace.deletions, h.workspace.publications, h.agentCalls, h.reverted]).toEqual([[], [], [], []]);
   });
 
-  it("retains package scope when reviewing a legacy plan", async () => {
-    const pr = await vitePr();
-    const legacy = { ...planOf(pr.body)!, kind: undefined, topic: "vite" };
-    const h = harness({ prs: [{ ...pr, headRef: "secure-it/2026-10-05-vite", body: withMarker(RULES, planSection(legacy), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) }], baseSha: NEW_BASE, fixes: [vite(), leftPad()] });
-    h.workspace.setRemoteHead("secure-it/2026-10-05-vite", HEAD_SHA);
-    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ outcome: "rebased" }] });
-    expect(planOf(h.github.prs.get(7)!.body)?.packages).toEqual(["npm|vite"]);
-    expect(planOf(h.github.prs.get(7)!.body)?.kind).toBeUndefined();
-  });
+
 
   it.each(["plan", "state"] as const)("refuses an agent description carrying a %s marker", async (kind) => {
     const marker = kind === "plan"
@@ -1714,6 +1739,7 @@ describe("secure-it review", () => {
 
     const pr = await vitePr();
     const adapt = harness({ prs: [pr], answer: forged });
+    await track(adapt);
     adapt.github.checks = RED;
     expect(JSON.stringify(await secureIt(adapt.deps).review(adapt.context))).toContain(`reserved ${kind} marker`);
     // The attempt is counted before the agent runs; the plan stays the verified one.
@@ -1725,6 +1751,7 @@ describe("secure-it review", () => {
   it("asks before an adaptation, and a deferred one runs no agent", async () => {
     const pr = await vitePr();
     const h = harness({ prs: [pr] });
+    await track(h);
     h.github.checks = RED;
     const deps = { ...h.deps, disposition: async (target: ExecutionTarget) => (target.kind === "review" ? { kind: "defer" as const, reason: "no" } : { kind: "proceed" as const }) };
     expect(await secureIt(deps).review(h.context)).toMatchObject({ reviewed: [{ outcome: "deferred" }] });
@@ -1734,6 +1761,7 @@ describe("secure-it review", () => {
   it("counts an adaptation whose agent ran even when only its reduced retry is deferred", async () => {
     const pr = await batchPr([vite(), leftPad()]);
     const h = harness({ prs: [pr], problems: ["vite at node_modules/vite is 8.3.2, not 8.3.3"] });
+    await track(h);
     h.github.checks = RED;
     const deps = { ...h.deps, disposition: async (target: ExecutionTarget) => (target.kind === "retry" ? { kind: "defer" as const, reason: "no" } : { kind: "proceed" as const }) };
     expect(await secureIt(deps).review(h.context)).toMatchObject({ reviewed: [{ outcome: "adaptation-unchanged", detail: "attempt 1 of 2" }] });
@@ -1746,6 +1774,7 @@ describe("secure-it review", () => {
     const pr = { ...previous, body: `No adaptation needed; old checks.\n${previous.body}` };
     const publication = { title: "adapting vite", body: "Adapted src/app.ts; npm test passed.", commitMessage: "adapting vite" };
     const h = harness({ prs: [pr], answer: { outcome: "applied", summary: "adapted", publication } });
+    await track(h);
     h.github.checks = RED;
     expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ outcome: "adapted" }] });
     const updated = h.github.prs.get(pr.number)!;
@@ -1761,6 +1790,7 @@ describe("secure-it review", () => {
     const pr = { ...previous, body: `Fixes vite.\n\nTracks #3.\n${previous.body}` };
     const publication = { title: "adapting vite, fixes #3", body: "Adapted src/app.ts.\n\nFixes #3.\nTracks #9.", commitMessage: "adapting vite\n\ncloses #3" };
     const h = harness({ prs: [pr], answer: { outcome: "applied", summary: "adapted", publication } });
+    await track(h);
     h.github.checks = RED;
     expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ outcome: "adapted" }] });
     const updated = h.github.prs.get(pr.number)!;
@@ -1770,15 +1800,17 @@ describe("secure-it review", () => {
     expect(h.workspace.publications[0]?.args.message).toBe("adapting vite\n\ncloses `#3`");
   });
 
-  it("doesn't publish a tracked PR's adaptation that holds a young version the PR didn't hold, and says so on its issue", async () => {
+  it("doesn't publish a tracked PR's adaptation that holds a young version no grant covers, and says so on its issue", async () => {
     const previous = await vitePr();
-    const pr = { ...previous, body: `Fixes vite.\n\nTracks #3.\n${previous.body}` };
     const publication = { title: "adapting vite", body: "Adapted.", commitMessage: "adapting vite" };
-    const held = { ecosystem: "npm" as const, name: "esbuild", version: "0.30.1", replaced: ["0.30.0"], published: "2026-10-06T00:00:00Z", eligibleAt: "2026-10-13T00:00:00Z", justification: "unjustified" as const };
+    const held = { ecosystem: "npm" as const, name: "esbuild", version: "0.30.1", replaced: ["0.30.0"], published: "2026-10-06T00:00:00.000Z", eligibleAt: "2026-10-13T00:00:00.000Z", justification: "unjustified" as const };
+    // A recorded hold is evidence from an older comparison, never this ordinary PR's authorization.
+    const recorded = { ...planOf(previous.body)!, cooldown: [{ ...held, eligibleAt: "2026-10-01T00:00:00.000Z", signals: [] }] };
+    const pr = { ...previous, body: withMarker(RULES, withPlanSection("Fixes vite.\n\nTracks #3.", recorded), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) };
     const h = harness({ prs: [pr], answer: { outcome: "applied", summary: "adapted", publication } });
+    await track(h);
     h.github.checks = RED;
     const issues = h.context.issues as FakeIssues;
-    issues.issues.set(3, { number: 3, url: "https://github.com/acme/widget/issues/3", title: "secure-it: vite", body: "## secure-it", state: "open", stateReason: null, author: "leanish", labels: [ISSUE_LABEL] });
     const verify = async (inputs: VerifyInputs) => {
       inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: [held] });
       return [];
@@ -1786,11 +1818,12 @@ describe("secure-it review", () => {
     // The agent ran, so the attempt counts; nothing is pushed.
     expect(await secureIt({ ...h.deps, verify }).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "adaptation-unchanged" }] });
     expect(h.workspace.publications).toEqual([]);
-    expect(issues.comments.get(3)!.map((comment) => comment.body)).toEqual([expect.stringContaining("secure-it didn't update #7: on the new base, verification found young versions it didn't hold before: `esbuild@0.30.1`")]);
+    expect(issues.comments.get(3)!.map((comment) => comment.body)).toEqual([expect.stringContaining("secure-it didn't update #7: on the new base, verification found young versions no grant covers: `esbuild@0.30.1`")]);
   });
 
   it("has the agent adapt a failing PR, verifies the result, and records the attempt", async () => {
     const h = harness({ prs: [await vitePr()] });
+    await track(h);
     h.workspace.setRemoteHead("secure-it/2026-10-05-security", HEAD_SHA);
     h.github.checks = { ...RED, statuses: [{ context: "legacy", state: "error" }] };
     expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "adapted" }] });
@@ -1799,6 +1832,7 @@ describe("secure-it review", () => {
     expect(stateOf(h.github.prs.get(7)!.body)?.adaptations).toBe(1);
 
     const failing = harness({ prs: [await vitePr()], problems: ["compare: new: vite@8.3.3: GHSA-new has no exception"] });
+    await track(failing);
     failing.workspace.setRemoteHead("secure-it/2026-10-05-security", HEAD_SHA);
     failing.github.checks = RED;
     expect(await secureIt(failing.deps).review(failing.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "error", detail: expect.stringContaining("doesn't verify") }] });
@@ -1997,14 +2031,16 @@ describe("the cooldown hold", () => {
   }
 
   it("keeps a held PR's cooldown warning and hold when rewriting its notes", async () => {
-    const plan = await planFor([vite()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined });
+    const plan = await planFor([YOUNG_VITE()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined }, { kind: "routine", topic: "security-cooldown-vite" });
     const held = { ...plan, notes: ["an outdated reason"], cooldown: [{ ...HELD, signals: [] }] };
-    const h = harness({ prs: [ownPr({ headRef: `secure-it/2026-10-05-${plan.topic}`, body: withMarker(RULES, withPlanSection("Fixes vite.", held), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) })] });
+    const h = harness({ fixes: [YOUNG_VITE()], prs: [ownPr({ headRef: `secure-it/2026-10-05-${plan.topic}`, body: withMarker(RULES, withPlanSection("Fixes vite.", held), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) })] });
+    await early(h, h.github.prs.get(7)!);
     expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "already-open" });
     const body = h.github.prs.get(7)!.body;
     expect(body).not.toContain("an outdated reason");
     expect(body).toContain("Release-age cooldown bypassed.");
     expect(planOf(body)?.cooldown).toEqual(held.cooldown);
+    expect(trackedRecord(h, 7).grant?.young).toEqual([{ ecosystem: "npm", name: "vite", version: "8.3.3" }]);
   });
 
   it("rewrites a held PR's notes without its evidence when the new notes leave no room for it", async () => {
@@ -2016,18 +2052,20 @@ describe("the cooldown hold", () => {
           declaredFixes: ["8.3.3"], verdicts: { "8.3.1": "affected" as const, "8.3.3": "not-affected" as const } };
         return { ids: [found.id], replaced: ["8.3.1"], sources: (["repository", "github", "osv"] as const).map((source) => ({ source, lookup: "checked" as const, records: [found] })) };
       }) }] };
-    const plan = await planFor([vite()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined });
+    const plan = await planFor([YOUNG_VITE()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined }, { kind: "routine", topic: "security-cooldown-vite" });
     const held = { ...plan, notes: ["an outdated reason"], cooldown: [{ ...HELD, signals: [], evidence }] };
     const published = withPlanSection("Fixes vite.", held);
     expect(planOf(published)?.cooldown?.[0]?.evidence).toEqual(evidence);
     const notes = Array.from({ length: 128 }, (_, i) => `vite@8.3.3 note ${i}: ${hex(`note-${i}`)}`);
     const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, planned) => ({ ...planned, notes });
-    const h = harness({ prs: [ownPr({ headRef: `secure-it/2026-10-05-${plan.topic}`, body: withMarker(RULES, published, { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) })] });
+    const h = harness({ fixes: [YOUNG_VITE()], prs: [ownPr({ headRef: `secure-it/2026-10-05-${plan.topic}`, body: withMarker(RULES, published, { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) })] });
+    await early(h, h.github.prs.get(7)!);
     expect(await secureIt({ ...h.deps, requiredNpm }).run(h.context)).toMatchObject({ outcome: "already-open" });
     const body = h.github.prs.get(7)!.body;
     expect(body).not.toContain("an outdated reason");
     expect(planOf(body)).toMatchObject({ notes, cooldown: [{ ...HELD, signals: [], evidenceFailure: EVIDENCE_LEFT_OUT }] });
     expect(planOf(body)?.cooldown?.[0]?.evidence).toBeUndefined();
+    expect(trackedRecord(h, 7).grant?.young).toEqual([{ ecosystem: "npm", name: "vite", version: "8.3.3" }]);
   });
 
   it("opens young fixes in a held PR of their own, warned, while the aged ones go out as usual", async () => {
@@ -2396,6 +2434,7 @@ describe("the cooldown hold", () => {
       h.github.prs.set(pr.number, fix.to!.aged ? pr : await early(h, pr));
       h.workspace.setRemoteHead(pr.headRef, pr.headSha);
     }
+    await track(h);
   }
 
   it("leaves only the held PR whose preflight hit a transient Gradle execution error untouched; the other rebases", async () => {
@@ -2432,7 +2471,7 @@ describe("the cooldown hold", () => {
       if (change?.transform !== undefined && attempts++ === 0) throw new Error("transient Gradle failure");
       return inventories.ofCommit(tree, change);
     } });
-    const tool = secureIt({ ...h.deps, gradle, candidates: async () => ({ ...found, fixes }) });
+    const tool = secureIt({ ...h.deps, gradle, verify: async (inputs) => inputs.plan.topic === "security" ? [] : h.deps.verify(inputs), candidates: async () => ({ ...found, fixes }) });
     expect(await tool.review({ ...h.context, workingCopy: { ...h.context.workingCopy, headSha: "f".repeat(40) } })).toMatchObject({ reviewed: [
       { number: 7, outcome: "error", detail: "transient Gradle failure" },
       { number: 8, outcome: "rebased" },
@@ -2883,14 +2922,17 @@ describe("the cooldown hold", () => {
     // The registry dates vite 8.3.3 past the wait too, so its grant has nothing young left.
     const registry = fakeFetch({ "https://registry.npmjs.org/vite": { body: { time: { "8.3.3": "2026-09-29T00:00:00.000Z" }, versions: { "8.3.3": {} } } } });
     const dated = { ...aged.deps, gate: async () => ({ ...await aged.deps.gate(aged.context), fetch: registry }) };
-    expect(await secureIt(dated).review(aged.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "graduated" }] });
+    const issues = aged.context.issues as FakeIssues;
+    issues.forbidden.add("removeLabel");
+    expect(await secureIt(dated).review({ ...aged.context, workingCopy: { ...aged.context.workingCopy, headSha: "f".repeat(40) } })).toMatchObject({ reviewed: [{ number: 7, outcome: "graduated" }] });
     expect(aged.github.prs.get(7)?.state).toBe("closed");
     expect(aged.agentCalls).toEqual([]);
-    // The next run settles the attempt from the closed PR and gives the label back.
-    const issues = aged.context.issues as FakeIssues;
+    expect(aged.workspace.preparations).toEqual([]);
+    expect(aged.github.calls.some((call) => call.startsWith("headChecks"))).toBe(false);
+    expect(recordOf(issues.issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 7, outcome: "pr-closed" }]);
+    // Recovery retries the label cleanup after graduation recorded the attempt's end.
     const client = { issues, github: aged.github, repo: REPO, clean: (body: string) => body, ours: () => true };
     // The label's removal fails the first time: the attempt's end is recorded anyway, and the next recovery returns it.
-    issues.forbidden.add("removeLabel");
     await recoverAttempts(client, await syncedIssues(aged));
     expect(recordOf(issues.issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 7, outcome: "pr-closed" }]);
     expect(issues.issues.get(1)!.labels).toContain("take-early");
@@ -2917,6 +2959,88 @@ describe("the cooldown hold", () => {
     });
   });
 
+  it.each([true, false])("admits an early adaptation by its grant, regardless of its recorded cooldown (covered: %s)", async (covered) => {
+    const plan = await heldPlan(YOUNG_VITE());
+    const extra = { ...HELD, name: "esbuild", version: "0.30.1", replaced: ["0.30.0"] };
+    const recorded = covered ? [] : [{ ...HELD, signals: [] }, { ...extra, signals: [] }];
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite",
+      body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: recorded }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pr] });
+    await early(h, pr, [{ ecosystem: "npm", name: "vite", version: "8.3.3", eligibleAt: HELD.eligibleAt }]);
+    h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
+    h.github.checks = RED;
+    const verify: SecureItDeps["verify"] = async (inputs) => {
+      inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: [covered ? HELD : extra] });
+      return [];
+    };
+    expect(await secureIt({ ...h.deps, verify }).review(h.context)).toMatchObject({ reviewed: [{ outcome: covered ? "adapted" : "adaptation-unchanged" }] });
+    const issue = (h.context.issues as FakeIssues).issues.get(1)!;
+    expect(recordOf(issue.body)!.attempts).toMatchObject([{ pr: 7 }]);
+    expect(h.workspace.publications).toHaveLength(covered ? 1 : 0);
+    if (covered) {
+      expect(h.github.prs.get(7)!.body).toContain("Tracks #1");
+      expect(planOf(h.github.prs.get(7)!.body)?.cooldown).toMatchObject([{ name: "vite" }]);
+    } else {
+      expect((h.context.issues as FakeIssues).comments.get(1)!.at(-1)!.body).toContain("esbuild@0.30.1");
+    }
+  });
+
+  it("adapts an early PR on the grant its disposition saw, reading no issue after the agent; a label removed meanwhile leaves it next tick", async () => {
+    const plan = await heldPlan(YOUNG_VITE());
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite",
+      body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pr] });
+    await early(h, pr, [{ ecosystem: "npm", name: "vite", version: "8.3.3", eligibleAt: HELD.eligibleAt }]);
+    h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
+    h.github.checks = RED;
+    const issues = h.context.issues as FakeIssues;
+    // The owner removes the label while the agent adapts: this tick's disposition already authorized the adaptation.
+    let agentRan = false;
+    let readsAfterAgent = 0;
+    const getIssue = issues.getIssue.bind(issues);
+    issues.getIssue = async (args) => {
+      if (agentRan) readsAfterAgent++;
+      return getIssue(args);
+    };
+    const agent: ToolRunContext["agent"] = async (call) => {
+      await issues.removeLabel({ repo: REPO, number: 1, label: "take-early" });
+      agentRan = true;
+      return h.context.agent(call);
+    };
+    const verify: SecureItDeps["verify"] = async (inputs) => {
+      inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: [HELD] });
+      return [];
+    };
+    const tool = secureIt({ ...h.deps, verify });
+    expect(await tool.review({ ...h.context, agent })).toMatchObject({ reviewed: [{ outcome: "adapted" }] });
+    expect(readsAfterAgent).toBe(0);
+    expect(h.workspace.publications).toHaveLength(1);
+    expect(h.github.prs.get(7)!.body).toContain("Tracks #1.");
+    // The next tick sees the withdrawn grant before any branch work.
+    // The fakes don't move the PR's head on publication: point it at the head the tool recorded, as GitHub would.
+    const published = /leanish:state head=([0-9a-f]+)/.exec(h.github.prs.get(7)!.body)![1]!;
+    h.github.prs.set(7, { ...h.github.prs.get(7)!, headSha: published });
+    h.workspace.setRemoteHead(pr.headRef, published);
+    const preparations = h.workspace.preparations.length;
+    expect(await tool.review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "left-alone", detail: "its `take-early` label was removed" }] });
+    expect(h.workspace.preparations).toHaveLength(preparations);
+    expect(h.workspace.publications).toHaveLength(1);
+  });
+
+  it.each([{ aged: false, race: false }, { aged: true, race: false }, { aged: true, race: true }])("leaves an early PR a person marked ready, including at graduation (aged: $aged, raced: $race)", async ({ aged, race }) => {
+    const plan = await heldPlan(YOUNG_VITE());
+    const pr = ownPr({ isDraft: race, body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pr] });
+    const tracked = await early(h, pr);
+    if (race) h.github.before("getPullRequest", () => h.github.prs.set(7, { ...h.github.prs.get(7)!, isDraft: false }));
+    const env = await h.deps.gate(h.context);
+    const fetch = fakeFetch({ "https://registry.npmjs.org/vite": { body: { time: { "8.3.3": aged ? OLD : "2026-10-06T00:00:00Z" }, versions: { "8.3.3": {} } } } });
+    expect(await secureIt({ ...h.deps, gate: async () => ({ ...env, fetch }) }).review(h.context)).toMatchObject({ reviewed: [{ outcome: "left-alone", detail: "a person marked the held PR ready" }] });
+    expect(h.github.prs.get(7)).toEqual({ ...tracked, isDraft: false });
+    expect(h.workspace.preparations).toEqual([]);
+    expect(recordOf((h.context.issues as FakeIssues).issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 7 }]);
+  });
+
   it("knows a PR was taken early from its issue even when the gate held nothing in it", async () => {
     // The probe brought g:x@2 into a configuration where it's new; the gate saw it elsewhere in the repository already.
     const plan = await heldPlan(YOUNG_VITE());
@@ -2935,7 +3059,7 @@ describe("the cooldown hold", () => {
     const h = harness({ prs: [pr] });
     await early(h, pr, [{ ecosystem: "Maven", name: "g:x", version: "2", eligibleAt: "2026-10-13T00:00:00.000Z" }]);
     h.github.checks = GREEN;
-    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "held" }] });
+    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "held", detail: "until unknown" }] });
     expect(h.github.prs.get(7)?.isDraft).toBe(true);
   });
 
@@ -2968,36 +3092,22 @@ describe("the cooldown hold", () => {
     const plan = await heldPlan(YOUNG_VITE());
     const pr = ownPr({ headRef: "secure-it/2026-10-05-security", body: withMarker(RULES, withPlanSection("Fixes lib.\n\nTracks #1.", { ...plan, cooldown: [] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr], files: { "package-lock.json": LOCK } });
+    await track(h);
     h.github.checks = GREEN;
     expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "marked-ready" }] });
     expect((h.context.issues as FakeIssues).calls).toEqual([]);
   });
 
-
-  it("leaves a held draft from before issues that a person marked ready, even once an issue tracks its packages", async () => {
-    const plan = await heldPlan(YOUNG_VITE());
-    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite", isDraft: false, body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
-    const h = harness({ prs: [pr] });
-    const subject = { kind: "package" as const, ecosystem: "npm" as const, name: "vite" };
-    const record: IssueRecord = { version: 1, subject, openedAt: BASE_SHA, findings: [], absences: [], attempts: [] };
-    await (h.context.issues as FakeIssues).createIssue({ repo: REPO, title: "secure-it: vite", body: ISSUE_WRITER.render({ subject, findings: [], status: { kind: "informational" } }, record, BASE_SHA).body, labels: [ISSUE_LABEL] });
-    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "left-alone", detail: "a person marked the held PR ready" }] });
-    expect(h.github.prs.get(7)?.state).toBe("open");
-  });
-
-  it("closes a held draft from before issues only once an issue tracks its packages, linking to it", async () => {
-    const plan = await heldPlan(YOUNG_VITE());
-    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-cooldown-vite", body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
-    const h = harness({ prs: [pr] });
-    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "left-alone", detail: "a held draft from before issues; a run opens the issue that replaces it" }] });
-    expect(h.github.prs.get(7)?.state).toBe("open");
-    const issues = h.context.issues as FakeIssues;
-    const subject = { kind: "package" as const, ecosystem: "npm" as const, name: "vite" };
-    const record: IssueRecord = { version: 1, subject, openedAt: BASE_SHA, findings: [], absences: [], attempts: [] };
-    await issues.createIssue({ repo: REPO, title: "secure-it: vite", body: ISSUE_WRITER.render({ subject, findings: [], status: { kind: "informational" } }, record, BASE_SHA).body, labels: [ISSUE_LABEL] });
-    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "left-alone", detail: "closed: replaced by #1" }] });
-    expect(h.github.prs.get(7)?.state).toBe("closed");
-    expect(h.github.calls).toContainEqual(expect.stringMatching(/^createComment 7 secure-it now tracks these fixes in #1/));
+  it("leaves version PRs without Tracks to the owner, without migration or execution", async () => {
+    for (const cooldown of [[], [{ ...HELD, signals: [] }]]) for (const isDraft of [false, true]) {
+      const plan = await heldPlan(YOUNG_VITE());
+      const pr = ownPr({ isDraft, body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+      const h = harness({ prs: [pr], baseSha: "f".repeat(40) });
+      expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ outcome: "left-alone", detail: "it tracks no issue; close it by hand and run secure-it again" }] });
+      expect(h.github.prs.get(7)).toEqual(pr);
+      expect([h.workspace.preparations, h.workspace.publications, h.workspace.deletions, h.agentCalls]).toEqual([[], [], [], []]);
+      expect((h.context.issues as FakeIssues).calls).toEqual([]);
+    }
   });
 
   it("leaves a PR taken early to the owner when, on a moved base, its fix now requires a young dependency its grant didn't cover", async () => {
@@ -3029,8 +3139,9 @@ describe("the cooldown hold", () => {
 
   it("refuses a held PR whose recorded hold doesn't read", async () => {
     const plan = await planFor([YOUNG_VITE()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined });
-    const body = withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, eligibleAt: "soon", signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 });
+    const body = withMarker(RULES, withPlanSection("Fixes vite.\n\nTracks #1.", { ...plan, cooldown: [{ ...HELD, eligibleAt: "soon", signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 });
     const h = harness({ prs: [ownPr({ headRef: "secure-it/2026-10-05-security", body })] });
+    await track(h);
     h.github.checks = GREEN;
     expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "error" }] });
     expect(h.github.prs.get(7)?.isDraft).toBe(true);

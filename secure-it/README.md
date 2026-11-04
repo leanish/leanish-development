@@ -46,7 +46,7 @@ versions: the code decides, and the only thing a person's input changes is wheth
 Someone with write, maintain or admin access comments `take-early: <reason>` on a waiting decision's issue, then adds
 the `take-early` label. The next run fixes exactly that decision, with the young versions it took then (or fewer as
 they age), on a branch reserved for that label, and opens a draft PR with the [cooldown warning](#the-cooldown-warning).
-It stays a draft until those versions are past the wait; then review retires it, as any held PR, and the next run
+It stays a draft until those granted versions are past the wait; then review retires it and the next run
 fixes that work afresh, in the batch it now belongs to.
 
 - **One label, one attempt**, recorded on the issue before anything executes. An attempt that the agent couldn't
@@ -65,8 +65,9 @@ fixes that work afresh, in the batch it now belongs to.
 Verification can find a young version planning didn't choose (a transitive move, say). Whether the decision was past
 the wait or taken early, the run then publishes nothing, names the versions on the issue and tries again next run.
 
-A held draft opened before issues is closed by review, with a link, once an issue tracks one of its packages; until a
-run opens one, it's left as it is.
+A version-fix PR without a `Tracks` line is left to its owner. Before upgrading from earlier versions or release
+candidates, close obsolete version-fix PRs and issues by hand, keeping any human changes you need, then run secure-it
+to create current decision issues. Nothing is migrated; waiting decisions need a fresh authorization.
 
 ## What a run does
 
@@ -321,10 +322,8 @@ The tick from [`core/tool-runtime`](../core/tool-runtime), with secure-it's step
     or a direct-peer set in the PR's recomputation can't be, the PR is kept as it is and the tick reports an `error`:
     a move lost to a failed check isn't work the base no longer needs, so nothing is retired, replaced or rewritten
     until it can be decided.
-  - Older per-package plans without a batch kind keep their original package scope and topic during review. Runs
-    create the new units independently; legacy PRs retire once their fixes are on the base.
-  - A different plan on the new base: the PR is reconciled as in a run (reverted to the base, conflicts included,
-    then the new plan applied), with the agent's new title and description.
+  - A different decision on the new base: review leaves the PR unchanged and says why on its issue. The next run
+    handles it through the new decision's issue. The same moves with changed metadata can still be refreshed.
   - The same plan: conflicted dependency files take the base's side, the tool re-writes npm files and the agent
     re-applies the non-npm plan; it also resolves any code conflicts.
   - A clean merge with the same plan also refreshes npm files before verification, without an agent. Matching npm
@@ -333,16 +332,18 @@ The tick from [`core/tool-runtime`](../core/tool-runtime), with secure-it's step
     pushed, with the plan in the PR. Fixes remained on the new base, so an edit that leaves the base as it was fails
     verification; it doesn't retire the PR.
 - **CI failed (version-fix units):** the agent adapts, at most twice, and the result is verified before it's pushed.
-- **A held PR** (the verifying comparison held young versions; its plan records them: one taken early) never becomes
-  ready on the tool's say. Trusted packages don't cause a cooldown hold; a PR with no other hold becomes ready on
-  green like any other. Green CI, or only the gate's `cooldown` job failing in its hold
-  step after a passing comparison, is `held`; any other failure is adapted as usual. Once the last held version has
-  aged, the draft is closed with a comment before anything else (`graduated`), and the next run plans again from the
-  default branch with fresh checks. A held PR a person marked ready is theirs: the tick leaves it alone. One taken
-  early goes on only while its `take-early` grant stands (see [Issues](#issues-decide-what-runs)); once it's closed
-  (graduated, out of adaptations, or by a person), its attempt ends and its label comes off.
-- **A held draft from before issues** (it tracks no issue) isn't reviewed any more: it's closed with a link once an
-  issue tracks one of its packages, and left as it is until then.
+- **A PR taken early** stays a draft while any version its issue's grant covered is still young, even when the gate's
+  recorded cooldown holds nothing. A date that can't be read keeps it waiting, with its time reported as unknown.
+  Green CI, or only the gate's `cooldown` job failing in its hold step after a passing comparison, is `held`; other
+  failures are adapted as usual. Once all granted versions aged, review closes the draft before branch, base or CI
+  work (`graduated`), ends its attempt and returns its label. The next run plans afresh from the default branch.
+  A person who marked it ready owns it: review leaves it alone, including at graduation. While it is young, review
+  proceeds only while its grant stands (see [Issues](#issues-decide-what-runs)); verification admits only that grant's
+  versions and trusted packages. The recorded cooldown is evidence, not authorization.
+- **Ordinary tracked PRs** need no early grant and become ready on green, unless the gate's cooldown alone holds
+  them. Trusted packages don't cause a gate hold. Verification refuses any non-trusted young version no grant covers.
+- **A version-fix PR without `Tracks`** is left to its owner; review does not migrate, rebase, adapt or mark it ready.
+  Floor-removal PRs intentionally track no issue and retain their separate review path.
 
 ## The cooldown warning
 
@@ -351,8 +352,8 @@ the versions that came early (published, held until, and why: the rule-picked fi
 plus provenance, publisher changes and new install scripts for npm, for information. It says that needing a version
 and passing every check doesn't rule out malware, that secure-it keeps the PR a draft until everything
 aged, and how a person takes it earlier: every other check green, the reason written on the PR, an admin merge. A PR
-planned as aged that the comparison holds anyway is held the same way. A cooldown the comparison couldn't evaluate
-fails verification.
+whose verification finds a young version its issue didn't authorize is not published; the issue says why.
+A cooldown the comparison couldn't evaluate fails verification.
 
 For every held version that fixes advisories (the gate records them, whether or not anything justified the version,
 and an exception's named one, reviewed or not), the warning also says where those advisories appear. After the
