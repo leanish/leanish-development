@@ -13,6 +13,7 @@
  *   - An incomplete assessment closes and resolves nothing.
  */
 import { type Assessment, type FindingKey, type IssueRecord, keyOf, type PackageVersion, sameFinding, SHOWN_PENDING, type SubjectAssessment, subjectId } from "./issue-model.ts";
+import { TAKE_EARLY_LABEL } from "./issue-text.ts";
 
 /** An issue the tool opened, with its record read back. */
 export interface TrackedIssue {
@@ -27,6 +28,8 @@ export interface TrackedIssue {
    * again, that closing was theirs: a dismissal.
    */
   readonly reopened: boolean;
+  /** Its labels, where known: a duplicate a person labelled `take-early` is theirs to settle. */
+  readonly labels?: ReadonlyArray<string>;
 }
 
 /** How issue text is written (`issue-text.ts`). */
@@ -159,10 +162,18 @@ export function reconcile(assessment: Assessment, issues: ReadonlyArray<TrackedI
         return;
       }
       if (wanted.has(id)) {
-        // A duplicate instance (a create retried after its answer was lost): the lowest-numbered one carries on, once
-        // a complete assessment confirms it. Only a closing already recorded finishes on an incomplete one.
+        // A duplicate instance (a create retried after its answer was lost, or one a lagging listing hid): the
+        // lowest-numbered one carries on. A complete assessment closes the others. An incomplete one (a repository
+        // with a lasting gap is never complete) closes one only when the survivor was opened for every finding it was,
+        // so no finding leaves tracking unseen. Neither closes one a person labelled `take-early` or one running an
+        // early attempt: a grant is a person's and never moves to another issue, so while two stay open the decision
+        // executes through neither (`issueDisposition`) until a person closes one.
         const first = bySubject.get(id)![0]!;
-        if (first !== issue && assessment.complete) operations.push(closing(issue, record, writer, "superseded", [first.number], assessment.sha));
+        if (first === issue) return;
+        const authorized = (issue.labels ?? []).includes(TAKE_EARLY_LABEL) || record.attempts.some((attempt) => attempt.outcome === undefined);
+        const covered = record.findings.every((finding) => first.record.findings.some((kept) => sameFinding(finding, kept)));
+        if (authorized) notes.push(`#${issue.number}: duplicates #${first.number} but carries an authorization; a person closes one of them`);
+        else if (assessment.complete || covered) operations.push(closing(issue, record, writer, "superseded", [first.number], assessment.sha));
         return;
       }
       if (!assessment.complete) {

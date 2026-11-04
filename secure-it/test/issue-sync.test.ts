@@ -28,6 +28,71 @@ describe("syncIssues", () => {
     expect(issues.calls).toEqual([]);
   });
 
+  it("opens each issue once and settles when GitHub's listing lags its writes", async () => {
+    const issues = new FakeIssues();
+    issues.lagging = true;
+    const result = await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1"), waiting("other", "2.0.1")]));
+    expect(result.settled).toBe(true);
+    expect(issues.calls.filter((call) => call.startsWith("createIssue"))).toEqual(["createIssue #1", "createIssue #2"]);
+    expect(result.tracked.map((issue) => issue.number).sort()).toEqual([1, 2]);
+    // The sync's last listing came after its last write, so the next run lists both and changes nothing.
+    issues.calls.length = 0;
+    expect((await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1"), waiting("other", "2.0.1")]))).settled).toBe(true);
+    expect(issues.calls).toEqual([]);
+  });
+
+  it("takes an issue a person deleted during the sync for gone, as the listing would, and opens its subject again", async () => {
+    const issues = new FakeIssues();
+    issues.lagging = true;
+    const create = issues.createIssue.bind(issues);
+    issues.createIssue = async (args) => {
+      const issue = await create(args);
+      if (issue.number === 1) issues.issues.delete(1);
+      return issue;
+    };
+    const result = await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+    expect(result.settled).toBe(true);
+    expect(result.tracked.map((issue) => issue.number)).toEqual([2]);
+  });
+
+  it("drops a written issue a person took the tool's label off, as the listing would", async () => {
+    const issues = new FakeIssues();
+    issues.lagging = true;
+    const create = issues.createIssue.bind(issues);
+    issues.createIssue = async (args) => {
+      const issue = await create(args);
+      if (issue.number === 1) issues.issues.set(1, { ...issue, labels: [] });
+      return issue;
+    };
+    const result = await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+    expect(result.tracked.map((issue) => issue.number)).toEqual([2]);
+  });
+
+  it("doesn't close a duplicate a person labelled take-early after the lagging listing last saw it", async () => {
+    const issues = new FakeIssues();
+    await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+    issues.issues.set(2, { ...issues.issues.get(1)!, number: 2 });
+    issues.lagging = true;
+    await issues.listIssues({ repo: "acme/widget", creator: "leanish", label: "leanish:secure-it-issue" });
+    issues.label(2, "owner", "take-early");
+    issues.calls.length = 0;
+    const result = await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+    expect(issues.issues.get(2)!.state).toBe("open");
+    expect(issues.calls).toEqual([]);
+    expect(result.notes).toContain("#2: duplicates #1 but carries an authorization; a person closes one of them");
+  });
+
+  it("supersedes a changed decision through to its closing with a lagging listing, posting the notice once", async () => {
+    const issues = new FakeIssues();
+    issues.lagging = true;
+    await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+    const result = await syncIssues(sync(issues), assessed([waiting("lib", "1.0.2")], LATER));
+    expect(result.settled).toBe(true);
+    expect(issues.calls.filter((call) => call.startsWith("createIssue"))).toEqual(["createIssue #1", "createIssue #2"]);
+    expect(issues.issues.get(1)).toMatchObject({ state: "closed", stateReason: "not_planned" });
+    expect(issues.comments.get(1)).toHaveLength(1);
+  });
+
   it("supersedes a changed decision through to its closing, posting the notice once", async () => {
     const issues = new FakeIssues();
     await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));

@@ -177,13 +177,42 @@ describe("reconcile", () => {
     expect(result.notes).toEqual([expect.stringContaining("#7: its record can't be read")]);
   });
 
-  it("closes a duplicate instance of one subject in favour of the lowest number, on a complete assessment only", () => {
+  it("closes a duplicate instance of one subject in favour of the lowest number, on an incomplete assessment too", () => {
     const fix = decision([move("lib")], [finding("lib", ["GHSA-1"])]);
     const [first] = converge(assessed([fix])).issues;
-    expect(reconcile(assessed([fix], false), [first!, { ...first!, number: 2 }], ISSUE_WRITER).operations).toEqual([]);
-    const result = converge(assessed([fix]), [first!, { ...first!, number: 2 }]);
-    expect(open(result.issues).map((issue) => issue.number)).toEqual([1]);
-    expect(result.issues[1]!.record.pendingClose?.successors).toEqual([1]);
+    for (const complete of [true, false]) {
+      const result = converge(assessed([fix], complete), [first!, { ...first!, number: 2 }]);
+      expect(open(result.issues).map((issue) => issue.number)).toEqual([1]);
+      expect(result.issues[1]!.record.pendingClose).toMatchObject({ reason: "superseded", successors: [1] });
+    }
+  });
+
+  it("keeps a duplicate opened for a finding the survivor lacks while the assessment is incomplete", () => {
+    const [first] = converge(assessed([informational("lib", [finding("lib", ["GHSA-A"], { reviewed: false })])])).issues;
+    const [wider] = converge(assessed([informational("lib", [finding("lib", ["GHSA-A"], { reviewed: false }), finding("lib", ["GHSA-B"], { reviewed: false })])])).issues;
+    const both = [first!, { ...wider!, number: 2 }];
+    // An incomplete scan sees only A: B isn't shown gone, so #2, the only issue opened for it, stays.
+    const now = informational("lib", [finding("lib", ["GHSA-A"], { reviewed: false })]);
+    expect(reconcile(assessed([now], false), both, ISSUE_WRITER).operations).toEqual([]);
+    // A complete one settles it.
+    expect(open(converge(assessed([now]), both).issues).map((issue) => issue.number)).toEqual([1]);
+  });
+
+  it("never closes a duplicate a person labelled take-early, and says a person closes one", () => {
+    const fix = decision([move("lib")], [finding("lib", ["GHSA-1"])]);
+    const [first] = converge(assessed([fix])).issues;
+    const labelled: TrackedIssue = { ...first!, number: 2, labels: ["leanish:secure-it-issue", "take-early"] };
+    const result = reconcile(assessed([fix]), [first!, labelled], ISSUE_WRITER);
+    expect(result.operations).toEqual([]);
+    expect(result.notes).toContain("#2: duplicates #1 but carries an authorization; a person closes one of them");
+  });
+
+  it("never closes a duplicate running an early attempt", () => {
+    const fix = decision([move("lib")], [finding("lib", ["GHSA-1"])]);
+    const [first] = converge(assessed([fix])).issues;
+    const record: IssueRecord = { ...first!.record, attempts: [{ id: "7-1", grantEventId: 7, branch: "secure-it/2026-11-04-take-early-7", startedAt: "2026-11-04T00:00:00.000Z" }] };
+    const running: TrackedIssue = { ...first!, number: 2, record, body: ISSUE_WRITER.withRecord(first!.body, record) };
+    expect(reconcile(assessed([fix]), [first!, running], ISSUE_WRITER).operations).toEqual([]);
   });
 
   it("doesn't wait for a successor a dismissal covers", () => {

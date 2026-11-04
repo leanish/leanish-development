@@ -48,7 +48,7 @@ import { assessmentOf, decisionMoves, type PlannedUnit, youngOf } from "./issue-
 import { type PackageVersion, subjectId } from "./issue-model.ts";
 import { observationsOf } from "./issue-observations.ts";
 import { postNotice, syncIssues } from "./issue-sync.ts";
-import { type Disposition, inactiveLabelNotices, issueDisposition, type Tracking, type TrackedExecution } from "./issue-tracking.ts";
+import { attemptBranches, type Disposition, inactiveLabelNotices, issueDisposition, type Tracking, type TrackedExecution } from "./issue-tracking.ts";
 import { type AttemptClient, type AttemptPatch, endAttempt, recoverAttempts, settleAttempt } from "./issue-attempts.ts";
 import { earlyDecisions, reviewClosed, reviewDisposition, reviewExecution, type ReviewIssues, takenEarlyOf, trackedIssueOf } from "./issue-review.ts";
 import { trackingContent } from "./issue-text.ts";
@@ -1537,11 +1537,12 @@ function issueCleaner(context: ToolRunContext): (body: string) => string {
  */
 function trackedDisposition(execution: Execution, tracking: Tracking, started: Map<string, { readonly issue: number; readonly attempt: string }>): SecureItDeps["disposition"] {
   const client = { issues: execution.context.issues, repo: execution.context.repo.repo, clean: issueCleaner(execution.context), now: execution.context.now };
+  // An early attempt publishes to the branch of the PR its unit reuses, or to one reserved for its grant alone.
+  const branches = attemptBranches((labelEventId) => branchFor(RULES, client.now, `take-early-${labelEventId}`));
   return async (target) => {
     if (target.kind === "removal" || target.kind === "review") return execution.deps.disposition(target);
     const own = target.of ?? target.plan;
-    // An early attempt publishes to the branch of the PR its unit reuses, or to one reserved for its grant alone.
-    const decided = await issueDisposition(tracking, own, client, (labelEventId) => target.branch ?? branchFor(RULES, client.now, `take-early-${labelEventId}`));
+    const decided = await issueDisposition(tracking, own, client, branches(target.branch));
     if (decided.kind === "proceed" && decided.tracked?.attempt !== undefined) started.set(own.topic, { issue: decided.tracked.issue, attempt: decided.tracked.attempt.id });
     if (decided.kind === "defer" || target.of === undefined || target.plan === target.of) return decided;
     const id = subjectId({ kind: "decision", moves: decisionMoves(own) });
