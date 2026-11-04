@@ -22,16 +22,20 @@
   grant's young versions and trusted packages; recorded cooldown warnings and evidence remain visible. bump-it and
   ordinary PRs still wait when only the gate's cooldown holds them.
 - Before upgrading from 0.10.x, close secure-it's open version-fix PRs by hand, keeping any human changes you need:
-  nothing migrates them, and review leaves a version-fix PR without `Tracks` to its owner. The first run then assesses
-  the findings and opens the corresponding issues. Don't close secure-it's issues to start over: closing an issue
-  dismisses its tracked findings. A new advisory finding can open a new issue; a dismissed finding can open one again
-  after a complete assessment records it absent and it later returns. If you ran a release candidate, keep its issues
-  open and run secure-it again; if you closed them following an earlier version of this note, reopen those issues.
+  review leaves a version-fix PR without `Tracks` to its owner, and a run still matches one to a fix it plans by its
+  kind and topic alone, as before: it leaves it as it is when the plan is unchanged, or redoes it, then with a
+  `Tracks` line, when the plan changed. The first run then assesses the findings and opens the corresponding issues.
+  Don't close secure-it's issues to start over: closing an issue dismisses its tracked findings. A new advisory
+  finding can open a new issue; a dismissed finding can open one again after a complete assessment records it absent
+  and it later returns. If you ran a release candidate, keep its issues open and run secure-it again; if you closed
+  them following an earlier version of this note, reopen those issues.
   Floor-removal PRs intentionally track no issue and keep their separate review behavior.
 - A package whose advisories only its own repository publishes is reported as informational, never as a candidate the
   rule refused, unless something else blocks it too. A waiting issue says it was taken early only while an attempt's PR
   is open or merged: while an attempt runs it says it is taking it early, and an attempt that ended before publishing,
-  or whose PR was closed, leaves the issue waiting again, with the attempt listed.
+  or whose PR was closed, leaves the issue waiting again, with the attempt listed. A run renders an open issue again as
+  soon as it records an attempt's PR or its end, unless the text no longer fits; otherwise, and in a review, which
+  assesses nothing, only the record changes, and the next run's sync renders it.
 - A first `take-early` label authorizes only the young versions its issue showed: one the issue never displayed (an
   update that couldn't be written, say) needs a new label once the issue shows it.
 - While an incomplete assessment (a lasting coverage gap, say) no longer finds an open issue's decision, the issue stays

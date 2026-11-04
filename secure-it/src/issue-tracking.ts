@@ -26,8 +26,11 @@ export interface TrackedExecution {
    * Anything else young that verification finds defers it.
    */
   readonly young: ReadonlyArray<PackageVersion>;
-  /** The attempt a `take-early` grant runs, and the branch it publishes to (reserved when it was recorded). */
-  readonly attempt?: { readonly id: string; readonly branch: string };
+  /**
+   * The attempt a `take-early` grant runs, the branch it publishes to (reserved when it was recorded), and the
+   * assessment its issue was written from, which settling the attempt renders the issue from again.
+   */
+  readonly attempt?: { readonly id: string; readonly branch: string; readonly assessment: Assessment };
 }
 
 export interface Tracking {
@@ -77,7 +80,7 @@ export async function issueDisposition(
     return { kind: "defer", reason: `take-early refused on #${issue.number}: ${decision.reason}` };
   }
   const young = subject.status.young.map(({ ecosystem, name, version }) => ({ ecosystem, name, version }));
-  const early = (attempt: Attempt): Disposition => ({ kind: "proceed", tracked: { issue: issue.number, young, attempt: { id: attempt.id, branch: attempt.branch } } });
+  const early = (attempt: Attempt): Disposition => ({ kind: "proceed", tracked: { issue: issue.number, young, attempt: { id: attempt.id, branch: attempt.branch, assessment: tracking.assessment } } });
   const running = current.attempts.find((attempt) => attempt.outcome === undefined && attempt.grantEventId === decision.grant.labelEventId);
   if (running !== undefined) {
     if (!attemptBranchAllowed(running, branch(running.grantEventId))) {

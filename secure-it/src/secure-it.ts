@@ -637,10 +637,10 @@ async function runUnit(
   let result: Readonly<Record<string, unknown>>;
   try {
     result = await executeUnit(execution, plan, base, owned[0], own, details, tracked);
-    await settleAttempt(attemptClient(execution), tracked.issue, attempt.id, attemptPatchOf(result));
+    await settleAttempt(attemptClient(execution), tracked.issue, attempt.id, attemptPatchOf(result), attempt.assessment);
   } catch (error) {
     // A publication can fail after its PR exists (a label, say): that PR is the attempt's, still running.
-    await endAttempt(attemptClient(execution), tracked.issue, attempt.id).catch((failure: unknown) => {
+    await endAttempt(attemptClient(execution), tracked.issue, attempt.id, attempt.assessment).catch((failure: unknown) => {
       execution.context.logger.warn("secure-it: an early attempt couldn't be ended", { issue: tracked.issue, error: asError(failure).message });
     });
     throw error;
@@ -776,7 +776,7 @@ async function withoutAgedEarly(execution: Execution, own: ReadonlyArray<GitHubP
       continue;
     }
     // Closed: its attempt ends here, or, if that write fails, at the next run's recovery from the PR's history.
-    await settleAttempt(attemptClient(execution), number!, attempt!.id, { outcome: "pr-closed" }).catch((error: unknown) => {
+    await settleAttempt(attemptClient(execution), number!, attempt!.id, { outcome: "pr-closed" }, tracking.assessment).catch((error: unknown) => {
       if (rateLimited(error)) throw error;
       context.logger.warn("secure-it: a retired PR's attempt couldn't be ended; the next run's recovery ends it", { pr: pr.number, error: asError(error).message });
     });
@@ -1387,7 +1387,7 @@ async function trackIssues(execution: Execution, inputs: TrackingInputs): Promis
   });
   const sync = await syncIssues({ issues: context.issues, repo: context.repo.repo, clean: issueCleaner(context), ...(execution.deps.clock === undefined ? {} : { clock: execution.deps.clock }) }, assessment);
   // Before any disposition: an attempt a previous run left running is settled from its PR, or ends as interrupted.
-  const recovered = await recoverAttempts(attemptClient(execution), sync.tracked);
+  const recovered = await recoverAttempts(attemptClient(execution), sync.tracked, assessment);
   // Recovery can attach a PR to its attempt: execution must not reuse assessment's earlier ownership answer.
   if (recovered.length > 0) execution.early.forget();
   for (const note of [...sync.notes, ...recovered]) context.logger.warn("secure-it: issues", { note });
