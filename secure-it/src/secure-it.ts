@@ -644,8 +644,11 @@ async function runUnit(
   const already = owned.find((candidate) => samePlan(candidate.pr, planDigest(plan), digestOf));
   // The reused PR is checked before anything repairs, refreshes or redoes it.
   const reused = already ?? owned[0];
-  if (reused !== undefined) assertNoUndecidedMoves(planOf(reused.pr.body), undecided);
   const details = { topic: plan.topic, packages: plan.packages, notes: plan.notes ?? [] };
+  if (reused !== undefined && !reused.pr.isDraft && await earlyPr(execution, reused.pr, plan)) {
+    return { ...details, outcome: "deferred", reason: "a person marked the early PR ready" };
+  }
+  if (reused !== undefined) assertNoUndecidedMoves(planOf(reused.pr.body), undecided);
   if (already !== undefined) {
     const pr = await repairOwnership(publication, already);
     await refreshText(execution, pr, plan);
@@ -1024,7 +1027,7 @@ function earlyPr(execution: Execution, pr: GitHubPullRequest, plan: ChangePlan):
 /** Early PRs carry exact decisions; eligible ordinary PRs can reconcile their kind and full recorded topic. */
 function matchesPlan(target: { readonly plan: ChangePlan; readonly unit?: SecurityUnit }, candidate: { readonly pr: GitHubPullRequest; readonly plan: ChangePlan; readonly early: boolean }): boolean {
   if (target.plan.kind !== candidate.plan.kind) return false;
-  if (candidate.early) return candidate.pr.isDraft && decisionIdOf(target.plan) === decisionIdOf(candidate.plan);
+  if (candidate.early) return decisionIdOf(target.plan) === decisionIdOf(candidate.plan);
   if (target.unit?.young === true || takenEarlyOf(candidate.pr.body)) return false;
   return target.plan.topic === candidate.plan.topic;
 }
@@ -1195,6 +1198,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       const selected = await reviewPlan(execution, previous, prepared, { tree: base, gradle: baseGradle }, early);
       if (selected === undefined) {
         await closeAndDelete(publication, pr.number, pr.headSha, "No actionable fixes remain for this security unit on the default branch. Blocked fixes are reported by secure-it.");
+        if (early) await reviewClosed(issues, pr, previous);
         return "retired";
       }
       const { unit, plan } = selected;

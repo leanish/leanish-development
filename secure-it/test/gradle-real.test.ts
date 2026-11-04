@@ -238,7 +238,7 @@ dependencies { implementation "fixture:d:1.0" }
 });
 
 
-describe.skipIf(process.env["SUPPLY_CHAIN_GRADLE_TESTS"] !== "1")("held Gradle fixes, with real Gradle offline", () => {
+describe.skipIf(process.env["SUPPLY_CHAIN_GRADLE_TESTS"] !== "1")("young Gradle fixes, with real Gradle offline", () => {
   let fixtureRoot: string;
   let fixtureBuild: string;
   const offline: RunProcess = (command, args, options) => runProcess(process.env["SUPPLY_CHAIN_GRADLE_BIN"] ?? command,

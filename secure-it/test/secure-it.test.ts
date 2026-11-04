@@ -2892,14 +2892,13 @@ describe("the cooldown hold", () => {
     expect(trackedRecord(h).subject).toMatchObject({ moves: [{ name: second.name }] });
   });
 
-  it("retires an early PR on a moved base only when its fixes are gone, and recovery ends its attempt", async () => {
+  it("retires an early PR on a moved base only when its fixes are gone, ending its attempt and returning its label", async () => {
     const plan = await heldPlan(YOUNG_VITE());
     const pr = ownPr({ body: withMarker(RULES, withPlanSection("Fixes vite.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr], fixes: [] });
     await early(h, pr, [{ ecosystem: "npm", name: "vite", version: "8.3.3", eligibleAt: HELD.eligibleAt }]);
     expect(await secureIt(h.deps).review({ ...h.context, workingCopy: { ...h.context.workingCopy, headSha: "f".repeat(40) } })).toMatchObject({ reviewed: [{ number: 7, outcome: "retired" }] });
     expect(h.github.prs.get(7)?.state).toBe("closed");
-    await recoverAttempts({ issues: h.context.issues, github: h.github, repo: REPO, clean: (body: string) => body, ours: () => true }, await syncedIssues(h));
     expect(recordOf((h.context.issues as FakeIssues).issues.get(1)!.body)!.attempts).toMatchObject([{ outcome: "pr-closed" }]);
     expect((h.context.issues as FakeIssues).issues.get(1)!.labels).not.toContain("take-early");
     expect(h.agentCalls).toEqual([]);
@@ -2929,6 +2928,31 @@ describe("the cooldown hold", () => {
   const heldPlan = (fix: SecurityFix) => planFor([fix], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined },
     { kind: "routine", topic: `security-young-${fix.ecosystem}|${fix.name}` });
 
+  it.each([false, true])("defers to the owner of an early PR marked ready with its label still on (changed metadata: %s)", async (changed) => {
+    const plan = await heldPlan(YOUNG_VITE());
+    const recorded = changed ? { ...plan, notes: ["an outdated reason"],
+      moves: plan.moves.map((move) => ({ ...move, advisories: ["GHSA-old"] })) } : plan;
+    expect(decisionMoves(recorded)).toEqual(decisionMoves(plan));
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-take-early-1001",
+      body: withMarker(RULES, withPlanSection("Fixes vite.", recorded), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pr], fixes: [YOUNG_VITE()] });
+    const taken = { ...await early(h, pr, [{ ecosystem: "npm", name: "vite", version: "8.3.3", eligibleAt: HELD.eligibleAt }]), isDraft: false };
+    h.github.prs.set(7, taken);
+    const issues = h.context.issues as FakeIssues;
+    const attempts = recordOf(issues.issues.get(1)!.body)!.attempts;
+    const tool = secureIt({ ...h.deps, verify: holdingVerify });
+    for (let run = 0; run < 2; run++) {
+      expect(await tool.run(h.context)).toMatchObject({ outcome: "deferred", reason: "a person marked the early PR ready" });
+      expect(h.github.prs.size).toBe(1);
+      expect(h.github.prs.get(7)).toEqual(taken);
+      expect(recordOf(issues.issues.get(1)!.body)!.attempts).toEqual(attempts);
+      expect(recordOf(issues.issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 7 }]);
+      expect(recordOf(issues.issues.get(1)!.body)!.attempts[0]!.outcome).toBeUndefined();
+      expect(issues.issues.get(1)!.labels).toContain("take-early");
+      expect([h.workspace.preparations, h.workspace.publications, h.agentCalls, h.written, h.reverted]).toEqual([[], [], [], [], []]);
+    }
+  });
+
   it("keeps an early PR a person marked ready without starting another attempt", async () => {
     const plan = await heldPlan(YOUNG_VITE());
     const taken = ownPr({ headRef: "secure-it/2026-10-05-take-early-1001", isDraft: false,
@@ -2941,7 +2965,7 @@ describe("the cooldown hold", () => {
     const issues = h.context.issues as FakeIssues;
     issues.comment(1, "owner", "take-early: a fresh attempt without changing the person's PR");
     issues.label(1, "owner", "take-early");
-    expect(await tool.run(h.context)).toMatchObject({ outcome: "deferred", reason: expect.stringContaining("an early attempt is still running under an earlier label") });
+    expect(await tool.run(h.context)).toMatchObject({ outcome: "deferred", reason: "a person marked the early PR ready" });
     expect(h.github.prs.get(7)!.body).toBe(protectedPr.body);
     expect(h.workspace.publications).toEqual([]);
     expect(h.agentCalls).toEqual([]);
@@ -3002,7 +3026,7 @@ describe("the cooldown hold", () => {
     const issues = h.context.issues as FakeIssues;
     issues.comment(1, "owner", "take-early: a fresh attempt without changing the person's PR");
     issues.label(1, "owner", "take-early");
-    expect(await tool.run(h.context)).toMatchObject({ outcome: "deferred", reason: expect.stringContaining("an early attempt is still running under an earlier label") });
+    expect(await tool.run(h.context)).toMatchObject({ outcome: "deferred", reason: "a person marked the early PR ready" });
     expect(h.github.prs.get(7)).toEqual(taken);
     expect(h.workspace.publications).toEqual([]);
     expect(h.agentCalls).toEqual([]);

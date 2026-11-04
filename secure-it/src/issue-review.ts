@@ -205,7 +205,7 @@ export async function reviewExecution(client: ReviewIssues, pr: GitHubPullReques
     : leave(client, scope.number, `beyond:${pr.number}:${beyond.join(",")}`, pr, `on the new base it takes young versions its \`take-early\` label didn't cover: ${beyond.join(", ")}`);
 }
 
-/** Ends the early attempt of a PR review closed (its adaptations ran out): the attempt is over, its label returned. */
+/** Ends the early attempt of a PR review closed: the attempt is over, its label returned. */
 export async function reviewClosed(client: ReviewIssues, pr: GitHubPullRequest, plan: ChangePlan): Promise<void> {
   const number = trackedIssueOf(pr.body);
   if (number === undefined) return;

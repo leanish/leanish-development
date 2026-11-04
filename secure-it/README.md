@@ -395,7 +395,7 @@ sandboxed commands) and verified by sha256 before every run; launchd or cron cal
 
 ## Tests
 
-Run the held-Gradle reproduction from the repository root:
+Run the reproduction for young Gradle fixes from the repository root:
 
 ```sh
 SUPPLY_CHAIN_GRADLE_TESTS=1 SUPPLY_CHAIN_GRADLE_BIN=/path/to/installed/gradle npm test --workspace secure-it -- gradle-real.test.ts -t 'aligned security moves'
