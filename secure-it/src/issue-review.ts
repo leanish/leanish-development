@@ -12,6 +12,7 @@
  */
 import { GitHubApiError } from "@leanish/agent-runtime/github/github-client";
 import type { GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
+import { label, versionKey } from "@leanish/gate/package-version";
 import type { Ecosystem } from "@leanish/gate/versions";
 import type { GitHubIssue } from "@leanish/tool-runtime/github-issues";
 
@@ -24,6 +25,7 @@ import { postNotice } from "./issue-notices.ts";
 import { recordOf } from "./issue-text.ts";
 import { planOf } from "./plan-block.ts";
 import type { ChangePlan } from "./plan.ts";
+import { youngAt } from "./young-at.ts";
 
 export interface ReviewIssues extends AttemptClient {
   readonly now: Date;
@@ -64,7 +66,7 @@ export function takenEarlyOf(body: string): boolean {
 
 /** The versions `plan` holds that are still younger than the wait and need a grant: a trusted package's never do. */
 function youngIn(client: ReviewIssues, plan: ChangePlan) {
-  return (plan.cooldown ?? []).filter((held) => Date.parse(held.eligibleAt) > client.now.getTime() && !client.trusted(held));
+  return (plan.cooldown ?? []).filter((held) => youngAt(held.eligibleAt, client.now) && !client.trusted(held));
 }
 
 /**
@@ -93,7 +95,7 @@ async function stillYoung(client: ReviewIssues, grant: Grant): Promise<YoungVers
   for (const pkg of grant.young) {
     if (client.trusted(pkg)) continue;
     const eligibleAt = await client.eligibleAt(pkg).catch(() => undefined);
-    if (eligibleAt === undefined || Date.parse(eligibleAt) > client.now.getTime()) young.push({ ...pkg, eligibleAt: eligibleAt ?? "unknown" });
+    if (youngAt(eligibleAt, client.now)) young.push({ ...pkg, eligibleAt: eligibleAt ?? "unknown" });
   }
   return young;
 }
@@ -172,7 +174,7 @@ export async function earlyDecisions(client: ReviewIssues, open: ReadonlyArray<G
  * non-trusted): no grant covers one, so it waits, said on its issue, and a later review tries again. A tracked PR only as
  * the decision its issue tracks: another one waits for the next run, which updates it through that decision's issue.
  */
-export async function reviewExecution(client: ReviewIssues, pr: GitHubPullRequest, previous: ChangePlan, plan: ChangePlan, young: ReadonlyArray<string>): Promise<ReviewDisposition> {
+export async function reviewExecution(client: ReviewIssues, pr: GitHubPullRequest, previous: ChangePlan, plan: ChangePlan, young: ReadonlyArray<PackageVersion>): Promise<ReviewDisposition> {
   const number = trackedIssueOf(pr.body);
   const scope = number === undefined ? undefined : await scopeOf(client, pr, previous, number);
   const granted = scope?.kind === "early" ? await stillYoung(client, scope.grant) : [];
@@ -187,10 +189,11 @@ export async function reviewExecution(client: ReviewIssues, pr: GitHubPullReques
       return { kind: "leave", reason: `on the new base it's a different decision than #${number} tracks` };
     }
     if (young.length === 0) return { kind: "proceed" };
-    const why = `on the new base it would take young versions no grant covers: ${young.join(", ")}`;
+    const named = young.map(label);
+    const why = `on the new base it would take young versions no grant covers: ${named.join(", ")}`;
     if (number !== undefined) {
-      await postNotice(client, number, `young:${pr.number}:${young.join(",")}`,
-        `secure-it didn't update #${pr.number}: on the new base it would take young versions no grant covers: ${young.map((entry) => `\`${entry}\``).join(", ")}. It tries again on a later review.`);
+      await postNotice(client, number, `young:${pr.number}:${named.join(",")}`,
+        `secure-it didn't update #${pr.number}: on the new base it would take young versions no grant covers: ${named.map((entry) => `\`${entry}\``).join(", ")}. It tries again on a later review.`);
     }
     return { kind: "leave", reason: why };
   }
@@ -198,8 +201,8 @@ export async function reviewExecution(client: ReviewIssues, pr: GitHubPullReques
   // The same moves can still take more young versions (one a parent probe now brings in): only the grant's may run.
   const standing = await grantFor(client, scope, granted);
   if (standing.kind === "gone") return leave(client, scope.number, `left:${pr.number}:${standing.key}`, pr, standing.why);
-  const covered = new Set(standing.grant.young.map((entry) => `${entry.name}@${entry.version}`));
-  const beyond = young.filter((entry) => !covered.has(entry));
+  const covered = new Set(standing.grant.young.map(versionKey));
+  const beyond = young.filter((entry) => !covered.has(versionKey(entry))).map(label);
   return beyond.length === 0
     ? { kind: "proceed" }
     : leave(client, scope.number, `beyond:${pr.number}:${beyond.join(",")}`, pr, `on the new base it takes young versions its \`take-early\` label didn't cover: ${beyond.join(", ")}`);

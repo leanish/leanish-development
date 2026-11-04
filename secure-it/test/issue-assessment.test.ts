@@ -28,4 +28,13 @@ describe("youngOf", () => {
     } });
     expect(young).toEqual([{ ecosystem: "Maven", name: "g:young", version: "2", eligibleAt: "unknown" }]);
   });
+
+  it("keeps a rule-chosen young target young even when its date appears past the wait", async () => {
+    const chosen = unit([]);
+    const fix = chosen.work[0]!;
+    const young = await youngOf({ ...chosen, work: [{ ...fix, to: { ...fix.to!, aged: false } }] }, plan, {
+      now, trusted: () => false, eligibleAt: async () => "2026-10-30T00:00:00.000Z",
+    });
+    expect(young).toEqual([{ ecosystem: "Maven", name: "g:parent", version: "1.1", eligibleAt: "2026-10-30T00:00:00.000Z" }]);
+  });
 });

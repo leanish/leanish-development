@@ -12,6 +12,8 @@
  *     finding's episode ended, so its return is new and opens a new issue, past any dismissal and without any grant.
  *   - An incomplete assessment closes and resolves nothing.
  */
+import { versionKey } from "@leanish/gate/package-version";
+
 import { type Assessment, type FindingKey, type IssueRecord, keyOf, type PackageVersion, sameFinding, SHOWN_PENDING, type SubjectAssessment, subjectId } from "./issue-model.ts";
 import { type IssueWriter, TAKE_EARLY_LABEL } from "./issue-text.ts";
 
@@ -62,7 +64,7 @@ export interface Reconciliation {
 function withShown(record: IssueRecord, subject: SubjectAssessment, at: string): IssueRecord {
   if (subject.status.kind !== "waiting") return record;
   const young = subject.status.young.map(({ ecosystem, name, version }) => ({ ecosystem, name, version }));
-  const known = (pkg: PackageVersion) => record.shown?.young.some((entry) => entry.ecosystem === pkg.ecosystem && entry.name === pkg.name && entry.version === pkg.version) === true;
+  const known = (pkg: PackageVersion) => record.shown?.young.some((entry) => versionKey(entry) === versionKey(pkg)) === true;
   const since = record.shown === undefined || !young.every(known) ? SHOWN_PENDING
     : record.shown.since === SHOWN_PENDING ? at
       : record.shown.since;

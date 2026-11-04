@@ -9,9 +9,11 @@
  * so its package is blocked.
  */
 import type { Ecosystem } from "@leanish/gate/versions";
+import { uniqueVersions, versionKey } from "@leanish/gate/package-version";
 
 import type { Assessment, DecisionMove, ObservedFinding, PackageVersion, SubjectAssessment, YoungVersion } from "./issue-model.ts";
 import { type ChangePlan, packageKey, type SecurityUnit, type Selection } from "./plan.ts";
+import { youngAt } from "./young-at.ts";
 
 /** A unit as the run planned it, from metadata only: its fixes and its plan's moves. */
 export interface PlannedUnit {
@@ -98,13 +100,12 @@ export async function youngOf(unit: SecurityUnit, plan: ChangePlan, inputs: Pick
     .filter((pkg) => !inputs.trusted(pkg));
   // A date that can't be read is unknown, never a reason to fail: the version counts as young either way.
   const dateOf = (pkg: PackageVersion) => inputs.eligibleAt(pkg).catch(() => undefined);
-  const unique = [...new Map(young.map((pkg) => [`${pkg.ecosystem}|${pkg.name}|${pkg.version}`, pkg])).values()];
   const dated: YoungVersion[] = [];
-  for (const pkg of unique) dated.push({ ...pkg, eligibleAt: (await dateOf(pkg)) ?? "unknown" });
+  for (const pkg of uniqueVersions(young)) dated.push({ ...pkg, eligibleAt: (await dateOf(pkg)) ?? "unknown" });
   for (const pkg of induced) {
-    if (dated.some((entry) => entry.ecosystem === pkg.ecosystem && entry.name === pkg.name && entry.version === pkg.version)) continue;
+    if (dated.some((entry) => versionKey(entry) === versionKey(pkg))) continue;
     const eligibleAt = await dateOf(pkg);
-    if (eligibleAt === undefined || Date.parse(eligibleAt) > inputs.now.getTime()) dated.push({ ...pkg, eligibleAt: eligibleAt ?? "unknown" });
+    if (youngAt(eligibleAt, inputs.now)) dated.push({ ...pkg, eligibleAt: eligibleAt ?? "unknown" });
   }
   return dated;
 }

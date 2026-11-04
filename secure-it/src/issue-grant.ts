@@ -12,6 +12,8 @@
  * the decision is past the wait there's nothing to authorize (`none`): its PR goes on as an ordinary one. Times are
  * GitHub's, to the second: a reason posted in the label's own second counts as before it.
  */
+import { versionKey } from "@leanish/gate/package-version";
+
 import { type Grant, type IssueRecord, type PackageVersion, SHOWN_PENDING, type SubjectStatus } from "./issue-model.ts";
 import { TAKE_EARLY_LABEL } from "./issue-text.ts";
 
@@ -76,7 +78,7 @@ export function grantOf(input: GrantInput): GrantDecision {
     if (reasonComment(input.comments, actor, label.createdAt)?.id !== recorded.reasonCommentId) {
       return refused("the reason comment this label was given with was edited or deleted; a new reason and label authorize it again", "reason-changed");
     }
-    const added = input.status.young.filter((young) => !recorded.young.some((granted) => sameVersion(granted, young)));
+    const added = input.status.young.filter((young) => !recorded.young.some((granted) => versionKey(granted) === versionKey(young)));
     if (added.length > 0) return refused(`the decision now takes ${added.map(describe).join(", ")}, which the label didn't cover`, "young");
     const ended = input.record.attempts.some((attempt) => attempt.grantEventId === label.id && attempt.outcome !== undefined);
     return ended && running === undefined ? refused("this label's attempt has ended; a new reason and label authorize another", "spent") : { kind: "granted", grant: recorded };
@@ -121,5 +123,4 @@ function reasonComment(comments: ReadonlyArray<GrantComment>, actor: string, lab
   return latest !== undefined && Date.parse(latest.updatedAt) <= at ? latest : undefined;
 }
 
-const sameVersion = (a: PackageVersion, b: PackageVersion) => a.ecosystem === b.ecosystem && a.name === b.name && a.version === b.version;
 const describe = (pkg: PackageVersion) => `${pkg.ecosystem} ${pkg.name}@${pkg.version}`;

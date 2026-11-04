@@ -3163,17 +3163,22 @@ describe("the cooldown hold", () => {
     expect(issues.issues.get(1)!.labels).toContain("take-early");
   });
 
-  it("runs a PR taken early's unchanged decision on a new base only with the young versions its grant covered", async () => {
+  it.each([
+    { ecosystem: "Maven" as const, name: "g:transitive", version: "2.0.1" },
+    { ecosystem: "Maven" as const, name: "vite", version: "8.3.3" },
+    { ecosystem: "npm" as const, name: "vite", version: "8.3.4" },
+  ])("runs a PR taken early's unchanged decision only with grant-covered versions, excluding $ecosystem $name@$version", async (extra) => {
     const plan = await heldPlan(YOUNG_VITE());
     const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite", body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr] });
     const tracked = await early(h, pr);
     const client = { issues: h.context.issues, github: h.github, repo: REPO, clean: (body: string) => body, ours: () => true, now: NOW, trusted: () => false, retire: async () => "closed" as const, eligibleAt: async () => "2026-10-13T00:00:00.000Z" };
     const previous = planOf(tracked.body)!;
-    expect(await reviewExecution(client, tracked, previous, previous, ["vite@8.3.3"])).toEqual({ kind: "proceed" });
-    // The same moves, but its parent probe now brings in a young version too: the label didn't cover it.
-    expect(await reviewExecution(client, tracked, previous, previous, ["vite@8.3.3", "g:transitive@2.0.1"])).toEqual({
-      kind: "leave", reason: "on the new base it takes young versions its `take-early` label didn't cover: g:transitive@2.0.1",
+    const covered = { ecosystem: "npm" as const, name: "vite", version: "8.3.3" };
+    expect(await reviewExecution(client, tracked, previous, previous, [covered])).toEqual({ kind: "proceed" });
+    // The same moves can still bring in a young version the label didn't cover.
+    expect(await reviewExecution(client, tracked, previous, previous, [covered, extra])).toEqual({
+      kind: "leave", reason: `on the new base it takes young versions its \`take-early\` label didn't cover: ${extra.name}@${extra.version}`,
     });
   });
 
