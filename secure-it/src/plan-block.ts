@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import { MAX_BODY_CHARS } from "@leanish/agent-runtime/github/github-client";
 import { isAdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import { heldEntry, heldUntil } from "@leanish/gate/cooldown";
+import { packageKey } from "@leanish/gate/package-version";
 import { MARKER_ROOM, stateOf } from "@leanish/tool-runtime/own-pr";
 import { defused, planPayload, planSection as sectionOf, TooLargeError, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
 import { literal } from "@leanish/tool-runtime/pr-text";
@@ -80,7 +81,7 @@ function fixesLabel(plan: ChangePlan, move: PlannedMove): string {
   if (move.unblocks !== undefined && move.advisories.length === 0) return `a range admitting the fix at ${move.unblocks.map(cell).join(", ")}`;
   if (move.advisories.length > 0 || plan.malware) return cell(move.advisories.join(", "));
   if (plan.requiredNpm?.some((target) => target.name === move.name && target.version === move.to)) return "required dependency compatibility";
-  const coupled = plan.coupled?.some((set) => set.includes(`${move.ecosystem}|${move.name}`));
+  const coupled = plan.coupled?.some((set) => set.includes(packageKey(move)));
   return coupled ? "direct peer compatibility" : "";
 }
 

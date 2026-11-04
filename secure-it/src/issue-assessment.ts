@@ -48,7 +48,7 @@ export async function assessmentOf(inputs: AssessmentInputs): Promise<Assessment
   for (const { unit, plan } of inputs.units) {
     const moves = decisionMoves(plan);
     if (moves.length === 0) continue;
-    const packages = new Set([...moves.map(packageKey), ...plan.moves.flatMap((move) => (move.carries ?? []).map((carried) => `${move.ecosystem}|${carried.name}`))]);
+    const packages = new Set([...moves.map(packageKey), ...plan.moves.flatMap((move) => (move.carries ?? []).map((carried) => packageKey({ ecosystem: move.ecosystem, name: carried.name })))]);
     const findings = inputs.observations.filter((finding) => packages.has(packageKey(finding)) && !covered.has(finding));
     for (const finding of findings) covered.add(finding);
     const young = await youngOf(unit, plan, inputs);
