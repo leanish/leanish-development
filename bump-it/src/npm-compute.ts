@@ -13,7 +13,7 @@ import semver from "semver";
 import type { NpmDeclaration } from "@leanish/gate/candidates";
 import { type NodeRuntime, nodeRuntime, nodeTypeProblem, nodeTypeVersions } from "@leanish/gate/node-runtime";
 import { NPM_REGISTRY } from "@leanish/gate/npm-lock";
-import { resolveExact } from "@leanish/tool-runtime/npm-exact";
+import { manifestPath, resolveExact } from "@leanish/tool-runtime/npm-exact";
 import { workingTree } from "@leanish/gate/tree";
 
 import { assertLocalFile } from "./files.ts";
@@ -132,8 +132,8 @@ async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions
   const declaring = ["", ...Object.keys(baseGraph.packages).filter((path) => path !== "" && !path.includes("node_modules/") && baseGraph.packages[path]?.link !== true)];
   const baseTexts = new Map<string, string>();
   for (const path of declaring) {
-    await assertLocalFile(inputs.dir, repoPath(manifestOf(path)));
-    baseTexts.set(path, await readFile(at(manifestOf(path)), "utf8"));
+    await assertLocalFile(inputs.dir, repoPath(manifestPath(path)));
+    baseTexts.set(path, await readFile(at(manifestPath(path)), "utf8"));
   }
   const planned = plannedManifests(baseTexts, inputs.moves.filter((move) => move.lockfile === lockfile), lockfile);
   const plannedParsed = new Map([...planned].map(([path, text]) => [path, JSON.parse(text) as Manifest]));
@@ -227,12 +227,12 @@ async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions
 
   const files = new Map<string, string>();
   for (const [path, text] of planned) {
-    const onDisk = await readFile(at(manifestOf(path)), "utf8");
+    const onDisk = await readFile(at(manifestPath(path)), "utf8");
     if (onDisk !== text) {
-      throw new Error(`npm rewrote ${repoPath(manifestOf(path))}; bump-it lands only the ranges it planned`);
+      throw new Error(`npm rewrote ${repoPath(manifestPath(path))}; bump-it lands only the ranges it planned`);
     }
     if (text !== baseTexts.get(path)) {
-      files.set(repoPath(manifestOf(path)), text);
+      files.set(repoPath(manifestPath(path)), text);
     }
   }
   const finalText = await readFile(at(lockName), "utf8");
@@ -276,10 +276,6 @@ function decisionNotes(lockfile: string, decision: Decision): string[] {
     return [`${location} stays at ${decision.target ?? decision.copy.version}: ${decision.why}`];
   }
   return [];
-}
-
-function manifestOf(declaringPath: string): string {
-  return declaringPath === "" ? "package.json" : `${declaringPath}/package.json`;
 }
 
 function retainedTargets(graph: NpmGraph, retained: ReadonlyMap<string, Copy>, unpinned: ReadonlySet<string>, accepted: ReadonlyMap<string, string>): Map<string, string> {
@@ -394,12 +390,12 @@ function plannedManifests(texts: ReadonlyMap<string, string>, moves: ReadonlyArr
     }
     const spec = rewriteSpec(move.spec, move.to);
     if (spec === undefined) {
-      throw new Error(`${move.declaredAs}'s range '${move.spec}' in ${manifestOf(path)} can't be moved to ${move.to} mechanically`);
+      throw new Error(`${move.declaredAs}'s range '${move.spec}' in ${manifestPath(path)} can't be moved to ${move.to} mechanically`);
     }
     if (spec === move.spec) {
       continue;
     }
-    result.set(path, withSpec(text, move.declaredAs, move.spec, spec, manifestOf(path)));
+    result.set(path, withSpec(text, move.declaredAs, move.spec, spec, manifestPath(path)));
   }
   return result;
 }

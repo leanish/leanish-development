@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 
 import { isObject } from "@leanish/gate/json";
 import { safePath } from "@leanish/tool-runtime/local-files";
+import { NPM_DEPENDENCY_FIELDS } from "@leanish/tool-runtime/npm-file-checks";
 import { defused, planBlock, planPayload, planSection as sectionOf, SECTION_LIMIT, withPlanSection as replaceSection } from "@leanish/tool-runtime/plan-blocks";
 import { literal } from "@leanish/tool-runtime/pr-text";
 
@@ -33,14 +34,9 @@ export interface BumpPlan {
   readonly rehoisted?: ReadonlyArray<string>;
 }
 
-export const DEPENDENCY_FIELDS = [
-  "dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "bundleDependencies",
-  "bundledDependencies", "peerDependenciesMeta", "overrides", "workspaces",
-];
-
 export const dependencyDigest = (text: string) => {
   const manifest = JSON.parse(text) as Record<string, unknown>;
-  const fields = Object.fromEntries(DEPENDENCY_FIELDS.map((field) => [field, manifest[field]]));
+  const fields = Object.fromEntries(NPM_DEPENDENCY_FIELDS.map((field) => [field, manifest[field]]));
   return sha256(JSON.stringify(stable(fields)));
 };
 
