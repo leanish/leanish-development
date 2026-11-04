@@ -25,6 +25,7 @@ import { type SecurityFix, severityRank } from "@leanish/gate/candidates";
 import type { Veto } from "@leanish/gate/young-fixes";
 import type { CarriedPackage } from "@leanish/gate/carrier-candidates";
 import type { NpmPeerPlanner } from "@leanish/gate/npm-peers";
+import { packageKey } from "@leanish/gate/package-version";
 import type { HeldVersion } from "@leanish/gate/release-age";
 import { gradleLocation, type GradleInventory } from "@leanish/gate/gradle";
 import type { Ecosystem } from "@leanish/gate/versions";
@@ -138,7 +139,8 @@ export interface PlanInputs {
   readonly tagCommit: (action: string, tag: string) => Promise<string | undefined>;
 }
 
-export const packageKey = (fix: Pick<SecurityFix, "ecosystem" | "name">) => `${fix.ecosystem}|${fix.name}`;
+/** The key a package is known by across versions (`npm|name`), the gate's own. */
+export { packageKey };
 
 export interface SecurityUnit {
   readonly kind: PlanKind;
@@ -333,7 +335,7 @@ function carriedSets(fixes: ReadonlyArray<FixWork>): string[][] {
       if (fixes.some((other) => packageKey(other) === key)) byPackage.set(`parent:${packageKey(fix)}:${key}`, new Set([packageKey(fix), key]));
     }
     for (const carried of fix.carries ?? []) {
-      const key = `${fix.ecosystem}|${carried.name}`;
+      const key = packageKey({ ecosystem: fix.ecosystem, name: carried.name });
       const set = byPackage.get(key) ?? new Set<string>();
       set.add(packageKey(fix));
       if (fixes.some((other) => packageKey(other) === key)) set.add(key);

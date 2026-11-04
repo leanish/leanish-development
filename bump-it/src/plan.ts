@@ -1,6 +1,7 @@
 /** A bounded PR payload: exact npm and generated wrapper hashes, never their contents. */
 import { createHash } from "node:crypto";
 
+import { isObject } from "@leanish/gate/json";
 import { safePath } from "@leanish/tool-runtime/local-files";
 import { NPM_DEPENDENCY_FIELDS } from "@leanish/tool-runtime/npm-file-checks";
 import { defused, planBlock, planPayload, planSection as sectionOf, SECTION_LIMIT, withPlanSection as replaceSection } from "@leanish/tool-runtime/plan-blocks";
@@ -96,7 +97,7 @@ export function planDigest(plan: BumpPlan): string {
 /** The payload is untrusted data from a PR body; reject malformed or oversized plans. */
 export function planOf(body: string): BumpPlan | undefined {
   const value = planPayload(body);
-  if (!object(value) || !validUnit(value)) {
+  if (!isObject(value) || !validUnit(value)) {
     return undefined;
   }
   if (!Array.isArray(value.moves) || !value.moves.every(validMove)) {
@@ -135,7 +136,7 @@ function validWrapperFiles(files: unknown): boolean {
 }
 
 function validWrapperFile(file: unknown): file is WrapperFile {
-  if (!object(file) || typeof file.path !== "string" || !WRAPPER_FILES.includes(file.path)) {
+  if (!isObject(file) || typeof file.path !== "string" || !WRAPPER_FILES.includes(file.path)) {
     return false;
   }
   return validHash(file.sha256) && typeof file.executable === "boolean";
@@ -152,7 +153,7 @@ function validUnit(value: Record<string, unknown>): boolean {
 }
 
 function validNpmFile(file: unknown): boolean {
-  if (!object(file) || !safePath(file.path) || !validHash(file.sha256)) {
+  if (!isObject(file) || !safePath(file.path) || !validHash(file.sha256)) {
     return false;
   }
   return !file.path.endsWith("package.json") || validHash(file.dependencySha256);
@@ -163,7 +164,7 @@ function validHash(value: unknown): boolean {
 }
 
 function validCopyChange(change: unknown): boolean {
-  if (!object(change) || !safePath(change.lockfile)) {
+  if (!isObject(change) || !safePath(change.lockfile)) {
     return false;
   }
   if (typeof change.path !== "string" || typeof change.name !== "string") {
@@ -176,12 +177,8 @@ function optionalString(value: unknown): boolean {
   return value === undefined || typeof value === "string";
 }
 
-function object(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function validMove(move: unknown): boolean {
-  if (!object(move)) {
+  if (!isObject(move)) {
     return false;
   }
   if (move.ecosystem !== "npm" && move.ecosystem !== "Maven" && move.ecosystem !== "GitHub Actions" && move.ecosystem !== "Gradle Wrapper") {
@@ -210,7 +207,7 @@ function validWrapperMove(move: Record<string, unknown>): boolean {
   if (move.name !== "gradle/gradle" || !Array.isArray(move.locations) || move.locations.length !== 1 || move.locations[0] !== WRAPPER_PROPERTIES) {
     return false;
   }
-  if (!Array.isArray(move.declarations) || move.declarations.length !== 0 || !object(move.wrapper)) {
+  if (!Array.isArray(move.declarations) || move.declarations.length !== 0 || !isObject(move.wrapper)) {
     return false;
   }
   if (typeof move.wrapper.distributionUrl !== "string" || !/^https:\/\/services\.gradle\.org\/distributions\/gradle-\d+(?:\.\d+){1,2}-(?:bin|all)\.zip$/.test(move.wrapper.distributionUrl)) {
@@ -220,7 +217,7 @@ function validWrapperMove(move: Record<string, unknown>): boolean {
 }
 
 function validDeclaration(declaration: unknown): boolean {
-  if (!object(declaration) || !safePath(declaration.lockfile)) {
+  if (!isObject(declaration) || !safePath(declaration.lockfile)) {
     return false;
   }
   return [declaration.workspace, declaration.declaredAs, declaration.spec].every((value) => typeof value === "string");

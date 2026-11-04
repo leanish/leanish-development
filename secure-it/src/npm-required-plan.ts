@@ -3,7 +3,7 @@ import { type Config, isTrustedPackage } from "@leanish/gate/config";
 import type { Exceptions } from "@leanish/gate/exceptions";
 import { type Evidence, inherits } from "@leanish/gate/findings";
 import type { Snapshot } from "@leanish/gate/snapshot";
-import type { PackageVersion } from "@leanish/gate/package-version";
+import { packageKey, type PackageVersion } from "@leanish/gate/package-version";
 import { ActionsGitHub } from "@leanish/gate/actions-github";
 import { type GateEnvironment, readSettings, snapshotOptions } from "@leanish/gate/gate";
 import { npmLocation } from "@leanish/gate/inventory";
@@ -42,7 +42,7 @@ export async function requiredNpmPlan(base: Tree, plan: ChangePlan, env: GateEnv
   const notes = [...new Set([...(plan.notes ?? []), ...targets.map((target) => target.reason)])];
   const distinctAdditions = companionMoves(targets, plan, locks);
   const moves = [...plan.moves, ...distinctAdditions];
-  const packages = [...new Set(moves.map((move) => `${move.ecosystem}|${move.name}`))].sort();
+  const packages = [...new Set(moves.map(packageKey))].sort();
   const coupled = [...plan.coupled ?? [], ...proofs.map((proof) =>
     [...new Set([proof.root.name, ...proof.targets.map((target) => target.name)].map((name) => `npm|${name}`))].filter((key) => packages.includes(key)))];
   return { ...plan, moves, packages, coupled, requiredNpm: targets, notes };

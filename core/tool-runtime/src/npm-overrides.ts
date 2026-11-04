@@ -1,6 +1,8 @@
 /** Plain repository overrides constrain targets; scoped or complex rules keep copies at base. */
 import semver from "semver";
 
+import { isObject } from "@leanish/gate/json";
+
 import { rangeOf } from "./npm-graph.ts";
 
 export interface RepositoryOverrides {
@@ -65,8 +67,4 @@ export function repositoryOverrides(manifest: unknown): RepositoryOverrides {
 export function splitKey(key: string): { readonly name: string; readonly spec: string | undefined } {
   const at = key.indexOf("@", key.startsWith("@") ? 1 : 0);
   return at === -1 ? { name: key, spec: undefined } : { name: key.slice(0, at), spec: key.slice(at + 1) };
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

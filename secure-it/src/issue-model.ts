@@ -8,6 +8,7 @@
  */
 import { createHash } from "node:crypto";
 
+import { isObject } from "@leanish/gate/json";
 import type { Ecosystem } from "@leanish/gate/versions";
 
 /** One move of a decision: exactly what the fix changes. */
@@ -306,7 +307,6 @@ function arrayOf<T>(value: unknown, parse: (element: unknown) => T | undefined):
   return parsed;
 }
 
-const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const isText = (value: unknown): value is string => typeof value === "string" && value.length > 0;
 const isId = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 const isEcosystem = (value: unknown): value is Ecosystem => typeof value === "string" && ECOSYSTEMS.has(value);
