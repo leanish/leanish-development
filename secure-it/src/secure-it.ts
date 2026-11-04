@@ -7,6 +7,7 @@ import { GitHubApiError } from "@leanish/agent-runtime/github/github-client";
 import type { GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
 import type { PreparedBranch, WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
 import { ActionsGitHub } from "@leanish/gate/actions-github";
+import { eligibleAt } from "@leanish/gate/age";
 import type { Floor } from "@leanish/gate/floors";
 import { type SecurityCandidates, type SecurityFix, securityCandidates, severityRank } from "@leanish/gate/candidates";
 import type { CooldownEvaluation } from "@leanish/gate/cooldown";
@@ -20,6 +21,7 @@ import { namingFailures } from "@leanish/gate/http";
 import { FileRepositoryAdvisoryCache } from "@leanish/tool-runtime/repository-advisory-cache";
 import { BundleReader } from "@leanish/gate/npm-bundles";
 import { NpmRegistry, releaseSignals } from "@leanish/gate/npm-registry";
+import { versionKey } from "@leanish/gate/package-version";
 import type { HeldVersion } from "@leanish/gate/release-age";
 import { runProcess } from "@leanish/gate/process";
 import { gitTree, type Tree, workingTree } from "@leanish/gate/tree";
@@ -70,6 +72,7 @@ import { type ChangePlan, coupledWork, type FixWork, youngUnits, packageKey, pla
 import { planningCause } from "./planning-cause.ts";
 import { namedProblems, retryWithoutNamed, type ProblemMoves } from "./retry.ts";
 import { referencePlan, verifyPlan, type VerifyInputs } from "./verify.ts";
+import { youngAt } from "./young-at.ts";
 
 export const RULES = ownPullRequests("secure-it");
 
@@ -724,10 +727,10 @@ async function executeUnit(
 }
 
 /** Which held versions an execution may take: the ones its issue allows, and any trusted package's. */
-async function admitted(base: Tree, allowed: ReadonlyArray<{ readonly ecosystem: string; readonly name: string; readonly version: string }>): Promise<(held: HeldVersion) => boolean> {
+async function admitted(base: Tree, allowed: ReadonlyArray<PackageVersion>): Promise<(held: HeldVersion) => boolean> {
   const { config } = await readSettings(base);
   return (held) => isTrustedPackage(config.trustedPackages, held)
-    || allowed.some((young) => young.ecosystem === held.ecosystem && young.name === held.name && young.version === held.version);
+    || allowed.some((young) => versionKey(young) === versionKey(held));
 }
 
 /** How a unit's result ends (or continues) the early attempt it ran. */
@@ -759,11 +762,11 @@ interface AgedEarlyRetired {
  */
 async function withoutAgedEarly(execution: Execution, own: ReadonlyArray<GitHubPullRequest>, tracking: Tracking, config: ScanState["settings"]["config"]): Promise<AgedEarlyRetired> {
   const { context } = execution;
-  const eligibleAt = eligibleAtOf(execution, config);
+  const eligibleAtFor = eligibleAtOf(execution, config);
   const aged = async (pkg: PackageVersion) => {
     if (isTrustedPackage(config.trustedPackages, pkg)) return true;
-    const at = await eligibleAt(pkg).catch(() => undefined);
-    return at !== undefined && Date.parse(at) <= context.now.getTime();
+    const at = await eligibleAtFor(pkg).catch(() => undefined);
+    return !youngAt(at, context.now);
   };
   // A rate limit stops the run as before, wherever it comes from: going on would only spend more of the limit.
   const rateLimited = (error: unknown) => error instanceof GitHubApiError && error.reason === "rate limited";
@@ -1209,7 +1212,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       // decision its grant covered.
       // The young versions the recomputed unit takes, as a run assesses them: none may run without a grant.
       const young = (await youngOf(unit, plan, { trusted, eligibleAt: eligibleAtOf(execution, config), now: context.now }))
-        .filter((entry) => !trusted(entry)).map((entry) => `${entry.name}@${entry.version}`);
+        .filter((entry) => !trusted(entry));
       const scoped = await reviewExecution(issues, pr, previous, plan, young);
       if (scoped.kind !== "proceed") {
         notes.push({ number: pr.number, left: scoped.reason });
@@ -1435,7 +1438,7 @@ function eligibleAtOf(execution: Execution, config: ScanState["settings"]["confi
   const catalogs = versionCatalogs(config, execution.env, new ActionsGitHub(execution.env.fetch, execution.env.githubToken));
   return async (pkg) => {
     const published = await catalogs[pkg.ecosystem].published(pkg);
-    return published === undefined ? undefined : new Date(published.getTime() + config.releaseAgeDays * 86_400_000).toISOString();
+    return published === undefined ? undefined : eligibleAt(published, config.releaseAgeDays).toISOString();
   };
 }
 
