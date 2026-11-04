@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
 
+import { GitHubApiError } from "@leanish/agent-runtime/github/github-client";
 import type { GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
 import type { PreparedBranch, WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
 import { ActionsGitHub } from "@leanish/gate/actions-github";
@@ -337,16 +338,25 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   }
   // A PR taken early whose granted versions all aged is retired before any unit runs, as review would: this run plans
   // that work afresh, so no second PR for it opens beside it.
-  const own = tracking === undefined || tracking instanceof Error || scanned === undefined ? listed : await withoutAgedEarly(execution, listed, tracking, scanned.settings.config);
+  const retired = tracking === undefined || tracking instanceof Error || scanned === undefined
+    ? { own: listed, stuck: new Set<string>() }
+    : await withoutAgedEarly(execution, listed, tracking, scanned.settings.config);
+  const own = retired.own;
+  // A unit with a package of an early PR that couldn't be retired waits this run, so no second PR opens beside that one.
+  const waits = (unit: SecurityUnit) => unit.work.some((fix) => retired.stuck.has(packageKey(fix)));
   const governed = tracking === undefined
     ? execution
     : { ...execution, deps: { ...deps, disposition: tracking instanceof Error ? untracked(execution, tracking) : trackedDisposition(execution, tracking, started) } };
-  const pending = prepared.units.filter((unit) => !prepared.failures.has(unit));
+  const pending = prepared.units.filter((unit) => !prepared.failures.has(unit) && !waits(unit));
   const { units, ungrouped } = prepared;
   const failures = new Map([...prepared.failures, ...await heldPreflight(governed, pending, base)]);
   // Claims over every unit, failed ones included: a failure never moves another unit's claim.
   const claims = await heldClaimsOf(execution.publication, units, own);
   for (const unit of units) {
+    if (waits(unit) && !failures.has(unit)) {
+      results.push({ topic: unit.topic, outcome: "deferred", reason: "a PR taken early for its packages couldn't be retired this run" });
+      continue;
+    }
     try {
       // A unit whose own planning or preflight failed fails alone; held units also need every own PR's claim and, when
       // the aged plan failed, held units with npm work need the grouping it decides. Other units still run.
@@ -910,13 +920,19 @@ function attemptPatchOf(result: Readonly<Record<string, unknown>>): AttemptPatch
   }
 }
 
+/** The run's own PRs after retiring aged early ones, and the packages of any whose retirement failed (`withoutAgedEarly`). */
+interface AgedEarlyRetired {
+  readonly own: GitHubPullRequest[];
+  readonly stuck: ReadonlySet<string>;
+}
+
 /**
  * `own` without the PRs taken early whose granted versions have all aged, each closed as review graduates one, its
  * attempt ended and its label returned. Early is what the issue records (a running attempt that is the PR's), not the
  * gate's cooldown, which can hold nothing for a version new only where it arrives. Only the tool's own drafts: one a
  * person marked ready, or someone pushed to, stays theirs.
  */
-async function withoutAgedEarly(execution: Execution, own: ReadonlyArray<GitHubPullRequest>, tracking: Tracking, config: ScanState["settings"]["config"]): Promise<GitHubPullRequest[]> {
+async function withoutAgedEarly(execution: Execution, own: ReadonlyArray<GitHubPullRequest>, tracking: Tracking, config: ScanState["settings"]["config"]): Promise<AgedEarlyRetired> {
   const { context } = execution;
   const eligibleAt = eligibleAtOf(execution, config);
   const aged = async (pkg: PackageVersion) => {
@@ -924,25 +940,51 @@ async function withoutAgedEarly(execution: Execution, own: ReadonlyArray<GitHubP
     const at = await eligibleAt(pkg).catch(() => undefined);
     return at !== undefined && Date.parse(at) <= context.now.getTime();
   };
+  // A rate limit stops the run as before, wherever it comes from: going on would only spend more of the limit.
+  const rateLimited = (error: unknown) => error instanceof GitHubApiError && error.reason === "rate limited";
   const kept: GitHubPullRequest[] = [];
+  const stuck = new Set<string>();
   for (const pr of own) {
     const number = trackedIssueOf(pr.body);
     const record = tracking.sync.tracked.find((issue) => issue.number === number)?.record;
     const attempt = record?.attempts.find((entry) => entry.pr === pr.number && entry.outcome === undefined);
     const grant = record?.grant;
-    const retire = number !== undefined && attempt !== undefined && grant?.labelEventId === attempt.grantEventId
-      && (await Promise.all(grant.young.map(aged))).every(Boolean) && pr.isDraft && (await inspectOwnership(execution.publication, pr)).kind === "ours";
-    if (!retire) {
+    // One PR's retirement failing (someone pushed to it or closed it meanwhile) leaves that PR as it is this run, never
+    // the run: other units and floor removal still go on, but its packages' units wait, so no second PR opens beside it.
+    let closed: Awaited<ReturnType<typeof closeAndDelete>> | undefined;
+    try {
+      const retire = number !== undefined && attempt !== undefined && grant?.labelEventId === attempt.grantEventId
+        && (await Promise.all(grant.young.map(aged))).every(Boolean) && pr.isDraft && (await inspectOwnership(execution.publication, pr)).kind === "ours";
+      if (retire) {
+        closed = await closeAndDelete(execution.publication, pr.number, pr.headSha,
+          "Every version this PR was taken early for is now past the release-age wait. secure-it retires this draft: this run plans that work again from the default branch, with fresh checks.",
+          { onlyDraft: true });
+      }
+    } catch (error) {
+      if (rateLimited(error)) throw error;
+      // A failure after the close itself went through (its comment, its branch) still leaves the PR closed: read back.
+      const now = number === undefined || attempt === undefined ? undefined
+        : await execution.publication.github.getPullRequest({ repo: execution.publication.repo, number: pr.number }).catch((read: unknown) => {
+          if (rateLimited(read)) throw read;
+          return undefined;
+        });
+      if (now?.state === "closed") closed = "closed";
+      else for (const pkg of planOf(pr.body)?.packages ?? []) stuck.add(pkg);
+      context.logger.warn(closed === undefined
+        ? "secure-it: a PR taken early couldn't be retired; it stays as it is this run, and its packages wait"
+        : "secure-it: a PR taken early is closed, but retiring it didn't finish", { pr: pr.number, error: asError(error).message });
+    }
+    if (closed === undefined || closed === "not-draft") {
       kept.push(pr);
       continue;
     }
-    const closed = await closeAndDelete(execution.publication, pr.number, pr.headSha,
-      "Every version this PR was taken early for is now past the release-age wait. secure-it retires this draft: this run plans that work again from the default branch, with fresh checks.",
-      { onlyDraft: true });
-    if (closed === "not-draft") kept.push(pr);
-    else await settleAttempt(attemptClient(execution), number, attempt.id, { outcome: "pr-closed" });
+    // Closed: its attempt ends here, or, if that write fails, at the next run's recovery from the PR's history.
+    await settleAttempt(attemptClient(execution), number!, attempt!.id, { outcome: "pr-closed" }).catch((error: unknown) => {
+      if (rateLimited(error)) throw error;
+      context.logger.warn("secure-it: a retired PR's attempt couldn't be ended; the next run's recovery ends it", { pr: pr.number, error: asError(error).message });
+    });
   }
-  return kept;
+  return { own: kept, stuck };
 }
 
 /** A plan's decision, as its issue's subject names it. */

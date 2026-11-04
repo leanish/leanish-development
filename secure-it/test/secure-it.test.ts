@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
+import { GitHubApiError } from "@leanish/agent-runtime/github/github-client";
 import { ConsoleLogger } from "@leanish/agent-runtime/logger/console-logger";
 import type { GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
 import type { WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
@@ -689,6 +690,38 @@ describe("secure-it run", () => {
       expect(await tool([vite()]).run(later)).toMatchObject({ outcome: "published" });
       expect(h.github.prs.get(42)?.state).toBe("closed");
       expect([...h.github.prs.values()].filter((pr) => pr.state === "open")).toHaveLength(1);
+      expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 42, outcome: "pr-closed" }]);
+    });
+
+    it("goes on with the run when retiring an aged early PR fails, leaving that PR as it is", async () => {
+      const h = harness({ fixes: [young] });
+      const holding = (young: boolean) => async (inputs: VerifyInputs) => {
+        inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: young ? [{ ecosystem: "npm", name: "vite", version: "8.3.3", replaced: ["8.3.1"], published: "2026-10-05T00:00:00.000Z", eligibleAt: "2026-10-12T00:00:00.000Z", justification: "security-fix" }] : [] });
+        return [];
+      };
+      const tool = (fixes: SecurityFix[]) => secureIt({ ...h.deps, gate: async () => scanned("2026-10-05T00:00:00Z"), scan: readScanState, verify: holding(fixes.some((fix) => fix.to?.aged === false)),
+        candidates: async () => ({ fixes, incomplete: [], gaps: [], notes: [], osvScannerVersion: "2.6.0" }) });
+      await tool([young]).run(h.context);
+      issuesOf(h).permissions.set("owner", "admin");
+      issuesOf(h).comment(1, "owner", "take-early: urgent");
+      issuesOf(h).label(1, "owner", "take-early");
+      expect(await tool([young]).run(h.context)).toMatchObject({ outcome: "published", number: 42 });
+      const later = { ...h.context, now: new Date("2026-10-14T06:00:00Z") };
+      // A week later, a rate limit while closing the aged draft still stops the run.
+      h.github.fail("closePullRequest", new GitHubApiError("closePullRequest", "rate limited", 403) as never);
+      await expect(tool([vite()]).run(later)).rejects.toThrow("rate limited");
+      expect(h.github.prs.get(42)?.state).toBe("open");
+      // Closing it fails another way (someone pushed to it meanwhile, say): the run goes on, the PR as it is, and vite's
+      // unit waits rather than open a second PR beside it.
+      h.github.fail("closePullRequest", new Error("the PR's head moved") as never);
+      expect(await tool([vite()]).run(later)).toMatchObject({ outcome: "deferred", reason: "a PR taken early for its packages couldn't be retired this run" });
+      expect(h.github.prs.get(42)?.state).toBe("open");
+      expect([...h.github.prs.values()].filter((pr) => pr.state === "open")).toHaveLength(1);
+      expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts[0]!.outcome).toBeUndefined();
+      // The next run, the close goes through but its comment fails: the PR is closed all the same, and its attempt ends.
+      h.github.fail("createComment", new Error("socket hang up") as never);
+      await expect(tool([vite()]).run(later)).resolves.toBeDefined();
+      expect(h.github.prs.get(42)?.state).toBe("closed");
       expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 42, outcome: "pr-closed" }]);
     });
 
