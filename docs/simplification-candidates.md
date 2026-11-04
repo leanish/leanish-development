@@ -1,6 +1,32 @@
 # Simplification candidates
 
-No open candidates are recorded.
+## Open (after 0.11.0)
+
+- **One retirement for early PRs**: a run's `withoutAgedEarly` and review's `graduated` (in
+  [`issue-review.ts`](../secure-it/src/issue-review.ts)) both retire a PR taken early once none of its granted versions
+  still needs the release-age wait: close it while it's still a draft, end its attempt, return its label. Their
+  failure-handling contracts differ (a run isolates failures, blocks the affected packages after a failed close and
+  stops on a rate limit; review reports a per-PR error), so a shared protocol would add parameters to save little.
+  Revisit if either side's handling changes.
+- **Smaller duplications** found in the 0.11.0 review and left for later because their proof cost outweighed the gain
+  so close to a release: regex escaping, string-array guards, table-cell wrappers, a restored-file refresh helper,
+  lockfile validation, npm graph traversal and indexing, the runtime filters, YAML walkers, the agent and verification
+  loops, the wiring factories, the object fallback wrappers, export and error-helper sweeps. The digest wrappers stay
+  tool-specific.
+
+## Completed: 0.11.0 simplification (2026-11-04)
+
+With one issue per decision, the held-PR machinery and the second ways of doing the same thing went:
+
+- `deps.scan` is mandatory; the run path without issues is gone (#375).
+- Review holds a PR taken early by its issue's grant, not by the cooldown its plan recorded; legacy held drafts are no
+  longer migrated (#376).
+- Held claims, the Gradle preflight, `ChangePlan.members` and held-topic naming are gone; early PRs match their exact
+  decision (#377).
+- One package-version key and one "still young?" predicate in the issue flow (#379); one owner for decision-issue
+  lookup and grant standing, with explicit lifetimes (`decision-issues.ts`, #380).
+- Shared helpers instead of copies: package keys and undecided-move protection (#381), the object and path guards
+  (#382), the npm manifest and range helpers (#383).
 
 ## Completed: strict pins through Gradle
 
