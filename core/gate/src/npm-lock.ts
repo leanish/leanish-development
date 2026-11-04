@@ -5,6 +5,7 @@
  * Ported from leanish-development `tools/supply-chain/src/supply-chain.ts`
  * (commit adc2a6f); `sourceProblems` now takes the allowed registries.
  */
+import { isObject } from "./json.ts";
 
 export const NPM_REGISTRY = "https://registry.npmjs.org";
 
@@ -36,11 +37,11 @@ interface LockEntry {
 /** Packages from an npm lockfile (v2/v3 `packages` map); workspace links and the root are skipped. */
 export function lockedPackages(lock: unknown): LockedPackage[] {
   const { lockfileVersion, packages } = (lock ?? {}) as { lockfileVersion?: number; packages?: unknown };
-  if ((lockfileVersion !== 2 && lockfileVersion !== 3) || !isPlainObject(packages)) {
+  if ((lockfileVersion !== 2 && lockfileVersion !== 3) || !isObject(packages)) {
     throw new Error("package-lock.json must be lockfileVersion 2 or 3 with a `packages` map");
   }
   for (const [path, entry] of Object.entries(packages)) {
-    if (!isPlainObject(entry)) throw new Error(`lockfile entry ${path || "(root)"} isn't an object`);
+    if (!isObject(entry)) throw new Error(`lockfile entry ${path || "(root)"} isn't an object`);
   }
   const entries = packages as Record<string, LockEntry>;
   return Object.entries(entries).flatMap(([path, entry]) => {
@@ -53,10 +54,6 @@ export function lockedPackages(lock: unknown): LockedPackage[] {
     if (bundled) bundlingAncestor(entries, path);
     return [{ name, version: entry.version, path, resolved: entry.resolved, bundled, integrity: entry.integrity }];
   });
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -228,7 +225,7 @@ export interface DirectDependency {
  */
 export function directDependencies(lock: unknown): DirectDependency[] {
   const { packages } = (lock ?? {}) as { packages?: Record<string, LockEntry & DeclaringEntry> };
-  if (!isPlainObject(packages)) throw new Error("package-lock.json has no `packages` map");
+  if (!isObject(packages)) throw new Error("package-lock.json has no `packages` map");
   const found: DirectDependency[] = [];
   for (const [workspace, entry] of Object.entries(packages)) {
     if (workspace.includes("node_modules/") || entry.link === true) continue;

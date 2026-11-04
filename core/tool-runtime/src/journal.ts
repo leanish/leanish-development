@@ -9,6 +9,8 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+import { isObject } from "@leanish/gate/json";
+
 export interface PushedState {
   readonly head: string;
   readonly base: string;
@@ -71,20 +73,16 @@ export class FileJournal implements PublicationJournal {
 
 /** A recorded entry, checked before recovery trusts it: a hand-edited or damaged one fails instead. */
 function pushedState(value: unknown, where: string): PushedState {
-  if (!isRecord(value)) throw new Error(`${where} isn't a pushed state`);
+  if (!isObject(value)) throw new Error(`${where} isn't a pushed state`);
   const { head, base, publication } = value;
   if (!isSha(head) || !isSha(base)) throw new Error(`${where} lacks its head and base commits`);
   if (publication === undefined) return { head, base };
-  if (!isRecord(publication)) throw new Error(`${where} has a malformed publication`);
+  if (!isObject(publication)) throw new Error(`${where} has a malformed publication`);
   const { title, body, adaptations } = publication;
   if (typeof title !== "string" || typeof body !== "string" || typeof adaptations !== "number" || !Number.isInteger(adaptations) || adaptations < 0) {
     throw new Error(`${where} has a malformed publication`);
   }
   return { head, base, publication: { title, body, adaptations } };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isSha(value: unknown): value is string {
