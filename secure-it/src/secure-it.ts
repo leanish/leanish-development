@@ -68,6 +68,7 @@ import { withParents } from "./npm-parents.ts";
 import { requiredNpmPlan } from "./npm-required-plan.ts";
 import { npmWindowFor } from "./npm-window.ts";
 import { assertNoPlanMarker } from "@leanish/tool-runtime/plan-blocks";
+import { assertNoUndecidedMoves, byPackage } from "@leanish/tool-runtime/undecided-moves";
 import { planDigest, planOf, planSection, withPlanSection } from "./plan-block.ts";
 import { type ChangePlan, coupledWork, type FixWork, youngUnits, packageKey, planFor, type PlannedHold, type SecurityUnit, type Selection, withUnsupportedCarriers } from "./plan.ts";
 import { planningCause } from "./planning-cause.ts";
@@ -398,28 +399,6 @@ function errorsOf(problems: ReadonlyArray<string>): { readonly errors?: Readonly
   return problems.length > 0 ? { errors: [...new Set(problems)] } : {};
 }
 
-/** Causes by package key, each once: a key with more than one keeps them all, none overriding another. */
-function byPackage(entries: ReadonlyArray<readonly [string, string]>): ReadonlyMap<string, ReadonlyArray<string>> {
-  const causes = new Map<string, string[]>();
-  for (const [key, cause] of entries) {
-    const known = causes.get(key) ?? [];
-    if (!known.includes(cause)) causes.set(key, [...known, cause]);
-  }
-  return causes;
-}
-
-/**
- * Throws, keeping the PR, when the plan an open PR records moves a package (by ecosystem and name, companions included)
- * that can't be decided now (`undecided`: package key → what can't be: its publisher identity, its carrier move, its
- * direct-peer set, or several): the recomputed plan lacks that move only because a check failed, so reusing the PR
- * would rewrite it as if the move were no longer needed.
- */
-function assertNoUndecidedMoves(recorded: ChangePlan | undefined, undecided: ReadonlyMap<string, ReadonlyArray<string>>): void {
-  const lost = new Map((recorded?.moves ?? []).filter((move) => undecided.has(packageKey(move))).map((move) => [packageKey(move), move]));
-  if (lost.size === 0) return;
-  throw new Error([...lost.values()].map((move) => `${move.ecosystem} ${move.name}'s ${undecided.get(packageKey(move))!.join(" and ")} can't be decided; keeping the PR`).join("; "));
-}
-
 /**
  * The run's fixes with their parents (`parentsFirst`), and the direct-peer planner that sees the npm parents they
  * added: a parent may need a peer of its own to move.
@@ -653,7 +632,7 @@ async function runUnit(
   if (reused !== undefined && !reused.pr.isDraft && await execution.early.is(reused.pr, plan)) {
     return { ...details, outcome: "deferred", reason: "a person marked the early PR ready" };
   }
-  if (reused !== undefined) assertNoUndecidedMoves(planOf(reused.pr.body), undecided);
+  if (reused !== undefined) assertNoUndecidedMoves(planOf(reused.pr.body)?.moves, undecided);
   if (already !== undefined) {
     const pr = await repairOwnership(publication, already);
     await refreshText(execution, pr, plan);
@@ -1377,7 +1356,7 @@ async function trackIssues(execution: Execution, inputs: TrackingInputs): Promis
   const failed = (unit: SecurityUnit, error: Error) => {
     complete = false;
     const packages = [...unit.work.map(packageKey), ...(unit.coupled ?? []).flat(),
-      ...unit.work.flatMap((fix) => (fix.carries ?? []).map((carried) => `${fix.ecosystem}|${carried.name}`))];
+      ...unit.work.flatMap((fix) => (fix.carries ?? []).map((carried) => packageKey({ ecosystem: fix.ecosystem, name: carried.name })))];
     const cause = planningCause(error.message);
     for (const key of packages) if (!planningCauses.has(key)) planningCauses.set(key, cause);
   };

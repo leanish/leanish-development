@@ -13,6 +13,7 @@ import { inspectOwnership, type Ours, repairOwnership, samePlan } from "@leanish
 import { closeAndDelete, ownOpenPullRequests, publishNew, publishUpdate, type PullRequestContent } from "@leanish/tool-runtime/publication";
 import { machineRoots } from "@leanish/tool-runtime/publication-text";
 import { reviewOpenPullRequests, type ReviewSteps } from "@leanish/tool-runtime/review";
+import { assertNoUndecidedMoves, byPackage } from "@leanish/tool-runtime/undecided-moves";
 
 import { WRAPPER_FILES, type WrapperCandidates } from "./gradle-wrapper.ts";
 import { type BumpItDeps, defaultDeps } from "./deps.ts";
@@ -191,32 +192,6 @@ function undecidedPeerKeys(computed: Computed): Array<readonly [string, string]>
   return (computed.undecided ?? []).flatMap((set) => set.names.map((name) => [`npm|${name}`, "direct-peer set"] as const));
 }
 
-/** Causes by package key, each once: a key with more than one keeps them all, none overriding another. */
-function byPackage(entries: ReadonlyArray<readonly [string, string]>): ReadonlyMap<string, ReadonlyArray<string>> {
-  const causes = new Map<string, string[]>();
-  for (const [key, cause] of entries) {
-    const known = causes.get(key) ?? [];
-    if (!known.includes(cause)) {
-      causes.set(key, [...known, cause]);
-    }
-  }
-  return causes;
-}
-
-/**
- * Throws, keeping the PR, when the plan an open PR records moves a dependency (by ecosystem and name) that can't be
- * decided now (`undecided`: package key → what can't be: its publisher identity, its direct-peer set, or both): the
- * recomputed plan lacks that move only because a check failed, so reusing the PR would rewrite it as if the move were no
- * longer needed.
- */
-function assertNoUndecidedMoves(recorded: BumpPlan | undefined, undecided: ReadonlyMap<string, ReadonlyArray<string>>): void {
-  const lost = new Map((recorded?.moves ?? []).filter((move) => undecided.has(packageKey(move))).map((move) => [packageKey(move), move]));
-  if (lost.size === 0) {
-    return;
-  }
-  throw new Error([...lost.values()].map((move) => `${move.ecosystem} ${move.name}'s ${undecided.get(packageKey(move))!.join(" and ")} can't be decided; keeping the PR`).join("; "));
-}
-
 /**
  * The unit's open PRs that are still the tool's, matched by their effective content (`inspectOwnership`): a PR whose
  * body lags behind its head is matched by the plan the journal saved for that head, not by its stale body. Read-only:
@@ -268,7 +243,7 @@ async function runUnit(
   // what can't be decided reads as one with nothing to do.
   const reused = same ?? owned[0];
   if (reused !== undefined) {
-    assertNoUndecidedMoves(planOf(reused.pr.body), undecided);
+    assertNoUndecidedMoves(planOf(reused.pr.body)?.moves, undecided);
   }
   if (computed.blocked !== undefined) {
     return { topic: unit.topic, outcome: "blocked", detail: computed.blocked, notes: computed.plan.notes };

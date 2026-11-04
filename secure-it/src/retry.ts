@@ -1,4 +1,5 @@
 /** Attribute verification messages conservatively; a routine may drop named package groups once. */
+import { packageKey } from "@leanish/gate/package-version";
 import { withoutVetoNote } from "@leanish/gate/young-fixes";
 
 import type { ChangePlan, OmittedMoves, PlannedMove } from "./plan.ts";
@@ -19,7 +20,7 @@ export function retryWithoutNamed(plan: ChangePlan, problems: ReadonlyArray<stri
   if (plan.kind !== "routine" || plan.moves.some((move) => move.major) || problems.length === 0 || named.some((entry) => entry.moves.length === 0)) {
     return { plan: undefined, named, leftOut: [] };
   }
-  const keys = new Set(named.flatMap((entry) => entry.moves.map(moveKey)));
+  const keys = new Set(named.flatMap((entry) => entry.moves.map(packageKey)));
   for (;;) {
     const size = keys.size;
     for (const set of plan.coupled ?? []) {
@@ -29,10 +30,10 @@ export function retryWithoutNamed(plan: ChangePlan, problems: ReadonlyArray<stri
   }
   for (const key of keys) if (!plan.packages.includes(key)) keys.delete(key);
   const leftOut = [...keys].sort().map((key) => ({
-    moves: plan.moves.filter((move) => moveKey(move) === key),
-    problems: named.filter((entry) => entry.moves.some((move) => moveKey(move) === key || (plan.coupled ?? []).some((set) => set.includes(key) && set.includes(moveKey(move))))).map((entry) => entry.problem),
+    moves: plan.moves.filter((move) => packageKey(move) === key),
+    problems: named.filter((entry) => entry.moves.some((move) => packageKey(move) === key || (plan.coupled ?? []).some((set) => set.includes(key) && set.includes(packageKey(move))))).map((entry) => entry.problem),
   }));
-  const moves = plan.moves.filter((move) => !keys.has(moveKey(move)));
+  const moves = plan.moves.filter((move) => !keys.has(packageKey(move)));
   if (moves.length === 0) return { plan: undefined, named, leftOut };
   const requiredNpm = plan.requiredNpm?.filter((target) => !keys.has(`npm|${target.root.name}`));
   // The omitted moves' notes go with them: the required targets' reasons, unless a kept target shares the reason (same
@@ -41,7 +42,7 @@ export function retryWithoutNamed(plan: ChangePlan, problems: ReadonlyArray<stri
   // package it starts with; others it mentions only explain it. The rest stays (the gate's, a kept fix's).
   const keptReasons = new Set((requiredNpm ?? []).map((target) => target.reason));
   const omittedReasons = new Set((plan.requiredNpm ?? []).map((target) => target.reason).filter((reason) => !keptReasons.has(reason)));
-  const omitted = plan.moves.filter((move) => keys.has(moveKey(move)));
+  const omitted = plan.moves.filter((move) => keys.has(packageKey(move)));
   const kept = (plan.notes ?? []).filter((note) => {
     if (keptReasons.has(note)) return true;
     if (omittedReasons.has(note)) return false;
@@ -58,8 +59,6 @@ export function namedProblems(plan: ChangePlan, problems: ReadonlyArray<string>)
     target.root.name === move.name && target.root.version === move.to && namesMove(problem, { ...move, name: target.name })) ||
     (move.carries ?? []).some((carried) => namesMove(problem, { ...move, name: carried.name }))) }));
 }
-
-const moveKey = (move: PlannedMove) => `${move.ecosystem}|${move.name}`;
 
 /**
  * The package a note is about: the name of the `name@version` it starts with (scoped npm and Maven names included);
