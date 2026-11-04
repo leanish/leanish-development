@@ -333,8 +333,9 @@ The tick from [`core/tool-runtime`](../core/tool-runtime), with secure-it's step
     pushed, with the plan in the PR. Fixes remained on the new base, so an edit that leaves the base as it was fails
     verification; it doesn't retire the PR.
 - **CI failed (version-fix units):** the agent adapts, at most twice, and the result is verified before it's pushed.
-- **A held PR** (the verifying comparison held young versions; its plan records them: one taken early, or a trusted
-  exception's) never becomes ready on the tool's say. Green CI, or only the gate's `cooldown` job failing in its hold
+- **A held PR** (the verifying comparison held young versions; its plan records them: one taken early) never becomes
+  ready on the tool's say. Trusted packages don't cause a cooldown hold; a PR with no other hold becomes ready on
+  green like any other. Green CI, or only the gate's `cooldown` job failing in its hold
   step after a passing comparison, is `held`; any other failure is adapted as usual. Once the last held version has
   aged, the draft is closed with a comment before anything else (`graduated`), and the next run plans again from the
   default branch with fresh checks. A held PR a person marked ready is theirs: the tick leaves it alone. One taken

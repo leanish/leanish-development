@@ -2938,15 +2938,16 @@ describe("the cooldown hold", () => {
     expect(h.github.prs.get(7)).toEqual(tracked);
   });
 
-  it("reviews a trusted exception's PR with young trusted versions as any held PR, without asking for a grant", async () => {
+  it("makes a tracked PR whose plan records no cooldown ready on green, without asking for a grant", async () => {
+    // What a trusted exception's PR looks like: the gate never holds a trusted package, so nothing keeps it a draft.
     const plan = await heldPlan(YOUNG_VITE());
-    const trusted = { ...HELD, ecosystem: "Maven" as const, name: "com.acme:lib", signals: [] };
-    const pr = ownPr({ headRef: "secure-it/2026-10-05-security", body: withMarker(RULES, withPlanSection("Fixes lib.\n\nTracks #1.", { ...plan, cooldown: [trusted] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
-    const h = harness({ prs: [pr], files: { "package-lock.json": LOCK, ".github/supply-chain.json": JSON.stringify({ trustedPackages: { Maven: { groups: ["com.acme"] } } }) } });
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security", body: withMarker(RULES, withPlanSection("Fixes lib.\n\nTracks #1.", { ...plan, cooldown: [] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pr], files: { "package-lock.json": LOCK } });
     h.github.checks = GREEN;
-    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "held" }] });
+    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "marked-ready" }] });
     expect((h.context.issues as FakeIssues).calls).toEqual([]);
   });
+
 
   it("leaves a held draft from before issues that a person marked ready, even once an issue tracks its packages", async () => {
     const plan = await heldPlan(YOUNG_VITE());
