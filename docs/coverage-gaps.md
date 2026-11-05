@@ -63,8 +63,8 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 - **An early attempt whose PR the listing doesn't show yet (secure-it)**: when publication fails after its PR was
   created, the attempt ends as failed if the PR listing doesn't show that PR yet, and review then leaves the PR alone
   as not taken early (with a notice).
-- **A lasting gap keeps a fixed finding's issue open (secure-it)**: an issue closes as resolved only on a complete
-  scan, so on a repository the gate always reports a gap for (an advisory range it can't read, say), an issue whose
+- **A lasting gap keeps a fixed finding's issue open (secure-it)**: only a complete scan can conclude that findings
+  are gone and record a resolution (a later run finishes that recorded closing even with gaps), so on a repository the gate always reports a gap for (an advisory range it can't read, say), an issue whose
   findings are gone stays open until that gap goes or a person closes it. It says meanwhile that the run couldn't assess
   it, naming what it tracks, rather than its last status.
 - **A different token login (secure-it)**: issues are found by their creator, so a write PAT from another account
