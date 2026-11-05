@@ -53,8 +53,8 @@ gaps never takes a finding for gone: it makes no new resolution decision and lea
 longer finds. It only closes a duplicate issue whose findings the surviving one already tracks, and finishes a closing
 an earlier run recorded. Issue text never selects versions: the code decides. A person's input changes two things:
 closing an issue [dismisses its findings](#dismissing-findings), and a `take-early` label lets a waiting decision run
-early. Labels match ignoring case, as on GitHub: a `Take-Early` label made by hand counts, and so does the tool's own
-label in whatever casing the repository has it.
+early. Issue labels match ignoring case, as on GitHub: a `Take-Early` label made by hand counts, and so does the
+tool's own issue label in whatever casing the repository has it.
 
 ### Dismissing findings
 
