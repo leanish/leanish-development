@@ -83,15 +83,17 @@ function foreignLinkLeft(number: number): Left {
 }
 
 /**
- * Leaves a PR whose `Tracks` line names an issue that fails the ownership and decision checks (`issueCovers`), before
- * review changes anything: any update would publish that false link again. Fixing the link needs to know where it came
- * from, which nothing records yet, and a run that finds the same plan open leaves it as it is, so it takes a person.
- * Reads only. A PR with no `Tracks` line is `reviewDisposition`'s to judge.
+ * Leaves a PR whose `Tracks` line names an issue that fails the ownership and decision checks, before review changes
+ * anything: any update would publish that false link again. Fixing the link needs to know where it came from, which
+ * nothing records yet, and a run that finds the same plan open leaves it as it is, so it takes a person. A PR taken early
+ * is never reduced, so only its exact decision's issue will do (`decisionIssue`); any other may carry a retry's reduced
+ * plan (`issueCovers`). Reads only. A PR with no `Tracks` line is `reviewDisposition`'s to judge.
  */
 export async function foreignLink(client: ReviewIssues, pr: GitHubPullRequest, plan: ChangePlan): Promise<Left | undefined> {
   const number = trackedIssueOf(pr.body);
   if (number === undefined) return undefined;
-  return await issueCovers(client, number, plan) ? undefined : foreignLinkLeft(number);
+  const holds = takenEarlyOf(pr.body) ? await decisionIssue(client, number, plan) !== undefined : await issueCovers(client, number, plan);
+  return holds ? undefined : foreignLinkLeft(number);
 }
 
 /** `early` learns what this read found, whatever it decides, so this tick asks the issue nothing more about it. */

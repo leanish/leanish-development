@@ -13,9 +13,9 @@
 
 - secure-it's review now leaves a PR untouched when its `Tracks` line names an issue that isn't the tool's for a decision
   including that PR's moves, including one deleted, transferred or opened by another login, instead of updating it and
-  publishing that link again. Such an ordinary PR no longer gets rebased, adapted or marked ready by review: it waits for
-  a person to close it, or for a run to redo it because its plan changed. A retry's reduced plan under its whole decision's
-  issue and proved floor-removal PRs, which track no issue, aren't affected.
+  publishing that link again. While the link stays invalid, such an ordinary PR no longer gets rebased, adapted or marked
+  ready by review: a person closes or corrects it, or a run redoes it because its plan changed. A retry's reduced plan
+  under its whole decision's issue and proved floor-removal PRs, which track no issue, aren't affected.
 
 ## 0.11.0 - 2026-11-05
 

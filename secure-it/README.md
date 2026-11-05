@@ -46,8 +46,8 @@ login's PRs and other issues never crowd its listing. Removing the label takes a
 opens another for what it tracked. Review still reads the issue a PR names (`Tracks #N.`) by its number, label or not,
 so a PR taken early goes on under its recorded attempt and grant. When that isn't the tool's issue for a decision including
 this PR's moves (someone else's, another decision's, unreadable, opened by another login, deleted or transferred), review
-leaves the PR untouched, so it doesn't publish that link again. It stays that way until you close it, after which a run
-opens it again through the current decision's issue, or a run redoes it because its plan changed.
+leaves the PR untouched while the link stays that way, so it doesn't publish it again. Closing the PR lets a run open it
+anew through the current decision's issue, and a run also replaces the link when it redoes the PR because its plan changed.
 
 Issues don't change subject: when a decision changes (another version, another grouping), the run opens the new issue
 first, then closes the old one as superseded by it. Once a complete scan sees none of an issue's findings outside a

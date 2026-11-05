@@ -57,9 +57,12 @@ describe("a PR's link to an issue", () => {
     expect(await foreignLink(client, pullRequest("No line."), planOf(VITE))).toBeUndefined();
   });
 
-  it("fails closed for a PR taken early whose issue covers it without confirming it", async () => {
+  it("doesn't let a PR taken early through on an issue that only covers it: it's never reduced", async () => {
     const { client } = clientFor(VITE, LEFT_PAD);
-    expect(await reviewDisposition(client, pullRequest("Tracks #1, taken early."), planOf(VITE), new EarlyPrs(client))).toEqual({ kind: "leave", reason: FOREIGN });
+    const taken = pullRequest("Tracks #1, taken early.");
+    expect(await foreignLink(client, taken, planOf(VITE))).toEqual({ kind: "leave", reason: FOREIGN });
+    expect(await reviewDisposition(client, taken, planOf(VITE), new EarlyPrs(client))).toEqual({ kind: "leave", reason: FOREIGN });
+    expect(await foreignLink(client, taken, planOf(VITE, LEFT_PAD))).toBeUndefined();
   });
 
   it("lets a read that fails for another reason go through, so it's that PR's error", async () => {

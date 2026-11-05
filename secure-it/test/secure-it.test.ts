@@ -1941,6 +1941,19 @@ describe("secure-it review", () => {
     expect(h.github.prs.get(7)!.body).toBe(previous.body);
   });
 
+  it("restores nothing for a saved publication taken early whose issue's decision only includes its moves", async () => {
+    const previous = await vitePr();
+    const plan = planOf(previous.body)!;
+    const saved = withMarker(RULES, withPlanSection("Fixes vite.\n\nTracks #1, taken early.", plan), { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 });
+    const h = harness({ prs: [{ ...previous, headSha: PUSHED_SHA, labels: [] }] });
+    await h.journal.pushed(REPO, 7, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: previous.title, body: saved, adaptations: 0 } });
+    const subject = { kind: "decision" as const, moves: [...plan.moves.map(({ ecosystem, name, from, to }) => ({ ecosystem, name, from, to })), { ecosystem: "npm" as const, name: "other", from: "1.0.0", to: "1.0.1" }] };
+    const body = ISSUE_WRITER.render({ subject, findings: [], status: { kind: "eligible", trusted: [] } }, { version: 1, subject, openedAt: BASE_SHA, findings: [], absences: [], attempts: [] }, BASE_SHA).body;
+    (h.context.issues as FakeIssues).issues.set(1, { number: 1, url: "https://github.com/acme/widget/issues/1", title: "secure-it", body, state: "open", stateReason: null, author: "leanish", labels: [ISSUE_LABEL] });
+    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "left-alone" }] });
+    expect(h.github.calls.filter((call) => call.startsWith("updatePullRequest") || call.startsWith("addLabels"))).toEqual([]);
+  });
+
   it("never rebases a tracked PR into another decision: the next run moves it through that decision's issue", async () => {
     const major = vite({ to: { version: "9.0.1", line: "9", aged: true, major: true, blockers: [] } });
     const previous = await vitePr({}, major);

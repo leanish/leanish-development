@@ -76,9 +76,11 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   release stops trusting a record someone else edited, give Triage only to people you'd trust with a `take-early`
   label. A PR's `Tracks` line is read from the PR's description the same way: review reads its last recognized
   `Tracks` line. It leaves the PR untouched when that names an issue that isn't the tool's for a decision including the
-  PR's moves (it posts no notice there) and doesn't fix the link, since nothing records where it came from. That PR waits
-  for a person to close it, even when only its issue went away, unless a run redoes it because its plan changed, which
-  replaces the link with the current decision's issue. A run that finds the same plan open leaves the link as it is.
+  PR's moves (it posts no notice there) and doesn't fix the link, since nothing records where it came from. While the
+  link stays invalid, even when only its issue went away, that PR waits for a person to close it or correct it, unless a
+  run redoes it because its plan changed, which replaces the link with the current decision's issue. A run that finds the
+  same plan open leaves the link as it is. Which issue a reduced plan belongs to isn't recorded either: an ordinary PR
+  passes on any of the tool's issues whose decision includes its moves, which gives it no notices or grant there.
 - **A person using the token's account can look like secure-it closing an issue (secure-it)**: secure-it tells its
   own closing from a person's by the token's login and the event boundary it recorded with the closing (or, for a
   closing recorded before boundaries were kept, its notice's time). A person using that same account who closes and
