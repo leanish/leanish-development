@@ -11,7 +11,7 @@
 
 ### Fixed
 
-- Both tools recognize their PR label in any casing, as GitHub does, so a PR recognized only by its label isn't lost, and
+- Both tools recognize their PR label in any casing, as GitHub does, so a PR recognized only by its label isn't missed, and
   a label already there isn't added again, when the repository's label was created as, say, `Leanish:Secure-It`.
 
 ## 0.11.0 - 2026-11-05
