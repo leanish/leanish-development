@@ -14,8 +14,8 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
 
 Every finding a run sees on the default branch, minus those a valid exception covers, is tracked by an issue the tool
 opens with the write PAT (it needs **Issues: read and write**, see [adopting the tools](../docs/adopting-tools.md)),
-except where a person [dismissed](#dismissing-findings) it: a dismissed finding shows again only in a decision that
-also fixes one not dismissed, or once it came back after it was gone. An issue tracks one subject:
+except where a person [dismissed](#dismissing-findings) it: a dismissed finding shows again only in an issue whose
+subject also has a finding not dismissed, or once it came back after it was gone. An issue tracks one subject:
 
 - **A decision:** the exact moves a unit would make. Past the release-age wait, or a trusted package's ordinary fix
   (said as a trusted exception), a run fixes it right away. Its PR says `Tracks #N.`, never a closing keyword. A PR
@@ -53,16 +53,18 @@ a waiting decision run early.
 ### Dismissing findings
 
 An issue a person closes is dismissed, with its findings, and the run never reopens it. Dismissal holds back a new
-issue only for a decision whose findings are all dismissed; it doesn't take dismissed findings' moves out of another
-decision. So a new issue still opens:
+issue only for a subject (a decision, or a package without one) whose findings are all dismissed; it doesn't take
+dismissed findings out of another subject, nor their moves out of another decision. So a new issue still opens:
 
 - for a dismissed finding that comes back after a complete assessment recorded it gone;
-- for a decision that also fixes a finding not dismissed (the routine batch, say). That issue shows every finding the
-  decision fixes, and its PR fixes the dismissed ones too.
+- for a subject that also has a finding not dismissed. That issue shows all its findings, the dismissed ones included:
+  a decision that also fixes another (the routine batch, say), whose PR fixes the dismissed ones too, or a package
+  with a new advisory beside a dismissed one.
 
 Closing an issue doesn't close an open PR for it either. Review keeps an ordinary PR going (it may adapt it or mark it
-ready), so close that PR too. A PR taken early is left to its owner once its issue is closed: its grant no longer
-stands.
+ready), so close that PR too. A PR taken early is left to its owner once its issue is closed while any version it was
+granted is still young: its grant no longer stands. Once they've all aged, review retires that draft as it would any
+other.
 
 ### Taking a fix early: `take-early`
 

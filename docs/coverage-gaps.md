@@ -44,8 +44,8 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   or a crash ends it, a transient one included; only a new reason and label start another.
 - **A fix that only breaks once its versions aged has no deadline (secure-it)**: a waiting decision's PR opens only
   then, and may still need adapting.
-- **A dismissal holds back only what it fully covers (secure-it)**: a decision that also fixes a finding not
-  dismissed opens an issue showing them all, and its PR fixes the dismissed ones too. Closing an issue leaves an open
+- **A dismissal holds back only what it fully covers (secure-it)**: a subject that also has a finding not dismissed
+  opens an issue showing them all, and a decision's PR fixes the dismissed ones too. Closing an issue leaves an open
   ordinary PR for it to review, which may adapt it or mark it ready; close that PR by hand
   ([dismissing findings](../secure-it/README.md#dismissing-findings)).
 - **Version-fix PRs from before issues (secure-it)**: review leaves a version-fix PR without a `Tracks` line to its
