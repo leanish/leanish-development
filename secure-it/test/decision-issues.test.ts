@@ -62,10 +62,14 @@ describe("decisionIssue", () => {
     expect(await decisionIssue({ issues, repo: REPO }, ours, other)).toBeUndefined();
   });
 
-  it("finds nothing for an issue GitHub answers is gone (410), as for a deleted one", async () => {
+  it.each([
+    [301, "transferred to a repository the token reads"],
+    [404, "transferred to one it can't read"],
+    [410, "deleted"],
+  ])("finds nothing for an issue GitHub answers is gone (%i: %s)", async (status) => {
     const issues = new FakeIssues();
     issues.getIssue = async () => {
-      throw new GitHubApiError("getIssue", "This issue was deleted", 410);
+      throw new GitHubApiError("getIssue", "gone", status);
     };
     expect(await decisionIssue({ issues, repo: REPO }, 1, plan)).toBeUndefined();
   });

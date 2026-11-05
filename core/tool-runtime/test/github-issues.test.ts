@@ -62,7 +62,15 @@ describe("createGitHubIssues", () => {
       `https://api.github.com/repos/${REPO}/issues?state=all&creator=leanish&labels=leanish%3Asecure-it-issue&per_page=100&page=2`,
     ]);
     expect((calls[0]!.init.headers as Record<string, string>)["authorization"]).toBe(`Bearer ${TOKEN}`);
-    expect(calls[0]!.init.redirect).toBe("error");
+    expect(calls[0]!.init.redirect).toBe("manual");
+  });
+
+  it("answers a transferred issue's redirect with its status, never following it", async () => {
+    const { fetch, calls } = scripted(json({ message: "Moved Permanently", url: "https://api.github.com/repositories/1/issues/12" }, 301, { location: "https://api.github.com/repositories/1/issues/12" }));
+    const read = issues(fetch).getIssue({ repo: REPO, number: 12 });
+    await expect(read).rejects.toMatchObject({ status: 301 });
+    await expect(read).rejects.toBeInstanceOf(GitHubApiError);
+    expect(calls).toHaveLength(1);
   });
 
   it("reads exactly the cap's worth whole, and fails past it instead of returning part of the history", async () => {

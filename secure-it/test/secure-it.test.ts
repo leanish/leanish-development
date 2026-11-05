@@ -765,6 +765,21 @@ describe("secure-it run", () => {
       expect(await reviewDisposition(client, pr, planOf(pr.body)!, new EarlyPrs({ issues: h.context.issues, repo: REPO }))).toEqual({ kind: "proceed", permit: { early: false, young: [] } });
     });
 
+    it("goes on when an open PR's issue was transferred away (301): it's no issue of this decision's, and nothing defers", async () => {
+      const pr = await vitePr();
+      const h = harness({ prs: [{ ...pr, body: `Tracks #42.\n\n${pr.body}` }], fixes: [vite(), leftPad()] });
+      h.workspace.setRemoteHead("secure-it/2026-10-05-security", HEAD_SHA);
+      const issues = issuesOf(h);
+      const getIssue = issues.getIssue.bind(issues);
+      issues.getIssue = async (args) => {
+        if (args.number === 42) throw new GitHubApiError("getIssue", "moved", 301);
+        return getIssue(args);
+      };
+      const result = await flow(h, OLD).run(h.context);
+      expect(result).not.toHaveProperty("errors");
+      expect(result).toMatchObject({ outcome: "updated", number: 7 });
+    });
+
     it("shows a PR carrying part of the decision (a retry reduced it) as that decision's PR, which the run then redoes whole", async () => {
       const h = harness({ prs: [await vitePr()], fixes: [vite(), leftPad()] });
       h.workspace.setRemoteHead("secure-it/2026-10-05-security", HEAD_SHA);
