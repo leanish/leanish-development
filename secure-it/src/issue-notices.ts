@@ -1,7 +1,7 @@
 /** Issue comments identified by a notice marker, posted once even when GitHub's comment listing lags. */
 import type { GitHubIssues } from "@leanish/tool-runtime/github-issues";
 
-import { issueWrite, unlessGone } from "./issue-access.ts";
+import { unlessGone, writeUnlessGone } from "./issue-access.ts";
 import { noticeMarker } from "./issue-text.ts";
 
 /** The notices each client (one per run) has posted, so a listing that lags its own comment never posts one twice. */
@@ -24,7 +24,7 @@ export async function postNotice(client: { readonly issues: GitHubIssues; readon
   // The login is read only when some comment carries the marker: a notice nobody posted yet costs no extra request.
   const login = marked.length === 0 ? undefined : await client.issues.login();
   if (!marked.some((comment) => comment.author === login)) {
-    const created = await unlessGone(() => issueWrite(() => client.issues.createComment({ repo: client.repo, number, body: `${client.clean(text)}\n\n${marker}` })));
+    const created = await writeUnlessGone(() => client.issues.createComment({ repo: client.repo, number, body: `${client.clean(text)}\n\n${marker}` }));
     if (created === undefined) return;
   }
   posted.add(key);

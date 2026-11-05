@@ -10,7 +10,7 @@
 import type { GitHubClient, GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
 import type { GitHubIssues } from "@leanish/tool-runtime/github-issues";
 
-import { issueWrite, unlessGone } from "./issue-access.ts";
+import { issueWrite, unlessGone, writeUnlessGone } from "./issue-access.ts";
 import { withoutPr } from "./issue-assessment.ts";
 import { type Assessment, type Attempt, type IssueRecord, subjectId } from "./issue-model.ts";
 import { recordShows, type TrackedIssue } from "./issue-reconcile.ts";
@@ -49,7 +49,7 @@ export async function settleAttempt(client: AttemptClient, number: number, id: s
   // progress. Without an assessment (a review's), the text stays as the last sync left it, until the next one.
   const current = issue.state === "open" && updated.pendingClose === undefined;
   const rendered = current && assessment !== undefined && settled.outcome === "pr-closed" && settled.pr !== undefined ? withoutPr(assessment, settled.pr) : assessment;
-  const written = await unlessGone(() => issueWrite(() => client.issues.updateIssue({ repo: client.repo, number, body: bodyWith(client, issue.body, updated, current ? rendered : undefined) })));
+  const written = await writeUnlessGone(() => client.issues.updateIssue({ repo: client.repo, number, body: bodyWith(client, issue.body, updated, current ? rendered : undefined) }));
   if (written === undefined) return false;
   if (settled.outcome !== "pr-closed") return true;
   try {
@@ -123,7 +123,7 @@ export async function showPullRequest(client: AttemptClient, number: number, pr:
     subjects: assessment.subjects.map((subject) => (subjectId(subject.subject) === id && subject.status.kind === "eligible" ? { ...subject, status: { ...subject.status, pr } } : subject)),
   };
   const body = bodyWith(client, issue.body, record, shown);
-  if (body !== issue.body) await unlessGone(() => issueWrite(() => client.issues.updateIssue({ repo: client.repo, number, body })));
+  if (body !== issue.body) await writeUnlessGone(() => client.issues.updateIssue({ repo: client.repo, number, body }));
 }
 
 /**

@@ -50,11 +50,20 @@ describe("an issue gone, on the lifecycle's reads and writes", () => {
     expect(issues.calls).toEqual([]);
   });
 
-  it.each(GONE)("stops settling, returning no label, when it goes between the read and the write with %d", async (status) => {
+  it.each([301, 410])("stops settling, returning no label, when it goes between the read and the write with %d", async (status) => {
     const { issues, client } = withIssue();
     issues.gone.set("updateIssue", status);
     issues.gone.set("listEvents", 500);
     expect(await settleAttempt(client, 1, "a1", { outcome: "pr-closed" }, undefined)).toBe(false);
+  });
+
+  it("doesn't take a 404 on a write, right after a read that worked, for gone: it may be the token", async () => {
+    const { issues, client } = withIssue();
+    issues.gone.set("updateIssue", 404);
+    issues.gone.set("createComment", 404);
+    await expect(settleAttempt(client, 1, "a1", { outcome: "pr-closed" }, undefined)).rejects.toMatchObject({ status: 404 });
+    await expect(showPullRequest(client, 1, SHOWN, assessed(eligible))).rejects.toMatchObject({ status: 404 });
+    await expect(postNotice(client, 1, "note", "text")).rejects.toMatchObject({ status: 404 });
   });
 
   it("doesn't take a server error or a rate limit for gone", async () => {

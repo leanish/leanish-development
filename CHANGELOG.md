@@ -11,10 +11,11 @@
 
 ### Fixed
 
-- secure-it copes with an issue transferred or deleted while it works on it: execution defers, recording an attempt's
+- secure-it copes with an issue transferred or deleted after its sync read it: execution defers, recording an attempt's
   end or a new PR, notices and returning a label have nothing to write and move on, and a review leaves a PR taken early.
-  Before, these failed the run or the review on an issue that was simply gone. A permission lookup on a repository that
-  moved grants nothing. Other failures, such as a rate limit or a server error, still go through as they were.
+  Before, these failed the run or the review on an issue that was simply gone; the sync's own writes still do. A permission
+  lookup on a repository that moved grants nothing. Other failures, such as a rate limit or a server error, still go
+  through as they were.
 - Every issue write now says to check the write PAT's Issues permission when GitHub refuses it as forbidden, not only the
   sync's.
 - secure-it no longer shows a newly published PR on an issue a person took its label off, as execution already respected.

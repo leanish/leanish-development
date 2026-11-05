@@ -2,15 +2,29 @@
 import { GitHubApiError } from "@leanish/agent-runtime/github/github-client";
 
 /**
- * `access`'s result, or undefined when its issue is gone: transferred to a repository the token reads (301) or to one it
+ * `read`'s result, or undefined when its issue is gone: transferred to a repository the token reads (301) or to one it
  * can't (404), or deleted (410). What that means is the caller's: execution defers, bookkeeping has nothing to write. Any
  * other failure (a rate limit, a server error, the network) goes through, so nothing is taken for gone unread.
  */
-export async function unlessGone<T>(access: () => Promise<T>): Promise<T | undefined> {
+export async function unlessGone<T>(read: () => Promise<T>): Promise<T | undefined> {
   try {
-    return await access();
+    return await read();
   } catch (error) {
     if (error instanceof GitHubApiError && (error.status === 301 || error.status === 404 || error.status === 410)) return undefined;
+    throw error;
+  }
+}
+
+/**
+ * `write`'s result as `issueWrite` gives it, or undefined when its issue went since it was read: transferred (301) or
+ * deleted (410). Not on a 404: right after a read that worked it says more likely that this token can't write here, which
+ * has to show.
+ */
+export async function writeUnlessGone<T>(write: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await issueWrite(write);
+  } catch (error) {
+    if (error instanceof GitHubApiError && (error.status === 301 || error.status === 410)) return undefined;
     throw error;
   }
 }
