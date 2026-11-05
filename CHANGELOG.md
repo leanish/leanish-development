@@ -11,9 +11,10 @@
 
 ### Fixed
 
-- secure-it's issues no longer publish a planning error's assignments to a secret-looking name (`password=…`,
-  `token="…"`), quoted values included, and an error whose first line is empty now says it gave no details instead of
-  leaving a sentence unfinished. Other `key=value` details stay.
+- secure-it's issues redact more of a planning error: values assigned to a secret-looking name (`password=…`,
+  `token="…"`) and the user and password of any URL. It's best effort and errs toward redacting: `max_tokens=4096` loses
+  its value too, while `--password value`, `token:value` and an unquoted value's later words still show. An error whose
+  first line is empty now says it gave no details instead of leaving a sentence unfinished.
 
 ## 0.11.0 - 2026-11-05
 

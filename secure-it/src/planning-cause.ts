@@ -1,9 +1,16 @@
 /**
- * A name that says its value is a secret, then its value: quoted (spaces included, up to the closing quote or the line's
- * end) or up to whitespace, a comma or a semicolon. The lookbehind starts it only at a name's beginning, so a long line
- * stays linear; `auth` followed by a letter is an ordinary word (`author`), and `authToken` matches through `token`.
+ * A name that looks secret, then its value: any quoted part (spaces included, up to the closing quote or the line's end)
+ * and whatever follows it up to whitespace, leaving out a final comma or semicolon. It errs toward redacting: a word that
+ * only contains a name (`max_tokens=4096`) loses its value, and an unquoted value's words after the first space stay.
+ *
+ * A colon counts only before a space or a quote, or after a closing quote or bracket: Gradle coordinates
+ * (`com.password4j:password4j:1.7`) must stay whole, so `token:abc` isn't an assignment. `auth` followed by another letter
+ * is an ordinary word (`author`). The lookbehind starts a match only at a name's beginning, so a long line stays linear.
  */
-const SENSITIVE_ASSIGNMENT = /(?<![\w.-])(?=[\w.-]*(?:password|passwd|pwd|secret|token|api[_-]?key|credential|private[_-]?key|access[_-]?key|auth(?![a-z])))([\w.-]+)(["'`]?[ \t]*[:=][ \t]*)(?:"(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?|`(?:[^`\\]|\\.)*`?|[^\s,;]+)/gi;
+const SENSITIVE_ASSIGNMENT = /(?<![\w.-])(?=[\w.-]*(?:pass(?:word|wd|phrase)|pwd|secret|token|api[_-]?key|credential|private[_-]?key|access[_-]?key|session|cookie|jwt|auth(?:orization|key)?(?![a-z])))([\w.-]+)(["'`\]]{0,2}\s*(?:=|:(?=[\s"'`])|(?<=["'`\]]):)\s*)(?=\S)(?:"(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?|`(?:[^`\\]|\\.)*`?)?(?:\S*[^\s,;])?/gi;
+
+/** A URL's user and password, in a scheme `publicUrl` doesn't read (`postgres://user:password@host/db`). */
+const URL_USERINFO = /\/\/[^\s/@]+@/g;
 
 /**
  * A planning error's first line for a public issue, without URL credentials, queries, sensitive assignments or
@@ -13,6 +20,7 @@ const SENSITIVE_ASSIGNMENT = /(?<![\w.-])(?=[\w.-]*(?:password|passwd|pwd|secret
 export function planningCause(message: string): string {
   const cause = message.split(/[\r\n\u2028\u2029]/, 1)[0]!
     .replace(/https?:\/\/[^\s<>"'`]+/gi, publicUrl)
+    .replace(URL_USERINFO, "//")
     .replace(/\bAuthorization[ \t]*:.*/gi, "Authorization: [redacted]")
     .replace(/\bBearer[ \t]+[^\s,;]+/gi, "Bearer [redacted]")
     .replace(SENSITIVE_ASSIGNMENT, "$1$2[redacted]")

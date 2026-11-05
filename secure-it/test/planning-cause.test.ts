@@ -49,6 +49,18 @@ describe("planningCause", () => {
     ["token=\"fake secret", "token=[redacted]"],
     ["\"password\":\"fake secret\"", "\"password\":[redacted]"],
     ["'password': 'fake secret'", "'password': [redacted]"],
+    ["password:\"fake secret\"", "password:[redacted]"],
+    ["token=fake,secret;tail", "token=[redacted]"],
+    ["token: \"fake\"secret\"", "token: [redacted]"],
+    ["[token]=fake-secret", "[token]=[redacted]"],
+    ["[\"token\"]=fake-secret", "[\"token\"]=[redacted]"],
+    ["token = fake-secret", "token = [redacted]"],
+    ["authorization=fake-secret", "authorization=[redacted]"],
+    ["authkey=fake-secret", "authkey=[redacted]"],
+    ["passphrase=fake-secret", "passphrase=[redacted]"],
+    ["sessionid=fake-secret", "sessionid=[redacted]"],
+    ["cookie: fake-secret", "cookie: [redacted]"],
+    ["jwt=fake-secret", "jwt=[redacted]"],
   ])("redacts the assignment %s", (assignment, redacted) => {
     expect(planningCause(`registry 502, ${assignment}`)).toBe(`registry 502, ${redacted}`);
   });
@@ -61,13 +73,38 @@ describe("planningCause", () => {
     expect(planningCause("failed: password=fake-secret")).toBe("failed: password=[redacted]");
   });
 
+  it("removes a URL's user and password in a scheme other than http", () => {
+    expect(planningCause("can't reach postgres://reader:fake-secret@db.example/main")).toBe("can't reach postgres://db.example/main");
+  });
+
   it.each([
     "registry 502, retry=3",
     "author=someone at line: 12",
     "lockfile package-lock.json: entry@1.2.3 has version=1.2.3",
     "a Authentic=value and authors: many",
+    "com.password4j:password4j:1.7 not found",
+    "com.example:password-util:1.2.3 not found",
+    "org.springframework.security:spring-security-token:5.0.1 not found",
+    "@scope/token-utils@1.0.0 and left-pad@npm:token-helper@^1.0.0",
+    "file:../secret-lib is missing",
+    "invalid token:",
   ])("keeps the ordinary diagnostic %j", (diagnostic) => {
     expect(planningCause(diagnostic)).toBe(diagnostic);
+  });
+
+  it.each([
+    ["max_tokens=4096 exceeded", "max_tokens=[redacted] exceeded"],
+    ["invalid token: expired", "invalid token: [redacted]"],
+  ])("errs toward redacting a word that only looks secret: %s", (diagnostic, redacted) => {
+    expect(planningCause(diagnostic)).toBe(redacted);
+  });
+
+  it.each([
+    ["password=several words here", "password=[redacted] words here"],
+    ["--password fake-secret", "--password fake-secret"],
+    ["token:fake-secret", "token:fake-secret"],
+  ])("documents what an unquoted or unseparated value still shows: %s", (message, result) => {
+    expect(planningCause(message)).toBe(result);
   });
 
   it.each(["", "   ", "\nprivate file contents: some-secret", " \t\r\nprivate file contents: some-secret"])("gives a generic cause for an error whose first line is empty (%j), never a later line", (message) => {
