@@ -130,12 +130,24 @@ function interpolate(value: string, properties: ReadonlyMap<string, string>): st
  */
 export function githubRepository(value: unknown): string | undefined {
   const raw = isObject(value) ? dig(value, ["url"]) : value;
-  if (typeof raw !== "string") return undefined;
+  if (typeof raw !== "string" || namesAnotherHost(raw)) return undefined;
   const match =
     /github\.com[/:]([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:[/#?]|$)/i.exec(raw) ?? /^(?:github:)?([\w.-]+)\/([\w.-]+?)(?:\.git)?$/i.exec(raw);
   // `.` or `..` would walk the API URL the token is sent to (`/repos/../..`): no repository is named.
   if (match === null || isDotSegment(match[1]!) || isDotSegment(match[2]!)) return undefined;
   return `${match[1]}/${match[2]}`.toLowerCase();
+}
+
+/**
+ * Whether a URL's real host is neither GitHub nor one of its subdomains, so nothing further along in it can name a GitHub
+ * repository (`https://evil.example/github.com/acme/lib`). Forms without a host (`scm:git:…`, `github:acme/lib`) and what
+ * doesn't parse (`git@github.com:acme/lib.git`) are left to the matcher. A URL parser only lowercases the hosts of schemes
+ * it knows, not `git+https://GitHub.com`.
+ */
+function namesAnotherHost(raw: string): boolean {
+  if (!URL.canParse(raw)) return false;
+  const host = new URL(raw).hostname.toLowerCase();
+  return host !== "" && host !== "github.com" && !host.endsWith(".github.com");
 }
 
 export function isDotSegment(segment: string): boolean {

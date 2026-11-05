@@ -117,10 +117,11 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   as every version. This can still count versions outside it as affected when no reviewed record names the same
   package and ecosystem. A non-withdrawn reviewed record that independently clears the version takes precedence;
   the drop is reported as a note.
-- **GitHub source repository matching stays as in v0.5.2**: a repository URL whose host only ends in `github.com`
-  (`notgithub.com/acme/lib`), or names it in a path, query or fragment, can be read as the wrong GitHub repository.
-  A numeric port in a URL (`https://github.com:443/acme/lib`) can be read as the owner (`443/acme`). These limits
-  only add or miss repository advisories; OSV still covers the package.
+- **GitHub source repository matching outside URLs with a host**: a URL whose real host isn't GitHub or a subdomain names
+  no repository, but a form without one can still be read as the wrong GitHub repository: schemeless
+  (`notgithub.com/acme/lib`) or an opaque `scm:` form (`scm:git:https://evil.example/github.com/acme/lib`). A numeric port
+  in a URL (`https://github.com:443/acme/lib`) can be read as the owner (`443/acme`). These limits only add or miss
+  repository advisories; OSV still covers the package.
 - **Operating-system packages** in container images: no scanner here reads them (Trivy or similar, later). Dockerfile CLIs are covered only through configured npm manifests and locks.
 - **Code copied into a package without its own manifest**: npm bundles are read package by package (each bundled `node_modules/<name>/package.json`); JavaScript vendored into a package's own files isn't a package anywhere, so its advisories can't match.
 - **Shaded Java dependencies**: classes a library copies (and usually relocates) into its own jar aren't a module in the Gradle inventory, only the jar that ships them is; an advisory on the shaded library doesn't match it, and the only fix is another version of the shading artifact.

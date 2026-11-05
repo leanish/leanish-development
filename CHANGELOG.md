@@ -9,6 +9,13 @@
   general rules. There, every release review is one exhaustive pass, the reviewer is picked per iteration, and minor
   findings don't block: a new candidate cut for another reason fixes them all, and otherwise they go to the next patch.
 
+### Fixed
+
+- The gate no longer reads a package's source repository out of a URL on another host, such as
+  `https://evil.example/github.com/acme/lib` or `https://notgithub.com/acme/lib`, which could add or miss that wrong
+  repository's advisories. Such a package now reports the usual gap for a dependency without a GitHub source repository.
+  Forms without a URL host and numeric ports read as before.
+
 ## 0.11.0 - 2026-11-05
 
 ### Changed

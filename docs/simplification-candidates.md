@@ -45,10 +45,12 @@ authoritative tool already interprets, or guarding a case no build depends on). 
 says what was tried or measured, so the analysis needn't be repeated unless what it rests on changes.
 
 - **GitHub source repository matcher** (`githubRepository` in [`source-repos.ts`](../core/gate/src/source-repos.ts)):
-  stays exactly as in v0.5.2 by the owner's decision. Three attempts to tighten host boundaries and handle ports
-  each lost valid forms v0.5.2 read, losing those repositories' advisories. The gain was low: reading the wrong
-  repository only adds or misses repository advisories; OSV still covers the package. The known host and port
-  limits are documented in [coverage gaps](coverage-gaps.md), and tests pin the v0.5.2 results.
+  stays as in v0.5.2 by the owner's decision, with one narrow exception they chose in 0.11.1: a URL whose real host
+  isn't GitHub or a subdomain names no repository. Three attempts to tighten host boundaries and handle ports each lost
+  valid forms v0.5.2 read, losing those repositories' advisories, so don't parse the rest (`scm:` forms, `github:`,
+  schemeless) or handle ports without an agreed compatibility change. The gain is low: reading the wrong repository
+  only adds or misses repository advisories; OSV still covers the package. The remaining limits are documented in
+  [coverage gaps](coverage-gaps.md), and tests pin the results.
 - **Gradle source scan** ([`gradle-sources.ts`](../core/gate/src/gradle-sources.ts)): planning only, verification
   doesn't use it. Gradle's inventory exports `allDependencies`, declared and inherited or plugin-added alike, with no
   origin, so only this scan tells bump-it which coordinates the repository's own files name; without it bump-it would
