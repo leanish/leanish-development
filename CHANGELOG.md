@@ -26,8 +26,9 @@
   plan. Graduation closes the draft and settles its attempt before branch or CI work. Verification admits only the
   grant's young versions and trusted packages; recorded cooldown warnings and evidence remain visible. bump-it and
   ordinary PRs still wait when only the gate's cooldown holds them.
-- Before upgrading from 0.10.x, enable the repository's Issues feature if it's off, and close secure-it's open
-  version-fix PRs by hand, keeping any human changes you need:
+- Before upgrading from 0.10.x, enable the repository's Issues feature if it's off, run secure-it on only one base
+  branch of each repository (its issues carry no branch: [known limitation](docs/coverage-gaps.md#limits)), and close
+  secure-it's open version-fix PRs by hand, keeping any human changes you need:
   review leaves a version-fix PR without `Tracks` to its owner, and a run still matches one to a fix it plans by its
   kind and topic alone, as before: it keeps it, refreshing only its plan notes, when the plan is unchanged, or redoes it, then with a
   `Tracks` line, when the plan changed. The first run then assesses the findings and opens the corresponding issues.
@@ -72,6 +73,9 @@
   says so with the rule's reasons, rather than claiming the rule refused every candidate.
 - secure-it takes a notice as already posted only from its own comment: a notice marker in someone else's comment no
   longer keeps a notice from being posted, nor dates a closing it recorded.
+- An issue's title names every ecosystem its packages span (`(npm, Maven)`), not only the first package's. A title is
+  written when the issue opens, and an issue never changes decision, so one a release candidate opened keeps the title
+  it got; edit it by hand if you like.
 - An issue secure-it closes isn't taken as dismissed when someone on another account closed and reopened it while the
   tool was closing it: only a closing by the token's login counts as the tool's. A person using the token's own
   account still can't be told apart ([known limitation](docs/coverage-gaps.md#limits)).

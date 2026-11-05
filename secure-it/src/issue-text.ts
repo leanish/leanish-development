@@ -145,10 +145,11 @@ function titleOf(assessment: SubjectAssessment): string {
   const packages = subjectPackages(assessment.subject);
   const plain = (name: string) => name.replace(/[^A-Za-z0-9@/._:-]/g, "").replace(/^@/, "");
   const names = packages.slice(0, 3).map((pkg) => plain(pkg.name)).join(", ") + (packages.length > 3 ? ` and ${packages.length - 3} more` : "");
-  const ecosystem = packages[0]!.ecosystem;
+  // Every ecosystem the subject spans, in first-seen order: a routine decision can move npm, Maven and Actions at once.
+  const ecosystems = [...new Set(packages.map((pkg) => pkg.ecosystem))].join(", ");
   // A title can't hold Markdown: names stay plain, cut to fit GitHub's title limit with room for the rest.
   const shown = names.length > 160 ? `${names.slice(0, 157)}...` : names;
-  return assessment.subject.kind === "decision" ? `secure-it: fixing ${shown} (${ecosystem})` : `secure-it: advisories on ${shown} (${ecosystem})`;
+  return assessment.subject.kind === "decision" ? `secure-it: fixing ${shown} (${ecosystems})` : `secure-it: advisories on ${shown} (${ecosystems})`;
 }
 
 function essentialLines(assessment: SubjectAssessment, record: IssueRecord): string[] {

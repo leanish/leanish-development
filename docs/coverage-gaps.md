@@ -84,6 +84,17 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   the issue while it's open, or make it count as dismissed once secure-it closes it, so no new issue opens for its
   findings while they're still there. The boundary survives an interrupted run, so the window lasts until a later run
   finishes that closing.
+- **Issues track one base branch per repository (secure-it)**: a repository's issues carry no base branch, so secure-it
+  reads every issue its write PAT's login opened there as the current base's. A configuration lists a repository
+  once, with one `branch`, but runs on different bases with the same login share those issues: other configurations
+  or runners, an entry whose `branch` changed, or one without `branch` after the repository's default branch changed.
+  A clean assessment of one base can then close the other's still-vulnerable issue as resolved and record its findings
+  as absent, and a base switch can reuse the other's dismissals and `take-early` authorizations, or close and
+  supersede its issues. Run secure-it on one stable base per repository across all its configurations and runners.
+- **A recovered early PR isn't retired in the same run (secure-it)**: after an interruption leaves a published early
+  PR unattached to its attempt, recovery attaches it, but that run's retirement still reads the earlier snapshot. If
+  its granted versions have aged and the fixes regroup, the run can open an overlapping PR before a later run or
+  review retires the old draft.
 - **An early attempt whose PR the listing doesn't show yet (secure-it)**: when publication fails after its PR was
   created, the attempt ends as failed if the PR listing doesn't show that PR yet, and review then leaves the PR alone
   as not taken early (with a notice).

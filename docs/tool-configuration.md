@@ -19,7 +19,7 @@ permissions and schedules are in the [adoption guide](adopting-tools.md).
 | Field | Required / default | Meaning |
 |---|---|---|
 | `repos` | Required, nonempty list | Explicit opt-in. Each entry has `repo: owner/repo`; duplicates are rejected case-insensitively. A command still names exactly one repository. |
-| `repos[].branch` | Repository's default branch | Base branch to sync, plan against and target with PRs. |
+| `repos[].branch` | Repository's default branch | Base branch to sync, plan against and target with PRs. secure-it's issues carry no branch: run it on one stable base per repository, across all configurations and runners with the same write PAT ([limit](coverage-gaps.md#limits)). |
 | `agent.codingAgent` | Required: `claude-code` or `codex` | Which CLI runs the agent. Both edit only inside their sandbox; see the [security model](security-model.md#secure-it-and-bump-it). |
 | `agent.model` | Required | `claude-code`: a model the `claude` CLI accepts, such as `claude-haiku-5-5`. `codex`: a concrete model ID or family `sol`, `astra`, `luna`; a family resolves to the newest listed model in the installed CLI's catalog, not a pinned ID. |
 | `agent.effort` | Required; example `high` | Effort for every agent call: routine and security moves, majors, their review adaptations and conflict resolution. |
