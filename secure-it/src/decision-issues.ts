@@ -14,7 +14,7 @@ import type { GitHubIssue, GitHubIssues } from "@leanish/tool-runtime/github-iss
 
 import { decisionMoves } from "./issue-assessment.ts";
 import { type GrantDecision, grantOf } from "./issue-grant.ts";
-import { type Attempt, type Grant, type IssueRecord, subjectId, type SubjectStatus } from "./issue-model.ts";
+import { type Attempt, type DecisionMove, type Grant, type IssueRecord, subjectId, type SubjectStatus } from "./issue-model.ts";
 import { recordOf } from "./issue-text.ts";
 import type { ChangePlan } from "./plan.ts";
 
@@ -39,6 +39,24 @@ export function takenEarlyOf(body: string): boolean {
 
 /** The tool's issue `number` with its record, when that record is `plan`'s decision. */
 export async function decisionIssue(client: IssueReader, number: number, plan: ChangePlan): Promise<{ issue: GitHubIssue; record: IssueRecord } | undefined> {
+  const tracked = await toolIssue(client, number);
+  return tracked !== undefined && subjectId(tracked.record.subject) === subjectId({ kind: "decision", moves: decisionMoves(plan) }) ? tracked : undefined;
+}
+
+/**
+ * Whether a PR with `plan` may name issue `number`: the tool's, for a decision that includes every move of `plan`, which
+ * is the whole decision's or the one a retry reduced (`retryWithoutNamed`), still published under its whole decision's issue.
+ */
+export async function issueCovers(client: IssueReader, number: number, plan: ChangePlan): Promise<boolean> {
+  const subject = (await toolIssue(client, number))?.record.subject;
+  if (subject?.kind !== "decision") return false;
+  const key = (move: DecisionMove) => JSON.stringify([move.ecosystem, move.name, move.from, move.to]);
+  const whole = new Set(subject.moves.map(key));
+  return decisionMoves(plan).every((move) => whole.has(key(move)));
+}
+
+/** Issue `number` when the token's login opened it and its record reads. */
+async function toolIssue(client: IssueReader, number: number): Promise<{ issue: GitHubIssue; record: IssueRecord } | undefined> {
   // An issue gone (transferred to a repository the token reads: 301, or to one it can't: 404; deleted: 410) is no issue
   // of this decision's; any other failure goes through, so nothing proceeds unread.
   const read = await client.issues.getIssue({ repo: client.repo, number }).catch((error: unknown) => {
@@ -48,8 +66,7 @@ export async function decisionIssue(client: IssueReader, number: number, plan: C
   if (read === undefined) return undefined;
   const [issue, login] = [read, await client.issues.login()];
   const record = recordOf(issue.body);
-  if (issue.author !== login || record === undefined) return undefined;
-  return subjectId(record.subject) === subjectId({ kind: "decision", moves: decisionMoves(plan) }) ? { issue, record } : undefined;
+  return issue.author === login && record !== undefined ? { issue, record } : undefined;
 }
 
 /**

@@ -1137,7 +1137,8 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
     const verified = await verifyWithRetry(execution, base, plan, content, { admits });
     if (verified.unplanned !== undefined) {
       const unplanned = verified.unplanned;
-      // Said only on this decision's own issue, as its disposition found it.
+      // Said only on this decision's own issue, as its disposition found it: a reduced plan's PR, whose `Tracks` line
+      // names its whole decision's, gets here and gets no notice.
       const notified = permitOf(pr).issue;
       if (notified !== undefined) {
         await postNotice(issues, notified, `unplanned-young:${pr.number}:${unplanned.join(",")}`,

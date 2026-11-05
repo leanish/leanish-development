@@ -14,7 +14,7 @@ import type { GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
 import { label, versionKey } from "@leanish/gate/package-version";
 import type { Ecosystem } from "@leanish/gate/versions";
 
-import { decisionIssue, type EarlyPrs, grantStanding, type Scope, scopeOf, takenEarlyOf, trackedIssueOf } from "./decision-issues.ts";
+import { decisionIssue, type EarlyPrs, grantStanding, issueCovers, type Scope, scopeOf, takenEarlyOf, trackedIssueOf } from "./decision-issues.ts";
 import { decisionMoves } from "./issue-assessment.ts";
 import type { AttemptClient } from "./issue-attempts.ts";
 import { settleAttempt } from "./issue-attempts.ts";
@@ -44,7 +44,7 @@ export interface ReviewIssues extends AttemptClient {
 export interface ReviewPermit {
   readonly early: boolean;
   readonly young: ReadonlyArray<PackageVersion>;
-  /** The decision's own issue, where review's notices about the PR go: none when its `Tracks` line names another. */
+  /** The decision's own issue, where review's notices about the PR go: none for a reduced plan's PR, whose `Tracks` line names its whole decision's. */
   readonly issue?: number;
 }
 
@@ -79,18 +79,19 @@ async function stillYoung(client: ReviewIssues, grant: Grant): Promise<YoungVers
 }
 
 function foreignLinkLeft(number: number): Left {
-  return { kind: "leave", reason: `it tracks #${number}, which isn't this decision's issue` };
+  return { kind: "leave", reason: `it tracks #${number}, which isn't this decision's issue; close it by hand and run secure-it again` };
 }
 
 /**
- * Leaves a PR whose `Tracks` line names an issue that fails the ownership and decision checks (`decisionIssue`), before
+ * Leaves a PR whose `Tracks` line names an issue that fails the ownership and decision checks (`issueCovers`), before
  * review changes anything: any update would publish that false link again. Fixing the link needs to know where it came
- * from, which nothing records yet. Reads only. A PR with no `Tracks` line is `reviewDisposition`'s to judge.
+ * from, which nothing records yet, and a run that finds the same plan open leaves it as it is, so it takes a person.
+ * Reads only. A PR with no `Tracks` line is `reviewDisposition`'s to judge.
  */
 export async function foreignLink(client: ReviewIssues, pr: GitHubPullRequest, plan: ChangePlan): Promise<Left | undefined> {
   const number = trackedIssueOf(pr.body);
   if (number === undefined) return undefined;
-  return await decisionIssue(client, number, plan) === undefined ? foreignLinkLeft(number) : undefined;
+  return await issueCovers(client, number, plan) ? undefined : foreignLinkLeft(number);
 }
 
 /** `early` learns what this read found, whatever it decides, so this tick asks the issue nothing more about it. */
@@ -101,9 +102,15 @@ export async function reviewDisposition(client: ReviewIssues, pr: GitHubPullRequ
   early.remember(pr, scope);
   // An issue that isn't this decision's (gone, unreadable, someone else's) is a false link, which an update would publish
   // again (`foreignLink` stops it earlier; this is for one that went since). No notice: it isn't this decision's to get.
-  if (scope.kind === "foreign") return foreignLinkLeft(number);
-  // A PR taken early that its issue can't confirm (no running attempt) fails closed: nothing on it says it's ordinary now.
-  // Any other with no early attempt there is an ordinary PR: fine while it holds no young version.
+  // A retry's reduced plan under its whole decision's issue is an ordinary PR, fine while it holds no young version; a
+  // PR taken early is never reduced, so one that its issue can't confirm fails closed.
+  if (scope.kind === "foreign") {
+    const left = await foreignLink(client, pr, plan);
+    if (left !== undefined) return left;
+    return youngIn(client, plan).length === 0 && !takenEarlyOf(pr.body) ? { kind: "proceed", permit: ORDINARY } : foreignLinkLeft(number);
+  }
+  // A PR taken early with no running attempt on its issue fails closed: nothing on it says it's ordinary now. Any other
+  // is an ordinary PR: fine while it holds no young version.
   if (scope.kind === "ordinary") {
     return youngIn(client, plan).length === 0 && !takenEarlyOf(pr.body) ? { kind: "proceed", permit: { ...ORDINARY, issue: number } } : leave(client, number, `no-attempt:${pr.number}`, pr, "no running early attempt on its issue is this PR's");
   }

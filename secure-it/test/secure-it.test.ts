@@ -1901,7 +1901,7 @@ describe("secure-it review", () => {
   it("changes nothing on a PR whose `Tracks` line names an issue that isn't this decision's", async () => {
     const previous = await vitePr();
     const pr = { ...previous, body: `Fixes vite.\n\nTracks #1.\n${previous.body}` };
-    const REASON = "it tracks #1, which isn't this decision's issue";
+    const REASON = "it tracks #1, which isn't this decision's issue; close it by hand and run secure-it again";
     const reviewed = async (arrange: (issues: FakeIssues) => void) => {
       const h = harness({ prs: [pr], baseSha: NEW_BASE });
       h.workspace.setRemoteHead("secure-it/2026-10-05-security", HEAD_SHA);
@@ -3605,7 +3605,7 @@ describe("the cooldown hold", () => {
     const h = harness({ prs: [pr] });
     h.github.checks = GREEN;
     // Issue #5 doesn't exist (deleted): nothing confirms the attempt, and nothing says the PR is ordinary now.
-    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "left-alone", detail: "it tracks #5, which isn't this decision's issue" }] });
+    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "left-alone", detail: "it tracks #5, which isn't this decision's issue; close it by hand and run secure-it again" }] });
     expect(h.github.prs.get(7)).toEqual(pr);
   });
 
