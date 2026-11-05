@@ -7,7 +7,7 @@ import { verifyPlan } from "../src/verify.ts";
 
 vi.mock("@leanish/gate/gate", async (load) => ({ ...await load<typeof import("@leanish/gate/gate")>(), runCompare: vi.fn() }));
 
-const tree = (id: string, files: Record<string, string> = {}): Tree => ({ id, read: async (path) => files[path], list: async () => [] });
+const tree = (id: string, files: Record<string, string> = {}): Tree => ({ id, read: async (path) => files[path], links: async () => [], list: async () => [] });
 /** A lockfile with the carrier still at 1.0.0: verification reads it without reaching the registry. */
 const LOCK = { "package-lock.json": JSON.stringify({ lockfileVersion: 3, packages: { "": { name: "app", dependencies: { carrier: "^1.0.0" } }, "node_modules/carrier": { version: "1.0.0" } } }) };
 const env: GateEnvironment = { run: async () => { throw new Error("no process expected"); }, fetch: async () => { throw new Error("no network expected"); }, now: () => new Date(), osvScanner: "osv", githubToken: undefined };

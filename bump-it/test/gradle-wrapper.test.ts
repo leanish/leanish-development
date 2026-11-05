@@ -13,7 +13,7 @@ const ALL = "c".repeat(64);
 const tree = (version = "8.0", type = "bin", checksum = SUM): Tree => ({
   id: "fixture", read: async (path) => path === WRAPPER_PROPERTIES
     ? `distributionUrl=https\\://services.gradle.org/distributions/gradle-${version}-${type}.zip\ndistributionSha256Sum=${checksum}\n` : undefined,
-  list: async () => [],
+  links: async () => [], list: async () => [],
 });
 const release = (version: string, extra: object = {}) => ({
   version, buildTime: "20260901000000+0000", snapshot: false, broken: false, rcFor: "", milestoneFor: "",

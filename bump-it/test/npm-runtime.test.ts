@@ -45,7 +45,7 @@ async function fixture(npmVersion: string) {
   for (const [path, content] of Object.entries(files)) {
     await writeFile(join(dir, path), content);
   }
-  const base: Tree = { id: "a".repeat(40), read: async (path) => files[path], list: async () => [] };
+  const base: Tree = { id: "a".repeat(40), read: async (path) => files[path], links: async () => [], list: async () => [] };
   const context = {
     workingCopy: { path: "/synthetic/widget", projectId: "leanish/widget", gitDir: "/synthetic/git", headSha: base.id, branch: "main" },
     isolation: { readDenied: [], env: {}, buildCacheRoot: "/tmp/bump-it-test-cache" },

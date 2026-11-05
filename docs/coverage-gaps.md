@@ -22,6 +22,7 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 - **Unpinned or unverified remote actions** a PR didn't touch (`uses: actions/checkout@v7`): their version (and advisories) can't be told. A new or changed remote action or reusable workflow must be pinned; that fails, it isn't a gap.
 - **`docker://` actions**, new or not: no advisory source covers container images.
 - **Local actions without an `action.yml`**, and local reusable workflows that don't exist.
+- **Links in workflow and action metadata** that base has too: a symbolic link instead of a workflow, a local reusable workflow or action metadata, on the way to one, or anywhere under `.github/actions`. The gate doesn't open it, so the actions behind it aren't read, and it can't see what changes behind an unchanged link. A new or retargeted link, or a new `uses:` through one, fails; that isn't a gap.
 
 ## Limits
 
@@ -128,7 +129,6 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 - **Advisories behind a `strictly(...)` pin**: the tools never move the owner's strict versions, so secure-it reports a fix that needs one as blocked, and the default branch's scan keeps failing until the owner moves the pin.
 - **Strict pins Gradle doesn't resolve, by deliberate choice**: verification relies on Gradle's inventory and the planned reference comparison ([what it compares](security-model.md#secure-it-and-bump-it)), and doesn't parse source files or unused catalog entries separately. A pin in an inactive branch, an unused catalog entry, any code Gradle doesn't interpret for the inventoried configuration, or a build the inventory doesn't run (left out of `gradle.builds`, or not discovered) isn't checked. The owner chose this scope: the agent's instructions still forbid moving any strict pin, and the PR diff lets the owner review the ones Gradle didn't see.
 - **Gradle metadata outside the reference comparison**: declaration `because(...)` reasons and resolved graph edges are exported but not compared with the planned reference; secure-it checks floor reasons separately. Local files, artifacts, attributes and capabilities are outside the exported module/version comparison.
-- **Links in workflow and action metadata (gate)**: the gate reads a symbolic link in a commit as the path it points to, so the actions behind a linked workflow, action metadata file or folder aren't read. This is pre-existing in 0.5.1. The tools refuse edits that add links or change what's behind one.
 - **An unpinned action moved into a step (gate)**: the comparison counts each action's occurrences in a file, so moving `uses: acme/action@main` from an `env` map (or another non-step key read as an action) into a step of the same workflow leaves the count unchanged and isn't required to be pinned: it's only reported as an unpinned-action gap, not failed. Pre-existing in 0.5.2.
 - **Gradle floor removal and parent configurations (secure-it)**: the reference build that checks a floor removal
   snapshots what the configuration inherits, after the projects are evaluated. A dependency the build adds to a

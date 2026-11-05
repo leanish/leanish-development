@@ -7,7 +7,7 @@ function tree(files: Record<string, string>): Tree {
   return {
     id: "fixture",
     read: async (path) => files[path],
-    list: async (dir) => Object.keys(files).filter((path) => dir === "." || path.startsWith(`${dir}/`)).sort(),
+    links: async () => [], list: async (dir) => Object.keys(files).filter((path) => dir === "." || path.startsWith(`${dir}/`)).sort(),
   };
 }
 

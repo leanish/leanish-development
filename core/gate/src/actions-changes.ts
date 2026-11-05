@@ -11,12 +11,15 @@
  *     above still apply);
  *   - unchanged uses that aren't pinned or verified, `docker://` uses and
  *     local actions without metadata are coverage gaps: the PR didn't make
- *     them worse.
+ *     them worse;
+ *   - a link on a path the gate reads actions from hides what's behind it: a
+ *     new or retargeted one fails, and one base has too is a coverage gap,
+ *     even when what it points to changed, which the gate can't see.
  * Each occurrence is judged on its own; each distinct action, ref and
  * named tag is resolved with GitHub once for both sides.
  */
 import type { ActionsGitHub } from "./actions-github.ts";
-import { type ActionsInventory, type ActionUse, isFullTag, occurrenceKey, type Resolution, resolutionKey, resolveUse } from "./actions-inventory.ts";
+import { type ActionsInventory, type ActionsLink, type ActionUse, isFullTag, linkKey, occurrenceKey, type Resolution, resolutionKey, resolveUse } from "./actions-inventory.ts";
 import { type Config, isTrustedPackage } from "./config.ts";
 import type { Located } from "./findings.ts";
 import { mapLimited } from "./http.ts";
@@ -73,6 +76,11 @@ export async function actionChanges(
   const after = count(head.uses);
   const problems: string[] = [];
   const gaps: string[] = [...head.gaps, ...head.docker.map((use) => `GitHub Actions ${use}: no advisory source covers container images`)];
+  const baseLinks = new Set(base.links.map(linkKey));
+  for (const link of head.links) {
+    if (baseLinks.has(linkKey(link))) gaps.push(linkGap(link));
+    else problems.push(`GitHub Actions link ${linkLabel(link)} is new or changed, and the gate doesn't read what's behind a link: commit the file itself`);
+  }
   const changes = new Map<string, ChangedVersion>();
   const seen = new Set<string>();
   const headVersions = new Set(
@@ -117,9 +125,9 @@ export async function actionChanges(
   return { problems, gaps, changes: [...changes.values()] };
 }
 
-/** What a full scan can't tell about a tree's actions: uses not pinned or not verified, container images, missing local actions. */
+/** What a full scan can't tell about a tree's actions: uses not pinned or not verified, container images, missing local actions, links. */
 export function actionGaps(inventory: ActionsInventory, resolutions: ReadonlyMap<string, Resolution>): string[] {
-  const gaps = [...inventory.gaps, ...inventory.docker.map((use) => `GitHub Actions ${use}: no advisory source covers container images`)];
+  const gaps = [...inventory.gaps, ...inventory.docker.map((use) => `GitHub Actions ${use}: no advisory source covers container images`), ...inventory.links.map(linkGap)];
   const seen = new Set<string>();
   for (const use of inventory.uses) {
     const occurrence = occurrenceKey(use);
@@ -129,6 +137,15 @@ export function actionGaps(inventory: ActionsInventory, resolutions: ReadonlyMap
     if (resolution.kind !== "pinned") gaps.push(gapOf(use, resolution));
   }
   return gaps;
+}
+
+/** How problems and gaps name a link. Its target is the repository's own text, so it's quoted and cut. */
+function linkLabel(link: ActionsLink): string {
+  return `${link.path} -> ${JSON.stringify(link.target.slice(0, 200))}${link.usedBy === undefined ? "" : ` (used by ${link.usedBy})`}`;
+}
+
+function linkGap(link: ActionsLink): string {
+  return `GitHub Actions link ${linkLabel(link)}: the gate doesn't read what's behind a link, so what it uses can't be told`;
 }
 
 /** How problems and gaps name a use: the action, the folder in its repository when it names one, its ref, and the file. */

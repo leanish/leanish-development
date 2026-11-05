@@ -51,7 +51,7 @@ dirs: { state: /synthetic/state, cache: /synthetic/cache }
 maxNewMajorsPerRun: 1
 `, "agent.yaml");
 const BASE_FILES = { "package.json": JSON.stringify({ dependencies: { lib: "^1.0.0" } }), "package-lock.json": JSON.stringify({ packages: { "": { dependencies: { lib: "^1.0.0" } }, "node_modules/lib": { version: "1.0.0" } } }) };
-const tree = (id: string, files: Record<string, string>): Tree => ({ id, read: async (path) => files[path], list: async (dir) => Object.keys(files).filter((path) => path.startsWith(`${dir}/`)) });
+const tree = (id: string, files: Record<string, string>): Tree => ({ id, read: async (path) => files[path], links: async () => [], list: async (dir) => Object.keys(files).filter((path) => path.startsWith(`${dir}/`)) });
 function npmOf(unit: Pick<Unit, "moves">): NpmResult {
   const move = unit.moves.find((move) => move.ecosystem === "npm");
   return { files: move === undefined ? new Map() : new Map([["package-lock.json", JSON.stringify({ packages: { "": { dependencies: { [move.name]: `^${move.to}` } }, [`node_modules/${move.name}`]: { version: move.to } } })], ["package.json", JSON.stringify({ dependencies: { [move.name]: `^${move.to}` } })]]), changes: [], notes: [] };

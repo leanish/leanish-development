@@ -6,7 +6,7 @@ import { readInventory, sourcesOf } from "../src/inventory.ts";
 import type { Tree } from "../src/tree.ts";
 
 const LOCK = JSON.stringify({ lockfileVersion: 3, packages: {} });
-const tree = (files: Record<string, string>, id = "head"): Tree => ({ id, read: async (path) => files[path], list: async () => [] });
+const tree = (files: Record<string, string>, id = "head"): Tree => ({ id, read: async (path) => files[path], links: async () => [], list: async () => [] });
 
 describe("npm lockfile selection", () => {
   it.each([

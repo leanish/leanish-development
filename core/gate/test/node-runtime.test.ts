@@ -6,7 +6,7 @@ import type { Tree } from "../src/tree.ts";
 const declarations = [{ lockfile: "package-lock.json", workspace: "." }];
 
 function tree(files: Record<string, string>): Tree {
-  return { id: "base", read: async (path) => files[path], list: async (dir) => Object.keys(files).filter((path) => path.startsWith(`${dir}/`)) };
+  return { id: "base", read: async (path) => files[path], links: async () => [], list: async (dir) => Object.keys(files).filter((path) => path.startsWith(`${dir}/`)) };
 }
 
 function workflow(value: string, matrix = ""): string {

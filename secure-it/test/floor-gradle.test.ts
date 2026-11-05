@@ -58,7 +58,7 @@ function tree(floors: ReadonlyArray<Floor> = []): Tree {
       added: floor.added,
     })) }),
   };
-  return { id: "tree-id", read: async (path) => files[path], list: async () => [] };
+  return { id: "tree-id", read: async (path) => files[path], links: async () => [], list: async () => [] };
 }
 
 function rawConfiguration(

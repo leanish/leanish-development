@@ -15,8 +15,8 @@ import type { VersionCatalog } from "../src/young-fixes.ts";
 const NOW = new Date("2026-10-27T12:00:00Z");
 const OLD = new Date(NOW.getTime() - 30 * DAY_MS);
 const YESTERDAY = new Date(NOW.getTime() - DAY_MS);
-const tree: Tree = { id: "worktree", read: async () => undefined, list: async () => [] };
-const inventory: Inventory = { tree: "worktree", npm: [], gradle: undefined, actions: { uses: [], docker: [], files: [], gaps: [] } };
+const tree: Tree = { id: "worktree", read: async () => undefined, links: async () => [], list: async () => [] };
+const inventory: Inventory = { tree: "worktree", npm: [], gradle: undefined, actions: { uses: [], docker: [], files: [], gaps: [], links: [] } };
 const catalog: VersionCatalog = {
   versions: async () => ["1.0.0", "1.0.1"],
   published: async (pkg) => (pkg.version === "1.0.1" ? YESTERDAY : OLD),

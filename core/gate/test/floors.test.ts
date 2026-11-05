@@ -84,7 +84,7 @@ describe("floors file", () => {
 });
 
 function tree(files: Record<string, string>): Tree {
-  return { id: "head", read: async (path) => files[path], list: async () => [] };
+  return { id: "head", read: async (path) => files[path], links: async () => [], list: async () => [] };
 }
 
 function gradleInventory(configurations: Partial<GradleConfiguration>[]): Inventory {
@@ -106,7 +106,7 @@ function gradleInventory(configurations: Partial<GradleConfiguration>[]): Invent
       },
     ],
   };
-  return { tree: "head", npm: [], gradle, actions: { uses: [], docker: [], files: [], gaps: [] } };
+  return { tree: "head", npm: [], gradle, actions: { uses: [], docker: [], files: [], gaps: [], links: [] } };
 }
 
 describe("Gradle floors", () => {
@@ -181,7 +181,7 @@ describe("npm floors", () => {
     tree: "head",
     npm: [{ path: "package-lock.json", packages: lock(copies), bundleProblems: [] }],
     gradle: undefined,
-    actions: { uses: [], docker: [], files: [], gaps: [] },
+    actions: { uses: [], docker: [], files: [], gaps: [], links: [] },
   });
   const floor = {
     ecosystem: "npm",

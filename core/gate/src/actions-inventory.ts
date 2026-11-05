@@ -9,6 +9,9 @@
  * workflow file for a reusable workflow (`./.github/workflows/x.yml`), else to
  * the action's `action.yml`; `docker://` uses are coverage gaps.
  *
+ * A symbolic link on any of those paths is recorded and never opened, from a
+ * commit and a working tree alike: what's behind it isn't read.
+ *
  * A use resolves to a version when its ref is a full commit SHA and its
  * comment names a tag that points at that commit (checked with GitHub).
  */
@@ -18,7 +21,13 @@ import { isAlias, isMap, isScalar, isSeq, parseDocument } from "yaml";
 
 import type { ActionsGitHub } from "./actions-github.ts";
 import { isDotSegment } from "./source-repos.ts";
-import type { Tree } from "./tree.ts";
+import type { Tree, TreeLink } from "./tree.ts";
+
+/** A link on a path the gate reads actions from, so what's behind it isn't read. */
+export interface ActionsLink extends TreeLink {
+  /** The file whose local `uses:` leads through it, or undefined when discovery found it on its own. */
+  readonly usedBy: string | undefined;
+}
 
 export interface ActionUse {
   /** `owner/repo`, lower case. */
@@ -40,6 +49,8 @@ export interface ActionsInventory {
   readonly files: ReadonlyArray<string>;
   /** Local actions a workflow uses that have no `action.yml`, and local reusable workflows that don't exist. */
   readonly gaps: ReadonlyArray<string>;
+  /** Links instead of a workflow or action file, or on the way to one. */
+  readonly links: ReadonlyArray<ActionsLink>;
 }
 
 const USES = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)(\/[^@\s]+)?@([^@\s]+)$/;
@@ -117,11 +128,26 @@ function readsAsAction(value: string): boolean {
 
 /** Every `uses:` in the tree's workflows and actions, local actions followed. */
 export async function readActionsInventory(tree: Tree): Promise<ActionsInventory> {
-  // `missing`: the gap to report when none of `files` exists (only for files a `uses:` points at).
-  const queue: Array<{ files: string[]; missing: string | undefined }> = [
-    ...(await tree.list(".github/workflows")).filter((path) => LOCAL_WORKFLOW.test(path)).map((file) => ({ files: [file], missing: undefined })),
-    ...(await tree.list(".github/actions")).filter((path) => /\/action\.ya?ml$/.test(path)).map((file) => ({ files: [file], missing: undefined })),
-    { files: ["action.yml", "action.yaml"], missing: undefined },
+  const links = new Map<string, ActionsLink>();
+  const record = (found: ReadonlyArray<TreeLink>, usedBy: string | undefined) => {
+    for (const link of found) {
+      const located = { ...link, usedBy };
+      links.set(linkKey(located), located);
+    }
+  };
+  /** The files under a discovery folder, recording the links in it (`relevant`) or on the way to it, which keep it from being listed. */
+  const discover = async (root: string, relevant: (path: string) => boolean): Promise<string[]> => {
+    const found = await tree.links(root);
+    const blocked = found.some((link) => root === link.path || root.startsWith(`${link.path}/`));
+    record(found.filter((link) => blocked || relevant(link.path)), undefined);
+    return blocked ? [] : tree.list(root);
+  };
+  // `missing`: the gap to report when none of `files` exists (only for files a `uses:` points at). `usedBy`: the file whose `uses:` that is.
+  const queue: Array<{ files: string[]; missing: string | undefined; usedBy: string | undefined }> = [
+    ...(await discover(".github/workflows", (path) => LOCAL_WORKFLOW.test(path))).filter((path) => LOCAL_WORKFLOW.test(path)).map((file) => ({ files: [file], missing: undefined, usedBy: undefined })),
+    // Any link here: a commit doesn't say whether one leads to a folder, which may hold an `action.yml`.
+    ...(await discover(".github/actions", () => true)).filter((path) => /\/action\.ya?ml$/.test(path)).map((file) => ({ files: [file], missing: undefined, usedBy: undefined })),
+    { files: ["action.yml", "action.yaml"], missing: undefined, usedBy: undefined },
   ];
   const seen = new Set<string>();
   const uses: ActionUse[] = [];
@@ -129,10 +155,16 @@ export async function readActionsInventory(tree: Tree): Promise<ActionsInventory
   const files: string[] = [];
   const gaps: string[] = [];
   while (queue.length > 0) {
-    const { files: candidates, missing } = queue.shift()!;
+    const { files: candidates, missing, usedBy } = queue.shift()!;
     let found = false;
     for (const file of candidates) {
       if (seen.has(file)) {
+        found = true;
+        continue;
+      }
+      const linked = await tree.links(file);
+      if (linked.length > 0) {
+        record(linked, usedBy);
         found = true;
         continue;
       }
@@ -151,14 +183,22 @@ export async function readActionsInventory(tree: Tree): Promise<ActionsInventory
         if (path === ".." || path.startsWith("../")) throw new Error(`${file}: \`uses: ${local}\` points outside the repository`);
         queue.push(
           LOCAL_WORKFLOW.test(path)
-            ? { files: [path], missing: `GitHub Actions local workflow ${local} (${file}) doesn't exist, so what it uses isn't read` }
-            : { files: [posix.join(path, "action.yml"), posix.join(path, "action.yaml")], missing: `GitHub Actions local action ${local} (${file}) has no action.yml, so what it uses isn't read` },
+            ? { files: [path], missing: `GitHub Actions local workflow ${local} (${file}) doesn't exist, so what it uses isn't read`, usedBy: file }
+            : { files: [posix.join(path, "action.yml"), posix.join(path, "action.yaml")], missing: `GitHub Actions local action ${local} (${file}) has no action.yml, so what it uses isn't read`, usedBy: file },
         );
       }
     }
     if (!found && missing !== undefined) gaps.push(missing);
   }
-  return { uses, docker, files, gaps };
+  return { uses, docker, files, gaps, links: [...links.values()] };
+}
+
+/**
+ * One link: where it is, where it points and what leads through it. So a retargeted link or a new `uses:` through a link
+ * base already had is a change. Structured, so no field's characters can blur two apart.
+ */
+export function linkKey(link: ActionsLink): string {
+  return JSON.stringify([link.path, link.target, link.usedBy ?? null]);
 }
 
 export type Resolution =

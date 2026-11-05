@@ -33,7 +33,7 @@ for (const source of sources) {
       await mkdir(dirname(join(dir, path)), { recursive: true });
       await writeFile(join(dir, path), text);
     }
-    const base: Tree = { id: "smoke-base", read: async (path) => files[path], list: async () => [] };
+    const base: Tree = { id: "smoke-base", read: async (path) => files[path], links: async () => [], list: async () => [] };
     const plan = await planFor([{
       ecosystem: "npm", name: "vite", from: "8.3.2", locations: copies.map((copy) => copy.path),
       targets: ["GHSA-rq7h-c2jc-7f22"], unfixable: [], malicious: false, severity: "MODERATE", problem: undefined,

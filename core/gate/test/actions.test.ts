@@ -16,7 +16,7 @@ function tree(files: Record<string, string>): Tree {
   return {
     id: "tree",
     read: async (path) => files[path],
-    list: async (dir) => Object.keys(files).filter((path) => path.startsWith(`${dir}/`)).sort(),
+    links: async () => [], list: async (dir) => Object.keys(files).filter((path) => path.startsWith(`${dir}/`)).sort(),
   };
 }
 
@@ -133,7 +133,7 @@ jobs:
 
 describe("resolving uses", () => {
   const use = (ref: string, comment: string | undefined) => ({ name: "actions/checkout", path: undefined, ref, comment, file: "ci.yml" });
-  const inventory = (...uses: ReturnType<typeof use>[]): ActionsInventory => ({ uses, docker: [], files: ["ci.yml"], gaps: [] });
+  const inventory = (...uses: ReturnType<typeof use>[]): ActionsInventory => ({ uses, docker: [], files: ["ci.yml"], gaps: [], links: [] });
 
   it("pins a commit whose comment names a tag pointing at it, annotated tags included", async () => {
     const resolutions = await resolveUses(
@@ -167,6 +167,7 @@ describe("resolving uses", () => {
       docker: ["docker://alpine:3.20 (ci.yml)"],
       files: ["ci.yml"],
       gaps: [],
+      links: [],
     };
     const gh = github();
     const resolutions = await resolveUses([base, head], gh);
@@ -194,7 +195,7 @@ describe("resolving uses", () => {
   it("words an unchanged use's gap as a full scan does, folder included", async () => {
     const unpinned = { name: "acme/tools", path: "lint", ref: "v1", comment: undefined, file: "ci.yml" };
     const uncommented = { ...unpinned, path: "build", ref: CHECKOUT_SHA };
-    const tree: ActionsInventory = { uses: [unpinned, uncommented], docker: [], files: ["ci.yml"], gaps: [] };
+    const tree: ActionsInventory = { uses: [unpinned, uncommented], docker: [], files: ["ci.yml"], gaps: [], links: [] };
     const gh = github();
     const resolutions = await resolveUses([tree], gh);
     const { gaps } = await actionChanges(tree, tree, resolutions, gh, parseConfig({}));
@@ -210,8 +211,8 @@ describe("resolving uses", () => {
     const gh = github({
       [`${API}/repos/acme/tools/git/ref/tags/v1.0.0`]: { body: { object: { type: "commit", sha: CHECKOUT_SHA } } },
     });
-    const head: ActionsInventory = { uses: [trusted], docker: [], files: ["ci.yml"], gaps: [] };
-    const none: ActionsInventory = { uses: [], docker: [], files: [], gaps: [] };
+    const head: ActionsInventory = { uses: [trusted], docker: [], files: ["ci.yml"], gaps: [], links: [] };
+    const none: ActionsInventory = { uses: [], docker: [], files: [], gaps: [], links: [] };
     const resolutions = await resolveUses([head], gh);
     expect((await actionChanges(none, head, resolutions, gh, parseConfig({}))).problems).toEqual([
       "acme/tools@3d3c42e5aac5ba805825da76410c181273ba90b1 (ci.yml): acme/tools has no immutable GitHub release for v1.0.0, so the gate can't trust its age",
@@ -235,8 +236,8 @@ describe("mutable releases", () => {
         body: [{ tag_name: "v2.0.0", published_at: "2024-01-01T00:00:00Z", draft: false, immutable: false }],
       },
     });
-    const head: ActionsInventory = { uses: [use], docker: [], files: ["ci.yml"], gaps: [] };
-    const none: ActionsInventory = { uses: [], docker: [], files: [], gaps: [] };
+    const head: ActionsInventory = { uses: [use], docker: [], files: ["ci.yml"], gaps: [], links: [] };
+    const none: ActionsInventory = { uses: [], docker: [], files: [], gaps: [], links: [] };
     expect((await actionChanges(none, head, await resolveUses([head], gh), gh, parseConfig({}))).problems).toEqual([
       "acme/tools@3d3c42e5aac5ba805825da76410c181273ba90b1 (ci.yml): acme/tools has no immutable GitHub release for v2.0.0, so the gate can't trust its age",
     ]);
@@ -258,7 +259,7 @@ describe("mutable releases", () => {
 
 describe("occurrences and edge cases", () => {
   const use = (ref: string, comment: string | undefined, file = "ci.yml") => ({ name: "actions/checkout", path: undefined, ref, comment, file });
-  const inventory = (...uses: ReturnType<typeof use>[]): ActionsInventory => ({ uses, docker: [], files: ["ci.yml"], gaps: [] });
+  const inventory = (...uses: ReturnType<typeof use>[]): ActionsInventory => ({ uses, docker: [], files: ["ci.yml"], gaps: [], links: [] });
 
   it("judges each occurrence: a dropped comment, or an unpinned ref copied to another workflow, is a change", async () => {
     const gh = github();
@@ -279,7 +280,7 @@ describe("occurrences and edge cases", () => {
     const gh = github();
     const config = parseConfig({});
     const at = (path: string | undefined, file = "ci.yml") => ({ name: "acme/actions", path, ref: "main", comment: undefined, file });
-    const of = (...uses: ReturnType<typeof at>[]): ActionsInventory => ({ uses, docker: [], files: ["ci.yml"], gaps: [] });
+    const of = (...uses: ReturnType<typeof at>[]): ActionsInventory => ({ uses, docker: [], files: ["ci.yml"], gaps: [], links: [] });
     const base = of(at("safe"), at("safe"));
     const resolutions = await resolveUses([base], gh);
     const problems = async (head: ActionsInventory) => (await actionChanges(base, head, resolutions, gh, config)).problems;
@@ -290,14 +291,14 @@ describe("occurrences and edge cases", () => {
     expect(await problems(of(at("safe"), at("safe")))).toEqual([]);
     expect(await problems(of(at("safe")))).toEqual([]);
     const aliased = (copies: number) => `on: push\njobs:\n  a:\n    steps:\n      - &step\n        uses: acme/actions/safe@main\n${"      - *step\n".repeat(copies)}`;
-    const read = (copies: number): ActionsInventory => ({ ...parseUses(aliased(copies), "ci.yml"), files: ["ci.yml"], gaps: [] });
+    const read = (copies: number): ActionsInventory => ({ ...parseUses(aliased(copies), "ci.yml"), files: ["ci.yml"], gaps: [], links: [] });
     expect((await actionChanges(read(1), read(2), resolutions, gh, config)).problems).toEqual([unpinned("safe")]);
   });
 
   it("keeps occurrences apart whose ref or comment holds a separator", async () => {
     const gh = github({ [`${API}/repos/acme/actions/git/ref/tags/v1.2.3`]: { body: { object: { type: "commit", sha: CHECKOUT_SHA } } } });
     const at = (ref: string, comment: string) => ({ name: "acme/actions", path: undefined, ref, comment, file: "ci.yml" });
-    const of = (...uses: ReturnType<typeof at>[]): ActionsInventory => ({ uses, docker: [], files: ["ci.yml"], gaps: [] });
+    const of = (...uses: ReturnType<typeof at>[]): ActionsInventory => ({ uses, docker: [], files: ["ci.yml"], gaps: [], links: [] });
     const base = of(at(CHECKOUT_SHA, "reviewed|note v1.2.3"));
     const head = of(at(`${CHECKOUT_SHA}|reviewed`, "note v1.2.3"));
     const resolutions = await resolveUses([base, head], gh);

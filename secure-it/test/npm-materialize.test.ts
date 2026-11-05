@@ -23,7 +23,7 @@ async function fixture(files: Record<string, string>) {
     await mkdir(join(target, ".."), { recursive: true });
     await writeFile(target, text);
   }
-  const base: Tree = { id: "base", read: async (path) => files[path], list: async (path) => Object.keys(files).filter((file) => file.startsWith(`${path}/`)) };
+  const base: Tree = { id: "base", read: async (path) => files[path], links: async () => [], list: async (path) => Object.keys(files).filter((file) => file.startsWith(`${path}/`)) };
   return { dir, base };
 }
 
@@ -114,7 +114,7 @@ describe("security npm materialization", () => {
 
   it("protects computed locks and dependency fields, allowing only a major's manifest scripts to change", async () => {
     const expected = new Map([["package.json", json({ dependencies: { vite: "^8.3.3" } })], ["package-lock.json", "lock"]]);
-    const head = (manifest: unknown, lock = "lock"): Tree => ({ id: "head", list: async () => [], read: async (path) => path === "package.json" ? json(manifest) : lock });
+    const head = (manifest: unknown, lock = "lock"): Tree => ({ id: "head", links: async () => [], list: async () => [], read: async (path) => path === "package.json" ? json(manifest) : lock });
     expect(await computedNpmProblems(expected, head({ dependencies: { vite: "^8.3.3" }, scripts: { test: "true" } }), true)).toEqual([]);
     expect(await computedNpmProblems(expected, head({ dependencies: { vite: "^8.3.4" } }), true)).toEqual(["package.json differs from secure-it's computed npm plan"]);
     expect(await computedNpmProblems(expected, head({ dependencies: { vite: "^8.3.3" }, scripts: { test: "true" } }), false)).toHaveLength(1);
@@ -353,13 +353,13 @@ describe("security npm materialization", () => {
   it("permits planned Gradle records beside tool-written npm floors, but protects the npm records", async () => {
     const npm = { ecosystem: "npm", package: "vite", version: "8.3.3" };
     const expected = new Map([[".github/dependency-floors.json", json({ floors: [npm] })]]);
-    const head: Tree = { id: "head", list: async () => [], read: async () => json({ floors: [npm, { ecosystem: "Maven", package: "a:b" }] }) };
+    const head: Tree = { id: "head", links: async () => [], list: async () => [], read: async () => json({ floors: [npm, { ecosystem: "Maven", package: "a:b" }] }) };
     expect(await computedNpmProblems(expected, head, false)).toEqual([]);
     expect(await computedNpmProblems(expected, { ...head, read: async () => json({ floors: [{ ...npm, version: "8.3.4" }] }) }, false)).toHaveLength(1);
   });
 
   it("protects npm files outside the computed lockfile set", async () => {
-    const base: Tree = { id: "base", list: async () => [], read: async () => "base lock" };
+    const base: Tree = { id: "base", links: async () => [], list: async () => [], read: async () => "base lock" };
     const head: Tree = { ...base, id: "head", read: async () => "changed lock" };
     expect(await computedNpmProblems(new Map(), head, false, base, ["other/package-lock.json"])).toEqual(["other/package-lock.json differs from secure-it's computed npm plan"]);
   });

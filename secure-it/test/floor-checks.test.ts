@@ -15,7 +15,7 @@ const plan: ChangePlan = { kind: "major", topic: "security", malware: false, pac
 
 function tree(floors: unknown[], manifest = {}): Tree {
   const files: Record<string, string> = { ".github/dependency-floors.json": JSON.stringify({ floors }), "build.gradle.kts": "dependencies {}", "package.json": JSON.stringify(manifest) };
-  return { id: "fixture", read: async (path) => files[path], list: async () => [] };
+  return { id: "fixture", read: async (path) => files[path], links: async () => [], list: async () => [] };
 }
 
 function gradle(version: string, reason = ID): GradleInventory {

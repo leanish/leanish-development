@@ -9,6 +9,13 @@
   general rules. There, every release review is one exhaustive pass, the reviewer is picked per iteration, and minor
   findings don't block: a new candidate cut for another reason fixes them all, and otherwise they go to the next patch.
 
+### Fixed
+
+- The gate no longer reads a symbolic link where it looks for actions as if it were a workflow with nothing in it. A new
+  or retargeted link, or a new `uses:` through one, now fails the comparison, and a link base has too is a reported
+  coverage gap, as is any in a full scan. It doesn't follow links: a change behind an unchanged link goes unseen, which
+  that gap says. A working tree no longer follows or refuses such a link either, so it reads the same as a commit.
+
 ## 0.11.0 - 2026-11-05
 
 ### Changed

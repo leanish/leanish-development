@@ -67,7 +67,7 @@ const inventory = (okhttp: string, moved = false, edges = true, brings = BRINGS)
   schemaVersion: 3, tree: "base", builds: [{ build: ".", configurations: [configuration(":compileClasspath", okhttp, moved, edges, brings), configuration(":runtimeClasspath", okhttp, moved, edges, brings)] }],
 });
 
-const BASE: Tree = { id: "base", read: async () => undefined, list: async () => [] };
+const BASE: Tree = { id: "base", read: async () => undefined, links: async () => [], list: async () => [] };
 
 /** Answers each reference run with okhttp moved where the transform says; records each probe's target. */
 function references(probes: string[], fail = false, brings = BRINGS) {

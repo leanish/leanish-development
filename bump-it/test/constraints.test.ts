@@ -3,7 +3,7 @@ import type { Tree } from "@leanish/gate/tree";
 import { constrainedUnit } from "../src/constraints.ts";
 import { routineUnit } from "../src/units.ts";
 import { candidate } from "./fixtures.ts";
-const tree = (manifest: unknown): Tree => ({ id: "base", read: async () => JSON.stringify(manifest), list: async () => [] });
+const tree = (manifest: unknown): Tree => ({ id: "base", read: async () => JSON.stringify(manifest), links: async () => [], list: async () => [] });
 describe("override bounds on direct declarations", () => {
   it("blocks a Node type peer companion above the runtime while retaining unrelated moves", async () => {
     const node = candidate({ name: "@types/node", from: "26.0.0", minor: { version: "26.1.0", line: "26" }, declarations: [{ lockfile: "package-lock.json", workspace: ".", declaredAs: "@types/node", spec: "^26" }] });

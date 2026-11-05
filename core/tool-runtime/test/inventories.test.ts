@@ -27,7 +27,7 @@ const POLICY: IsolationPolicy = { readDenied: [], env: {}, buildCacheRoot: "/syn
 const tree: Tree = {
   id: "worktree",
   read: async (path) => path === "build.gradle.kts" ? "plugins { java }" : undefined,
-  list: async () => [],
+  links: async () => [], list: async () => [],
 };
 
 describe("sandboxed Gradle inventory errors", () => {

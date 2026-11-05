@@ -19,7 +19,7 @@ const ID = "CVE-2026-12345";
 const raw = (name: string, ecosystem = "npm", purpose = "security") => ({ ecosystem, package: name, version: ecosystem === "npm" ? "2.0.0" : "2.0", declaredIn: ecosystem === "npm" ? "package.json" : "build.gradle.kts",
   selector: ecosystem === "npm" ? [name] : [":runtimeClasspath"], purpose, advisories: purpose === "security" ? [ID] : [], reason: "needed", added: "2026-10-01" });
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
-const tree = (id: string, data: Record<string, string>): Tree => ({ id, read: async (path) => data[path], list: async () => [] });
+const tree = (id: string, data: Record<string, string>): Tree => ({ id, read: async (path) => data[path], links: async () => [], list: async () => [] });
 const env: GateEnvironment = { run: async () => { throw new Error("no process expected"); }, fetch: async () => { throw new Error("no network expected"); }, now: () => new Date(), osvScanner: "osv", githubToken: undefined };
 
 function fixture() {

@@ -28,7 +28,7 @@ function lock(root: Record<string, string>, installed: Record<string, string>): 
 }
 
 function tree(id: string, files: Record<string, string>): Tree {
-  return { id, read: async (path) => files[path], list: async (dir) => Object.keys(files).filter((path) => path.startsWith(`${dir}/`)) };
+  return { id, read: async (path) => files[path], links: async () => [], list: async (dir) => Object.keys(files).filter((path) => path.startsWith(`${dir}/`)) };
 }
 
 /** Fake osv-scanner from `affected`, fake npm registry where every version of lib and other is old and published by one maintainer. */

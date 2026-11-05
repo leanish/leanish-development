@@ -75,7 +75,7 @@ const LOCK = JSON.stringify({
 });
 
 function tree(id: string, files: Record<string, string> = { "package-lock.json": LOCK }): Tree {
-  return { id, read: async (path) => files[path], list: async (dir) => Object.keys(files).filter((path) => path.startsWith(`${dir}/`)) };
+  return { id, read: async (path) => files[path], links: async () => [], list: async (dir) => Object.keys(files).filter((path) => path.startsWith(`${dir}/`)) };
 }
 
 function vite(overrides: Partial<SecurityFix> = {}): SecurityFix {

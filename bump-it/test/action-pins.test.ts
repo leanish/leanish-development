@@ -8,7 +8,7 @@ import { plannedPinsLanded } from "../src/action-pins.ts";
 import { writePins } from "../src/operations.ts";
 import type { PlannedMove } from "../src/plan.ts";
 const file = ".github/workflows/ci.yml";
-const tree = (text: string): Tree => ({ id: "tree", read: async (path) => path === file ? text : undefined, list: async (dir) => file.startsWith(`${dir}/`) ? [file] : [] });
+const tree = (text: string): Tree => ({ id: "tree", read: async (path) => path === file ? text : undefined, links: async () => [], list: async (dir) => file.startsWith(`${dir}/`) ? [file] : [] });
 const workflow = (uses: ReadonlyArray<[string, string]>) => `on: push\njobs:\n  build:\n    steps:\n${uses.map(([sha, tag]) => `      - uses: actions/checkout@${sha.repeat(40)} # ${tag}`).join("\n")}\n`;
 const move = (from: string, to: string, sha: string): PlannedMove => ({ ecosystem: "GitHub Actions", mechanism: "action-pin", name: "actions/checkout", from, to, commitSha: sha.repeat(40), locations: [file], declarations: [], major: false });
 describe("action source versions", () => {

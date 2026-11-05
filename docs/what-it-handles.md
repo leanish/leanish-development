@@ -234,10 +234,12 @@ the edit visibly, and a person must update it. Only full release tags (`vX.Y.Z`)
 versions an action can move to, since a pin's comment can name no other: a
 partial one (`v1.1`) is left for a person.
 
-A commit's tree has a workflow, local reusable workflow or action metadata file (`action.yml`) that is a symbolic link
-only as the path it points to, so the gate doesn't read the actions behind it ([coverage gaps](coverage-gaps.md#limits)).
-In a working tree, the gate follows links that stay inside the repository and refuses any file (an action, a lockfile,
-a Gradle source, its settings) that links lead outside: the run fails rather than read what isn't the repository's. The tools
+The gate never opens a symbolic link where it reads actions from: instead of a workflow, a local reusable workflow or
+action metadata (`action.yml`), on the way to one, or anywhere under `.github/actions`, from a commit and a working tree
+alike. A new or retargeted link, or a new `uses:` through one, fails the comparison; one base has too, and any in a full
+scan, is a [coverage gap](coverage-gaps.md), which also means a change behind an unchanged link goes unseen.
+For its other files, in a working tree the gate follows links that stay inside the repository and refuses any file (a
+lockfile, a Gradle source, its settings) that links lead outside: the run fails rather than read what isn't the repository's. The tools
 refuse an edit that adds or changes a symbolic link or a submodule, or changes what an existing link leads to, and
 can't update a repository with a link leading out of it unless the edit removes that link; the reasons are in the
 [security model](security-model.md#secure-it-and-bump-it).

@@ -283,7 +283,7 @@ describe("npm parents, third round", () => {
 
   it("rebuilds the direct-peer closure with the parents it adds", async () => {
     const files: Record<string, string> = { "package-lock.json": JSON.stringify(lock("1.0.0", "1.0.0", "~1.0.0")) };
-    const tree = { id: "base", read: async (path: string) => files[path], list: async () => [] };
+    const tree = { id: "base", read: async (path: string) => files[path], links: async () => [], list: async () => [] };
     const asked: string[][] = [];
     const found = {
       fixes: [fixAt("node_modules/x", "1.0.0", "1.1.0")], incomplete: [], gaps: [], osvScannerVersion: "2.6.0",

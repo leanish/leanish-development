@@ -29,7 +29,7 @@ export function files(version = "8.3.2", child: string | undefined = "8.5.28"): 
   } }) };
 }
 export function tree(files: Record<string, string>, id = "base"): Tree {
-  return { id, read: async (path) => files[path], list: async (dir) => Object.keys(files).filter((path) => path.startsWith(`${dir}/`)) };
+  return { id, read: async (path) => files[path], links: async () => [], list: async (dir) => Object.keys(files).filter((path) => path.startsWith(`${dir}/`)) };
 }
 /** `routes` answer before the registry's (a version manifest naming its repository, that repository's advisories). */
 export function environment(options: { docs?: Record<string, { time: Record<string, unknown>; versions: Record<string, unknown> }>; affected?: Record<string, string[]>; routes?: Record<string, FakeResponse> } = {}) {
