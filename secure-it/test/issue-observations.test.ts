@@ -38,7 +38,7 @@ describe("observationsOf", () => {
     expect(excepted).toEqual([{ ecosystem: "npm", name: "b", ids: ["GHSA-b"] }]);
   });
 
-  it("puts a group in both when its exception covers only some of a version's locations", () => {
+  it("keeps a group observed when its exception covers only some of a version's locations", () => {
     const snap = snapshot({ "b@1.0.0": [advisory("GHSA-b")] });
     const { observed, excepted } = observationsOf([npm("b", "1.0.0", ["node_modules/b", "nested/node_modules/b"])], snap, exception(), TODAY);
     expect(observed).toMatchObject([{ name: "b", ids: ["GHSA-b"], versions: ["1.0.0"] }]);
