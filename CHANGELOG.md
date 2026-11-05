@@ -4,10 +4,10 @@
 
 ### Changed
 
-- Every release review is one exhaustive pass that reports all its findings at once, and a candidate's fixes land
-  together in the next candidate. Minor findings (a nit, a small inaccuracy that leads no one to a wrong action)
-  don't block: a new candidate cut for another reason fixes them all, and otherwise they go to the next patch
-  ([releasing](docs/releasing.md)).
+- The [releasing](docs/releasing.md) doc now keeps only what's specific to this repository and points to the
+  [release-flow](https://github.com/leanish/leanish-skills/blob/main/skills/wip/release-flow/SKILL.md) skill for the
+  general rules. There, every release review is one exhaustive pass, the reviewer is picked per iteration, and minor
+  findings don't block: a new candidate cut for another reason fixes them all, and otherwise they go to the next patch.
 
 ## 0.11.0 - 2026-11-05
 
