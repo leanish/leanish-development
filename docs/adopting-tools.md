@@ -6,10 +6,10 @@ uses one local app task per tool and GitHub owner, with review→run chains and 
 explicitly consented real test run. The manual path below stays the reference for
 people who prefer to configure and operate the tools themselves.
 
-The tools run on your machine and propose draft PRs (secure-it also opens issues that track its findings); people
-merge them. Each has
-its own config, default Keychain services and two schedules: `run` plans changes,
-`review` revisits its open PRs. Either command can push or change a PR. There is
+The tools run on your machine and propose draft PRs (secure-it also opens issues
+that track its findings); people merge them. Each has its own config, default
+Keychain services and two schedules: `run` plans changes, `review` revisits its
+open PRs. Either command can push or change a PR. There is
 **no tool dry-run flag**: start with the candidate preview below before enabling
 publication or a schedule.
 

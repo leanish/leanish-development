@@ -699,6 +699,25 @@ describe("secure-it run", () => {
     const flow = (h: Harness, published = "2026-10-05T00:00:00Z") => secureIt({ ...h.deps, gate: async () => scanned(published), scan: readScanState });
     const issuesOf = (h: Harness) => h.context.issues as FakeIssues;
 
+    it("says so with nothing to fix too: a failed sync as an error, one that didn't settle as a note", async () => {
+      const failed = harness({ fixes: [] });
+      issuesOf(failed).forbidden.add("createIssue");
+      const broken = await flow(failed).run(failed.context);
+      expect(broken).toMatchObject({ outcome: "nothing-to-fix", errors: [expect.stringContaining("the write PAT needs Issues: read and write")] });
+      const unsettled = harness({ fixes: [] });
+      // Every issue the sync opens is gone when read back, so the rounds run out without settling.
+      const issues = issuesOf(unsettled);
+      const create = issues.createIssue.bind(issues);
+      issues.createIssue = async (args) => {
+        const issue = await create(args);
+        issues.issues.delete(issue.number);
+        return issue;
+      };
+      const result = await flow(unsettled).run(unsettled.context);
+      expect(result).toMatchObject({ outcome: "nothing-to-fix", notes: expect.arrayContaining(["the issues didn't settle this run"]) });
+      expect(result).not.toHaveProperty("errors");
+    });
+
     it("reports a write PAT without Issues permission as an error, executing nothing", async () => {
       const h = harness({ fixes: [young] });
       issuesOf(h).forbidden.add("createIssue");

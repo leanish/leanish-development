@@ -50,9 +50,9 @@
   open or redo a PR on its next run. The docs say closing an issue is an input too (it dismisses its findings), and
   that a Maven version already on the base elsewhere isn't held or refused when an aged update brings it into another
   configuration.
-- A secure-it run whose issues couldn't be synced (a write PAT without Issues permission, say) reports it as an error,
-  so a batch reads it as failed rather than completed; one whose issues didn't settle says so in a note. Either way it
-  still executes nothing.
+- A secure-it run whose issues couldn't be synced (a write PAT without Issues permission, or GitHub failing) reports
+  it as an error, so a batch reads it as failed rather than completed; one whose issues didn't settle says so in a
+  note. Either way it still executes nothing.
 - The docs state what a dismissal covers: no new issue for a decision whose findings are all dismissed, but a decision
   that also fixes a finding not dismissed opens an issue showing them all, and its PR fixes them all; and closing an
   issue doesn't close an open ordinary PR for it, which review keeps going. The adoption guide's first run describes

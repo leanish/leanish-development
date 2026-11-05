@@ -12,9 +12,10 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
 
 ## Issues decide what runs
 
-Every finding a run sees on the default branch, minus those a valid exception covers or a person
-[dismissed](#dismissing-findings), is tracked by an issue the tool opens with the write PAT (it needs **Issues: read
-and write**, see [adopting the tools](../docs/adopting-tools.md)). An issue tracks one subject:
+Every finding a run sees on the default branch, minus those a valid exception covers, is tracked by an issue the tool
+opens with the write PAT (it needs **Issues: read and write**, see [adopting the tools](../docs/adopting-tools.md)),
+except where a person [dismissed](#dismissing-findings) it: a dismissed finding shows again only in a decision that
+also fixes one not dismissed, or once it came back after it was gone. An issue tracks one subject:
 
 - **A decision:** the exact moves a unit would make. Past the release-age wait, or a trusted package's ordinary fix
   (said as a trusted exception), a run fixes it right away. Its PR says `Tracks #N.`, never a closing keyword. A PR
