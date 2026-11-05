@@ -109,7 +109,11 @@ Leave other permissions and account permissions unset.
   secure-it's write PAT also needs Issues read and write: it tracks every finding
   in an issue and reads the `take-early` label there
   ([issues](../secure-it/README.md#issues-decide-what-runs)). bump-it's doesn't
-  need it. Without it:
+  need it. secure-it also needs the repository's Issues feature enabled
+  (Settings → General → Features → Issues). With it off, GitHub lists no issues
+  and refuses to create one: a run with an issue to open fails its sync, saying
+  Issues are disabled, and executes nothing, until they're enabled.
+  Without the permission:
   - The issue sync fails when GitHub refuses one of its issue reads or writes
     (but see the exception below), and that run executes nothing. A refused
     write while applying the issues' changes says the write PAT needs Issues:

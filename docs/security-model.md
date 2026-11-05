@@ -88,7 +88,7 @@ Both tools are in this tree: [`secure-it`](../secure-it) and [`bump-it`](../bump
 - **Repository code never runs in the tool's process.** The Gradle inventory runs the build under `codex sandbox` with the agent's write profile. Under that profile, checked on macOS, the Keychain isn't reachable, the sensitive home paths (`~/.ssh`, `~/.aws`, the Codex and Claude logins, shell startup files…) can't be read, and writes land only in the working copy, the temp dirs and the build cache. Both tools compute npm changes in exported scratch copies under the same sandbox, with `--package-lock-only --ignore-scripts`, explicit release-age flags and trusted-scope exclusions. The tool protects exact lockfile bytes and manifest dependency fields; only major migrations may adapt other manifest fields.
 - **The Codex login source stays unreadable.** When a tool reuses a file-backed login, the sandbox denies the resolved `auth.json` and its canonical target when it is a symlink, including with a custom `CODEX_HOME`.
 - **npm's age exclusions do not waive verification.** secure-it excludes planned young or unreadable targets, plus young or unreadable versions already locked in the affected base lockfiles, retaining configured trusted-scope exclusions. This lets npm keep unrelated locked security fixes. It checks sandboxed npm >= 11.17.0 before tool-run npm uses these flags; agent check commands receive the same exclusions in every mode. Every exclusion is reported; exact target verification and `compare` still judge all induced changes, including their age and identity.
-- **secure-it's issues are output, with two inputs.** The issues it opens are written by the tool alone, from its own
+- **secure-it's issues are output, with two inputs.** The issues it opens are written by the tool, from its own
   assessment, and its record in them is read back only from issues the token's login opened, at the end of its own
   section. Issue text never selects versions: the code decides every move. A person has two inputs. Closing an issue
   dismisses its findings: secure-it opens no new issue for a subject whose findings are all dismissed, until a
@@ -99,7 +99,11 @@ Both tools are in this tree: [`secure-it`](../secure-it) and [`bump-it`](../bump
   `take-early` label, which counts only when someone with write, maintain or admin access added it after their own
   `take-early: <reason>` comment, unedited since; it covers the exact young versions the decision took then, and one
   label runs one attempt ([details](../secure-it/README.md#taking-a-fix-early-take-early)). The issues client runs
-  only in the tool's process, with the write PAT, never in the agent's.
+  only in the tool's process, with the write PAT, never in the agent's. One more way in is not an intended input: the
+  record is read back from the issue's description, which anyone who can edit issues can change, GitHub's Triage role
+  included, and secure-it trusts it whoever edited it. The versions stay the code's, but an edited record can authorize
+  an early attempt no writer granted, or change what the issue's findings, closing and dismissal are taken to be
+  ([known limitation](coverage-gaps.md#limits)).
 - **PR CI reads use Actions and commit statuses**, so no Checks API permission is required
   ([what review reads](../core/tool-runtime/README.md)).
 - **Tool-run Gradle builds never reuse a daemon.** Every inventory and tool-run wrapper task passes `--no-daemon` (in CI, exported base and working tree), so any daemon it needs is single-use and starts inside the current build's sandbox: a reused daemon keeps the permissions of the sandbox that started it. Agent commands may still start or reuse daemons in the shared `GRADLE_USER_HOME`; tool-run commands never connect to them. The flag is explicit; `GRADLE_OPTS`, `org.gradle.jvmargs` and repository properties are left alone.

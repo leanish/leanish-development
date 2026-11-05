@@ -60,6 +60,15 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   person closes one. A notice is posted once
   per run even if the comment listing lags; whether label events and comments can lag the same way, which grants read,
   isn't established.
+- **An issue's record is only as trusted as whoever can edit issues (secure-it)**: secure-it reads its decisions back
+  from a hidden record in its own issue's description and trusts it, whoever edited it last. GitHub lets anyone with
+  the Triage role edit issues (the description included), though not other people's comments, and a `take-early`
+  label they add doesn't authorize (secure-it takes it only from write access). So in an organization's repository a Triage member can
+  edit a record into authorizing what no writer did: another early attempt after one ended, or young versions the
+  label didn't cover. That opens a draft PR early; merging it still takes write access. They can also make an issue
+  close as resolved while its advisories are still there, or make a dismissal hide a finding that returned. On a
+  personal account's repository, which has no Triage role, everyone who can edit secure-it's issues can push anyway. Until a release stops trusting a
+  record someone else edited, give Triage only to people you'd trust with a `take-early` label.
 - **An early attempt whose PR the listing doesn't show yet (secure-it)**: when publication fails after its PR was
   created, the attempt ends as failed if the PR listing doesn't show that PR yet, and review then leaves the PR alone
   as not taken early (with a notice).
