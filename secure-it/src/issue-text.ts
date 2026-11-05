@@ -213,12 +213,13 @@ function shortenedDetail(detail: string): string {
   return `${detail.slice(0, end)}${DETAIL_CUT}`;
 }
 
-function blockedReason(reason: "no-fix" | "refused" | "unassessed"): string {
+function blockedReason(reason: "no-fix" | "not-taken" | "unassessed"): string {
   switch (reason) {
     case "no-fix":
       return "no published version fixes it.";
-    case "refused":
-      return "the security rule refused every candidate.";
+    case "not-taken":
+      // Neutral: a refusal and a rule that couldn't be applied (a listing or a date it couldn't read) both end here.
+      return "secure-it can't take a fix for it this run:";
     case "unassessed":
       return "the fix couldn't be assessed this run.";
   }

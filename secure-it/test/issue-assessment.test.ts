@@ -48,8 +48,8 @@ describe("assessmentOf", () => {
     to: undefined, problem: undefined, ...overrides,
   });
   // Through `selectWork`, as a run builds it: the blocked groups are the rule's own.
-  const assess = (observations: ObservedFinding[], fixes: SecurityFix[]) => assessmentOf({
-    sha: "a".repeat(40), complete: true, observations, excepted: [], units: [], blocked: selectWork(fixes).blocked, planningCauses: new Map(), trusted: () => false,
+  const assess = (observations: ObservedFinding[], fixes: SecurityFix[], undecided = new Map<string, string>(), planningCauses = new Map<string, string>()) => assessmentOf({
+    sha: "a".repeat(40), complete: true, observations, excepted: [], units: [], blocked: selectWork(fixes).blocked, planningCauses, undecided, trusted: () => false,
     eligibleAt: async () => undefined, now: new Date("2026-11-04T00:00:00Z"), prOf: () => undefined,
   });
   const report = fix({ problem: "lib@1.0.0 is affected by GHSA-lib, only in the project's repository advisories: no fix is proposed until a reviewed source lists it", unreviewedOnly: true });
@@ -62,12 +62,40 @@ describe("assessmentOf", () => {
   it("keeps any other block of such a package, a strict pin's say", async () => {
     const pinned = fix({ from: "1.5.0", to: { version: "1.6.0", line: "1", aged: true, major: false, blockers: ["strictly pinned"] } });
     const { subjects } = await assess([finding("lib", false)], [report, pinned]);
-    expect(subjects[0]!.status).toEqual(expect.objectContaining({ kind: "blocked", reason: "refused" }));
+    expect(subjects[0]!.status).toEqual(expect.objectContaining({ kind: "blocked", reason: "not-taken" }));
     expect(subjects[0]!.status).toEqual(expect.objectContaining({ detail: expect.stringContaining("lib@1.5.0: strictly pinned") }));
   });
 
-  it("still says the rule refused a reviewed finding's every candidate", async () => {
+  it("says no fix can be taken for a reviewed finding the rule held back, with its reasons", async () => {
     const { subjects } = await assess([finding("lib", true), finding("lib", false)], [fix({ problem: "no candidate passes" })]);
-    expect(subjects[0]!.status).toEqual({ kind: "blocked", reason: "refused", detail: "lib@1.0.0: no candidate passes" });
+    expect(subjects[0]!.status).toEqual({ kind: "blocked", reason: "not-taken", detail: "lib@1.0.0: no candidate passes" });
+  });
+
+  it("says a package a failed check left undecided couldn't be assessed, never that its candidates were refused", async () => {
+    const failed = fix({ problem: "lib@1.0.0's publisher identity couldn't be read (HTTP 503)", undecided: true });
+    const { subjects } = await assess([finding("lib", true)], [failed], new Map([["npm|lib", "lib@1.0.0's publisher identity couldn't be read (HTTP 503)"]]));
+    expect(subjects[0]!.status).toEqual({ kind: "blocked", reason: "unassessed", detail: "a check failed for it this run: lib@1.0.0's publisher identity couldn't be read (HTTP 503)" });
+  });
+
+  it("names both a failed check and a planning failure of the same package", async () => {
+    const { subjects } = await assess([finding("lib", true)], [], new Map([["npm|lib", "identity lookup failed"]]), new Map([["npm|lib", "lockfile unreadable"]]));
+    expect(subjects[0]!.status).toEqual({ kind: "blocked", reason: "unassessed", detail: "a check failed for it this run: identity lookup failed; its planning failed too: lockfile unreadable" });
+  });
+
+  it("doesn't take a package for only reported when a failed check also left it undecided", async () => {
+    // Its own block is only the repository's report, but it's also in a direct-peer set whose checks failed.
+    const { subjects } = await assess([finding("lib", false)], [report], new Map([["npm|lib", "the direct-peer set of root couldn't be resolved"]]));
+    expect(subjects[0]!.status).toEqual({ kind: "blocked", reason: "unassessed", detail: "a check failed for it this run: the direct-peer set of root couldn't be resolved" });
+  });
+
+  it("says why a malware repair held back by another package's failed check can't be taken", async () => {
+    // Malware is fixed as one: b's own move is ready, but a's identity check failed, so neither goes.
+    const a = fix({ name: "a", malicious: true, problem: "a@1.0.0's publisher identity couldn't be read (HTTP 503)", undecided: true });
+    const b = fix({ name: "b", malicious: true, to: { version: "1.0.1", line: "1", aged: true, major: false, blockers: [] } });
+    const { subjects } = await assess([{ ...finding("a", true), malicious: true }, { ...finding("b", true), malicious: true }], [a, b],
+      new Map([["npm|a", "a@1.0.0's publisher identity couldn't be read (HTTP 503)"]]));
+    const status = (name: string) => subjects.find((subject) => subject.subject.kind === "package" && subject.subject.name === name)!.status;
+    expect(status("a")).toMatchObject({ kind: "blocked", reason: "unassessed" });
+    expect(status("b")).toMatchObject({ kind: "blocked", reason: "not-taken", detail: expect.stringContaining("a@1.0.0's publisher identity couldn't be read") });
   });
 });
