@@ -57,8 +57,8 @@ unreleased changes collect under its "Unreleased" heading.
      blocker. Every review, in every step, is one exhaustive pass: it goes
      through every changed area and reports every finding, of any severity, in
      one reply, without stopping at the first blocker. All the fixes a candidate
-     gets land together in a new candidate (what goes to the next release or
-     patch stays there), which starts again at the first step:
+     gets land together in a new candidate, which starts again at the first
+     step:
      1. Two cheap reviewers compare the candidate with the deployed release
         (`git diff v<deployed> v<version>-rc.<n>`): one goes through a fixed
         checklist of risky cases (links, case and Unicode variants, base versus
@@ -86,8 +86,9 @@ unreleased changes collect under its "Unreleased" heading.
    - Findings that weaken verification or the gate, produce wrong data, or abort
      whole runs, compared with the deployed release, block.
    - Minor findings don't block: a nit, or a small inaccuracy in docs or text
-     that leads no one to a wrong action and weakens nothing. They go to the next
-     patch.
+     that leads no one to a wrong action and weakens nothing. When a new
+     candidate is cut for another reason, all of them are fixed in it; otherwise
+     they go to the next patch.
    - A finding whose only effect is that a tool doesn't update something
      automatically (it skips it with a note, or the attempt fails visibly)
      doesn't block: document it as a known limitation and fix it later.

@@ -6,7 +6,8 @@
 
 - Every release review is one exhaustive pass that reports all its findings at once, and a candidate's fixes land
   together in the next candidate. Minor findings (a nit, a small inaccuracy that leads no one to a wrong action)
-  don't block; they go to the next patch ([releasing](docs/releasing.md)).
+  don't block: a new candidate cut for another reason fixes them all, and otherwise they go to the next patch
+  ([releasing](docs/releasing.md)).
 
 ## 0.11.0 - 2026-11-05
 
