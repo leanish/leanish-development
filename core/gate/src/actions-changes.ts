@@ -141,7 +141,7 @@ export function actionGaps(inventory: ActionsInventory, resolutions: ReadonlyMap
 
 /** How problems and gaps name a link. Its target is the repository's own text, so it's quoted and cut. */
 function linkLabel(link: ActionsLink): string {
-  return `${link.path} -> ${JSON.stringify(link.target.slice(0, 200))}${link.usedBy === undefined ? "" : ` (used by ${link.usedBy})`}`;
+  return `${link.path} -> ${JSON.stringify(link.target.slice(0, 200))}${link.usedBy === undefined ? "" : `, used by ${link.usedBy}`}`;
 }
 
 function linkGap(link: ActionsLink): string {

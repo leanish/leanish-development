@@ -31,7 +31,8 @@ export interface Tree {
   list(dir: string, options?: { readonly symlinks?: boolean }): Promise<string[]>;
   /**
    * The links at `path`, opening none: the first one on the way to it (a parent folder or `path` itself) and only that
-   * one, or else every link under it, sorted by path. Empty when there's no such path. A commit and a working tree agree.
+   * one, or else every link under it, sorted by path. Empty when there's no such path. A commit and a working tree agree,
+   * except inside a submodule, which a working tree has checked out and a commit doesn't.
    */
   links(path: string): Promise<TreeLink[]>;
 }
@@ -144,8 +145,12 @@ export async function gitTree(root: string, revision: string, run: RunProcess, g
         isDirectory = entry.type === "tree";
       }
       if (!isDirectory) return [];
-      const links = (await entries(path, true)).filter((entry) => entry.mode === SYMLINK_MODE).map((entry) => linkAt(entry.path));
-      return (await Promise.all(links)).sort(byPath);
+      // One at a time: the repository chooses how many there are, and each is a process.
+      const links: TreeLink[] = [];
+      for (const entry of await entries(path, true)) {
+        if (entry.mode === SYMLINK_MODE) links.push(await linkAt(entry.path));
+      }
+      return links.sort(byPath);
     },
     async read(path) {
       const listed = await git(["ls-tree", "-z", "--name-only", sha, "--", path]);

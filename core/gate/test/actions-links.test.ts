@@ -90,14 +90,23 @@ describe("links on the paths actions are read from", () => {
       { ".github/workflows/ci.yml": "jobs:\n  a:\n    steps:\n      - uses: ./tools/build\n      - uses: ./tools/build\n", "shared/build/action.yml": `runs:\n  using: composite\n  steps:\n    - uses: acme/behind-a-link@main\n` },
       { tools: "shared" },
     );
-    expect(inventory.links).toEqual([at("tools", "shared", ".github/workflows/ci.yml")]);
+    expect(inventory.links).toEqual([at("tools", "shared", "./tools/build (.github/workflows/ci.yml)")]);
     expect(inventory.uses).toEqual([]);
     expect(inventory.gaps).toEqual([]);
   });
 
+  it("tells apart another `uses:` through the same link, from the same file", async () => {
+    const read2 = (...local: string[]) => read({ ".github/workflows/ci.yml": `jobs:\n  a:\n    steps:\n${local.map((use) => `      - uses: ${use}\n`).join("")}` }, { tools: "shared" });
+    const base = await read2("./tools/build");
+    const head = await read2("./tools/build", "./tools/deploy");
+    const { problems, gaps } = await actionChanges(base, head, new Map(), new ActionsGitHub(fakeFetch({}), undefined), parseConfig({}));
+    expect(problems).toEqual([`GitHub Actions link tools -> "shared", used by ./tools/deploy (.github/workflows/ci.yml) is new or changed, and the gate doesn't read what's behind a link: commit the file itself`]);
+    expect(gaps).toEqual([`GitHub Actions link tools -> "shared", used by ./tools/build (.github/workflows/ci.yml): the gate doesn't read what's behind a link, so what it uses can't be told`]);
+  });
+
   it("records a linked local reusable workflow as found on its own and as used, so a new `uses:` of it is a change", async () => {
     const inventory = await read({ ".github/workflows/ci.yml": "jobs:\n  a:\n    uses: ./.github/workflows/shared.yml\n", "shared/ci.yml": STEP }, { ".github/workflows/shared.yml": "../../shared/ci.yml" });
-    expect(inventory.links).toEqual([at(".github/workflows/shared.yml", "../../shared/ci.yml"), at(".github/workflows/shared.yml", "../../shared/ci.yml", ".github/workflows/ci.yml")]);
+    expect(inventory.links).toEqual([at(".github/workflows/shared.yml", "../../shared/ci.yml"), at(".github/workflows/shared.yml", "../../shared/ci.yml", "./.github/workflows/shared.yml (.github/workflows/ci.yml)")]);
   });
 
   it("ignores a link in the workflows folder that couldn't be a workflow, and reads the real files around it", async () => {
@@ -108,7 +117,7 @@ describe("links on the paths actions are read from", () => {
 
   it("isn't caught by links that lead to each other, inside or around a followed action", async () => {
     const inventory = await read({ ".github/workflows/ci.yml": "jobs:\n  a:\n    steps:\n      - uses: ./loop/x\n" }, { loop: "other", other: "loop", ".github/actions/self": "self" });
-    expect(inventory.links).toEqual([at(".github/actions/self", "self"), at("loop", "other", ".github/workflows/ci.yml")]);
+    expect(inventory.links).toEqual([at(".github/actions/self", "self"), at("loop", "other", "./loop/x (.github/workflows/ci.yml)")]);
   });
 
   it("counts as something to check when links are all a repository's workflows have", async () => {
@@ -138,9 +147,9 @@ describe("the verdict on a link", () => {
 
   it("fails a new `uses:` through a link base already had", async () => {
     const folder = at(".github/actions/build", "../../shared");
-    const used = at(".github/actions/build", "../../shared", ".github/workflows/ci.yml");
+    const used = at(".github/actions/build", "../../shared", "./.github/actions/build (.github/workflows/ci.yml)");
     const result = await compare(inventory(folder), inventory(folder, used));
-    expect(result.problems).toEqual([problem(`.github/actions/build -> "../../shared" (used by .github/workflows/ci.yml)`)]);
+    expect(result.problems).toEqual([problem(`.github/actions/build -> "../../shared", used by ./.github/actions/build (.github/workflows/ci.yml)`)]);
     expect(result.gaps).toEqual([gap(`.github/actions/build -> "../../shared"`)]);
   });
 

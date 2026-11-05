@@ -25,7 +25,7 @@ import type { Tree, TreeLink } from "./tree.ts";
 
 /** A link on a path the gate reads actions from, so what's behind it isn't read. */
 export interface ActionsLink extends TreeLink {
-  /** The file whose local `uses:` leads through it, or undefined when discovery found it on its own. */
+  /** The local `uses:` that leads through it and its file (`./tools/build (ci.yml)`), or undefined when discovery found it on its own. */
   readonly usedBy: string | undefined;
 }
 
@@ -142,7 +142,7 @@ export async function readActionsInventory(tree: Tree): Promise<ActionsInventory
     record(found.filter((link) => blocked || relevant(link.path)), undefined);
     return blocked ? [] : tree.list(root);
   };
-  // `missing`: the gap to report when none of `files` exists (only for files a `uses:` points at). `usedBy`: the file whose `uses:` that is.
+  // `missing`: the gap to report when none of `files` exists (only for files a `uses:` points at). `usedBy`: that `uses:` and its file.
   const queue: Array<{ files: string[]; missing: string | undefined; usedBy: string | undefined }> = [
     ...(await discover(".github/workflows", (path) => LOCAL_WORKFLOW.test(path))).filter((path) => LOCAL_WORKFLOW.test(path)).map((file) => ({ files: [file], missing: undefined, usedBy: undefined })),
     // Any link here: a commit doesn't say whether one leads to a folder, which may hold an `action.yml`.
@@ -183,8 +183,8 @@ export async function readActionsInventory(tree: Tree): Promise<ActionsInventory
         if (path === ".." || path.startsWith("../")) throw new Error(`${file}: \`uses: ${local}\` points outside the repository`);
         queue.push(
           LOCAL_WORKFLOW.test(path)
-            ? { files: [path], missing: `GitHub Actions local workflow ${local} (${file}) doesn't exist, so what it uses isn't read`, usedBy: file }
-            : { files: [posix.join(path, "action.yml"), posix.join(path, "action.yaml")], missing: `GitHub Actions local action ${local} (${file}) has no action.yml, so what it uses isn't read`, usedBy: file },
+            ? { files: [path], missing: `GitHub Actions local workflow ${local} (${file}) doesn't exist, so what it uses isn't read`, usedBy: `${local} (${file})` }
+            : { files: [posix.join(path, "action.yml"), posix.join(path, "action.yaml")], missing: `GitHub Actions local action ${local} (${file}) has no action.yml, so what it uses isn't read`, usedBy: `${local} (${file})` },
         );
       }
     }
