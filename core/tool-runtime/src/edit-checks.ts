@@ -16,7 +16,7 @@ import { basename } from "node:path";
 
 import { isAlias, isMap, isScalar, isSeq, parseDocument, Scalar } from "yaml";
 
-import { commentTag, parseUses, readActionsInventory } from "@leanish/gate/actions-inventory";
+import { commentTag, occurrenceKey, parseUses, readActionsInventory } from "@leanish/gate/actions-inventory";
 import type { Floor } from "@leanish/gate/floors";
 import { gradleLocation, type GradleConfiguration, type GradleInventory } from "@leanish/gate/gradle";
 import { directDependencies } from "@leanish/gate/npm-lock";
@@ -73,19 +73,20 @@ export async function actionsOutsidePlan(pins: ReadonlyArray<PlannedPin>, base: 
   const planned = new Map<string, Set<string>>();
   for (const pin of pins) planned.set(pin.name.toLowerCase(), new Set([...(planned.get(pin.name.toLowerCase()) ?? []), ...pin.locations]));
   const outside = (use: { name: string; file: string }) => !planned.get(use.name)?.has(use.file);
-  // Counted by a structured key (a crafted path can't blur two uses together), reported by a readable label.
+  // Counted by the gate's own occurrences, reported by a readable label.
   const labels = new Map<string, string>();
   const occurrences = async (tree: Tree) =>
     (await readActionsInventory(tree)).uses.filter(outside).map((use) => {
-      const key = JSON.stringify([use.file, use.name, use.path ?? null, use.ref, use.comment ?? null]);
-      labels.set(key, `${use.file}: ${use.name}${use.path === undefined ? "" : `/${use.path}`}@${use.ref}${use.comment === undefined ? "" : ` # ${use.comment}`}`);
+      const key = occurrenceKey(use);
+      labels.set(key,`${use.file}: ${use.name}${use.path === undefined ? "" : `/${use.path}`}@${use.ref}${use.comment === undefined ? "" : ` # ${use.comment}`}`);
       return key;
     });
   const count = (list: string[]) => list.reduce((map, entry) => map.set(entry, (map.get(entry) ?? 0) + 1), new Map<string, number>());
   const was = count(await occurrences(base));
   const now = count(await occurrences(head));
-  const changed = [...new Set([...was.keys(), ...now.keys()])].filter((entry) => was.get(entry) !== now.get(entry)).map((entry) => labels.get(entry)!).sort();
-  return changed.map((label) => `the action use ${label} changed outside the plan`);
+  // A use moved into or out of a step is two occurrences with one label.
+  const changed = new Set([...new Set([...was.keys(), ...now.keys()])].filter((entry) => was.get(entry) !== now.get(entry)).map((entry) => labels.get(entry)!));
+  return [...changed].sort().map((label) => `the action use ${label} changed outside the plan`);
 }
 
 /** `npm|name|where` → version, for every direct npm declaration: per lockfile, workspace and key. Gradle's are compared with the plan's reference (`gradle-reference.ts`). */

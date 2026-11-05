@@ -368,6 +368,12 @@ describe("occurrences and edge cases", () => {
       expect((await compare(commented("note"), commented("other"))).problems).toEqual([mustPin("acme/tool@main (ci.yml, outside a job or step)")]);
     });
 
+    it("tells them apart by key name, as coverage gaps says: a `steps` key anywhere counts, a merge key doesn't", () => {
+      const places = (yaml: string) => parseUses(yaml, "ci.yml").uses.map((use) => use.executable);
+      expect(places("env:\n  steps:\n    - uses: acme/tool@main\n")).toEqual([true]);
+      expect(places("x: &step\n  uses: acme/tool@main\njobs:\n  a:\n    steps:\n      - <<: *step\n")).toEqual([false, false]);
+    });
+
     it("names both places in a full scan", async () => {
       const both = read("env:\n  X:\n    uses: acme/tool@main\njobs:\n  a:\n    steps:\n      - uses: acme/tool@main\n");
       const gh = github();

@@ -1,6 +1,28 @@
 import { describe, expect, it } from "vitest";
 
-import { GATE_WORKFLOW, isDependencyFile, isMechanical, writtenPins } from "../src/edit-checks.ts";
+import type { Tree } from "@leanish/gate/tree";
+
+import { actionsOutsidePlan, GATE_WORKFLOW, isDependencyFile, isMechanical, writtenPins } from "../src/edit-checks.ts";
+
+describe("actionsOutsidePlan", () => {
+  const workflow = (text: string): Tree => ({
+    id: "tree",
+    read: async (path) => (path === ".github/workflows/ci.yml" ? text : undefined),
+    list: async (dir) => (dir === ".github/workflows" ? [".github/workflows/ci.yml"] : []),
+  });
+  const inEnv = workflow("env:\n  X:\n    uses: acme/tool@main\n");
+  const inStep = workflow("jobs:\n  a:\n    steps:\n      - uses: acme/tool@main\n");
+
+  it("reports a use moved into or out of a step once, as the gate counts it", async () => {
+    const moved = ["the action use .github/workflows/ci.yml: acme/tool@main changed outside the plan"];
+    expect(await actionsOutsidePlan([], inEnv, inStep)).toEqual(moved);
+    expect(await actionsOutsidePlan([], inStep, inEnv)).toEqual(moved);
+  });
+
+  it("leaves a use alone that stayed where it was", async () => {
+    expect(await actionsOutsidePlan([], inStep, inStep)).toEqual([]);
+  });
+});
 
 describe("isMechanical", () => {
   it("takes the base's side for the dependency files a move touches, workflows aside, matching the catalog by whole folder", () => {
