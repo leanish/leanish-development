@@ -15,8 +15,9 @@ export interface Observations {
   /** One per package and advisory group a valid exception doesn't cover, with every version and alias seen. Sorted. */
   readonly observed: ReadonlyArray<ObservedFinding>;
   /**
-   * One per package and advisory group with a version a valid exception covers, with every alias seen. A group can be in
-   * both, when an exception covers only some of its versions or locations. Sorted.
+   * One per package and advisory group with a version a valid exception covers, with every alias seen. A group can be
+   * in both, when an exception covers only some of its versions; one covering only some of a version's locations
+   * excepts nothing. Sorted.
    */
   readonly excepted: ReadonlyArray<FindingKey>;
 }
