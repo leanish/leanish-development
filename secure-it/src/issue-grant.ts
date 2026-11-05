@@ -17,7 +17,7 @@
 import { versionKey } from "@leanish/gate/package-version";
 
 import { type Grant, type IssueRecord, type PackageVersion, SHOWN_PENDING, type SubjectStatus } from "./issue-model.ts";
-import { TAKE_EARLY_LABEL } from "./issue-text.ts";
+import { hasLabel, isLabel, TAKE_EARLY_LABEL } from "./issue-text.ts";
 
 /** An issue event as the issues client reads it. */
 export interface GrantEvent {
@@ -63,7 +63,7 @@ const REASON = new RegExp(`^${TAKE_EARLY_LABEL}:\\s*(\\S[\\s\\S]*)$`);
 
 export function grantOf(input: GrantInput): GrantDecision {
   const label = currentLabelEvent(input.events);
-  if (label === undefined || !input.labels.includes(TAKE_EARLY_LABEL)) return { kind: "none" };
+  if (label === undefined || !hasLabel(input.labels, TAKE_EARLY_LABEL)) return { kind: "none" };
   const refused = (reason: string, key = reason): GrantDecision => ({ kind: "refused", noticeId: `take-early:${label.id}:${key}`, reason });
   if (input.state !== "open") return refused("the issue is closed", "closed");
   if (input.record.subject.kind !== "decision") return refused("this issue has no fix decision to authorize", "no-decision");
@@ -114,7 +114,7 @@ export function grantOf(input: GrantInput): GrantDecision {
 
 /** The latest `take-early` labeled event with no unlabeled after it, by event id. */
 function currentLabelEvent(events: ReadonlyArray<GrantEvent>): GrantEvent | undefined {
-  const ours = events.filter((event) => event.label === TAKE_EARLY_LABEL && (event.event === "labeled" || event.event === "unlabeled")).sort((a, b) => a.id - b.id);
+  const ours = events.filter((event) => isLabel(event.label, TAKE_EARLY_LABEL) && (event.event === "labeled" || event.event === "unlabeled")).sort((a, b) => a.id - b.id);
   const last = ours.at(-1);
   return last?.event === "labeled" ? last : undefined;
 }

@@ -699,6 +699,22 @@ describe("secure-it run", () => {
     const flow = (h: Harness, published = "2026-10-05T00:00:00Z") => secureIt({ ...h.deps, gate: async () => scanned(published), scan: readScanState });
     const issuesOf = (h: Harness) => h.context.issues as FakeIssues;
 
+    it("closes an issue once a valid exception covers its finding, saying so, and never takes the finding for absent", async () => {
+      const files: Record<string, string> = { "package-lock.json": LOCK };
+      const h = harness({ fixes: [], files });
+      await flow(h).run(h.context);
+      const issues = issuesOf(h);
+      expect([...issues.issues.values()].map((issue) => issue.state)).toEqual(["open"]);
+      files[".github/supply-chain-exceptions.json"] = JSON.stringify({
+        vulnerabilities: [{ id: GHSA, package: "vite", version: "8.3.1", paths: ["node_modules/vite"], reason: "dev server only", expires: "2027-01-01" }],
+      });
+      await flow(h).run(h.context);
+      const [issue] = [...issues.issues.values()];
+      expect(issue!.state).toBe("closed");
+      expect(recordOf(issue!.body)).toMatchObject({ pendingClose: { reason: "resolved" }, absences: [] });
+      expect(issues.comments.get(issue!.number)!.at(-1)!.body).toContain("finds none of its advisories outside a valid exception");
+    });
+
     it("says so with nothing to fix too: a failed sync as an error, one that didn't settle as a note", async () => {
       const failed = harness({ fixes: [] });
       issuesOf(failed).forbidden.add("createIssue");
@@ -3240,7 +3256,8 @@ describe("the cooldown hold", () => {
     expect([aged.agentCalls, aged.workspace.preparations, aged.github.prs.size]).toEqual([[], [], 1]);
   });
 
-  it("keeps a PR taken early a draft on green CI while its versions are young, and retires it once they aged, ending its attempt", async () => {
+  // The repository's label in its own casing (one a person made by hand) reads as the label everywhere.
+  it.each(["take-early", "Take-Early"])("keeps a PR taken early a draft on green CI while its versions are young, and retires it once they aged, ending its attempt (%s)", async (casing) => {
     const plan = await planFor([YOUNG_VITE()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined },
       { kind: "routine", topic: "security-young-npm|vite" });
     const heldPr = (eligibleAt: string) => ownPr({
@@ -3248,11 +3265,13 @@ describe("the cooldown hold", () => {
       body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, eligibleAt, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }),
     });
     const waiting = harness({ prs: [heldPr("2026-10-13T00:00:00.000Z")] });
+    (waiting.context.issues as FakeIssues).repoLabels.set("take-early", casing);
     await early(waiting, heldPr("2026-10-13T00:00:00.000Z"));
     waiting.github.checks = GREEN;
     expect(await secureIt(waiting.deps).review(waiting.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "held" }] });
     expect(waiting.github.prs.get(7)?.isDraft).toBe(true);
     const aged = harness({ prs: [heldPr("2026-10-07T05:00:00.000Z")] });
+    (aged.context.issues as FakeIssues).repoLabels.set("take-early", casing);
     await early(aged, heldPr("2026-10-07T05:00:00.000Z"));
     // The registry dates vite 8.3.3 past the wait too, so its grant has nothing young left.
     const registry = fakeFetch({ "https://registry.npmjs.org/vite": { body: { time: { "8.3.3": "2026-09-29T00:00:00.000Z" }, versions: { "8.3.3": {} } } } });
@@ -3266,19 +3285,19 @@ describe("the cooldown hold", () => {
     expect(aged.github.calls.some((call) => call.startsWith("headChecks"))).toBe(false);
     expect(recordOf(issues.issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 7, outcome: "pr-closed" }]);
     // Recovery retries the label cleanup after graduation recorded the attempt's end. No subject assessed: only records change.
-    const NO_SUBJECTS = { sha: "f".repeat(40), at: "2026-10-07T06:00:00.000Z", complete: true, subjects: [] };
+    const NO_SUBJECTS = { sha: "f".repeat(40), at: "2026-10-07T06:00:00.000Z", complete: true, subjects: [], excepted: [] };
     const client = { issues, github: aged.github, repo: REPO, clean: (body: string) => body, ours: () => true };
     // The label's removal fails the first time: the attempt's end is recorded anyway, and the next recovery returns it.
     await recoverAttempts(client, await syncedIssues(aged), NO_SUBJECTS);
     expect(recordOf(issues.issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 7, outcome: "pr-closed" }]);
-    expect(issues.issues.get(1)!.labels).toContain("take-early");
+    expect(issues.issues.get(1)!.labels).toContain(casing);
     issues.forbidden.delete("removeLabel");
     await recoverAttempts(client, await syncedIssues(aged), NO_SUBJECTS);
-    expect(issues.issues.get(1)!.labels).not.toContain("take-early");
+    expect(issues.issues.get(1)!.labels).not.toContain(casing);
     // Only the event that attempt consumed: a newer label is a new grant, and stays.
     issues.label(1, "owner", "take-early");
     await recoverAttempts(client, await syncedIssues(aged), NO_SUBJECTS);
-    expect(issues.issues.get(1)!.labels).toContain("take-early");
+    expect(issues.issues.get(1)!.labels).toContain(casing);
   });
 
   it.each([

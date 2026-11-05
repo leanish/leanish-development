@@ -11,7 +11,7 @@
 import type { Ecosystem } from "@leanish/gate/versions";
 import { uniqueVersions, versionKey } from "@leanish/gate/package-version";
 
-import type { Assessment, DecisionMove, ObservedFinding, PackageVersion, SubjectAssessment, YoungVersion } from "./issue-model.ts";
+import type { Assessment, DecisionMove, FindingKey, ObservedFinding, PackageVersion, SubjectAssessment, YoungVersion } from "./issue-model.ts";
 import { type ChangePlan, packageKey, type SecurityUnit, type Selection } from "./plan.ts";
 import { youngAt } from "./young-at.ts";
 
@@ -26,6 +26,8 @@ export interface AssessmentInputs {
   /** No inventory problem and no coverage gap: only then may a finding be concluded gone. */
   readonly complete: boolean;
   readonly observations: ReadonlyArray<ObservedFinding>;
+  /** The findings a valid exception covers: passed through, never made into subjects. */
+  readonly excepted: ReadonlyArray<FindingKey>;
   readonly units: ReadonlyArray<PlannedUnit>;
   readonly blocked: Selection["blocked"];
   /** Known planning failures by full package key, for findings no decision covers this run. */
@@ -78,7 +80,7 @@ export async function assessmentOf(inputs: AssessmentInputs): Promise<Assessment
           : `no fix was planned for it this run: ${cause}` };
     subjects.push({ subject: { kind: "package", ecosystem, name }, findings, status });
   }
-  return { sha: inputs.sha, at: inputs.now.toISOString(), complete: inputs.complete, subjects };
+  return { sha: inputs.sha, at: inputs.now.toISOString(), complete: inputs.complete, subjects, excepted: inputs.excepted };
 }
 
 /** The plan's moves as a decision: exactly what it changes, each once. */

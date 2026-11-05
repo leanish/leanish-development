@@ -219,8 +219,9 @@ export function createGitHubIssues(options: CreateGitHubIssuesOptions): GitHubIs
       if (!(answer.body instanceof GitHubApiError)) return;
       if (answer.status !== 404) throw answer.body;
       // A 404 is also a wrong issue or a repository the token can't see: only an issue read without the label says it's gone.
+      // GitHub matches label names ignoring case: one still there in another casing is still there.
       const issue = toIssue(operation, await ok(operation, `/repos/${repo}/issues/${number}`));
-      if (issue.labels.includes(label)) throw answer.body;
+      if (issue.labels.some((shown) => shown.toLowerCase() === label.toLowerCase())) throw answer.body;
     },
     async permission({ repo, login }) {
       const operation = "permission";

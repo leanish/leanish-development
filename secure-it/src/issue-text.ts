@@ -25,6 +25,19 @@ export const TAKE_EARLY_LABEL = "take-early";
  */
 export const ISSUE_LABEL = "leanish:secure-it-issue";
 
+/**
+ * Whether `value` names label `name`: GitHub matches label names ignoring case, and an issue shows the repository's
+ * own casing (a `Take-Early` label made by hand, say), so every comparison here does too.
+ */
+export function isLabel(value: string | undefined, name: string): boolean {
+  return value !== undefined && value.toLowerCase() === name.toLowerCase();
+}
+
+/** Whether `labels` has label `name`, as GitHub matches it (`isLabel`). */
+export function hasLabel(labels: ReadonlyArray<string>, name: string): boolean {
+  return labels.some((label) => isLabel(label, name));
+}
+
 /** How issue text is written; reconciliation tests can replace a writer that fails one subject. */
 export interface IssueWriter {
   /** The whole text for a subject this run assessed, with `record` in its hidden block. */

@@ -93,6 +93,11 @@ export interface Assessment {
   /** Whether the inventory and every advisory lookup completed: only a complete one may conclude that a finding is gone. */
   readonly complete: boolean;
   readonly subjects: ReadonlyArray<SubjectAssessment>;
+  /**
+   * The findings a valid exception covers (`issue-observations.ts`): in no subject and no work, but still present, so
+   * an issue's record learns their aliases and never takes their absence.
+   */
+  readonly excepted: ReadonlyArray<FindingKey>;
 }
 
 /** The `take-early` authorization an issue received: the label event, its reason comment and who did both. */

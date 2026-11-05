@@ -12,7 +12,7 @@ import type { Assessment, Attempt, IssueRecord, PackageVersion } from "./issue-m
 import { subjectId } from "./issue-model.ts";
 import { postNotice } from "./issue-notices.ts";
 import type { SyncResult } from "./issue-sync.ts";
-import { ISSUE_LABEL, issueWriter, recordOf, TAKE_EARLY_LABEL } from "./issue-text.ts";
+import { hasLabel, isLabel, ISSUE_LABEL, issueWriter, recordOf, TAKE_EARLY_LABEL } from "./issue-text.ts";
 import type { ChangePlan } from "./plan.ts";
 
 /** Whether a target may execute now; `defer` says why not, and stops it before anything runs. */
@@ -67,12 +67,12 @@ export async function issueDisposition(
   const fresh = await client.issues.getIssue({ repo: client.repo, number: issue.number });
   const current = recordOf(fresh.body);
   if (current === undefined || subjectId(current.subject) !== id) return { kind: "defer", reason: `its issue #${issue.number} can't be read any more` };
-  if (fresh.state !== "open" || current.pendingClose !== undefined || !fresh.labels.includes(ISSUE_LABEL)) {
+  if (fresh.state !== "open" || current.pendingClose !== undefined || !hasLabel(fresh.labels, ISSUE_LABEL)) {
     return { kind: "defer", reason: `its issue #${issue.number} is no longer open as secure-it's` };
   }
   if (subject.status.kind === "eligible") return { kind: "proceed", tracked: { issue: issue.number, young: subject.status.trusted, assessment: tracking.assessment } };
   if (subject.status.kind !== "waiting") return { kind: "defer", reason: `its issue #${issue.number} says it can't go ahead` };
-  if (!fresh.labels.includes(TAKE_EARLY_LABEL)) return { kind: "defer", reason: `waiting for the release-age wait (#${issue.number})` };
+  if (!hasLabel(fresh.labels, TAKE_EARLY_LABEL)) return { kind: "defer", reason: `waiting for the release-age wait (#${issue.number})` };
 
   const decision = await grantStanding(client, issue.number, { state: fresh.state, labels: fresh.labels, record: current, status: subject.status });
   if (decision.kind === "none") return { kind: "defer", reason: `waiting for the release-age wait (#${issue.number})` };
@@ -131,12 +131,12 @@ export async function inactiveLabelNotices(client: { readonly issues: GitHubIssu
   // Current decisions, waiting or eligible: a label on an eligible one is moot rather than refused.
   const decided = new Set(tracking.assessment.subjects.filter((subject) => subject.status.kind !== "informational" && subject.status.kind !== "blocked").map((subject) => subjectId(subject.subject)));
   for (const issue of tracking.sync.tracked) {
-    if (!issue.labels.includes(TAKE_EARLY_LABEL)) continue;
+    if (!hasLabel(issue.labels, TAKE_EARLY_LABEL)) continue;
     const { record } = issue;
     const current = issue.state === "open" && record.pendingClose === undefined && decided.has(subjectId(record.subject));
     if (current) continue;
     const events = await client.issues.listEvents({ repo: client.repo, number: issue.number });
-    const label = events.filter((event) => event.label === TAKE_EARLY_LABEL && (event.event === "labeled" || event.event === "unlabeled")).sort((a, b) => a.id - b.id).at(-1);
+    const label = events.filter((event) => isLabel(event.label, TAKE_EARLY_LABEL) && (event.event === "labeled" || event.event === "unlabeled")).sort((a, b) => a.id - b.id).at(-1);
     if (label?.event !== "labeled" || record.attempts.some((attempt) => attempt.grantEventId === label.id)) continue;
     const why = issue.state !== "open" ? "the issue is closed"
       : record.pendingClose !== undefined ? "this issue is being superseded or resolved; its label doesn't carry over"

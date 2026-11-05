@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import { type Assessment, type DecisionMove, type IssueRecord, type ObservedFinding, parseRecord, type SubjectAssessment, subjectId } from "../src/issue-model.ts";
+import { type Assessment, type DecisionMove, type FindingKey, type IssueRecord, type ObservedFinding, parseRecord, type SubjectAssessment, subjectId } from "../src/issue-model.ts";
 import { type IssueOperation, reconcile, recordShows, type TrackedIssue } from "../src/issue-reconcile.ts";
 import { ISSUE_WRITER, type IssueWriter, recordOf } from "../src/issue-text.ts";
 
@@ -23,7 +23,7 @@ function informational(name: string, findings: ObservedFinding[]): SubjectAssess
   return { subject: { kind: "package", ecosystem: "npm", name }, findings, status: { kind: "informational" } };
 }
 
-const assessed = (subjects: SubjectAssessment[], complete = true, sha = SHA): Assessment => ({ sha, at: "2026-11-03T00:00:00.000Z", complete, subjects });
+const assessed = (subjects: SubjectAssessment[], complete = true, sha = SHA, excepted: FindingKey[] = []): Assessment => ({ sha, at: "2026-11-03T00:00:00.000Z", complete, subjects, excepted });
 
 /** Runs `reconcile` to completion against fake issues, applying each operation as GitHub would. */
 function converge(assessment: Assessment, issues: TrackedIssue[] = [], rounds = 5): { issues: TrackedIssue[]; operations: IssueOperation[][]; notes: string[] } {
@@ -342,10 +342,10 @@ describe("reconcile", () => {
     expect(open(converge(assessed([now]), both).issues).map((issue) => issue.number)).toEqual([1]);
   });
 
-  it("never closes a duplicate a person labelled take-early, and says a person closes one", () => {
+  it.each(["take-early", "Take-Early"])("never closes a duplicate a person labelled %s, and says a person closes one", (label) => {
     const fix = decision([move("lib")], [finding("lib", ["GHSA-1"])]);
     const [first] = converge(assessed([fix])).issues;
-    const labelled: TrackedIssue = { ...first!, number: 2, labels: ["leanish:secure-it-issue", "take-early"] };
+    const labelled: TrackedIssue = { ...first!, number: 2, labels: ["leanish:secure-it-issue", label] };
     const result = reconcile(assessed([fix]), [first!, labelled], ISSUE_WRITER);
     expect(result.operations).toEqual([]);
     expect(result.notes).toContain("#2: duplicates #1 but carries an authorization; a person closes one of them");
@@ -434,5 +434,87 @@ describe("recordShows", () => {
     expect(recordShows(record({ findings: [] }), subject)).toBe(false);
     expect(recordShows(record({ shown: { young: [], since: "2026-11-03T00:00:00.000Z" } }), subject)).toBe(false);
     expect(recordShows(record({ shown: undefined }), subject)).toBe(false);
+  });
+});
+
+describe("reconcile with findings a valid exception covers", () => {
+  const key = (name: string, ids: string[]): FindingKey => ({ ecosystem: "npm", name, ids });
+  const closingNotice = (operations: IssueOperation[][]) => operations.flat().flatMap((operation) => (operation.kind === "close" ? [operation.comment.body] : []));
+
+  it("closes an issue whose findings are now excepted as resolved, saying so, without taking them for absent", () => {
+    const one = informational("lib", [finding("lib", ["GHSA-1"], { reviewed: false })]);
+    const start = converge(assessed([one])).issues;
+    const excepted = converge(assessed([], true, LATER, [key("lib", ["GHSA-1"])]), start);
+    const issue = excepted.issues[0]!;
+    expect(issue.state).toBe("closed");
+    expect(issue.record.pendingClose?.reason).toBe("resolved");
+    expect(issue.record.absences).toEqual([]);
+    expect(closingNotice(excepted.operations)).toEqual([`secure-it closes this issue: a complete assessment of \`${LATER.slice(0, 12)}\` finds none of its advisories outside a valid exception.`]);
+  });
+
+  it("keeps an issue open with its other finding, taking no absence for the excepted one", () => {
+    const both = informational("lib", [finding("lib", ["GHSA-1"], { reviewed: false }), finding("lib", ["GHSA-2"], { reviewed: false })]);
+    const start = converge(assessed([both])).issues;
+    const after = converge(assessed([informational("lib", [finding("lib", ["GHSA-2"], { reviewed: false })])], true, LATER, [key("lib", ["GHSA-1"])]), start).issues;
+    expect(open(after).map((issue) => issue.number)).toEqual([1]);
+    expect(after[0]!.record.absences).toEqual([]);
+  });
+
+  it("keeps a dismissal once the exception expires, its aliases learned while it was excepted included", () => {
+    const one = informational("lib", [finding("lib", ["GHSA-1"], { reviewed: false })]);
+    const [issue] = converge(assessed([one])).issues;
+    const dismissed: TrackedIssue = { ...issue!, state: "closed" };
+    // Excepted, and reported with a new alias meanwhile: the record learns it, and takes no absence.
+    const during = converge(assessed([], true, LATER, [key("lib", ["CVE-1", "GHSA-1"])]), [dismissed]).issues;
+    expect(during[0]!.record.findings).toEqual([key("lib", ["CVE-1", "GHSA-1"])]);
+    expect(during[0]!.record.absences).toEqual([]);
+    // The exception expires and the source reports only the new alias: still dismissed, no new issue.
+    expect(reconcile(assessed([informational("lib", [finding("lib", ["CVE-1"], { reviewed: false })])], true, LATER), during, ISSUE_WRITER).operations).toEqual([]);
+  });
+
+  it("keeps an absence a complete assessment recorded before, when the finding returns under an exception", () => {
+    const one = informational("lib", [finding("lib", ["GHSA-1"], { reviewed: false })]);
+    const [issue] = converge(assessed([one])).issues;
+    const dismissed: TrackedIssue = { ...issue!, state: "closed" };
+    const gone = converge(assessed([], true, LATER), [dismissed]).issues;
+    const absent = [{ finding: key("lib", ["GHSA-1"]), at: LATER }];
+    expect(gone[0]!.record.absences).toEqual(absent);
+    // Back, excepted: that episode stays ended.
+    const excepted = converge(assessed([], true, SHA, [key("lib", ["GHSA-1"])]), gone).issues;
+    expect(excepted[0]!.record.absences).toEqual(absent);
+    // Its exception expires: a new episode, so a new issue past the old dismissal.
+    expect(reconcile(assessed([one]), excepted, ISSUE_WRITER).operations.map((operation) => operation.kind)).toEqual(["create"]);
+  });
+
+  it("supersedes a decision whose excepted move left it through the decision that remains", () => {
+    const both = decision([move("a"), move("b")], [finding("a", ["GHSA-a"]), finding("b", ["GHSA-b"])]);
+    const start = converge(assessed([both])).issues;
+    const rest = decision([move("b")], [finding("b", ["GHSA-b"])]);
+    const after = converge(assessed([rest], true, LATER, [key("a", ["GHSA-a"])]), start).issues;
+    const old = after.find((issue) => issue.number === 1)!;
+    expect(old.state).toBe("closed");
+    expect(old.record.pendingClose).toMatchObject({ reason: "superseded", successors: [2] });
+    expect(old.record.absences).toEqual([]);
+  });
+
+  it("doesn't say an incomplete run found a package's excepted advisories gone", () => {
+    const one = informational("lib", [finding("lib", ["GHSA-1"], { reviewed: false })]);
+    const start = converge(assessed([one])).issues;
+    const after = converge(assessed([], false, LATER, [key("lib", ["GHSA-1"])]), start).issues;
+    expect(after[0]!.state).toBe("open");
+    expect(after[0]!.record.absences).toEqual([]);
+    expect(after[0]!.body).toContain("didn't find these advisories again outside a valid exception; it tracks lib GHSA-1");
+  });
+
+  it("finishes a closing recorded before with the notice already posted, and posts the new text only for one not posted yet", () => {
+    const one = informational("lib", [finding("lib", ["GHSA-1"], { reviewed: false })]);
+    const [issue] = converge(assessed([one])).issues;
+    // A closing an earlier run recorded and didn't finish: it's finished as decided, under its own notice id, so a
+    // notice already posted under that id stays as it was (the sync posts none twice); one not posted yet gets this text.
+    const pendingClose = { id: `close:1:resolved:${LATER}`, reason: "resolved" as const, successors: [], at: LATER };
+    const recorded: TrackedIssue = { ...issue!, record: { ...issue!.record, pendingClose } };
+    const [close] = reconcile(assessed([]), [recorded], ISSUE_WRITER).operations;
+    expect(close).toMatchObject({ kind: "close", comment: { noticeId: pendingClose.id } });
+    expect(close!.kind === "close" && close!.comment.body).toContain("finds none of its advisories outside a valid exception");
   });
 });

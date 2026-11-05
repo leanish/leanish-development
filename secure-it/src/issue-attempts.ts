@@ -12,7 +12,7 @@ import type { GitHubIssues } from "@leanish/tool-runtime/github-issues";
 
 import { type Assessment, type Attempt, type IssueRecord, subjectId } from "./issue-model.ts";
 import { recordShows, type TrackedIssue } from "./issue-reconcile.ts";
-import { issueWriter, recordOf, TAKE_EARLY_LABEL } from "./issue-text.ts";
+import { hasLabel, isLabel, issueWriter, recordOf, TAKE_EARLY_LABEL } from "./issue-text.ts";
 
 export interface AttemptClient {
   readonly issues: GitHubIssues;
@@ -76,7 +76,7 @@ export async function recoverAttempts(client: AttemptClient, tracked: ReadonlyAr
   for (const issue of tracked) {
     for (const attempt of issue.record.attempts) {
       // A closed attempt's label whose removal failed: returned now, still only while it's the event that attempt used.
-      if (attempt.outcome === "pr-closed" && issue.labels.includes(TAKE_EARLY_LABEL) && issue.record.grant?.labelEventId === attempt.grantEventId) {
+      if (attempt.outcome === "pr-closed" && hasLabel(issue.labels, TAKE_EARLY_LABEL) && issue.record.grant?.labelEventId === attempt.grantEventId) {
         try {
           await returnLabel(client, issue.number, attempt.grantEventId);
         } catch (error) {
@@ -145,7 +145,7 @@ function ended(pr: GitHubPullRequest): Pick<Attempt, "outcome"> {
 /** Removes the label when its current event is still the one the attempt consumed; a newer label is a new grant. */
 async function returnLabel(client: AttemptClient, number: number, grantEventId: number): Promise<void> {
   const events = await client.issues.listEvents({ repo: client.repo, number });
-  const current = events.filter((event) => event.label === TAKE_EARLY_LABEL && (event.event === "labeled" || event.event === "unlabeled")).at(-1);
+  const current = events.filter((event) => isLabel(event.label, TAKE_EARLY_LABEL) && (event.event === "labeled" || event.event === "unlabeled")).at(-1);
   if (current?.event === "labeled" && current.id === grantEventId) await client.issues.removeLabel({ repo: client.repo, number, label: TAKE_EARLY_LABEL });
 }
 
