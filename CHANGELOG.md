@@ -9,6 +9,11 @@
   general rules. There, every release review is one exhaustive pass, the reviewer is picked per iteration, and minor
   findings don't block: a new candidate cut for another reason fixes them all, and otherwise they go to the next patch.
 
+### Fixed
+
+- Both tools recognize their PR label in any casing, as GitHub does, so a PR recognized only by its label isn't lost, and
+  a label already there isn't added again, when the repository's label was created as, say, `Leanish:Secure-It`.
+
 ## 0.11.0 - 2026-11-05
 
 ### Changed

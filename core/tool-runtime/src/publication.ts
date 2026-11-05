@@ -12,7 +12,7 @@ import type { Workspace } from "@leanish/agent-runtime/working-copy/workspace";
 
 import type { PublicationJournal } from "./journal.ts";
 import { cleanBody, cleanContent, type LocalRoots, withCanonical } from "./publication-text.ts";
-import { isOwnPullRequest, type OwnPullRequests, type PullRequestState, stateOf, withMarker } from "./own-pr.ts";
+import { carriesLabel, isOwnPullRequest, type OwnPullRequests, type PullRequestState, stateOf, withMarker } from "./own-pr.ts";
 
 /**
  * Everything a tool writes to GitHub, done by the tool's own process with its
@@ -269,7 +269,7 @@ async function createDraftPullRequest(
 
 /** A missing label is logged, not fatal: the marker still identifies the PR. */
 export async function ensureLabel(context: PublicationContext, pr: GitHubPullRequest): Promise<void> {
-  if (pr.labels.includes(context.rules.label)) return;
+  if (carriesLabel(context.rules, pr)) return;
   try {
     await context.github.addLabels({ repo: context.repo, number: pr.number, labels: [context.rules.label] });
   } catch (err) {

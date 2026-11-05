@@ -92,6 +92,8 @@ describe("grantOf", () => {
     expect(grantOf(input({ comments: [reason(9, "owner", "2026-11-03T09:00:00Z")] }))).toMatchObject({ kind: "refused", noticeId: "take-early:7:reason" });
     expect(grantOf(input({ comments: [reason(5, "owner", "2026-11-03T08:00:00Z", "2026-11-03T09:00:00Z")] }))).toMatchObject({ kind: "refused", noticeId: "take-early:7:reason" });
     expect(grantOf(input({ comments: [reason(5, "owner", undefined, undefined, "take-early:   ")] }))).toMatchObject({ kind: "refused", noticeId: "take-early:7:reason" });
+    // The label matches in any casing; the reason's syntax, on purpose, only as written.
+    expect(grantOf(input({ comments: [reason(5, "owner", undefined, undefined, "Take-Early: actively exploited")] }))).toMatchObject({ kind: "refused", noticeId: "take-early:7:reason" });
   });
 
   it("refuses on a closed, closing or package issue", () => {

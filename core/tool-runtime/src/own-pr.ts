@@ -88,8 +88,13 @@ export function isOwnPullRequest(rules: OwnPullRequests, pr: GitHubPullRequest, 
     isOwnBranch(rules, pr.headRef) &&
     pr.headRepo?.toLowerCase() === repo.toLowerCase() &&
     pr.baseRef === base &&
-    (pr.body.includes(rules.marker) || pr.labels.includes(rules.label))
+    (pr.body.includes(rules.marker) || carriesLabel(rules, pr))
   );
+}
+
+/** Whether `pr` has the tool's label, in any casing: GitHub treats label names that differ only by case as one label. */
+export function carriesLabel(rules: OwnPullRequests, pr: GitHubPullRequest): boolean {
+  return pr.labels.some((label) => label.toLowerCase() === rules.label.toLowerCase());
 }
 
 /** `body` ending with the PR's state and the marker, replacing earlier ones. */

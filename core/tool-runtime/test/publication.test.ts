@@ -146,6 +146,11 @@ describe("publication", () => {
       expect(github.prs.get(7)?.labels).toEqual([`leanish:${tool}`]);
       expect(github.calls.filter((call) => call.startsWith("addLabels"))).toEqual([`addLabels 7 leanish:${tool}`]);
     }
+
+    // The label already there in another casing is the same label: nothing to add.
+    const cased = new FakeGitHub(ownPr({ headRef: branch, labels: [`Leanish:${tool.toUpperCase()}`], body: rules.marker, isDraft: false }));
+    await publishUpdate({ ...context(cased), rules }, { ...existing, branch }, 7, CONTENT);
+    expect(cased.calls.filter((call) => call.startsWith("addLabels"))).toEqual([]);
   });
 
   // Restoring a saved publication adds it too: ownership.test.ts.
