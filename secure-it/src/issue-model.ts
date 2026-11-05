@@ -64,8 +64,11 @@ export interface YoungVersion extends PackageVersion {
 export type SubjectStatus =
   /** A package whose findings only the package's own repository publishes: reported, never acted on. */
   | { readonly kind: "informational" }
-  /** A package without a decision: no fix published, the rules refused every candidate, or the assessment failed for it. */
-  | { readonly kind: "blocked"; readonly reason: "no-fix" | "refused" | "unassessed"; readonly detail: string }
+  /**
+   * A package without a decision: no fix published (`no-fix`), no fix the run can take (`not-taken`: the rule refused
+   * every candidate, or couldn't be applied, as its reasons say), or a check or the planning failed for it (`unassessed`).
+   */
+  | { readonly kind: "blocked"; readonly reason: "no-fix" | "not-taken" | "unassessed"; readonly detail: string }
   /** A decision taking versions still inside the wait: deferred, `take-early` can authorize it. */
   | { readonly kind: "waiting"; readonly young: ReadonlyArray<YoungVersion> }
   /**

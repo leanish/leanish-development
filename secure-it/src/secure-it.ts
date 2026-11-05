@@ -322,7 +322,10 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   const prepared = await withRequiredYoung(execution, selection.units, base);
   let tracking: Tracking | Error;
   try {
-    tracking = await trackIssues(execution, { tree, scanned, complete: found.incomplete.length === 0 && found.gaps.length === 0, prepared, blocked: selection.blocked, own: listed, base });
+    tracking = await trackIssues(execution, {
+      tree, scanned, complete: found.incomplete.length === 0 && found.gaps.length === 0, prepared, blocked: selection.blocked,
+      undecided: undecidedCauses(found.fixes, selection.undecided ?? []), own: listed, base,
+    });
   } catch (error) {
     // Nothing executes without its issue: a sync that failed defers every unit this run, saying why.
     tracking = asError(error);
@@ -382,6 +385,18 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   const unitNotes = Array.isArray(outcome["notes"]) ? outcome["notes"] : [];
   const notes = [...new Set([...(found.notes ?? []), ...unitNotes, ...(unsettled === undefined ? [] : [unsettled])])];
   return { ...report, ...outcome, ...(notes.length === 0 ? {} : { notes }), waiting, blocked: selection.blocked, units: results, ...errors };
+}
+
+/**
+ * What failed for each package a check left undecided (`undecidedPackages`' sources), by full package key, as an issue
+ * shows a planning failure (`planningCause`: its first line, credentials redacted).
+ */
+function undecidedCauses(fixes: ReadonlyArray<SecurityFix>, peers: ReadonlyArray<{ readonly packages: ReadonlyArray<string>; readonly reason: string }>): Map<string, string> {
+  const causes = new Map<string, string[]>();
+  const add = (key: string, why: string) => causes.set(key, [...new Set([...causes.get(key) ?? [], planningCause(why)])]);
+  for (const fix of fixes) if (fix.undecided === true && fix.problem !== undefined) add(packageKey(fix), fix.problem);
+  for (const set of peers) for (const key of set.packages) add(key, set.reason);
+  return new Map([...causes].map(([key, why]) => [key, why.join("; ")]));
 }
 
 /** Why each fix that can't be decided (`SecurityFix.undecided`: its publisher identity, a carrier's reads) has no move. */
@@ -1307,6 +1322,8 @@ interface TrackingInputs {
   readonly complete: boolean;
   readonly prepared: YoungSplit;
   readonly blocked: Selection["blocked"];
+  /** What failed for each package a check left undecided (`undecidedCauses`). */
+  readonly undecided: ReadonlyMap<string, string>;
   readonly own: ReadonlyArray<GitHubPullRequest>;
   readonly base: PlanBase;
 }
@@ -1373,6 +1390,7 @@ async function trackIssues(execution: Execution, inputs: TrackingInputs): Promis
     units: planned,
     blocked: inputs.blocked,
     planningCauses,
+    undecided: inputs.undecided,
     trusted: (pkg) => isTrustedPackage(config.trustedPackages, pkg),
     eligibleAt: eligibleAtOf(execution, config),
     prOf: (target) => {

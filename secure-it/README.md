@@ -25,11 +25,13 @@ subject also has a finding not dismissed, or once it came back after it was gone
 - **A decision waiting for the wait:** it takes a version younger than `releaseAgeDays`. No PR opens: the issue says
   when each young version is past the wait, and a run fixes it then. Age always counts from the version's registry
   publication, never from the author's repository. A malware fix's destination always waits, trusted packages included.
-- **A package without a decision:** blocked (no fix, or the rule refused one), informational (only the project's own
-  repository reports it: nothing is done), or unassessed (planning failed this run).
+- **A package without a decision:** blocked (no published fix, or none the run can take: the rule refused every
+  candidate, or couldn't be applied, as the issue's reasons say), informational (only the project's own repository
+  reports it: nothing is done), or unassessed (planning failed this run, or a check did: a publisher identity, a
+  carrier's reads or a direct-peer set it couldn't decide).
 
 An unassessed issue names a known planning failure on the affected roots, coupled or carried packages, including when
-failed aged planning leaves young npm grouping unknown. It shows only the error's first line, with URL userinfo,
+failed aged planning leaves young npm grouping unknown, or the check that failed. It shows only the error's first line, with URL userinfo,
 queries, fragments and recognizable credentials redacted. Local paths are cleaned before the detail is cut to 1,000
 characters, including a visible cut marker, before quoting; quoting and body cleaning can expand that text. Without a
 known cause (malware taking priority, say), it keeps the generic explanation. Reassessed issues use this run's causes.

@@ -32,6 +32,11 @@ export interface AssessmentInputs {
   readonly blocked: Selection["blocked"];
   /** Known planning failures by full package key, for findings no decision covers this run. */
   readonly planningCauses: ReadonlyMap<string, string>;
+  /**
+   * Packages a failed check left without a decision this run (publisher identity, a carrier's reads, a direct-peer
+   * set), by full package key, with what failed, cleaned for an issue: never a refusal, and never only reported.
+   */
+  readonly undecided: ReadonlyMap<string, string>;
   readonly trusted: (pkg: { readonly ecosystem: Ecosystem; readonly name: string }) => boolean;
   /** When a young version is past the wait (UTC ISO), or undefined when its publication date can't be read. */
   readonly eligibleAt: (pkg: PackageVersion) => Promise<string | undefined>;
@@ -67,17 +72,21 @@ export async function assessmentOf(inputs: AssessmentInputs): Promise<Assessment
     const { ecosystem, name } = findings[0]!;
     const blocked = inputs.blocked.find((group) => group.packages.includes(key));
     const cause = inputs.planningCauses.get(key);
+    const failed = inputs.undecided.get(key);
     // Only the package's own repository publishing them: reported, never a candidate the rule refused, when all that
-    // holds the package back is that report. Any other block (a strict pin, an undecided carrier) is shown as one.
-    const reportedOnly = findings.every((finding) => !finding.reviewed && !finding.malicious)
+    // holds the package back is that report. Any other block (a strict pin, a check that failed) is shown as one.
+    const reportedOnly = failed === undefined && findings.every((finding) => !finding.reviewed && !finding.malicious)
       && (blocked === undefined || blocked.reportsOnly === true);
     const status: SubjectAssessment["status"] = reportedOnly
       ? { kind: "informational" }
-      : blocked !== undefined
-        ? { kind: "blocked", reason: "refused", detail: blocked.reasons.join("; ") }
-        : { kind: "blocked", reason: "unassessed", detail: cause === undefined
-          ? "no fix was planned for it this run (malware goes first, or its planning failed)"
-          : `no fix was planned for it this run: ${cause}` };
+      : failed !== undefined
+        // A check that failed decided nothing: the run couldn't assess it, whatever else blocks the package.
+        ? { kind: "blocked", reason: "unassessed", detail: `a check failed for it this run: ${failed}` }
+        : blocked !== undefined
+          ? { kind: "blocked", reason: "not-taken", detail: blocked.reasons.join("; ") }
+          : { kind: "blocked", reason: "unassessed", detail: cause === undefined
+            ? "no fix was planned for it this run (malware goes first, or its planning failed)"
+            : `no fix was planned for it this run: ${cause}` };
     subjects.push({ subject: { kind: "package", ecosystem, name }, findings, status });
   }
   return { sha: inputs.sha, at: inputs.now.toISOString(), complete: inputs.complete, subjects, excepted: inputs.excepted };

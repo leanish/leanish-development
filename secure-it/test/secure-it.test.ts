@@ -1255,16 +1255,37 @@ describe("secure-it run", () => {
     expect(quiet).toMatchObject({ outcome: "nothing-to-fix", waiting: ["vite@8.3.1: no version above 8.3.1 fixes GHSA-x"] });
     // A refusal is no error; an identity check that failed is one, reported while the other fix still goes out.
     expect(quiet).not.toHaveProperty("errors");
+    const viteIssue = (h: Harness) => [...(h.context.issues as FakeIssues).issues.values()].find((issue) => issue.title.includes("vite"))!.body;
+    expect(viteIssue(stuck)).toContain("**Blocked:** secure-it can't take a fix for it this run: `vite@8.3.1: no version above 8.3.1 fixes GHSA-x`");
     const undecidedProblem = "vite@8.3.1's publisher identity can't be decided: attestation lookup failed with HTTP 503";
     const broken = harness({ fixes: [vite({ to: undefined, problem: undecidedProblem, undecided: true }), leftPad()] });
     expect(await secureIt(broken.deps).run(broken.context)).toMatchObject({
       errors: [undecidedProblem], waiting: [`vite@8.3.1: ${undecidedProblem}`], units: [{ outcome: "published" }],
     });
+    // Its issue says the run couldn't assess it, never that the rule refused it.
+    expect(viteIssue(broken)).toContain(`**Blocked:** the fix couldn't be assessed this run. \`a check failed for it this run: ${undecidedProblem}\``);
+    expect(viteIssue(broken)).not.toContain("refused");
 
     const incomplete = harness();
     const deps = { ...incomplete.deps, candidates: async () => ({ fixes: [vite()], incomplete: ["Gradle :runtimeClasspath couldn't resolve x"], gaps: [], osvScannerVersion: "2.6.0" }) };
     expect(await secureIt(deps).run(incomplete.context)).toMatchObject({ outcome: "incomplete", incomplete: ["Gradle :runtimeClasspath couldn't resolve x"] });
     expect(incomplete.agentCalls).toEqual([]);
+  });
+
+  it("keeps a package a failed check left undecided tracked, while a finding gone elsewhere resolves its issue", async () => {
+    // A failed check decides nothing, but it doesn't make the scan incomplete: what it saw is still there.
+    const problem = "vite@8.3.1's publisher identity can't be decided: attestation lookup failed with HTTP 503";
+    const observations: ObservedFinding[] = [VITE_FINDING, { ...VITE_FINDING, name: "left-pad", ids: ["GHSA-left-pad"], versions: ["1.0.0"] }];
+    const h = harness({ fixes: [vite({ to: undefined, problem, undecided: true })], observations });
+    await secureIt(h.deps).run(h.context);
+    const issues = h.context.issues as FakeIssues;
+    const titled = (name: string) => [...issues.issues.values()].find((issue) => issue.title.includes(name))!;
+    expect([titled("vite").state, titled("left-pad").state]).toEqual(["open", "open"]);
+    observations.pop();
+    await secureIt(h.deps).run(h.context);
+    expect(titled("vite")).toMatchObject({ state: "open", body: expect.stringContaining("the fix couldn't be assessed this run") });
+    expect(titled("left-pad").state).toBe("closed");
+    expect(recordOf(titled("left-pad").body)!.pendingClose?.reason).toBe("resolved");
   });
 
   it("expands an existing batch by reconcile-by-revert rather than opening another package PR", async () => {

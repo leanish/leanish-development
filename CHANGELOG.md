@@ -62,6 +62,9 @@
 - A finding a valid exception covers is never recorded as absent: an issue whose findings are all excepted closes
   saying "finds none of its advisories outside a valid exception", a dismissal of it holds once the exception expires,
   and an incomplete run doesn't say its advisories were gone.
+- A package a failed check left undecided (a publisher identity, a carrier's reads, a direct-peer set) shows on its issue
+  as not assessed this run, with the check's first line, never as refused. Any other package without a fix it can take
+  says so with the rule's reasons, rather than claiming the rule refused every candidate.
 - The docs say what a scan with coverage gaps still closes: a duplicate issue whose findings the surviving one already
   tracks, and a closing an earlier run recorded; it never takes a finding for gone.
 - The docs state what a dismissal covers: no new issue for a subject whose findings are all dismissed, but one that
