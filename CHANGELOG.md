@@ -44,7 +44,11 @@
   one (404) already did, instead of failing the run.
 - A PR's text and commit message defuse `GH-12` references and `http://` or `www.github.com` issue links after a
   closing keyword too, so merging a PR never closes the issue it tracks. An ordinary unit's published PR shows on its
-  issue right away ("In progress"), not only after the next run's sync.
+  issue right away ("In progress") when it carries the whole decision, not only after the next run's sync.
+- An issue names as its PR only one recording exactly its decision, never one a run would reuse for another
+  (until that run redoes it, which then shows it on the issue). The docs say closing an issue is an input too (it
+  dismisses its findings), and that a Maven version already on the base elsewhere isn't held or refused when an aged
+  update brings it into another configuration.
 - A first `take-early` label authorizes only the young versions its issue showed: one the issue never displayed (an
   update that couldn't be written, say) needs a new label once the issue shows it.
 - While an incomplete assessment (a lasting coverage gap, say) no longer finds an open issue's decision, the issue stays

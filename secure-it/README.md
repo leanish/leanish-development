@@ -47,7 +47,8 @@ Issues don't change subject: when a decision changes (another version, another g
 first, then closes the old one as superseded by it. Once a complete scan no longer sees a finding, its issue closes as
 resolved; a scan with coverage gaps closes nothing. An issue a person closes is dismissed: the run doesn't reopen it
 for the same findings, and only a finding that comes back after it was gone opens a new one. Issue text never selects
-versions: the code decides, and the only thing a person's input changes is whether a waiting decision runs early.
+versions: the code decides. A person's input changes two things: closing an issue dismisses its findings, and a
+`take-early` label lets a waiting decision run early.
 
 ### Taking a fix early: `take-early`
 
@@ -343,7 +344,9 @@ The tick from [`core/tool-runtime`](../core/tool-runtime), with secure-it's step
   proceeds only while its grant stands (see [Issues](#issues-decide-what-runs)); verification admits only that grant's
   versions and trusted packages. The recorded cooldown is evidence, not authorization.
 - **Ordinary tracked PRs** need no early grant and become ready on green, unless the gate's cooldown alone holds
-  them. Trusted packages don't cause a gate hold. Verification refuses any non-trusted young version no grant covers.
+  them. Trusted packages don't cause a gate hold. Verification refuses any non-trusted young version no grant covers
+  among those the comparison sees as new; a Maven version already on the base elsewhere isn't one (see
+  [coverage gaps](../docs/coverage-gaps.md)).
 - **A version-fix PR without `Tracks`** is left to its owner; review does not migrate, rebase, adapt or mark it ready.
   Floor-removal PRs intentionally track no issue and retain their separate review path.
 

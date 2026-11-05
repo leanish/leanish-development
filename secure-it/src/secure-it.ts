@@ -632,11 +632,7 @@ async function runUnit(
   const tracked = disposition.tracked;
   if (tracked === undefined) throw new Error("a version unit can't execute without its decision's issue");
   const attempt = tracked.attempt;
-  if (attempt === undefined) {
-    const result = await executeUnit(execution, plan, base, owned[0], own, details, tracked);
-    await showPublished(execution, tracked, result);
-    return result;
-  }
+  if (attempt === undefined) return executeUnit(execution, plan, base, owned[0], own, details, tracked);
   // One grant runs one attempt; every post-start failure is settled here or recovered next run.
   let result: Readonly<Record<string, unknown>>;
   try {
@@ -689,11 +685,17 @@ async function executeUnit(
   if (verified.problems.length > 0) return { ...checked, outcome: "verification-failed", problems: verified.problems };
   const published = trackingContent(verified.content, tracked.issue, tracked.attempt !== undefined);
   const content = { ...published, body: withPlanSection(published.body, verified.plan) };
+  // An ordinary unit's PR shows on its issue at once, only when it carries the whole decision (a retry can reduce it).
+  const show = async (pr: { readonly number: number; readonly url: string }) => {
+    if (tracked.attempt === undefined && decisionIdOf(verified.plan) === decisionIdOf(plan)) await showPublished(execution, tracked, pr);
+  };
   if (reusable !== undefined) {
     const { pr } = await publishUpdate(publication, prepared, reusable.number, content, 0);
+    await show({ number: pr.number, url: pr.url });
     return { ...checked, outcome: "updated", pullRequest: pr.url, number: pr.number };
   }
   const created = await publishNew(publication, prepared, content);
+  if (created !== undefined) await show({ number: created.number, url: created.url });
   return created === undefined
     ? { ...checked, outcome: "nothing-changed", summary: answer.summary }
     : { ...checked, outcome: "published", pullRequest: created.url, number: created.number };
@@ -707,13 +709,11 @@ async function admitted(base: Tree, allowed: ReadonlyArray<PackageVersion>): Pro
 }
 
 /**
- * The PR an ordinary unit just published, shown on its issue now rather than at the next run's sync. The PR exists
- * either way, so a write that fails (a rate limit too: whatever the run does next meets it) is logged, never the unit's
- * failure.
+ * The PR an ordinary unit just published, or redid, with its whole decision, shown on its issue now rather than at the
+ * next run's sync. The PR exists either way, so a write that fails (a rate limit too: whatever the run does next meets
+ * it) is logged, never the unit's failure.
  */
-async function showPublished(execution: Execution, tracked: TrackedExecution, result: Readonly<Record<string, unknown>>): Promise<void> {
-  if (result["outcome"] !== "published" || typeof result["number"] !== "number" || typeof result["pullRequest"] !== "string") return;
-  const pr = { number: result["number"], url: result["pullRequest"] };
+async function showPublished(execution: Execution, tracked: TrackedExecution, pr: { readonly number: number; readonly url: string }): Promise<void> {
   await showPullRequest(attemptClient(execution), tracked.issue, pr, tracked.assessment).catch((error: unknown) => {
     execution.context.logger.warn("secure-it: a published PR couldn't be shown on its issue; the next run's sync shows it", { issue: tracked.issue, pr: pr.number, error: asError(error).message });
   });
@@ -1397,8 +1397,7 @@ async function trackIssues(execution: Execution, inputs: TrackingInputs): Promis
     trusted: (pkg) => isTrustedPackage(config.trustedPackages, pkg),
     eligibleAt: eligibleAtOf(execution, config),
     prOf: (target) => {
-      const matches = recorded.filter((entry) => matchesPlan(target, entry));
-      const found = matches.find((entry) => decisionIdOf(entry.plan) === decisionIdOf(target.plan)) ?? matches[0];
+      const found = recorded.find((entry) => matchesPlan(target, entry) && decisionIdOf(entry.plan) === decisionIdOf(target.plan));
       return found === undefined ? undefined : { number: found.pr.number, url: found.pr.url };
     },
   });

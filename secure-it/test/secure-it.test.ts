@@ -731,6 +731,16 @@ describe("secure-it run", () => {
       expect(issue.body).not.toContain("**Ready.**");
     });
 
+    it("doesn't name a PR it would reuse for another decision as this one's while it carries none of it", async () => {
+      const h = harness({ prs: [await vitePr()], fixes: [leftPad()], answer: { outcome: "cannot-apply", summary: "no" } });
+      h.workspace.setRemoteHead("secure-it/2026-10-05-security", HEAD_SHA);
+      expect(await flow(h, OLD).run(h.context)).toMatchObject({ outcome: "cannot-apply" });
+      const body = issuesOf(h).issues.get(1)!.body;
+      expect(recordOf(body)!.subject).toMatchObject({ kind: "decision", moves: [{ name: "left-pad" }] });
+      expect(body).toContain("**Ready.**");
+      expect(body).not.toContain("#7");
+    });
+
     it("never names a PR someone else pushed to as the decision's, even one recording exactly its moves", async () => {
       for (const fixes of [[vite()], [vite(), leftPad()]]) {
         const h = harness({ prs: [await vitePr({ headSha: "9".repeat(40) })], fixes });
@@ -1553,6 +1563,8 @@ describe("secure-it run", () => {
     expect(planOf(pr.body)?.packages).toEqual(["npm|vite"]);
     expect(planOf(pr.body)?.leftOut?.[0]?.moves[0]?.name).toBe("left-pad");
     expect(h.workspace.publications).toHaveLength(1);
+    // A PR that carries only part of the decision is not shown as the decision's.
+    expect((h.context.issues as FakeIssues).issues.get(1)!.body).not.toContain("#42");
   });
 
   it("does not retry a second time or guess a parent for an induced/global failure", async () => {

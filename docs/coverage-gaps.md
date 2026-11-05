@@ -34,7 +34,9 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   dependencies'), and nothing dates those before the removal is applied and verified. A young version only verification finds (a transitive
   move, say) stops that unit at once, with no retry, and is named on the issue, but the agent runs again on every run
   until that version ages. Gradle dynamic versions (ranges, `latest`) can bring one in the same way, as can a young
-  version already in the repository.
+  version already in the repository. A Maven version already resolved anywhere on the base isn't new to the
+  comparison at all, so an aged update that brings it into another configuration (a young X runtime didn't have but
+  another configuration did) is neither held nor refused: it publishes without a grant, as in v0.10.1.
 - **A run whose planning fails changes no issue (secure-it)**: when candidate planning throws or the inventory is
   incomplete, the run executes nothing and leaves the issues as they are. While that persists (on a repository's first
   run, say), a finding the scan sees has no issue yet.
