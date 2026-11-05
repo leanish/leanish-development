@@ -7,13 +7,13 @@
  * is listed with its old body), while reading an issue by its number doesn't. So every issue the sync wrote is read
  * back by number in the rounds after: a round never takes the listing's stale copy for the truth and writes again.
  *
- * A write GitHub refuses as forbidden is a setup problem: the write PAT lacks Issues: read and write. So is a create
+ * A write GitHub refuses as forbidden is a setup problem, likely the write PAT's Issues permission. So is a create
  * GitHub answers as gone: the repository has Issues disabled. Either fails the sync with that, never a fallback; a rate
- * limit stays a rate limit.
+ * limit stays a rate limit (`issueWrite`).
  */
-import { GitHubApiError } from "@leanish/agent-runtime/github/github-client";
 import type { GitHubIssue, GitHubIssues } from "@leanish/tool-runtime/github-issues";
 
+import { issueWrite, unlessGone } from "./issue-access.ts";
 import type { Assessment, PendingClose } from "./issue-model.ts";
 import { postNotice } from "./issue-notices.ts";
 import { type IssueOperation, reconcile, type TrackedIssue } from "./issue-reconcile.ts";
@@ -155,13 +155,8 @@ async function reopenedAfterClosing(sync: IssueSync, login: string, number: numb
  * Issue `number` as GitHub has it now, or undefined once it's gone: transferred to a repository the token reads (301)
  * or to one it can't (404), or deleted (410).
  */
-async function readWritten(sync: IssueSync, number: number): Promise<GitHubIssue | undefined> {
-  try {
-    return await sync.issues.getIssue({ repo: sync.repo, number });
-  } catch (error) {
-    if (error instanceof GitHubApiError && (error.status === 301 || error.status === 404 || error.status === 410)) return undefined;
-    throw error;
-  }
+function readWritten(sync: IssueSync, number: number): Promise<GitHubIssue | undefined> {
+  return unlessGone(() => sync.issues.getIssue({ repo: sync.repo, number }));
 }
 
 /** An issue the token's login opened that looks like the tool's (its section heading), not the owner's own issue. */
@@ -170,7 +165,7 @@ const looksOurs = (issue: GitHubIssue) => issue.body.includes("## secure-it") ||
 /** Applies one operation and returns the number of the issue it wrote. */
 async function apply(sync: IssueSync, operation: IssueOperation): Promise<number> {
   const { issues, repo } = sync;
-  return setup(async () => {
+  return issueWrite(async () => {
     switch (operation.kind) {
       case "create":
         return (await issues.createIssue({ repo, title: operation.title, body: operation.body, labels: [ISSUE_LABEL] })).number;
@@ -188,19 +183,3 @@ async function apply(sync: IssueSync, operation: IssueOperation): Promise<number
   });
 }
 
-/** Runs a write, turning GitHub's plain refusal into what to fix; a rate limit or anything else goes through as it is. */
-async function setup<T>(write: () => Promise<T>): Promise<T> {
-  try {
-    return await write();
-  } catch (error) {
-    if (error instanceof GitHubApiError && error.status === 403 && error.reason === "forbidden") {
-      throw new Error(`GitHub refused secure-it's issue write (${error.operation}): the write PAT needs Issues: read and write (docs/adopting-tools.md)`);
-    }
-    // Only a create says it: listing a repository's issues with the feature off answers an empty list, so the first
-    // create is where it shows, while a 410 on an issue that exists means that issue was deleted.
-    if (error instanceof GitHubApiError && error.status === 410 && error.operation === "createIssue") {
-      throw new Error(`GitHub refused secure-it's issue write (${error.operation}): Issues are disabled on this repository, and secure-it needs them enabled (docs/adopting-tools.md)`);
-    }
-    throw error;
-  }
-}

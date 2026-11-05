@@ -7,6 +7,7 @@
 import type { GitHubIssues } from "@leanish/tool-runtime/github-issues";
 
 import { grantStanding } from "./decision-issues.ts";
+import { issueWrite, unlessGone } from "./issue-access.ts";
 import { decisionMoves } from "./issue-assessment.ts";
 import type { Assessment, Attempt, IssueRecord, PackageVersion } from "./issue-model.ts";
 import { subjectId } from "./issue-model.ts";
@@ -64,7 +65,9 @@ export async function issueDisposition(
   // Read fresh, by number: the sync's listing can lag a person's closing by seconds, and one run asks for the same plan
   // more than once (the unit and its retries), so an attempt recorded by an earlier ask must be seen by the next,
   // never started twice.
-  const fresh = await client.issues.getIssue({ repo: client.repo, number: issue.number });
+  const gone: Disposition = { kind: "defer", reason: `its issue #${issue.number} is gone` };
+  const fresh = await unlessGone(() => client.issues.getIssue({ repo: client.repo, number: issue.number }));
+  if (fresh === undefined) return gone;
   const current = recordOf(fresh.body);
   if (current === undefined || subjectId(current.subject) !== id) return { kind: "defer", reason: `its issue #${issue.number} can't be read any more` };
   if (fresh.state !== "open" || current.pendingClose !== undefined || !hasLabel(fresh.labels, ISSUE_LABEL)) {
@@ -74,7 +77,8 @@ export async function issueDisposition(
   if (subject.status.kind !== "waiting") return { kind: "defer", reason: `its issue #${issue.number} says it can't go ahead` };
   if (!hasLabel(fresh.labels, TAKE_EARLY_LABEL)) return { kind: "defer", reason: `waiting for the release-age wait (#${issue.number})` };
 
-  const decision = await grantStanding(client, issue.number, { state: fresh.state, labels: fresh.labels, record: current, status: subject.status });
+  const decision = await unlessGone(() => grantStanding(client, issue.number, { state: fresh.state, labels: fresh.labels, record: current, status: subject.status }));
+  if (decision === undefined) return gone;
   if (decision.kind === "none") return { kind: "defer", reason: `waiting for the release-age wait (#${issue.number})` };
   if (decision.kind === "refused") {
     // Every refusal shows on the issue, once per label event and reason.
@@ -95,8 +99,8 @@ export async function issueDisposition(
     id: `${decision.grant.labelEventId}-${client.now.getTime()}`, grantEventId: decision.grant.labelEventId, branch: branch(decision.grant.labelEventId), startedAt: client.now.toISOString(),
   };
   const record: IssueRecord = { ...current, grant: decision.grant, attempts: [...current.attempts, attempt] };
-  await client.issues.updateIssue({ repo: client.repo, number: issue.number, body: issueWriter(client.clean).render(subject, record, tracking.assessment.sha).body });
-  return early(attempt);
+  const recorded = await unlessGone(() => issueWrite(() => client.issues.updateIssue({ repo: client.repo, number: issue.number, body: issueWriter(client.clean).render(subject, record, tracking.assessment.sha).body })));
+  return recorded === undefined ? gone : early(attempt);
 }
 
 /**
@@ -135,7 +139,8 @@ export async function inactiveLabelNotices(client: { readonly issues: GitHubIssu
     const { record } = issue;
     const current = issue.state === "open" && record.pendingClose === undefined && decided.has(subjectId(record.subject));
     if (current) continue;
-    const events = await client.issues.listEvents({ repo: client.repo, number: issue.number });
+    const events = await unlessGone(() => client.issues.listEvents({ repo: client.repo, number: issue.number }));
+    if (events === undefined) continue;
     const label = events.filter((event) => isLabel(event.label, TAKE_EARLY_LABEL) && (event.event === "labeled" || event.event === "unlabeled")).sort((a, b) => a.id - b.id).at(-1);
     if (label?.event !== "labeled" || record.attempts.some((attempt) => attempt.grantEventId === label.id)) continue;
     const why = issue.state !== "open" ? "the issue is closed"

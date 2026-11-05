@@ -115,10 +115,10 @@ Leave other permissions and account permissions unset.
   Issues are disabled, and executes nothing, until they're enabled.
   Without the permission:
   - The issue sync fails when GitHub refuses one of its issue reads or writes
-    (but see the exception below), and that run executes nothing. A refused
-    write while applying the issues' changes says the write PAT needs Issues:
-    read and write; other refusals report GitHub's error (a read refused on a
-    private repository, say).
+    (but see the exception below), and that run executes nothing. A write GitHub
+    refuses as forbidden, in the sync or later in the run, says to check that the
+    write PAT has Issues: read and write; other refusals report GitHub's error (a
+    read refused on a private repository, say).
   - The exception: returning a `take-early` label after its attempt's PR closed,
     reading its label events included. A failure there doesn't stop the run;
     later runs try again while it still applies, and note each failure.

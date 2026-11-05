@@ -169,6 +169,24 @@ describe("createGitHubIssues", () => {
     await expect(client.removeLabel({ repo: REPO, number: 99, label: "take-early" })).rejects.toThrow("HTTP 404");
   });
 
+  it("takes a label as off when its issue went, and an ambiguous 404 for nothing", async () => {
+    for (const gone of [301, 410]) {
+      const direct = scripted(json({ message: "Gone" }, gone));
+      await expect(issues(direct.fetch).removeLabel({ repo: REPO, number: 12, label: "take-early" })).resolves.toBeUndefined();
+      const onRead = scripted(json({ message: "Not Found" }, 404), json({ message: "Gone" }, gone));
+      await expect(issues(onRead.fetch).removeLabel({ repo: REPO, number: 12, label: "take-early" })).resolves.toBeUndefined();
+    }
+    const unread = scripted(json({ message: "Not Found" }, 404), json({ message: "Server Error" }, 500));
+    await expect(issues(unread.fetch).removeLabel({ repo: REPO, number: 12, label: "take-early" })).rejects.toThrow("HTTP 500");
+  });
+
+  it("grants no permission on a repository that moved or went", async () => {
+    for (const gone of [301, 410]) {
+      const { fetch } = scripted(json({ message: "Moved" }, gone));
+      expect(await issues(fetch).permission({ repo: REPO, login: "owner" })).toBe("none");
+    }
+  });
+
   it("takes a label still on the issue in another casing after a 404 for not removed", async () => {
     const { fetch } = scripted(json({ message: "Not Found" }, 404), json(apiIssue({ labels: [{ name: "Take-Early" }] })));
     await expect(issues(fetch).removeLabel({ repo: REPO, number: 12, label: "take-early" })).rejects.toThrow("HTTP 404");

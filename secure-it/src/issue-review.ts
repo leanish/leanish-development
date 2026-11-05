@@ -17,6 +17,7 @@ import type { Ecosystem } from "@leanish/gate/versions";
 import { decisionIssue, type EarlyPrs, grantStanding, type Scope, scopeOf, takenEarlyOf, trackedIssueOf } from "./decision-issues.ts";
 import { decisionMoves } from "./issue-assessment.ts";
 import type { AttemptClient } from "./issue-attempts.ts";
+import { unlessGone } from "./issue-access.ts";
 import { settleAttempt } from "./issue-attempts.ts";
 import { type Grant, subjectId, type PackageVersion, type YoungVersion } from "./issue-model.ts";
 import { postNotice } from "./issue-notices.ts";
@@ -124,7 +125,8 @@ type GrantStanding = { readonly kind: "stands"; readonly grant: Grant } | { read
 /** Whether `grantOf` still grants an early attempt's label for the versions still `young`. Reads only. */
 async function grantFor(client: ReviewIssues, scope: Scope & { readonly kind: "early" }, young: ReadonlyArray<YoungVersion>): Promise<GrantStanding> {
   const { number, issue, record, attempt } = scope;
-  const decision = await grantStanding(client, number, { state: issue.state, labels: issue.labels, record, status: { kind: "waiting", young } });
+  const decision = await unlessGone(() => grantStanding(client, number, { state: issue.state, labels: issue.labels, record, status: { kind: "waiting", young } }));
+  if (decision === undefined) return { kind: "gone", why: `its issue #${number} is gone`, key: `take-early:${attempt.grantEventId}:issue-gone` };
   if (decision.kind === "granted" && decision.grant.labelEventId === attempt.grantEventId) return { kind: "stands", grant: decision.grant };
   const why = decision.kind === "refused" ? decision.reason : decision.kind === "none" ? "its `take-early` label was removed" : "a newer label isn't this attempt's";
   return { kind: "gone", why, key: decision.kind === "refused" ? decision.noticeId : `take-early:${attempt.grantEventId}:withdrawn` };

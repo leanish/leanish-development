@@ -10,10 +10,11 @@
 import type { GitHubClient, GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
 import type { GitHubIssues } from "@leanish/tool-runtime/github-issues";
 
+import { issueWrite, unlessGone } from "./issue-access.ts";
 import { withoutPr } from "./issue-assessment.ts";
 import { type Assessment, type Attempt, type IssueRecord, subjectId } from "./issue-model.ts";
 import { recordShows, type TrackedIssue } from "./issue-reconcile.ts";
-import { hasLabel, isLabel, issueWriter, recordOf, TAKE_EARLY_LABEL } from "./issue-text.ts";
+import { hasLabel, isLabel, ISSUE_LABEL, issueWriter, recordOf, TAKE_EARLY_LABEL } from "./issue-text.ts";
 
 export interface AttemptClient {
   readonly issues: GitHubIssues;
@@ -30,14 +31,16 @@ export type AttemptPatch = Pick<Attempt, "pr" | "outcome">;
 /**
  * Writes `patch` into attempt `id` of issue `number`, read fresh; an attempt that ended already stays as it ended.
  * `assessment` is the run's: the issue's text is rendered again from it (`bodyWith`). A review assesses nothing, so it
- * passes none: only the record changes, and the next run's sync renders the text from it.
+ * passes none: only the record changes, and the next run's sync renders the text from it. An issue gone has nothing to
+ * write to. Says whether it wrote.
  */
-export async function settleAttempt(client: AttemptClient, number: number, id: string, patch: AttemptPatch, assessment: Assessment | undefined): Promise<void> {
-  const issue = await client.issues.getIssue({ repo: client.repo, number });
+export async function settleAttempt(client: AttemptClient, number: number, id: string, patch: AttemptPatch, assessment: Assessment | undefined): Promise<boolean> {
+  const issue = await unlessGone(() => client.issues.getIssue({ repo: client.repo, number }));
+  if (issue === undefined) return false;
   const record = recordOf(issue.body);
   if (record === undefined) throw new Error(`#${number}'s record can't be read; attempt ${id} isn't recorded as ${describe(patch)}`);
   const attempt = record.attempts.find((entry) => entry.id === id);
-  if (attempt === undefined || attempt.outcome !== undefined) return;
+  if (attempt === undefined || attempt.outcome !== undefined) return false;
   const settled: Attempt = { ...attempt, ...patch };
   const updated: IssueRecord = { ...record, attempts: record.attempts.map((entry) => (entry.id === id ? settled : entry)) };
   // Only an open issue the run's sync rendered: a closed one (dismissed, superseded, resolved) or one waiting to close
@@ -46,13 +49,15 @@ export async function settleAttempt(client: AttemptClient, number: number, id: s
   // progress. Without an assessment (a review's), the text stays as the last sync left it, until the next one.
   const current = issue.state === "open" && updated.pendingClose === undefined;
   const rendered = current && assessment !== undefined && settled.outcome === "pr-closed" && settled.pr !== undefined ? withoutPr(assessment, settled.pr) : assessment;
-  await client.issues.updateIssue({ repo: client.repo, number, body: bodyWith(client, issue.body, updated, current ? rendered : undefined) });
-  if (settled.outcome !== "pr-closed") return;
+  const written = await unlessGone(() => issueWrite(() => client.issues.updateIssue({ repo: client.repo, number, body: bodyWith(client, issue.body, updated, current ? rendered : undefined) })));
+  if (written === undefined) return false;
+  if (settled.outcome !== "pr-closed") return true;
   try {
     await returnLabel(client, number, settled.grantEventId);
   } catch {
     // Pending cleanup: the attempt's end is recorded, and every run's recovery returns the label again.
   }
+  return true;
 }
 
 /**
@@ -60,8 +65,9 @@ export async function settleAttempt(client: AttemptClient, number: number, id: s
  * recording it failed before, is attached and the attempt goes on with it; only with none is it `failed`.
  */
 export async function endAttempt(client: AttemptClient, number: number, id: string, assessment: Assessment): Promise<void> {
-  const record = recordOf((await client.issues.getIssue({ repo: client.repo, number })).body);
-  const attempt = record?.attempts.find((entry) => entry.id === id);
+  const issue = await unlessGone(() => client.issues.getIssue({ repo: client.repo, number }));
+  if (issue === undefined) return;
+  const attempt = recordOf(issue.body)?.attempts.find((entry) => entry.id === id);
   if (attempt === undefined || attempt.outcome !== undefined || attempt.pr !== undefined) return;
   const pr = (await client.github.findPullRequests({ repo: client.repo, branch: attempt.branch })).find(client.ours);
   await settleAttempt(client, number, id, pr === undefined ? { outcome: "failed" } : { pr: pr.number, ...ended(pr) }, assessment);
@@ -94,8 +100,7 @@ export async function recoverAttempts(client: AttemptClient, tracked: ReadonlyAr
         : await client.github.getPullRequest({ repo: client.repo, number: attempt.pr });
       const patch: AttemptPatch = pr === undefined ? { outcome: "interrupted" } : { pr: pr.number, ...ended(pr) };
       if (attempt.pr === pr?.number && patch.outcome === undefined) continue;
-      await settleAttempt(client, issue.number, attempt.id, patch, assessment);
-      notes.push(`#${issue.number}: attempt ${attempt.id} ${describe(patch)}`);
+      if (await settleAttempt(client, issue.number, attempt.id, patch, assessment)) notes.push(`#${issue.number}: attempt ${attempt.id} ${describe(patch)}`);
     }
   }
   return notes;
@@ -104,19 +109,21 @@ export async function recoverAttempts(client: AttemptClient, tracked: ReadonlyAr
 /**
  * Shows `pr`, which an ordinary unit just published for issue `number`'s eligible decision, on that issue: rendered
  * again from `assessment` with the PR as its decision's, as the next run's sync would (`bodyWith`'s conditions); an
- * issue that isn't open as its subject's, or no longer reads, is left alone.
+ * issue gone, or that isn't open as its subject's with the tool's label, or no longer reads, is left alone: without that
+ * label a person took it out of the tool's hands, as for execution (`issueDisposition`).
  */
 export async function showPullRequest(client: AttemptClient, number: number, pr: { readonly number: number; readonly url: string }, assessment: Assessment): Promise<void> {
-  const issue = await client.issues.getIssue({ repo: client.repo, number });
+  const issue = await unlessGone(() => client.issues.getIssue({ repo: client.repo, number }));
+  if (issue === undefined) return;
   const record = recordOf(issue.body);
-  if (record === undefined || issue.state !== "open" || record.pendingClose !== undefined) return;
+  if (record === undefined || issue.state !== "open" || record.pendingClose !== undefined || !hasLabel(issue.labels, ISSUE_LABEL)) return;
   const id = subjectId(record.subject);
   const shown: Assessment = {
     ...assessment,
     subjects: assessment.subjects.map((subject) => (subjectId(subject.subject) === id && subject.status.kind === "eligible" ? { ...subject, status: { ...subject.status, pr } } : subject)),
   };
   const body = bodyWith(client, issue.body, record, shown);
-  if (body !== issue.body) await client.issues.updateIssue({ repo: client.repo, number, body });
+  if (body !== issue.body) await unlessGone(() => issueWrite(() => client.issues.updateIssue({ repo: client.repo, number, body })));
 }
 
 /**
@@ -148,9 +155,11 @@ function ended(pr: GitHubPullRequest): Pick<Attempt, "outcome"> {
 
 /** Removes the label when its current event is still the one the attempt consumed; a newer label is a new grant. */
 async function returnLabel(client: AttemptClient, number: number, grantEventId: number): Promise<void> {
-  const events = await client.issues.listEvents({ repo: client.repo, number });
+  const events = await unlessGone(() => client.issues.listEvents({ repo: client.repo, number }));
+  if (events === undefined) return;
   const current = events.filter((event) => isLabel(event.label, TAKE_EARLY_LABEL) && (event.event === "labeled" || event.event === "unlabeled")).at(-1);
-  if (current?.event === "labeled" && current.id === grantEventId) await client.issues.removeLabel({ repo: client.repo, number, label: TAKE_EARLY_LABEL });
+  // Not `unlessGone`: a 404 here doesn't say the label is off (`removeLabel` tells what it can), so it stays pending.
+  if (current?.event === "labeled" && current.id === grantEventId) await issueWrite(() => client.issues.removeLabel({ repo: client.repo, number, label: TAKE_EARLY_LABEL }));
 }
 
 function describe(patch: AttemptPatch): string {

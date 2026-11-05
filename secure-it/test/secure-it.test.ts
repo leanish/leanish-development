@@ -719,7 +719,7 @@ describe("secure-it run", () => {
       const failed = harness({ fixes: [] });
       issuesOf(failed).forbidden.add("createIssue");
       const broken = await flow(failed).run(failed.context);
-      expect(broken).toMatchObject({ outcome: "nothing-to-fix", errors: [expect.stringContaining("the write PAT needs Issues: read and write")] });
+      expect(broken).toMatchObject({ outcome: "nothing-to-fix", errors: [expect.stringContaining("check that the write PAT has Issues: read and write")] });
       const unsettled = harness({ fixes: [] });
       // Every issue the sync opens is gone when read back, so the rounds run out without settling.
       const issues = issuesOf(unsettled);
@@ -739,8 +739,8 @@ describe("secure-it run", () => {
       issuesOf(h).forbidden.add("createIssue");
       const result = await flow(h).run(h.context);
       expect(result).toMatchObject({
-        outcome: "deferred", reason: expect.stringContaining("the write PAT needs Issues: read and write"),
-        errors: [expect.stringContaining("the write PAT needs Issues: read and write")],
+        outcome: "deferred", reason: expect.stringContaining("check that the write PAT has Issues: read and write"),
+        errors: [expect.stringContaining("check that the write PAT has Issues: read and write")],
       });
       expect(h.agentCalls).toHaveLength(0);
       expect(h.workspace.publications).toHaveLength(0);
@@ -1258,7 +1258,7 @@ describe("secure-it run", () => {
     it("runs nothing when the write PAT can't write issues, and says what to fix", async () => {
       const h = harness();
       issuesOf(h).forbidden.add("createIssue");
-      expect(await flow(h, OLD).run(h.context)).toMatchObject({ outcome: "deferred", reason: expect.stringContaining("the write PAT needs Issues: read and write") });
+      expect(await flow(h, OLD).run(h.context)).toMatchObject({ outcome: "deferred", reason: expect.stringContaining("check that the write PAT has Issues: read and write") });
       expect(h.agentCalls).toEqual([]);
     });
   });

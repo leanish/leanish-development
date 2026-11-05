@@ -8,10 +8,10 @@
  * - Whether a grant stands now (`grantStanding`): read afresh every time it's asked, never cached.
  * - What a review may do with a PR this tick: the review's own per-PR permit, from its disposition (`issue-review.ts`).
  */
-import { GitHubApiError } from "@leanish/agent-runtime/github/github-client";
 import type { GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
 import type { GitHubIssue, GitHubIssues } from "@leanish/tool-runtime/github-issues";
 
+import { unlessGone } from "./issue-access.ts";
 import { decisionMoves } from "./issue-assessment.ts";
 import { type GrantDecision, grantOf } from "./issue-grant.ts";
 import { type Attempt, type Grant, type IssueRecord, subjectId, type SubjectStatus } from "./issue-model.ts";
@@ -39,12 +39,8 @@ export function takenEarlyOf(body: string): boolean {
 
 /** The tool's issue `number` with its record, when that record is `plan`'s decision. */
 export async function decisionIssue(client: IssueReader, number: number, plan: ChangePlan): Promise<{ issue: GitHubIssue; record: IssueRecord } | undefined> {
-  // An issue gone (transferred to a repository the token reads: 301, or to one it can't: 404; deleted: 410) is no issue
-  // of this decision's; any other failure goes through, so nothing proceeds unread.
-  const read = await client.issues.getIssue({ repo: client.repo, number }).catch((error: unknown) => {
-    if (error instanceof GitHubApiError && (error.status === 301 || error.status === 404 || error.status === 410)) return undefined;
-    throw error;
-  });
+  // An issue gone is no issue of this decision's; any other failure goes through, so nothing proceeds unread.
+  const read = await unlessGone(() => client.issues.getIssue({ repo: client.repo, number }));
   if (read === undefined) return undefined;
   const [issue, login] = [read, await client.issues.login()];
   const record = recordOf(issue.body);

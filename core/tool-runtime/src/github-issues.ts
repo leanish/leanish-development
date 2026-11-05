@@ -77,11 +77,12 @@ export interface GitHubIssues {
   listComments(args: { readonly repo: string; readonly number: number }): Promise<ReadonlyArray<GitHubIssueComment>>;
   createComment(args: { readonly repo: string; readonly number: number; readonly body: string }): Promise<GitHubIssueComment>;
   listEvents(args: { readonly repo: string; readonly number: number }): Promise<ReadonlyArray<GitHubIssueEvent>>;
-  /** Resolves when the label is gone, including when it already was. */
+  /** Resolves when the label is gone, including when it already was or its issue went with it. */
   removeLabel(args: { readonly repo: string; readonly number: number; readonly label: string }): Promise<void>;
   /**
    * `login`'s effective permission; `none` on a 404, which is GitHub's answer for a non-collaborator but also for a
-   * repository the token can't see: either way no permission is established, so callers must fail closed on it.
+   * repository the token can't see, and on a 301 or 410, a repository that moved or went: either way no permission is
+   * established, so callers must fail closed on it.
    */
   permission(args: { readonly repo: string; readonly login: string }): Promise<RepositoryPermission>;
   /** The login the token acts as. */
@@ -217,20 +218,25 @@ export function createGitHubIssues(options: CreateGitHubIssuesOptions): GitHubIs
       checkLabel(operation, label);
       const answer = await request(operation, `/repos/${repo}/issues/${number}/labels/${encodeURIComponent(label)}`, { method: "DELETE" });
       if (!(answer.body instanceof GitHubApiError)) return;
+      // Transferred or deleted: the issue took its label with it.
+      if (answer.status === 301 || answer.status === 410) return;
       if (answer.status !== 404) throw answer.body;
-      // A 404 is also a wrong issue or a repository the token can't see: only an issue read without the label says it's gone.
+      // A 404 is also a wrong issue or a repository the token can't see: only an issue read without the label, or one
+      // that says it's gone, tells the label is off. Another 404 tells nothing, and fails.
       // GitHub matches label names ignoring case: one still there in another casing is still there.
-      const issue = toIssue(operation, await ok(operation, `/repos/${repo}/issues/${number}`));
-      if (issue.labels.some((shown) => shown.toLowerCase() === label.toLowerCase())) throw answer.body;
+      const read = await request(operation, `/repos/${repo}/issues/${number}`);
+      if (read.status === 301 || read.status === 410) return;
+      if (read.body instanceof GitHubApiError) throw read.body;
+      if (toIssue(operation, read.body).labels.some((shown) => shown.toLowerCase() === label.toLowerCase())) throw answer.body;
     },
     async permission({ repo, login }) {
       const operation = "permission";
       checkRepo(operation, repo);
       checkLogin(operation, login);
       const answer = await request(operation, `/repos/${repo}/collaborators/${encodeURIComponent(login)}/permission`);
-      // 404: not a collaborator (or no such account): no permission at all.
+      // 404: not a collaborator (or no such account). 301 or 410: the repository moved or went. No permission at all.
       if (answer.body instanceof GitHubApiError) {
-        if (answer.status === 404) return "none";
+        if (answer.status === 301 || answer.status === 404 || answer.status === 410) return "none";
         throw answer.body;
       }
       return toPermission(operation, answer.body);
