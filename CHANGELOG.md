@@ -12,8 +12,8 @@
   trusted package's ordinary fix still goes ahead right away, as a trusted exception. A person with write access takes
   a waiting fix early by commenting `take-early: <reason>` and adding the `take-early` label: the next run fixes exactly
   that decision, once per label, and says on the issue whenever it won't. Issues are never edited into another
-  decision: a changed one opens a new issue and closes the old as superseded, a finding no complete scan sees any more
-  closes its issue as resolved, and an issue a person closes stays dismissed. PRs say `Tracks #N.` rather than closing
+  decision: a changed one opens a new issue and closes the old as superseded, an issue closes as resolved once a
+  complete scan sees none of its tracked findings, and an issue a person closes stays dismissed. PRs say `Tracks #N.` rather than closing
   their issue. A PR taken early is retired once its granted versions aged, and its attempt ends. Verification finding
   a young version planning didn't choose stops publication and says so on the issue. **secure-it's write PAT now needs Issues: read and write**
   ([adopting the tools](docs/adopting-tools.md)); without it a run executes nothing and says why.
