@@ -1,7 +1,6 @@
 # Releasing supply-chain
 
-Releases follow [release-flow](https://github.com/leanish/leanish-skills/blob/main/skills/wip/release-flow/SKILL.md):
-candidates, real runs, reviews, what blocks, the release PR, tagging and repins.
+Releases follow [release-flow](https://github.com/leanish/leanish-skills/blob/main/skills/wip/release-flow/SKILL.md).
 This page only adds what is specific to this repository.
 
 All workspace packages stay private in this repository, and adopters use a
