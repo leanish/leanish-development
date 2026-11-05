@@ -88,6 +88,10 @@ describe("planningCause", () => {
     expect(planningCause("unsupported git+ssh://reader:p@ss@github.com/acme/repo.git")).toBe("unsupported git+ssh://github.com/acme/repo.git");
   });
 
+  it.each(["?ref=person@example.com", "#person@example.com"])("keeps the URL's host when %s also contains an @", (suffix) => {
+    expect(planningCause(`unsupported git+ssh://reader:fake-secret@github.com${suffix}`)).toBe(`unsupported git+ssh://github.com${suffix}`);
+  });
+
   it.each([
     "registry 502, retry=3",
     "author=someone at line: 12",

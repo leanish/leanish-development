@@ -24,7 +24,7 @@ const SENSITIVE_ASSIGNMENT = new RegExp(`${SECRET_NAME.source}${ASSIGNS.source}$
  * A URL's user and password, in a scheme `publicUrl` doesn't read (`postgres://user:password@host/db`): up to the
  * authority's last `@`, since a password can contain one.
  */
-const URL_USERINFO = /\/\/[^\s/]+@/g;
+const URL_USERINFO = /\/\/[^\s/?#]+@/g;
 
 /**
  * A planning error's first line for a public issue, with URL credentials, queries, sensitive assignments and recognizable
