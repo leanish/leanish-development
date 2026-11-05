@@ -9,9 +9,10 @@
  * label event and a new reason comment authorize another, and a new grant never replaces a running attempt.
  *
  * Fails closed: a labeler who lost write access, or a reason edited or deleted since, stops a running attempt too. Once
- * the decision is past the wait there's nothing to authorize (`none`): a run fixes it as an ordinary decision, and
- * review retires its PR taken early (or leaves it to the person who marked it ready) rather than carrying it on. Times
- * are GitHub's, to the second: a reason posted in the label's own second counts as before it.
+ * the decision is past the wait there's nothing to authorize (`none`): its PR taken early isn't carried on. Still a
+ * draft, it's retired, and a run then fixes the decision as an ordinary one; one a person marked ready is left to them,
+ * and runs defer the decision while it's open. Times are GitHub's, to the second: a reason posted in the label's own
+ * second counts as before it.
  */
 import { versionKey } from "@leanish/gate/package-version";
 
