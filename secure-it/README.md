@@ -45,12 +45,12 @@ opens another for what it tracked. Review still reads the issue a PR names (`Tra
 so a PR taken early goes on under its recorded attempt and grant.
 
 Issues don't change subject: when a decision changes (another version, another grouping), the run opens the new issue
-first, then closes the old one as superseded by it. Once a complete scan no longer sees a finding, its issue closes as
-resolved. A scan with coverage gaps never takes a finding for gone: it makes no new resolution decision and leaves open an
-issue whose subject it no longer finds. It only closes a duplicate issue whose findings the surviving one already tracks, and
-finishes a closing an earlier run recorded. Issue text never selects versions: the code decides. A person's
-input changes two things: closing an issue [dismisses its findings](#dismissing-findings), and a `take-early` label lets
-a waiting decision run early.
+first, then closes the old one as superseded by it. Once a complete scan sees none of an issue's findings, it closes as
+resolved; while it still sees some, the issue stays open and records the others as absent. A scan with coverage gaps
+never takes a finding for gone: it makes no new resolution decision and leaves open an issue whose subject it no longer
+finds. It only closes a duplicate issue whose findings the surviving one already tracks, and finishes a closing an
+earlier run recorded. Issue text never selects versions: the code decides. A person's input changes two things: closing
+an issue [dismisses its findings](#dismissing-findings), and a `take-early` label lets a waiting decision run early.
 
 ### Dismissing findings
 
