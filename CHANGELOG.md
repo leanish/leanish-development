@@ -14,8 +14,8 @@
 - The gate no longer reads a package's source repository out of a URL on another host, such as
   `https://evil.example/github.com/acme/lib` or `https://notgithub.com/acme/lib`, which could add or miss that wrong
   repository's advisories. Such a package now reports the usual gap for a dependency without a GitHub source repository,
-  or a Maven package its parent's repository. Forms with no host to check (`scm:`, scp-style, schemeless, a URL that
-  doesn't parse) and numeric ports read as before.
+  unless a Maven package's remaining POM fields or parents name one. Forms with no host to check (`scm:`, scp-style,
+  schemeless, a URL that doesn't parse) read as before, and so do numeric ports on GitHub URLs.
 
 ## 0.11.0 - 2026-11-05
 
