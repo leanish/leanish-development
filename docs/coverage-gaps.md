@@ -85,7 +85,7 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   findings while they're still there. The boundary survives an interrupted run, so the window lasts until a later run
   finishes that closing.
 - **Issues track one base branch per repository (secure-it)**: a repository's issues carry no base branch, so secure-it
-  reads every issue its write PAT's login opened there as the current base's. A configuration lists a repository
+  reads every tracked issue its write PAT's login opened there (its label and record) as the current base's. A configuration lists a repository
   once, with one `branch`, but runs on different bases with the same login share those issues: other configurations
   or runners, an entry whose `branch` changed, or one without `branch` after the repository's default branch changed.
   A clean assessment of one base can then close the other's still-vulnerable issue as resolved and record its findings
