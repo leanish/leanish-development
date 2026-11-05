@@ -59,6 +59,9 @@ limitations in [coverage gaps](coverage-gaps.md).
 
 ## Release PR
 
+The version is the root's: set it in `package.json` and in both root version fields
+of `package-lock.json`, and keep every `private: true` and workspace version intact.
+
 CI exercises the real Gradle inventory acceptance tests, and
 [validation](validation.md#automated-checks-and-skips) lists the checks and what
 can skip. The docs that name the current release are the README's "current release"
