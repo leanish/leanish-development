@@ -182,4 +182,3 @@ async function apply(sync: IssueSync, operation: IssueOperation): Promise<number
     }
   });
 }
-
