@@ -54,9 +54,6 @@ A candidate's real runs, before any release PR:
   a PR (compare) and a default-branch push (scan) through Actions, not only
   the CLI.
 
-Reviews and real runs are recorded in [validation](validation.md), and known
-limitations in [coverage gaps](coverage-gaps.md).
-
 ## Release PR
 
 The version is the root's: set it in `package.json` and in both root version fields
