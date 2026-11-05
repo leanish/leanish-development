@@ -11,18 +11,23 @@
   A fix that takes a younger version waits in its issue, which says until when, instead of in a held draft PR; a
   trusted package's ordinary fix still goes ahead right away, as a trusted exception. A person with write access takes
   a waiting fix early by commenting `take-early: <reason>` and adding the `take-early` label: the next run fixes exactly
-  that decision, once per label, and says on the issue whenever it won't. Issues are never edited into another
+  that decision, once per label, and says on the issue whenever it won't. secure-it reads its decisions back from a
+  hidden record in each issue's description, which anyone who can edit issues can change: GitHub lets the Triage role
+  edit them too, so in an organization's repository a Triage member can alter what that record authorizes or tracks
+  ([known limitation](docs/coverage-gaps.md#limits)). Issues are never edited into another
   decision: a changed one opens a new issue and closes the old as superseded, an issue closes as resolved once a
   complete scan sees none of its tracked findings outside a valid exception, and an issue a person closes stays dismissed. PRs say `Tracks #N.` rather than closing
   their issue. A PR taken early is retired once its granted versions aged, and its attempt ends. Verification finding
   a young version planning didn't choose stops publication and says so on the issue. **secure-it's write PAT now needs Issues: read and write**
   ([adopting the tools](docs/adopting-tools.md)); without it a run whose issue sync GitHub refuses executes
-  nothing and reports the refusal.
+  nothing and reports the refusal. **The repository needs Issues enabled too**: with them off, a run with an issue to
+  open fails its sync, saying so, and executes nothing.
 - secure-it review holds early PRs by their issue's grant, including when the gate held nothing in their recorded
   plan. Graduation closes the draft and settles its attempt before branch or CI work. Verification admits only the
   grant's young versions and trusted packages; recorded cooldown warnings and evidence remain visible. bump-it and
   ordinary PRs still wait when only the gate's cooldown holds them.
-- Before upgrading from 0.10.x, close secure-it's open version-fix PRs by hand, keeping any human changes you need:
+- Before upgrading from 0.10.x, enable the repository's Issues feature if it's off, and close secure-it's open
+  version-fix PRs by hand, keeping any human changes you need:
   review leaves a version-fix PR without `Tracks` to its owner, and a run still matches one to a fix it plans by its
   kind and topic alone, as before: it keeps it, refreshing only its plan notes, when the plan is unchanged, or redoes it, then with a
   `Tracks` line, when the plan changed. The first run then assesses the findings and opens the corresponding issues.
@@ -65,6 +70,8 @@
 - A package a failed check left undecided (a publisher identity, a carrier's reads, a direct-peer set) shows on its issue
   as not assessed this run, with the check's first line, never as refused. Any other package without a fix it can take
   says so with the rule's reasons, rather than claiming the rule refused every candidate.
+- secure-it takes a notice as already posted only from its own comment: a notice marker in someone else's comment no
+  longer keeps a notice from being posted, nor dates a closing it recorded.
 - The docs say what a scan with coverage gaps still closes: a duplicate issue whose findings the surviving one already
   tracks, and a closing an earlier run recorded; it never takes a finding for gone.
 - The docs state what a dismissal covers: no new issue for a subject whose findings are all dismissed, but one that

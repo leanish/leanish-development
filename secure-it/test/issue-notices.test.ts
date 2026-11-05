@@ -29,6 +29,14 @@ describe("postNotice", () => {
     expect(issues.comments.get(1)).toHaveLength(1);
   });
 
+  it("posts a notice whose marker only someone else's comment carries, a comment without an author included", async () => {
+    const issues = new FakeIssues();
+    issues.comment(1, "outsider", `copied\n\n${noticeMarker("a")}`);
+    issues.comments.set(1, [...issues.comments.get(1)!, { id: 1, author: null, body: noticeMarker("a"), createdAt: "2026-11-03T08:00:00Z", updatedAt: "2026-11-03T08:00:00Z" }]);
+    await postNotice(clientOf(issues), 1, "a", "the tool's notice");
+    expect(issues.comments.get(1)?.map((comment) => comment.author)).toEqual(["outsider", null, "leanish"]);
+  });
+
   it("retries a failed comment write instead of remembering an unposted notice", async () => {
     const issues = new FakeIssues();
     const client = clientOf(issues);

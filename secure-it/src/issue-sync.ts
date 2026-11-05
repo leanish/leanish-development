@@ -7,8 +7,9 @@
  * is listed with its old body), while reading an issue by its number doesn't. So every issue the sync wrote is read
  * back by number in the rounds after: a round never takes the listing's stale copy for the truth and writes again.
  *
- * A write GitHub refuses as forbidden is a setup problem: the write PAT lacks Issues: read and write. It fails the
- * sync with that, never a fallback; a rate limit stays a rate limit.
+ * A write GitHub refuses as forbidden is a setup problem: the write PAT lacks Issues: read and write. So is a create
+ * GitHub answers as gone: the repository has Issues disabled. Either fails the sync with that, never a fallback; a rate
+ * limit stays a rate limit.
  */
 import { GitHubApiError } from "@leanish/agent-runtime/github/github-client";
 import type { GitHubIssue, GitHubIssues } from "@leanish/tool-runtime/github-issues";
@@ -117,7 +118,7 @@ async function readTracked(sync: IssueSync, login: string, written: ReadonlySet<
       continue;
     }
     // A reopening only matters where the tool recorded a closing: read the events there alone.
-    const reopened = record.pendingClose !== undefined && await reopenedAfterClosing(sync, issue.number, record.pendingClose);
+    const reopened = record.pendingClose !== undefined && await reopenedAfterClosing(sync, login, issue.number, record.pendingClose);
     tracked.push({ number: issue.number, state: issue.state, body: issue.body, record, reopened, labels: issue.labels });
   }
   return { tracked, unreadable };
@@ -130,7 +131,7 @@ async function readTracked(sync: IssueSync, login: string, written: ReadonlySet<
  * recorded before `afterEvent` existed goes by its notice comment, which the tool posts right before closing, at a
  * second's precision; without the notice (deleted, or not listed), any reopening counts, so a person's is never lost.
  */
-async function reopenedAfterClosing(sync: IssueSync, number: number, pending: PendingClose): Promise<boolean> {
+async function reopenedAfterClosing(sync: IssueSync, login: string, number: number, pending: PendingClose): Promise<boolean> {
   const events = await sync.issues.listEvents({ repo: sync.repo, number });
   const reopenings = events.filter((event) => event.event === "reopened");
   if (reopenings.length === 0) return false;
@@ -139,8 +140,9 @@ async function reopenedAfterClosing(sync: IssueSync, number: number, pending: Pe
   if (pending.afterEvent !== undefined) {
     toolClosing = closings.filter((event) => event.id > pending.afterEvent!).sort((a, b) => a.id - b.id)[0]?.id;
   } else {
+    // Only the tool's own notice dates its closing: a marker someone else posted later would hide a person's reopening.
     const marker = noticeMarker(pending.id);
-    const notice = (await sync.issues.listComments({ repo: sync.repo, number })).find((comment) => comment.body.includes(marker));
+    const notice = (await sync.issues.listComments({ repo: sync.repo, number })).find((comment) => comment.author === login && comment.body.includes(marker));
     if (notice === undefined) return true;
     toolClosing = closings.filter((event) => Date.parse(event.createdAt) >= Date.parse(notice.createdAt)).sort((a, b) => a.id - b.id)[0]?.id;
   }
@@ -191,6 +193,11 @@ async function setup<T>(write: () => Promise<T>): Promise<T> {
   } catch (error) {
     if (error instanceof GitHubApiError && error.status === 403 && error.reason === "forbidden") {
       throw new Error(`GitHub refused secure-it's issue write (${error.operation}): the write PAT needs Issues: read and write (docs/adopting-tools.md)`);
+    }
+    // Only a create says it: listing a repository's issues with the feature off answers an empty list, so the first
+    // create is where it shows, while a 410 on an issue that exists means that issue was deleted.
+    if (error instanceof GitHubApiError && error.status === 410 && error.operation === "createIssue") {
+      throw new Error(`GitHub refused secure-it's issue write (${error.operation}): Issues are disabled on this repository, and secure-it needs them enabled (docs/adopting-tools.md)`);
     }
     throw error;
   }

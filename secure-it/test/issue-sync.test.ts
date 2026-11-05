@@ -5,7 +5,7 @@ import { FakeIssues } from "@leanish/tool-runtime/test/fake-issues";
 
 import type { Assessment, ObservedFinding, SubjectAssessment } from "../src/issue-model.ts";
 import { syncIssues } from "../src/issue-sync.ts";
-import { ISSUE_WRITER, recordOf } from "../src/issue-text.ts";
+import { ISSUE_WRITER, noticeMarker, recordOf } from "../src/issue-text.ts";
 
 const SHA = "a".repeat(40);
 const LATER = "b".repeat(40);
@@ -164,6 +164,23 @@ describe("syncIssues", () => {
     expect(back.notes).toContain("#1: a person reopened it after secure-it closed it; it stays open, retired");
   });
 
+  it("dates a closing recorded without its event only by the tool's own notice, never by someone else's marker", async () => {
+    const issues = new FakeIssues();
+    await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+    await syncIssues(sync(issues), assessed([waiting("lib", "1.0.2")], LATER));
+    // A closing recorded before `afterEvent` existed, whose notice the listing doesn't show; then a person reopens it,
+    // and someone posts the same notice marker afterwards.
+    const closed = issues.issues.get(1)!;
+    const { afterEvent: _, ...legacy } = recordOf(closed.body)!.pendingClose!;
+    issues.issues.set(1, { ...closed, body: ISSUE_WRITER.withRecord(closed.body, { ...recordOf(closed.body)!, pendingClose: legacy }) });
+    issues.comments.set(1, []);
+    issues.setState(1, "open", "owner", "2026-11-03T09:10:00Z");
+    issues.comment(1, "outsider", `copied\n\n${noticeMarker(legacy.id)}`, "2026-11-03T09:20:00Z");
+    const back = await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+    expect(back.notes).toContain("#1: a person reopened it after secure-it closed it; it stays open, retired");
+    expect(issues.issues.get(1)!.state).toBe("open");
+  });
+
   it("records since when a waiting issue has shown its young versions: a newcomer moves it, an aged-out one doesn't", async () => {
     const issues = new FakeIssues();
     const young = (name: string) => ({ ecosystem: "npm" as const, name, version: "1.0.1", eligibleAt: "2026-11-10T00:00:00.000Z" });
@@ -215,6 +232,19 @@ describe("syncIssues", () => {
     const issues = new FakeIssues();
     issues.forbidden.add("createIssue");
     await expect(syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]))).rejects.toThrow("the write PAT needs Issues: read and write");
+  });
+
+  it("says Issues are disabled when GitHub answers an issue create as gone, and only then", async () => {
+    const disabled = new FakeIssues();
+    disabled.createIssue = async () => { throw new GitHubApiError("createIssue", "gone", 410); };
+    await expect(syncIssues(sync(disabled), assessed([waiting("lib", "1.0.1")]))).rejects.toThrow("Issues are disabled on this repository, and secure-it needs them enabled");
+    // A 410 on an issue that exists is that issue deleted, not the feature off.
+    const deleted = new FakeIssues();
+    await syncIssues(sync(deleted), assessed([waiting("lib", "1.0.1")]));
+    deleted.updateIssue = async () => { throw new GitHubApiError("updateIssue", "gone", 410); };
+    const update = syncIssues(sync(deleted), assessed([waiting("lib", "1.0.2")], LATER));
+    await expect(update).rejects.toThrow();
+    await expect(update).rejects.not.toThrow("Issues are disabled");
   });
 
   it("keeps an issue open while its successor's update, skipped because a person changed that issue, isn't published", async () => {
