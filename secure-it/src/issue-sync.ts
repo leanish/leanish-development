@@ -147,12 +147,15 @@ async function reopenedAfterClosing(sync: IssueSync, number: number, pending: Pe
   return toolClosing !== undefined && reopenings.some((event) => event.id > toolClosing);
 }
 
-/** Issue `number` as GitHub has it now, or undefined once it's gone: transferred away (404) or deleted (410). */
+/**
+ * Issue `number` as GitHub has it now, or undefined once it's gone: transferred to a repository the token reads (301)
+ * or to one it can't (404), or deleted (410).
+ */
 async function readWritten(sync: IssueSync, number: number): Promise<GitHubIssue | undefined> {
   try {
     return await sync.issues.getIssue({ repo: sync.repo, number });
   } catch (error) {
-    if (error instanceof GitHubApiError && (error.status === 404 || error.status === 410)) return undefined;
+    if (error instanceof GitHubApiError && (error.status === 301 || error.status === 404 || error.status === 410)) return undefined;
     throw error;
   }
 }

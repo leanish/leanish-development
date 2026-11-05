@@ -68,7 +68,7 @@ describe("createGitHubIssues", () => {
   it("answers a transferred issue's redirect with its status, never following it", async () => {
     const { fetch, calls } = scripted(json({ message: "Moved Permanently", url: "https://api.github.com/repositories/1/issues/12" }, 301, { location: "https://api.github.com/repositories/1/issues/12" }));
     const read = issues(fetch).getIssue({ repo: REPO, number: 12 });
-    await expect(read).rejects.toMatchObject({ status: 301 });
+    await expect(read).rejects.toMatchObject({ status: 301, message: expect.stringContaining("moved") });
     await expect(read).rejects.toBeInstanceOf(GitHubApiError);
     expect(calls).toHaveLength(1);
   });

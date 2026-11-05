@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { GitHubApiError } from "@leanish/agent-runtime/github/github-client";
 import { FakeIssues } from "@leanish/tool-runtime/test/fake-issues";
 
 import type { Assessment, ObservedFinding, SubjectAssessment } from "../src/issue-model.ts";
@@ -48,6 +49,24 @@ describe("syncIssues", () => {
     issues.createIssue = async (args) => {
       const issue = await create(args);
       if (issue.number === 1) issues.issues.delete(1);
+      return issue;
+    };
+    const result = await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+    expect(result.settled).toBe(true);
+    expect(result.tracked.map((issue) => issue.number)).toEqual([2]);
+  });
+
+  it("takes an issue a person transferred away during the sync (301) for gone, as one deleted", async () => {
+    const issues = new FakeIssues();
+    issues.lagging = true;
+    const create = issues.createIssue.bind(issues);
+    const getIssue = issues.getIssue.bind(issues);
+    issues.createIssue = async (args) => {
+      const issue = await create(args);
+      if (issue.number === 1) issues.getIssue = async (read) => {
+        if (read.number === 1) throw new GitHubApiError("getIssue", "moved", 301);
+        return getIssue(read);
+      };
       return issue;
     };
     const result = await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
