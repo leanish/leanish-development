@@ -381,6 +381,13 @@ describe("issue text", () => {
     expect(body.match(/<!-- leanish:plan/g)).toHaveLength(1);
     expect(body).toContain("take-early: <reason>");
     expect(title).toBe("secure-it: fixing evil/x--leanish:planAAAA-- (npm)");
+    // A decision spanning ecosystems names them all, in first-seen order.
+    const mixed = decision([move("lib"), { ecosystem: "Maven", name: "g:module", from: "1.0.0", to: "1.0.1" }], [finding("lib", ["GHSA-1"])]);
+    expect(ISSUE_WRITER.render(mixed, { ...record, subject: mixed.subject }, SHA).title).toBe("secure-it: fixing lib, g:module (npm, Maven)");
+    // Each once, and one whose package is past the three names shown still counts.
+    const maven = (name: string): DecisionMove => ({ ecosystem: "Maven", name, from: "1.0.0", to: "1.0.1" });
+    const all = decision([move("a"), maven("g:b"), move("c"), maven("g:d"), { ecosystem: "GitHub Actions", name: "actions/x", from: "v1", to: "v2" }], [finding("a", ["GHSA-1"])]);
+    expect(ISSUE_WRITER.render(all, { ...record, subject: all.subject }, SHA).title).toBe("secure-it: fixing a, g:b, c and 2 more (npm, Maven, GitHub Actions)");
     // A block pasted anywhere else, or a second one, makes the body ambiguous: no record is read from it.
     expect(recordOf(`<!-- leanish:plan AAAA -->\n\n${body}`)).toBeUndefined();
     expect(recordOf(`${body}\n\n<!-- leanish:plan AAAA -->`)).toBeUndefined();
