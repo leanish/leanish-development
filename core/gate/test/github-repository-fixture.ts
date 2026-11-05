@@ -61,7 +61,12 @@ export const githubRepositoryCases: ReadonlyArray<readonly [unknown, string | un
     ["", "git@", "user%40corp@"].flatMap((user) =>
       ["github.com", "www.github.com"].map((host): readonly [string, string] => [`${prefix}${user}${host}:Acme/Lib.git#main`, "acme/lib"]))),
   ["HTTPS://USER%40CORP@WWW.GITHUB.COM:443/Acme/Lib.git?ref=main", "443/acme"],
-  // Known limit: without a URL host (schemeless, or an opaque `scm:` form), a lookalike or a path can still supply the github.com substring.
+  // Known limit: with no host to check (schemeless, scp-style, an opaque `scm:` form, a URL that doesn't parse), a lookalike or a path can still supply the github.com substring.
+  ["git@notgithub.com:acme/lib.git", "acme/lib"],
+  ["https://evil.example:github.com/acme/lib", "acme/lib"],
+  ["https://evil.example:99999/github.com/acme/lib", "acme/lib"],
+  // A trailing dot was never read, before or now.
+  ["https://github.com./acme/lib", undefined],
   ["https://github.com.evil.example/acme/lib", undefined],
   ["https://sub.github.com/acme/lib", "acme/lib"],
   ["notgithub.com/acme/lib", "acme/lib"],

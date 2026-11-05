@@ -141,8 +141,8 @@ export function githubRepository(value: unknown): string | undefined {
 /**
  * Whether a URL's real host is neither GitHub nor one of its subdomains, so nothing further along in it can name a GitHub
  * repository (`https://evil.example/github.com/acme/lib`). Forms without a host (`scm:git:…`, `github:acme/lib`) and what
- * doesn't parse (`git@github.com:acme/lib.git`) are left to the matcher. A URL parser only lowercases the hosts of schemes
- * it knows, not `git+https://GitHub.com`.
+ * doesn't parse (`git@github.com:acme/lib.git`, but also `https://evil.example:github.com/acme/lib`) are left to the
+ * matcher. A URL parser only lowercases the hosts of schemes it knows, not `git+https://GitHub.com`.
  */
 function namesAnotherHost(raw: string): boolean {
   if (!URL.canParse(raw)) return false;
