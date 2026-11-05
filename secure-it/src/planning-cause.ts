@@ -1,13 +1,13 @@
 /**
- * A name that looks secret, then its value: any quoted part (spaces included, up to the closing quote or the line's end)
- * and whatever follows it up to whitespace, leaving out a final comma or semicolon. It errs toward redacting: a word that
- * only contains a name (`max_tokens=4096`) loses its value, and an unquoted value's words after the first space stay.
+ * A name that looks secret, then its value: quoted (spaces included, up to the closing quote or the line's end), or up to
+ * whitespace, leaving out a final comma or semicolon. It errs toward redacting: a word that only contains a name
+ * (`max_tokens=4096`) loses its value. What it can't tell stays: an unquoted value's words after the first space.
  *
  * A colon counts only before a space or a quote, or after a closing quote or bracket: Gradle coordinates
  * (`com.password4j:password4j:1.7`) must stay whole, so `token:abc` isn't an assignment. `auth` followed by another letter
  * is an ordinary word (`author`). The lookbehind starts a match only at a name's beginning, so a long line stays linear.
  */
-const SENSITIVE_ASSIGNMENT = /(?<![\w.-])(?=[\w.-]*(?:pass(?:word|wd|phrase)|pwd|secret|token|api[_-]?key|credential|private[_-]?key|access[_-]?key|session|cookie|jwt|auth(?:orization|key)?(?![a-z])))([\w.-]+)(["'`\]]{0,2}\s*(?:=|:(?=[\s"'`])|(?<=["'`\]]):)\s*)(?=\S)(?:"(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?|`(?:[^`\\]|\\.)*`?)?(?:\S*[^\s,;])?/gi;
+const SENSITIVE_ASSIGNMENT = /(?<![\w.-])(?=[\w.-]*(?:pass(?:word|wd|phrase)|pwd|secret|token|api[_-]?key|credential|private[_-]?key|access[_-]?key|session|cookie|jwt|auth(?:orization|key)?(?![a-z])))([\w.-]+)(["'`\]]{0,2}\s*(?:=|:(?=[\s"'`])|(?<=["'`\]]):)\s*)(?:"(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?|`(?:[^`\\]|\\.)*`?|\S*[^\s,;])/gi;
 
 /** A URL's user and password, in a scheme `publicUrl` doesn't read (`postgres://user:password@host/db`). */
 const URL_USERINFO = /\/\/[^\s/@]+@/g;

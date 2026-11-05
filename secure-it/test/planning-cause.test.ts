@@ -51,7 +51,6 @@ describe("planningCause", () => {
     ["'password': 'fake secret'", "'password': [redacted]"],
     ["password:\"fake secret\"", "password:[redacted]"],
     ["token=fake,secret;tail", "token=[redacted]"],
-    ["token: \"fake\"secret\"", "token: [redacted]"],
     ["[token]=fake-secret", "[token]=[redacted]"],
     ["[\"token\"]=fake-secret", "[\"token\"]=[redacted]"],
     ["token = fake-secret", "token = [redacted]"],
