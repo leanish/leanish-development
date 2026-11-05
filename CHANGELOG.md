@@ -9,6 +9,12 @@
   general rules. There, every release review is one exhaustive pass, the reviewer is picked per iteration, and minor
   findings don't block: a new candidate cut for another reason fixes them all, and otherwise they go to the next patch.
 
+### Fixed
+
+- secure-it's issues no longer publish a planning error's assignments to a secret-looking name (`password=…`,
+  `token="…"`), quoted values included, and an error whose first line is empty now says it gave no details instead of
+  leaving a sentence unfinished. Other `key=value` details stay.
+
 ## 0.11.0 - 2026-11-05
 
 ### Changed

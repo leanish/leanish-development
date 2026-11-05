@@ -32,7 +32,8 @@ subject also has a finding not dismissed, or once it came back after it was gone
 
 An unassessed issue names a known planning failure on the affected roots, coupled or carried packages, including when
 failed aged planning leaves young npm grouping unknown, or the check that failed. It shows only the error's first line,
-with URL userinfo, queries, fragments and recognizable credentials redacted. Local paths are cleaned before the detail
+with URL userinfo, queries, fragments, assignments to a secret-looking name (`password=`, `token="…"`) and recognizable
+credentials redacted, or says the error gave no details when that line is empty. Local paths are cleaned before the detail
 is cut to 1,000 characters, including a visible cut marker, before quoting; quoting and body cleaning can expand that
 text. Without a known cause (malware taking priority, say), it keeps the generic explanation. Reassessed issues use this
 run's causes. An open issue whose decision an incomplete run no longer finds stays open and says the run couldn't assess
