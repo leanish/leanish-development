@@ -1051,6 +1051,14 @@ describe("secure-it run", () => {
       expect(h.agentCalls).toEqual([]);
     });
 
+    it("recovers a merged PR known as the tool's only by its label, in the repository's casing", async () => {
+      const h = harness({ fixes: [young] });
+      const branch = await granted(h, started((id) => `secure-it/2026-10-07-take-early-${id}`));
+      h.github.prs.set(7, ownPr({ number: 7, headRef: branch, state: "closed", merged: true, body: "Body.", labels: [RULES.label.toUpperCase()] }));
+      await flow(h).run(h.context);
+      expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 7, outcome: "pr-merged" }]);
+    });
+
     it("recovers a merged PR a crash left unattached, even after its branch was deleted", async () => {
       const h = harness({ fixes: [young] });
       const branch = await granted(h, started((id) => `secure-it/2026-10-07-take-early-${id}`));

@@ -38,6 +38,21 @@ describe("observationsOf", () => {
     expect(excepted).toEqual([{ ecosystem: "npm", name: "b", ids: ["GHSA-b"] }]);
   });
 
+  it("puts a group in both when its exception covers only some of a version's locations", () => {
+    const snap = snapshot({ "b@1.0.0": [advisory("GHSA-b")] });
+    const { observed, excepted } = observationsOf([npm("b", "1.0.0", ["node_modules/b", "nested/node_modules/b"])], snap, exception(), TODAY);
+    expect(observed).toMatchObject([{ name: "b", ids: ["GHSA-b"], versions: ["1.0.0"] }]);
+    expect(excepted).toEqual([]);
+  });
+
+  it("never excepts malware, even under an id an exception names", () => {
+    // The exceptions file refuses MAL- ids itself; an advisory marked malicious under another id is the case left.
+    const snap = snapshot({ "b@1.0.0": [{ ...advisory("GHSA-b"), malicious: true }] });
+    const { observed, excepted } = observationsOf([npm("b", "1.0.0")], snap, exception(), TODAY);
+    expect(observed).toMatchObject([{ name: "b", ids: ["GHSA-b"], malicious: true }]);
+    expect(excepted).toEqual([]);
+  });
+
   it("excepts nothing once an exception expired, or when there is none", () => {
     const snap = snapshot({ "b@1.0.0": [advisory("GHSA-b")] });
     for (const exceptions of [exception({ expires: "2026-11-04" }), NO_EXCEPTIONS]) {
