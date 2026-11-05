@@ -778,7 +778,7 @@ describe("secure-it run", () => {
       issuesOf(h).issues.set(1, { ...issue, state: "closed" });
       const pr = [...h.github.prs.values()].find((entry) => trackedIssueOf(entry.body) === 1)!;
       const client = { issues: h.context.issues, github: h.github, repo: REPO, clean: (body: string) => body, ours: () => true, now: NOW, trusted: () => false, retire: async () => "closed" as const, eligibleAt: async () => undefined };
-      expect(await reviewDisposition(client, pr, planOf(pr.body)!, new EarlyPrs({ issues: h.context.issues, repo: REPO }))).toEqual({ kind: "proceed", permit: { early: false, young: [] } });
+      expect(await reviewDisposition(client, pr, planOf(pr.body)!, new EarlyPrs({ issues: h.context.issues, repo: REPO }))).toEqual({ kind: "proceed", permit: { early: false, young: [], issue: 1 } });
     });
 
     it("leaves a PR that says it was taken early once its issue is transferred away (301): nothing confirms its grant", async () => {
@@ -916,10 +916,38 @@ describe("secure-it run", () => {
       expect(await tool([young]).run(h.context)).toMatchObject({ outcome: "published", number: 42 });
       // A week later vite 8.3.3 is past the wait: the run comes before any review.
       const later = { ...h.context, now: new Date("2026-10-14T06:00:00Z") };
-      expect(await tool([vite()]).run(later)).toMatchObject({ outcome: "published" });
+      const replaced = await tool([vite()]).run(later);
+      expect(replaced).toMatchObject({ outcome: "published" });
       expect(h.github.prs.get(42)?.state).toBe("closed");
       expect([...h.github.prs.values()].filter((pr) => pr.state === "open")).toHaveLength(1);
       expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 42, outcome: "pr-closed" }]);
+      // The issue names the replacement as in progress, never the retired draft.
+      const body = issuesOf(h).issues.get(1)!.body;
+      expect(body).toContain(`**In progress:** #${String(replaced["number"])}.`);
+      expect(body).not.toContain("**In progress:** #42.");
+    });
+
+    it("never leaves the issue naming a retired early PR as in progress when its fresh replacement doesn't publish", async () => {
+      const h = harness({ fixes: [young] });
+      const holding = (young: boolean) => async (inputs: VerifyInputs): Promise<string[]> => {
+        inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: young ? [{ ecosystem: "npm", name: "vite", version: "8.3.3", replaced: ["8.3.1"], published: "2026-10-05T00:00:00.000Z", eligibleAt: "2026-10-12T00:00:00.000Z", justification: "security-fix" }] : [] });
+        return [];
+      };
+      const tool = (fixes: SecurityFix[], verify = holding(fixes.some((fix) => fix.to?.aged === false))) => secureIt({ ...h.deps, gate: async () => scanned("2026-10-05T00:00:00Z"), scan: readScanState, verify,
+        candidates: async () => ({ fixes, incomplete: [], gaps: [], notes: [], osvScannerVersion: "2.6.0" }) });
+      await tool([young]).run(h.context);
+      issuesOf(h).permissions.set("owner", "admin");
+      issuesOf(h).comment(1, "owner", "take-early: urgent");
+      issuesOf(h).label(1, "owner", "take-early");
+      expect(await tool([young]).run(h.context)).toMatchObject({ outcome: "published", number: 42 });
+      // A week later the run retires #42, and the fresh fix fails verification: nothing replaces it this run.
+      const later = { ...h.context, now: new Date("2026-10-14T06:00:00Z") };
+      expect(await tool([vite()], async () => ["the build broke"]).run(later)).toMatchObject({ outcome: "verification-failed" });
+      expect(h.github.prs.get(42)?.state).toBe("closed");
+      const body = issuesOf(h).issues.get(1)!.body;
+      expect(body).not.toContain("#42. This issue stays open");
+      expect(body).toContain("**Ready.**");
+      expect(recordOf(body)!.attempts).toMatchObject([{ pr: 42, outcome: "pr-closed" }]);
     });
 
     it("goes on with the run when retiring an aged early PR fails, leaving that PR as it is", async () => {
@@ -1860,6 +1888,14 @@ describe("secure-it review", () => {
     expect(h.agentCalls).toEqual([]);
     expect(h.workspace.publications).toEqual([]);
     expect(issues.comments.get(1)!.map((comment) => comment.body)).toEqual([expect.stringContaining("would take young versions no grant covers: `vite@9.0.1`")]);
+    // The same PR tracking someone else's issue: left alone too, with nothing said there.
+    const elsewhere = harness({ prs: [pr], baseSha: NEW_BASE, fixes: [younger] });
+    elsewhere.workspace.setRemoteHead("secure-it/2026-10-05-vite-major", HEAD_SHA);
+    const theirs = elsewhere.context.issues as FakeIssues;
+    theirs.issues.set(1, { number: 1, url: "https://github.com/acme/widget/issues/1", title: "Roadmap", body: "Our own roadmap issue.", state: "open", stateReason: null, author: "someone", labels: [] });
+    expect(await secureIt(elsewhere.deps).review(elsewhere.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "deferred" }] });
+    expect(elsewhere.workspace.publications).toEqual([]);
+    expect(theirs.comments.get(1) ?? []).toEqual([]);
   });
 
   it("never rebases a tracked PR into another decision: the next run moves it through that decision's issue", async () => {
@@ -1881,6 +1917,18 @@ describe("secure-it review", () => {
     expect(changed.h.workspace.publications).toEqual([]);
     expect(changed.h.github.prs.get(7)!.body).toBe(pr.body);
     expect(changed.issues.comments.get(1)!.map((comment) => comment.body)).toEqual([expect.stringContaining("a different decision than this issue tracks")]);
+    // A `Tracks` line naming someone else's issue: review still leaves the PR, but says nothing on that issue.
+    const foreign = async () => {
+      const h = harness({ prs: [pr], baseSha: NEW_BASE, fixes: [vite({ to: { version: "9.0.2", line: "9", aged: true, major: true, blockers: [] } })] });
+      h.workspace.setRemoteHead("secure-it/2026-10-05-vite-major", HEAD_SHA);
+      const issues = h.context.issues as FakeIssues;
+      issues.issues.set(1, { ...issue, author: "someone", body: "Our own roadmap issue." });
+      return { h, issues, result: await secureIt(h.deps).review(h.context) };
+    };
+    const elsewhere = await foreign();
+    expect(elsewhere.result).toMatchObject({ reviewed: [{ number: 7, outcome: "deferred" }] });
+    expect(elsewhere.h.workspace.publications).toEqual([]);
+    expect(elsewhere.issues.comments.get(1) ?? []).toEqual([]);
     // The same decision on the new base rebases as before, still tracking #1.
     const same = await review("9.0.1");
     expect(same.result).toMatchObject({ reviewed: [{ number: 7, outcome: "rebased" }] });
@@ -2061,6 +2109,14 @@ describe("secure-it review", () => {
     expect(await secureIt({ ...h.deps, verify }).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "adaptation-unchanged" }] });
     expect(h.workspace.publications).toEqual([]);
     expect(issues.comments.get(3)!.map((comment) => comment.body)).toEqual([expect.stringContaining("secure-it didn't update #7: on the new base, verification found young versions no grant covers: `esbuild@0.30.1`")]);
+    // The same PR tracking someone else's issue: still not published, and nothing said on that issue.
+    const elsewhere = harness({ prs: [pr], answer: { outcome: "applied", summary: "adapted", publication } });
+    elsewhere.github.checks = RED;
+    const theirs = elsewhere.context.issues as FakeIssues;
+    theirs.issues.set(3, { number: 3, url: "https://github.com/acme/widget/issues/3", title: "Roadmap", body: "Our own roadmap issue.", state: "open", stateReason: null, author: "someone", labels: [] });
+    expect(await secureIt({ ...elsewhere.deps, verify }).review(elsewhere.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "adaptation-unchanged" }] });
+    expect(elsewhere.workspace.publications).toEqual([]);
+    expect(theirs.comments.get(3) ?? []).toEqual([]);
   });
 
   it("has the agent adapt a failing PR, verifies the result, and records the attempt", async () => {

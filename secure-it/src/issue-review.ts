@@ -44,6 +44,8 @@ export interface ReviewIssues extends AttemptClient {
 export interface ReviewPermit {
   readonly early: boolean;
   readonly young: ReadonlyArray<PackageVersion>;
+  /** The decision's own issue, where review's notices about the PR go: none when its `Tracks` line names another. */
+  readonly issue?: number;
 }
 
 const ORDINARY: ReviewPermit = { early: false, young: [] };
@@ -89,7 +91,7 @@ export async function reviewDisposition(client: ReviewIssues, pr: GitHubPullRequ
     return youngIn(client, plan).length === 0 && !takenEarlyOf(pr.body) ? { kind: "proceed", permit: ORDINARY } : { kind: "leave", reason: `it tracks #${number}, which isn't this decision's issue` };
   }
   if (scope.kind === "ordinary") {
-    return youngIn(client, plan).length === 0 && !takenEarlyOf(pr.body) ? { kind: "proceed", permit: ORDINARY } : leave(client, number, `no-attempt:${pr.number}`, pr, "no running early attempt on its issue is this PR's");
+    return youngIn(client, plan).length === 0 && !takenEarlyOf(pr.body) ? { kind: "proceed", permit: { ...ORDINARY, issue: number } } : leave(client, number, `no-attempt:${pr.number}`, pr, "no running early attempt on its issue is this PR's");
   }
   const young = await stillYoung(client, scope.grant);
   if (young.length === 0) {
@@ -99,7 +101,7 @@ export async function reviewDisposition(client: ReviewIssues, pr: GitHubPullRequ
     return retired;
   }
   const standing = await grantFor(client, scope, young);
-  if (standing.kind === "stands") return { kind: "proceed", held: { until: latest(young) }, permit: { early: true, young: standing.grant.young } };
+  if (standing.kind === "stands") return { kind: "proceed", held: { until: latest(young) }, permit: { early: true, young: standing.grant.young, issue: number } };
   return leave(client, number, `left:${pr.number}:${standing.key}`, pr, standing.why);
 }
 
@@ -154,19 +156,24 @@ export async function reviewExecution(client: ReviewIssues, pr: GitHubPullReques
   const granted = scope?.kind === "early" ? await stillYoung(client, scope.grant) : [];
   if (scope !== undefined && scope.kind !== "early" && takenEarlyOf(pr.body)) return { kind: "leave", reason: `its early attempt can't be confirmed on #${scope.number}` };
   const same = subjectId({ kind: "decision", moves: decisionMoves(plan) }) === subjectId({ kind: "decision", moves: decisionMoves(previous) });
+  // Notices go only on this decision's own issue: a `Tracks` line naming someone else's issue, or one the tool's record
+  // doesn't match, gets none, whatever review does with the PR.
+  const ownIssue = scope === undefined || scope.kind === "foreign" ? undefined : scope.number;
   if (scope?.kind !== "early" || granted.length === 0) {
     // `Tracks #N.` names the issue of the decision the PR makes: review never turns a tracked PR into another decision
     // (its link would then say something false). The next run moves it through the new decision's own issue.
     if (number !== undefined && !same) {
-      await postNotice(client, number, `decision:${pr.number}:${pr.headSha}`,
-        `secure-it didn't update #${pr.number} on review: on the new base it's a different decision than this issue tracks. Its next run updates it through that decision's issue.`);
+      if (ownIssue !== undefined) {
+        await postNotice(client, ownIssue, `decision:${pr.number}:${pr.headSha}`,
+          `secure-it didn't update #${pr.number} on review: on the new base it's a different decision than this issue tracks. Its next run updates it through that decision's issue.`);
+      }
       return { kind: "leave", reason: `on the new base it's a different decision than #${number} tracks` };
     }
     if (young.length === 0) return { kind: "proceed" };
     const named = young.map(label);
     const why = `on the new base it would take young versions no grant covers: ${named.join(", ")}`;
-    if (number !== undefined) {
-      await postNotice(client, number, `young:${pr.number}:${named.join(",")}`,
+    if (ownIssue !== undefined) {
+      await postNotice(client, ownIssue, `young:${pr.number}:${named.join(",")}`,
         `secure-it didn't update #${pr.number}: on the new base it would take young versions no grant covers: ${named.map((entry) => `\`${entry}\``).join(", ")}. It tries again on a later review.`);
     }
     return { kind: "leave", reason: why };

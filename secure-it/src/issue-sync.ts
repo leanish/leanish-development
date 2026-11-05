@@ -126,8 +126,10 @@ async function readTracked(sync: IssueSync, login: string, written: ReadonlySet<
 
 /**
  * Whether a person reopened issue `number` after the tool's own closing `pending`, not merely at some time before it
- * (closed and reopened by hand, then superseded by the tool). The tool's closing is the first `closed` event after the
- * last one it saw when it recorded the closing (`afterEvent`), and only a `reopened` after that counts. A closing
+ * (closed and reopened by hand, then superseded by the tool). The tool's closing is the first `closed` event by the
+ * token's login after the last one it saw when it recorded the closing (`afterEvent`), and only a `reopened` after that
+ * counts: another account closing and reopening it in between is never taken for the tool's closing. A person using
+ * the token's own account can be (a documented limit in docs/coverage-gaps.md). A closing
  * recorded before `afterEvent` existed goes by its notice comment, which the tool posts right before closing, at a
  * second's precision; without the notice (deleted, or not listed), any reopening counts, so a person's is never lost.
  */
@@ -135,7 +137,7 @@ async function reopenedAfterClosing(sync: IssueSync, login: string, number: numb
   const events = await sync.issues.listEvents({ repo: sync.repo, number });
   const reopenings = events.filter((event) => event.event === "reopened");
   if (reopenings.length === 0) return false;
-  const closings = events.filter((event) => event.event === "closed");
+  const closings = events.filter((event) => event.event === "closed" && event.actor === login);
   let toolClosing: number | undefined;
   if (pending.afterEvent !== undefined) {
     toolClosing = closings.filter((event) => event.id > pending.afterEvent!).sort((a, b) => a.id - b.id)[0]?.id;

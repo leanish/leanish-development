@@ -72,6 +72,13 @@
   says so with the rule's reasons, rather than claiming the rule refused every candidate.
 - secure-it takes a notice as already posted only from its own comment: a notice marker in someone else's comment no
   longer keeps a notice from being posted, nor dates a closing it recorded.
+- An issue secure-it closes isn't taken as dismissed when someone on another account closed and reopened it while the
+  tool was closing it: only a closing by the token's login counts as the tool's. A person using the token's own
+  account still can't be told apart ([known limitation](docs/coverage-gaps.md#limits)).
+- Review posts its notices only on the decision's own issue, never on another issue a PR's `Tracks` line names. It still
+  keeps that line's issue number when it updates such a PR ([known limitation](docs/coverage-gaps.md#limits)).
+- A run that retires a PR taken early renders its issue without that PR: it reads as ready until a new one publishes,
+  never as in progress on the PR just closed.
 - The docs say what a scan with coverage gaps still closes: a duplicate issue whose findings the surviving one already
   tracks, and a closing an earlier run recorded; it never takes a finding for gone.
 - The docs state what a dismissal covers: no new issue for a subject whose findings are all dismissed, but one that

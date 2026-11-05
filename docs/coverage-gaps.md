@@ -74,7 +74,16 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   resolved while its advisories are still there, or make a dismissal hide a finding that returned. On a personal
   account's repository, which has no Triage role, everyone who can edit secure-it's issues can push anyway. Until a
   release stops trusting a record someone else edited, give Triage only to people you'd trust with a `take-early`
-  label.
+  label. A PR's `Tracks` line is read from the PR's description the same way: review reads its last recognized
+  `Tracks` line and keeps that issue number when it publishes an update, even when it names an unrelated issue (it
+  posts no notice there); a regular run that redoes the PR replaces it with the current decision's issue.
+- **A person using the token's account can look like secure-it closing an issue (secure-it)**: secure-it tells its
+  own closing from a person's by the token's login and the event boundary it recorded with the closing (or, for a
+  closing recorded before boundaries were kept, its notice's time). A person using that same account who closes and
+  reopens the issue after that boundary can be mistaken for reopening it after secure-it closed it. That can retire
+  the issue while it's open, or make it count as dismissed once secure-it closes it, so no new issue opens for its
+  findings while they're still there. The boundary survives an interrupted run, so the window lasts until a later run
+  finishes that closing.
 - **An early attempt whose PR the listing doesn't show yet (secure-it)**: when publication fails after its PR was
   created, the attempt ends as failed if the PR listing doesn't show that PR yet, and review then leaves the PR alone
   as not taken early (with a notice).
