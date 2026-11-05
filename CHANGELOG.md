@@ -11,10 +11,10 @@
 
 ### Fixed
 
-- secure-it's issues redact more of a planning error: values assigned to a secret-looking name (`password=…`,
-  `token="…"`) and the user and password of any URL. It's best effort and errs toward redacting: `max_tokens=4096` loses
-  its value too, while `--password value`, `token:value` and an unquoted value's later words still show. An error whose
-  first line is empty now says it gave no details instead of leaving a sentence unfinished.
+- secure-it's issues try to redact more of a planning error: values assigned to a secret-looking name (`password=…`,
+  `token="…"`) and a URL's user and password in schemes other than http too. It's best effort and errs toward redacting:
+  `max_tokens=4096` loses its value too, while `--password value`, `token:value` and an unquoted value's later words still
+  show. An error whose first line is empty now says it gave no details instead of leaving a sentence unfinished.
 
 ## 0.11.0 - 2026-11-05
 

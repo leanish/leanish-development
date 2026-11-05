@@ -51,6 +51,10 @@ describe("planningCause", () => {
     ["'password': 'fake secret'", "'password': [redacted]"],
     ["password:\"fake secret\"", "password:[redacted]"],
     ["token=fake,secret;tail", "token=[redacted]"],
+    ["token: \"fake\"secret\"", "token: [redacted]"],
+    ["password=\"prefix\"suffix", "password=[redacted]"],
+    ["password='prefix'suffix", "password=[redacted]"],
+    ["password=`prefix`suffix", "password=[redacted]"],
     ["[token]=fake-secret", "[token]=[redacted]"],
     ["[\"token\"]=fake-secret", "[\"token\"]=[redacted]"],
     ["token = fake-secret", "token = [redacted]"],
@@ -68,12 +72,20 @@ describe("planningCause", () => {
     expect(planningCause("password=fake-secret, retry=3; token=other-secret then gave up")).toBe("password=[redacted], retry=3; token=[redacted] then gave up");
   });
 
+  it("stops a quoted value where the assignment ends, keeping what follows", () => {
+    expect(planningCause("password=\"fake secret\", retry=3; token='other secret'; gave up")).toBe("password=[redacted], retry=3; token=[redacted]; gave up");
+  });
+
   it("redacts an assignment that follows an ordinary label", () => {
     expect(planningCause("failed: password=fake-secret")).toBe("failed: password=[redacted]");
   });
 
   it("removes a URL's user and password in a scheme other than http", () => {
     expect(planningCause("can't reach postgres://reader:fake-secret@db.example/main")).toBe("can't reach postgres://db.example/main");
+  });
+
+  it("removes all of a URL's password when it contains an @", () => {
+    expect(planningCause("unsupported git+ssh://reader:p@ss@github.com/acme/repo.git")).toBe("unsupported git+ssh://github.com/acme/repo.git");
   });
 
   it.each([
@@ -94,6 +106,7 @@ describe("planningCause", () => {
   it.each([
     ["max_tokens=4096 exceeded", "max_tokens=[redacted] exceeded"],
     ["invalid token: expired", "invalid token: [redacted]"],
+    ["root@1.0.0: @fastify/cookie: no stable non-deprecated version satisfies ^1.0.0", "root@1.0.0: @fastify/cookie: [redacted] stable non-deprecated version satisfies ^1.0.0"],
   ])("errs toward redacting a word that only looks secret: %s", (diagnostic, redacted) => {
     expect(planningCause(diagnostic)).toBe(redacted);
   });
