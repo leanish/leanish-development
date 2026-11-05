@@ -108,9 +108,12 @@ Leave other permissions and account permissions unset.
 - Pull requests write also covers PR labels/comments via the Issues endpoints.
   secure-it's write PAT also needs Issues read and write: it tracks every finding
   in an issue and reads the `take-early` label there
-  ([issues](../secure-it/README.md#issues-decide-what-runs)). Without it, a run
-  executes nothing and says the write PAT needs Issues: read and write. bump-it's
-  doesn't need it.
+  ([issues](../secure-it/README.md#issues-decide-what-runs)). Without it, GitHub
+  refuses the run's first issue write: the issue sync fails, and that run executes
+  nothing and says the write PAT needs Issues: read and write. A run with no issue
+  to write doesn't find out: on a public repository, where reading issues needs no
+  permission, it syncs and goes on (a floor removal included), and the missing
+  permission shows at the first finding. bump-it's doesn't need it.
 - The tools read CI from Actions workflow runs/jobs and commit statuses, so
   checks-only results from other apps must be exposed as commit statuses to be
   seen.
