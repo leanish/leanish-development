@@ -42,7 +42,8 @@ export async function settleAttempt(client: AttemptClient, number: number, id: s
   const updated: IssueRecord = { ...record, attempts: record.attempts.map((entry) => (entry.id === id ? settled : entry)) };
   // Only an open issue the run's sync rendered: a closed one (dismissed, superseded, resolved) or one waiting to close
   // keeps the text it was left with. An assessment read while the attempt's PR was open may still name it as the
-  // decision's PR: once that PR closed, it's rendered without it, so the issue never says a closed PR is in progress.
+  // decision's PR: once that PR closed, it's rendered without it, so a text rendered here never says a closed PR is in
+  // progress. Without an assessment (a review's), the text stays as the last sync left it, until the next one.
   const current = issue.state === "open" && updated.pendingClose === undefined;
   const rendered = current && assessment !== undefined && settled.outcome === "pr-closed" && settled.pr !== undefined ? withoutPr(assessment, settled.pr) : assessment;
   await client.issues.updateIssue({ repo: client.repo, number, body: bodyWith(client, issue.body, updated, current ? rendered : undefined) });
