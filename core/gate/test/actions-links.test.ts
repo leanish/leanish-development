@@ -48,7 +48,8 @@ async function read(files: Record<string, string>, links: Record<string, string>
   return inventory;
 }
 
-const at = (path: string, target: string, usedBy?: string) => ({ path, target, usedBy });
+const CI = ".github/workflows/ci.yml";
+const at = (path: string, target: string, local?: string, file = CI) => ({ path, target, usedBy: local === undefined ? undefined : { local, file } });
 
 describe("a tree's links", () => {
   it("gives the first link on the way, or else every link under a folder, the same from a commit and a working tree", async () => {
@@ -90,7 +91,7 @@ describe("links on the paths actions are read from", () => {
       { ".github/workflows/ci.yml": "jobs:\n  a:\n    steps:\n      - uses: ./tools/build\n      - uses: ./tools/build\n", "shared/build/action.yml": `runs:\n  using: composite\n  steps:\n    - uses: acme/behind-a-link@main\n` },
       { tools: "shared" },
     );
-    expect(inventory.links).toEqual([at("tools", "shared", "./tools/build (.github/workflows/ci.yml)")]);
+    expect(inventory.links).toEqual([at("tools", "shared", "./tools/build")]);
     expect(inventory.uses).toEqual([]);
     expect(inventory.gaps).toEqual([]);
   });
@@ -106,7 +107,7 @@ describe("links on the paths actions are read from", () => {
 
   it("records a linked local reusable workflow as found on its own and as used, so a new `uses:` of it is a change", async () => {
     const inventory = await read({ ".github/workflows/ci.yml": "jobs:\n  a:\n    uses: ./.github/workflows/shared.yml\n", "shared/ci.yml": STEP }, { ".github/workflows/shared.yml": "../../shared/ci.yml" });
-    expect(inventory.links).toEqual([at(".github/workflows/shared.yml", "../../shared/ci.yml"), at(".github/workflows/shared.yml", "../../shared/ci.yml", "./.github/workflows/shared.yml (.github/workflows/ci.yml)")]);
+    expect(inventory.links).toEqual([at(".github/workflows/shared.yml", "../../shared/ci.yml"), at(".github/workflows/shared.yml", "../../shared/ci.yml", "./.github/workflows/shared.yml")]);
   });
 
   it("ignores a link in the workflows folder that couldn't be a workflow, and reads the real files around it", async () => {
@@ -117,7 +118,7 @@ describe("links on the paths actions are read from", () => {
 
   it("isn't caught by links that lead to each other, inside or around a followed action", async () => {
     const inventory = await read({ ".github/workflows/ci.yml": "jobs:\n  a:\n    steps:\n      - uses: ./loop/x\n" }, { loop: "other", other: "loop", ".github/actions/self": "self" });
-    expect(inventory.links).toEqual([at(".github/actions/self", "self"), at("loop", "other", "./loop/x (.github/workflows/ci.yml)")]);
+    expect(inventory.links).toEqual([at(".github/actions/self", "self"), at("loop", "other", "./loop/x")]);
   });
 
   it("counts as something to check when links are all a repository's workflows have", async () => {
@@ -147,10 +148,16 @@ describe("the verdict on a link", () => {
 
   it("fails a new `uses:` through a link base already had", async () => {
     const folder = at(".github/actions/build", "../../shared");
-    const used = at(".github/actions/build", "../../shared", "./.github/actions/build (.github/workflows/ci.yml)");
+    const used = at(".github/actions/build", "../../shared", "./.github/actions/build");
     const result = await compare(inventory(folder), inventory(folder, used));
     expect(result.problems).toEqual([problem(`.github/actions/build -> "../../shared", used by ./.github/actions/build (.github/workflows/ci.yml)`)]);
     expect(result.gaps).toEqual([gap(`.github/actions/build -> "../../shared"`)]);
+  });
+
+  it("doesn't take one route for another when their reference and file would read the same joined", async () => {
+    const base = inventory(at("tools", "shared", "./tools/build (b", "a/action.yml"));
+    const head = inventory(at("tools", "shared", "./tools/build", "b (a/action.yml"));
+    expect((await compare(base, head)).problems).toEqual([problem(`tools -> "shared", used by ./tools/build (b (a/action.yml)`)]);
   });
 
   it("reports a link base has too as a gap, in a comparison and a full scan alike", async () => {

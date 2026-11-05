@@ -22,7 +22,7 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 - **Unpinned or unverified remote actions** a PR didn't touch (`uses: actions/checkout@v7`): their version (and advisories) can't be told. A new or changed remote action or reusable workflow must be pinned; that fails, it isn't a gap.
 - **`docker://` actions**, new or not: no advisory source covers container images.
 - **Local actions without an `action.yml`**, and local reusable workflows that don't exist.
-- **Links in workflow and action metadata** that base has too: a symbolic link instead of a workflow, a local reusable workflow or action metadata, on the way to one, or anywhere under `.github/actions`. The gate doesn't open it, so the actions behind it aren't read, and it can't see what changes behind an unchanged link. A new or retargeted link, or a new `uses:` through one, fails; that isn't a gap.
+- **Links in workflow and action metadata** that base has too: a symbolic link instead of a workflow, a local reusable workflow or action metadata, on the way to one, or anywhere under `.github/actions`. The gate doesn't open it, so the actions behind it aren't read, and it can't see what changes behind an unchanged link. A new or retargeted link, or another local reference or file using one, fails; that isn't a gap. A second identical reference in the same file is inherited.
 
 ## Limits
 

@@ -25,8 +25,8 @@ import type { Tree, TreeLink } from "./tree.ts";
 
 /** A link on a path the gate reads actions from, so what's behind it isn't read. */
 export interface ActionsLink extends TreeLink {
-  /** The local `uses:` that leads through it and its file (`./tools/build (ci.yml)`), or undefined when discovery found it on its own. */
-  readonly usedBy: string | undefined;
+  /** The local `uses:` that leads through it and its file, or undefined when discovery found it on its own. */
+  readonly usedBy: { readonly local: string; readonly file: string } | undefined;
 }
 
 export interface ActionUse {
@@ -129,7 +129,7 @@ function readsAsAction(value: string): boolean {
 /** Every `uses:` in the tree's workflows and actions, local actions followed. */
 export async function readActionsInventory(tree: Tree): Promise<ActionsInventory> {
   const links = new Map<string, ActionsLink>();
-  const record = (found: ReadonlyArray<TreeLink>, usedBy: string | undefined) => {
+  const record = (found: ReadonlyArray<TreeLink>, usedBy: ActionsLink["usedBy"]) => {
     for (const link of found) {
       const located = { ...link, usedBy };
       links.set(linkKey(located), located);
@@ -143,7 +143,7 @@ export async function readActionsInventory(tree: Tree): Promise<ActionsInventory
     return blocked ? [] : tree.list(root);
   };
   // `missing`: the gap to report when none of `files` exists (only for files a `uses:` points at). `usedBy`: that `uses:` and its file.
-  const queue: Array<{ files: string[]; missing: string | undefined; usedBy: string | undefined }> = [
+  const queue: Array<{ files: string[]; missing: string | undefined; usedBy: ActionsLink["usedBy"] }> = [
     ...(await discover(".github/workflows", (path) => LOCAL_WORKFLOW.test(path))).filter((path) => LOCAL_WORKFLOW.test(path)).map((file) => ({ files: [file], missing: undefined, usedBy: undefined })),
     // Any link here: a commit doesn't say whether one leads to a folder, which may hold an `action.yml`.
     ...(await discover(".github/actions", () => true)).filter((path) => /\/action\.ya?ml$/.test(path)).map((file) => ({ files: [file], missing: undefined, usedBy: undefined })),
@@ -183,8 +183,8 @@ export async function readActionsInventory(tree: Tree): Promise<ActionsInventory
         if (path === ".." || path.startsWith("../")) throw new Error(`${file}: \`uses: ${local}\` points outside the repository`);
         queue.push(
           LOCAL_WORKFLOW.test(path)
-            ? { files: [path], missing: `GitHub Actions local workflow ${local} (${file}) doesn't exist, so what it uses isn't read`, usedBy: `${local} (${file})` }
-            : { files: [posix.join(path, "action.yml"), posix.join(path, "action.yaml")], missing: `GitHub Actions local action ${local} (${file}) has no action.yml, so what it uses isn't read`, usedBy: `${local} (${file})` },
+            ? { files: [path], missing: `GitHub Actions local workflow ${local} (${file}) doesn't exist, so what it uses isn't read`, usedBy: { local, file } }
+            : { files: [posix.join(path, "action.yml"), posix.join(path, "action.yaml")], missing: `GitHub Actions local action ${local} (${file}) has no action.yml, so what it uses isn't read`, usedBy: { local, file } },
         );
       }
     }
@@ -198,7 +198,7 @@ export async function readActionsInventory(tree: Tree): Promise<ActionsInventory
  * base already had is a change. Structured, so no field's characters can blur two apart.
  */
 export function linkKey(link: ActionsLink): string {
-  return JSON.stringify([link.path, link.target, link.usedBy ?? null]);
+  return JSON.stringify([link.path, link.target, link.usedBy?.local ?? null, link.usedBy?.file ?? null]);
 }
 
 export type Resolution =
