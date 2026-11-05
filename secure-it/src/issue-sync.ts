@@ -16,7 +16,7 @@ import type { GitHubIssue, GitHubIssues } from "@leanish/tool-runtime/github-iss
 import type { Assessment, PendingClose } from "./issue-model.ts";
 import { postNotice } from "./issue-notices.ts";
 import { type IssueOperation, reconcile, type TrackedIssue } from "./issue-reconcile.ts";
-import { ISSUE_LABEL, type IssueWriter, issueWriter, noticeMarker, recordOf } from "./issue-text.ts";
+import { hasLabel, ISSUE_LABEL, type IssueWriter, issueWriter, noticeMarker, recordOf } from "./issue-text.ts";
 
 export interface IssueSync {
   readonly issues: GitHubIssues;
@@ -105,7 +105,7 @@ async function readTracked(sync: IssueSync, login: string, written: ReadonlySet<
   const fresh: GitHubIssue[] = [];
   for (const number of written) {
     const issue = await readWritten(sync, number);
-    if (issue !== undefined && issue.author === login && issue.labels.includes(ISSUE_LABEL)) fresh.push(issue);
+    if (issue !== undefined && issue.author === login && hasLabel(issue.labels, ISSUE_LABEL)) fresh.push(issue);
   }
   const tracked: Array<TrackedIssue & { readonly labels: ReadonlyArray<string> }> = [];
   const unreadable: number[] = [];

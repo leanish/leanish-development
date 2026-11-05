@@ -16,6 +16,11 @@ export class FakeIssues implements GitHubIssues {
    * late (a new issue missing, an edited one with its old body). Reading an issue by its number is never late.
    */
   lagging = false;
+  /**
+   * Labels the repository already has, by lowercase name, in the casing they were made with: as on GitHub, applying
+   * one by any casing gives it that casing, and filters and removals match it ignoring case.
+   */
+  readonly repoLabels = new Map<string, string>();
   #listed = new Map<number, GitHubIssue>();
   #next = 1;
   #ids = 1000;
@@ -29,7 +34,7 @@ export class FakeIssues implements GitHubIssues {
   async listIssues({ creator, label }: { repo: string; creator: string; label: string }): Promise<ReadonlyArray<GitHubIssue>> {
     const seen = this.lagging ? this.#listed : this.issues;
     this.#listed = new Map(this.issues);
-    return [...seen.values()].filter((issue) => issue.author === creator && issue.labels.includes(label));
+    return [...seen.values()].filter((issue) => issue.author === creator && issue.labels.some((name) => sameLabel(name, label)));
   }
 
   async getIssue({ number }: { repo: string; number: number }): Promise<GitHubIssue> {
@@ -41,7 +46,7 @@ export class FakeIssues implements GitHubIssues {
   async createIssue({ title, body, labels }: { repo: string; title: string; body: string; labels: ReadonlyArray<string> }): Promise<GitHubIssue> {
     this.#refuse("createIssue");
     const number = this.#next++;
-    const issue: GitHubIssue = { number, url: `https://github.com/acme/widget/issues/${number}`, title, body, state: "open", stateReason: null, author: this.me, labels: [...labels] };
+    const issue: GitHubIssue = { number, url: `https://github.com/acme/widget/issues/${number}`, title, body, state: "open", stateReason: null, author: this.me, labels: labels.map((label) => this.#cased(label)) };
     this.issues.set(number, issue);
     this.calls.push(`createIssue #${number}`);
     return issue;
@@ -77,8 +82,8 @@ export class FakeIssues implements GitHubIssues {
   async removeLabel({ number, label }: { repo: string; number: number; label: string }): Promise<void> {
     this.#refuse("removeLabel");
     const issue = await this.getIssue({ repo: "", number });
-    this.issues.set(number, { ...issue, labels: issue.labels.filter((name) => name !== label) });
-    this.#event(number, { event: "unlabeled", actor: this.me, label });
+    this.issues.set(number, { ...issue, labels: issue.labels.filter((name) => !sameLabel(name, label)) });
+    this.#event(number, { event: "unlabeled", actor: this.me, label: this.#cased(label) });
   }
 
   async permission({ login }: { repo: string; login: string }): Promise<RepositoryPermission> {
@@ -100,8 +105,8 @@ export class FakeIssues implements GitHubIssues {
   /** A person adding a label. */
   label(number: number, actor: string, label: string, at = "2026-11-03T08:01:00Z"): void {
     const issue = this.issues.get(number)!;
-    this.issues.set(number, { ...issue, labels: [...issue.labels, label] });
-    this.#event(number, { event: "labeled", actor, label, createdAt: at });
+    this.issues.set(number, { ...issue, labels: [...issue.labels, this.#cased(label)] });
+    this.#event(number, { event: "labeled", actor, label: this.#cased(label), createdAt: at });
   }
 
   /** A person closing or reopening an issue. */
@@ -116,7 +121,15 @@ export class FakeIssues implements GitHubIssues {
     this.events.set(number, [...this.events.get(number) ?? [], { id: this.#ids++, createdAt: createdAt ?? "2026-11-03T09:00:00Z", ...rest }]);
   }
 
+  #cased(label: string): string {
+    return this.repoLabels.get(label.toLowerCase()) ?? label;
+  }
+
   #refuse(operation: string): void {
     if (this.forbidden.has(operation)) throw new GitHubApiError(operation, "forbidden", 403);
   }
+}
+
+function sameLabel(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase();
 }

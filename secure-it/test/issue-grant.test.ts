@@ -41,6 +41,16 @@ describe("grantOf", () => {
     });
   });
 
+  it("reads a take-early label made by hand in another casing as the label, as GitHub matches it", () => {
+    const cased = (event: GrantEvent): GrantEvent => ({ ...event, label: "Take-Early" });
+    expect(grantOf(input({ labels: ["Take-Early"], events: [cased(labeled(7))] }))).toMatchObject({ kind: "granted", grant: { labelEventId: 7 } });
+    // Its removal and a later label are read too, in either casing: the later one, with its own new reason, grants.
+    const removed = cased({ id: 8, event: "unlabeled", actor: "owner", createdAt: "2026-11-03T08:02:00Z" });
+    const again = reason(6, "owner", "2026-11-03T08:02:30Z", "2026-11-03T08:02:30Z", "take-early: still exploited");
+    expect(grantOf(input({ labels: ["take-early"], events: [cased(labeled(7)), removed, labeled(9, "owner", "2026-11-03T08:03:00Z")], comments: [reason(5), again] })))
+      .toMatchObject({ kind: "granted", grant: { labelEventId: 9, reasonCommentId: 6 } });
+  });
+
   it("never grants a first label for a young version its issue didn't show, even when the times allow it", () => {
     // The issue showed only lib@1.0.1 (an update adding lib-dep couldn't be written); the decision now takes both.
     const status: SubjectStatus = { kind: "waiting", young: [young("1.0.1"), { ecosystem: "npm", name: "lib-dep", version: "2.0.1", eligibleAt: "2026-11-10T00:00:00Z" }] };

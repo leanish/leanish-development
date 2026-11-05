@@ -169,6 +169,11 @@ describe("createGitHubIssues", () => {
     await expect(client.removeLabel({ repo: REPO, number: 99, label: "take-early" })).rejects.toThrow("HTTP 404");
   });
 
+  it("takes a label still on the issue in another casing after a 404 for not removed", async () => {
+    const { fetch } = scripted(json({ message: "Not Found" }, 404), json(apiIssue({ labels: [{ name: "Take-Early" }] })));
+    await expect(issues(fetch).removeLabel({ repo: REPO, number: 12, label: "take-early" })).rejects.toThrow("HTTP 404");
+  });
+
   it("treats a non-collaborator as no permission, and refuses what isn't one", async () => {
     const { fetch } = scripted(
       json({ message: "Forbidden" }, 403),

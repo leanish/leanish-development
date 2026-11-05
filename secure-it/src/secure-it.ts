@@ -8,13 +8,11 @@ import type { PreparedBranch, WorkingCopy } from "@leanish/agent-runtime/types/w
 import { ActionsGitHub } from "@leanish/gate/actions-github";
 import { eligibleAt } from "@leanish/gate/age";
 import type { Floor } from "@leanish/gate/floors";
-import { type SecurityCandidates, type SecurityFix, securityCandidates, severityRank, withProblem } from "@leanish/gate/candidates";
+import { type SecurityCandidates, type SecurityFix, securityCandidates, withProblem } from "@leanish/gate/candidates";
 import type { CooldownEvaluation } from "@leanish/gate/cooldown";
 import type { NpmPeerPlanner } from "@leanish/gate/npm-peers";
 import { type EvidenceOptions, heldEvidence } from "@leanish/gate/advisory-evidence";
 import { type GateEnvironment, type GradleInputs, readScanState, readSettings, type ScanState } from "@leanish/gate/gate";
-import { unexcusedProblem } from "@leanish/gate/exceptions";
-import { findingsOf } from "@leanish/gate/findings";
 import { type GradleInventory, gradleLocation, pinnedAmong, strictPinNote, strictPins } from "@leanish/gate/gradle";
 import { namingFailures } from "@leanish/gate/http";
 import { FileRepositoryAdvisoryCache } from "@leanish/tool-runtime/repository-advisory-cache";
@@ -48,14 +46,15 @@ import { versionCatalogs } from "@leanish/gate/gate";
 import { isTrustedPackage } from "@leanish/gate/config";
 import { cleanBody, withCanonical } from "@leanish/tool-runtime/publication-text";
 import { assessmentOf, decisionMoves, type PlannedUnit, youngOf } from "./issue-assessment.ts";
-import { type ObservedFinding, type PackageVersion, subjectId } from "./issue-model.ts";
+import { type PackageVersion, subjectId } from "./issue-model.ts";
+import { observationsOf } from "./issue-observations.ts";
 import { postNotice } from "./issue-notices.ts";
 import { syncIssues } from "./issue-sync.ts";
 import { attemptBranches, type Disposition, inactiveLabelNotices, issueDisposition, type Tracking, type TrackedExecution, UNSETTLED } from "./issue-tracking.ts";
 import { type AttemptClient, type AttemptPatch, endAttempt, recoverAttempts, settleAttempt, showPullRequest } from "./issue-attempts.ts";
 import { EarlyPrs, takenEarlyOf, trackedIssueOf } from "./decision-issues.ts";
 import { earlyDecisions, reviewClosed, reviewDisposition, reviewExecution, type ReviewIssues, type ReviewPermit } from "./issue-review.ts";
-import { trackingContent } from "./issue-text.ts";
+import { hasLabel, trackingContent } from "./issue-text.ts";
 import { removalTransform } from "./floor-gradle.ts";
 import { probeOnBase } from "./floor-probe.ts";
 import { type ComputedRemoval, type RemovalProbe, floorsOf, selectRemovals } from "./floor-removal.ts";
@@ -816,7 +815,7 @@ function attemptClient(execution: Execution): AttemptClient {
   const { context } = execution;
   return {
     issues: context.issues, github: context.github, repo: context.repo.repo, clean: issueCleaner(context),
-    ours: (pr) => topicOf(RULES, pr.headRef) !== undefined && pr.headRepo?.toLowerCase() === context.repo.repo.toLowerCase() && (pr.body.includes(RULES.marker) || pr.labels.includes(RULES.label)),
+    ours: (pr) => topicOf(RULES, pr.headRef) !== undefined && pr.headRepo?.toLowerCase() === context.repo.repo.toLowerCase() && (pr.body.includes(RULES.marker) || hasLabel(pr.labels, RULES.label)),
   };
 }
 
@@ -1326,35 +1325,6 @@ async function reusable(publication: PublicationContext, own: ReadonlyArray<GitH
   return reusable;
 }
 
-/**
- * What a run observed on the default branch, for its issues: every finding no valid exception covers, read from the
- * same scan state candidate planning uses (`readScanState`), before planning can fail. An excepted finding is a
- * decision the owner already wrote down, so it gets no issue. One observed finding per package and advisory group: its
- * installed versions, ids (every alias seen), whether any record is reviewed or malware, and the highest severity.
- * Sorted, so the same scan always reads the same.
- */
-function observationsOf(scan: ScanState, today: string): ObservedFinding[] {
-  const groups = new Map<string, { ecosystem: ObservedFinding["ecosystem"]; name: string; ids: Set<string>; versions: Set<string>; reviewed: boolean; malicious: boolean; severity: string | undefined }>();
-  for (const finding of findingsOf(scan.packages, scan.snapshot)) {
-    if (unexcusedProblem(finding, scan.settings.exceptions, scan.snapshot, today) === undefined) continue;
-    const key = `${finding.ecosystem}|${finding.name}|${finding.advisory}`;
-    const group = groups.get(key) ?? { ecosystem: finding.ecosystem, name: finding.name, ids: new Set<string>(), versions: new Set<string>(), reviewed: false, malicious: false, severity: undefined };
-    for (const id of finding.ids) group.ids.add(id);
-    group.ids.add(finding.advisory);
-    group.versions.add(finding.version);
-    group.reviewed ||= finding.reviewed;
-    group.malicious ||= finding.malicious;
-    if (severityRank(finding.severity) > severityRank(group.severity)) group.severity = finding.severity;
-    groups.set(key, group);
-  }
-  return [...groups.values()]
-    .map((group) => ({
-      ecosystem: group.ecosystem, name: group.name, ids: [...group.ids].sort(), versions: [...group.versions].sort(),
-      reviewed: group.reviewed, malicious: group.malicious, severity: group.severity,
-    }))
-    .sort((a, b) => `${a.ecosystem}|${a.name}|${a.ids[0]}`.localeCompare(`${b.ecosystem}|${b.name}|${b.ids[0]}`));
-}
-
 /** Observes, assesses and syncs the tool's issues for this run (`issue-tracking.ts`). */
 async function trackIssues(execution: Execution, inputs: TrackingInputs): Promise<Tracking> {
   const { context } = execution;
@@ -1393,11 +1363,13 @@ async function trackIssues(execution: Execution, inputs: TrackingInputs): Promis
     const plan = planOf(pr.body);
     if (plan !== undefined) recorded.push({ pr, plan, early: await execution.early.is(pr, plan) });
   }
+  const { observed, excepted } = observationsOf(inputs.scanned.packages, inputs.scanned.snapshot, inputs.scanned.settings.exceptions, today);
   const assessment = await assessmentOf({
     sha: inputs.tree.id,
     now: context.now,
     complete,
-    observations: observationsOf(inputs.scanned, today),
+    observations: observed,
+    excepted,
     units: planned,
     blocked: inputs.blocked,
     planningCauses,
