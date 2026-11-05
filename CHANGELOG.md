@@ -16,8 +16,8 @@
   complete scan sees none of its tracked findings, and an issue a person closes stays dismissed. PRs say `Tracks #N.` rather than closing
   their issue. A PR taken early is retired once its granted versions aged, and its attempt ends. Verification finding
   a young version planning didn't choose stops publication and says so on the issue. **secure-it's write PAT now needs Issues: read and write**
-  ([adopting the tools](docs/adopting-tools.md)); without it a run that has to write an issue executes nothing and
-  says why.
+  ([adopting the tools](docs/adopting-tools.md)); without it a run whose issue sync has to write executes nothing
+  and says why.
 - secure-it review holds early PRs by their issue's grant, including when the gate held nothing in their recorded
   plan. Graduation closes the draft and settles its attempt before branch or CI work. Verification admits only the
   grant's young versions and trusted packages; recorded cooldown warnings and evidence remain visible. bump-it and
@@ -53,8 +53,8 @@
   open or redo a PR on its next run. The docs say closing an issue is an input too (it dismisses its findings), and
   that a Maven version already on the base elsewhere isn't held or refused when an aged update brings it into another
   configuration.
-- A secure-it run whose issues couldn't be synced (GitHub refusing an issue write from a write PAT without Issues
-  permission, or GitHub failing) reports
+- A secure-it run whose issues couldn't be synced (GitHub refusing one of its issue calls, such as a write from a
+  write PAT without Issues permission, or GitHub failing) reports
   it as an error, so a batch reads it as failed rather than completed; one whose issues didn't settle says so in a
   note. Either way it still executes nothing.
 - The docs say what a scan with coverage gaps still closes: a duplicate issue whose findings the surviving one already
