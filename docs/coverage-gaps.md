@@ -66,10 +66,11 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   label they add doesn't authorize (secure-it takes it only from write access). So in an organization's repository a
   Triage member can edit a record into authorizing more than a writer did, while that writer's current label and
   unedited reason still stand: another early attempt after one ended, or young versions the label didn't cover. That
-  attempt runs before its versions are past the wait: the agent applies the change and verification builds and tests
-  it, sandboxed, with the young versions, even when it then publishes nothing, and what it publishes is a draft PR,
-  which still takes write access to merge. With no label at all, an edited record can retire a PR taken early before its
-  versions aged: review closes that draft and deletes its branch. And an edited record can make an issue close as
+  attempt runs before its versions are past the wait: it can execute the young versions in the agent's sandboxed
+  repository checks and in Gradle inventory and reference builds before any PR is published, even when it then
+  publishes nothing, and what it publishes is a draft PR, which still takes write access to merge. With no label at all,
+  an edited record can make secure-it retire one of its own tracked draft PRs too early: review closes it and deletes
+  its branch, under the usual ownership and head checks. And an edited record can make an issue close as
   resolved while its advisories are still there, or make a dismissal hide a finding that returned. On a personal
   account's repository, which has no Triage role, everyone who can edit secure-it's issues can push anyway. Until a
   release stops trusting a record someone else edited, give Triage only to people you'd trust with a `take-early`

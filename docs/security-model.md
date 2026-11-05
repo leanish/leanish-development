@@ -102,7 +102,7 @@ Both tools are in this tree: [`secure-it`](../secure-it) and [`bump-it`](../bump
   only in the tool's process, with the write PAT, never in the agent's. One more way in is not an intended input: the
   record is read back from the issue's description, which anyone who can edit issues can change, GitHub's Triage role
   included, and secure-it trusts it whoever edited it. The versions stay the code's, but an edited record can stretch
-  a writer's label to more early work than it granted, retire a PR taken early, or change what the issue's findings,
+  a writer's label to more early work than it granted, retire one of secure-it's draft PRs too early, or change what the issue's findings,
   closing and dismissal are taken to be ([known limitation](coverage-gaps.md#limits)).
 - **PR CI reads use Actions and commit statuses**, so no Checks API permission is required
   ([what review reads](../core/tool-runtime/README.md)).
