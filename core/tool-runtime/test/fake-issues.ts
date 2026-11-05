@@ -11,6 +11,8 @@ export class FakeIssues implements GitHubIssues {
   readonly calls: string[] = [];
   /** Operations GitHub refuses as forbidden (a PAT without Issues write). */
   readonly forbidden = new Set<string>();
+  /** Operations GitHub answers with this status, as for an issue transferred (301) or deleted (410) meanwhile. */
+  readonly gone = new Map<string, number>();
   /**
    * As GitHub's filtered listing does, list issues as they were at the previous listing: a write shows up one listing
    * late (a new issue missing, an edited one with its old body). Reading an issue by its number is never late.
@@ -38,6 +40,7 @@ export class FakeIssues implements GitHubIssues {
   }
 
   async getIssue({ number }: { repo: string; number: number }): Promise<GitHubIssue> {
+    this.#refuse("getIssue");
     const issue = this.issues.get(number);
     if (issue === undefined) throw new GitHubApiError("getIssue", "not found", 404);
     return issue;
@@ -127,6 +130,8 @@ export class FakeIssues implements GitHubIssues {
 
   #refuse(operation: string): void {
     if (this.forbidden.has(operation)) throw new GitHubApiError(operation, "forbidden", 403);
+    const gone = this.gone.get(operation);
+    if (gone !== undefined) throw new GitHubApiError(operation, "gone", gone);
   }
 }
 

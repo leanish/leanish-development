@@ -82,6 +82,12 @@ export interface ReviewSteps {
    */
   adapt(pr: GitHubPullRequest, prepared: PreparedBranch, context: PublicationContext, attempt: number, failingChecks: ReadonlyArray<string>): Promise<boolean | "deferred">;
   /**
+   * Whether the tick may touch the PR, asked of its effective content (a saved publication's, when its body lags) before
+   * the tick writes anything, repairing that body included: `leave` reports it and changes nothing. It must only read.
+   * Absent, every PR the tool owns goes on.
+   */
+  admit?(pr: GitHubPullRequest): Promise<{ readonly kind: "leave"; readonly reason: string } | undefined>;
+  /**
    * Whether the tick may act on the PR at all, asked once its ownership is settled and before anything else: retiring
    * a draft, preparing its branch, a rebase, readiness or an adaptation. `leave` reports it and does nothing.
    * A proceed result may carry a draft hold with a display time; `graduated` reports a retirement the tool completed.
@@ -142,6 +148,8 @@ async function reviewOne(context: ReviewContext, steps: ReviewSteps, pr: GitHubP
   }
   if (ownership.recovery === "state-removed") return result("left-alone", "its body no longer has the tool's state; someone rewrote it");
   if (ownership.recovery === "legacy") return result("left-alone", "the journal has only its head; the tool's next run recomputes and republishes it");
+  const admitted = await steps.admit?.(ownership.pr);
+  if (admitted !== undefined) return result("left-alone", admitted.reason);
   // A push landing during the repair fails it (`repairOwnership`): the PR is reported, and left as it is.
   pr = await repairOwnership(publication, ownership);
   const recorded = stateOf(pr.body);

@@ -44,7 +44,9 @@ failing to plan leaves its findings tracked and retires nothing.
 Every issue the tool opens carries the `leanish:secure-it-issue` label, and a run lists only issues with it, so the
 login's PRs and other issues never crowd its listing. Removing the label takes an issue out of a run's listing: the run
 opens another for what it tracked. Review still reads the issue a PR names (`Tracks #N.`) by its number, label or not,
-so a PR taken early goes on under its recorded attempt and grant.
+so a PR taken early goes on under its recorded attempt and grant. When that isn't the tool's issue for this PR's decision
+(someone else's, another decision's, unreadable, deleted or transferred), review leaves the PR untouched, so it doesn't
+publish that link again; a run that redoes the PR gives it the current decision's issue.
 
 Issues don't change subject: when a decision changes (another version, another grouping), the run opens the new issue
 first, then closes the old one as superseded by it. Once a complete scan sees none of an issue's findings outside a

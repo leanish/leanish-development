@@ -53,7 +53,7 @@ import { syncIssues } from "./issue-sync.ts";
 import { attemptBranches, type Disposition, inactiveLabelNotices, issueDisposition, type Tracking, type TrackedExecution, UNSETTLED } from "./issue-tracking.ts";
 import { type AttemptClient, type AttemptPatch, endAttempt, recoverAttempts, settleAttempt, showPullRequest } from "./issue-attempts.ts";
 import { EarlyPrs, takenEarlyOf, trackedIssueOf } from "./decision-issues.ts";
-import { earlyDecisions, reviewClosed, reviewDisposition, reviewExecution, type ReviewIssues, type ReviewPermit } from "./issue-review.ts";
+import { earlyDecisions, foreignLink, reviewClosed, reviewDisposition, reviewExecution, type ReviewIssues, type ReviewPermit } from "./issue-review.ts";
 import { hasLabel, trackingContent } from "./issue-text.ts";
 import { removalTransform } from "./floor-gradle.ts";
 import { probeOnBase } from "./floor-probe.ts";
@@ -1137,8 +1137,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
     const verified = await verifyWithRetry(execution, base, plan, content, { admits });
     if (verified.unplanned !== undefined) {
       const unplanned = verified.unplanned;
-      // Said only on this decision's own issue, as its disposition found it: an ordinary PR whose `Tracks` line names
-      // another issue still gets here, and gets no notice.
+      // Said only on this decision's own issue, as its disposition found it.
       const notified = permitOf(pr).issue;
       if (notified !== undefined) {
         await postNotice(issues, notified, `unplanned-young:${pr.number}:${unplanned.join(",")}`,
@@ -1153,6 +1152,11 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
     return publishUpdate(publication, prepared, pr.number, { ...published, body: withPlanSection(published.body, verified.plan) }, attempt);
   };
   const steps: ReviewSteps = {
+    // A proved floor removal tracks no issue. A plan that can't be read is the disposition's to report.
+    admit: async (pr) => {
+      const plan = planOf(pr.body);
+      return plan === undefined || plan.kind === "floor-removal" ? undefined : foreignLink(issues, pr, plan);
+    },
     disposition: async (pr) => {
       const plan = planFrom(pr);
       if (plan.kind === "floor-removal") return { kind: "proceed" };

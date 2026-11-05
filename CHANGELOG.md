@@ -9,6 +9,13 @@
   general rules. There, every release review is one exhaustive pass, the reviewer is picked per iteration, and minor
   findings don't block: a new candidate cut for another reason fixes them all, and otherwise they go to the next patch.
 
+### Fixed
+
+- secure-it's review now leaves a PR untouched when its `Tracks` line names an issue that isn't the tool's for that PR's
+  decision, including one deleted or transferred, instead of updating it and publishing that link again. That means such
+  an ordinary PR no longer gets rebased, adapted or marked ready by review until a run redoes it. Proved floor-removal
+  PRs, which track no issue, aren't affected.
+
 ## 0.11.0 - 2026-11-05
 
 ### Changed

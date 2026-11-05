@@ -281,6 +281,25 @@ describe("reviewOpenPullRequests", () => {
     expect(stateOf(github.prs.get(7)!.body)?.adaptations).toBe(1);
   });
 
+  it("asks whether it may touch a PR, of its saved content, before repairing it, and repairs nothing when told to leave", async () => {
+    const journal = new MemoryJournal();
+    const body = withMarker(RULES, "the saved body", { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 });
+    await journal.pushed(REPO, 7, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: "new plan title", body, adaptations: 0 } });
+    const github = new FakeGitHub(ownPr({ headSha: PUSHED_SHA }));
+    const before = github.prs.get(7)!;
+    const seen: string[] = [];
+    const calls: string[] = [];
+    const leaving: ReviewSteps = { ...steps(calls), admit: async (pr) => {
+      seen.push(pr.body);
+      return { kind: "leave", reason: "it names another issue" };
+    } };
+    expect(await reviewOpenPullRequests(context(github, new InMemoryWorkspace(), workingCopy(), journal), leaving)).toMatchObject([{ outcome: "left-alone", detail: "it names another issue" }]);
+    expect(seen).toEqual([body]);
+    expect(calls).toEqual([]);
+    expect(github.prs.get(7)).toEqual(before);
+    expect(github.calls.filter((call) => call.startsWith("updatePullRequest") || call.startsWith("addLabel"))).toEqual([]);
+  });
+
   it("leaves a legacy journal head alone for the next run, never marking it ready or adapting it", async () => {
     const journal = new MemoryJournal();
     await journal.pushed(REPO, 7, { head: PUSHED_SHA, base: BASE_SHA });

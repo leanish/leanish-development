@@ -1893,9 +1893,52 @@ describe("secure-it review", () => {
     elsewhere.workspace.setRemoteHead("secure-it/2026-10-05-vite-major", HEAD_SHA);
     const theirs = elsewhere.context.issues as FakeIssues;
     theirs.issues.set(1, { number: 1, url: "https://github.com/acme/widget/issues/1", title: "Roadmap", body: "Our own roadmap issue.", state: "open", stateReason: null, author: "someone", labels: [] });
-    expect(await secureIt(elsewhere.deps).review(elsewhere.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "deferred" }] });
+    expect(await secureIt(elsewhere.deps).review(elsewhere.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "left-alone" }] });
     expect(elsewhere.workspace.publications).toEqual([]);
     expect(theirs.comments.get(1) ?? []).toEqual([]);
+  });
+
+  it("changes nothing on a PR whose `Tracks` line names an issue that isn't this decision's", async () => {
+    const previous = await vitePr();
+    const pr = { ...previous, body: `Fixes vite.\n\nTracks #1.\n${previous.body}` };
+    const REASON = "it tracks #1, which isn't this decision's issue";
+    const reviewed = async (arrange: (issues: FakeIssues) => void) => {
+      const h = harness({ prs: [pr], baseSha: NEW_BASE });
+      h.workspace.setRemoteHead("secure-it/2026-10-05-security", HEAD_SHA);
+      const issues = h.context.issues as FakeIssues;
+      arrange(issues);
+      const result = await secureIt(h.deps).review(h.context);
+      return { h, issues, result };
+    };
+    const SOMEONE = { number: 1, url: "https://github.com/acme/widget/issues/1", title: "Roadmap", body: "Our own roadmap issue.", state: "open" as const, stateReason: null, author: "someone", labels: [] as string[] };
+    for (const arrange of [
+      (issues: FakeIssues) => issues.issues.set(1, SOMEONE),
+      // The tool's own issue, of another decision.
+      (issues: FakeIssues) => issues.issues.set(1, { ...SOMEONE, author: "leanish", labels: [ISSUE_LABEL], body: ISSUE_WRITER.render({ subject: { kind: "decision", moves: [{ ecosystem: "npm", name: "other", from: "1.0.0", to: "1.0.1" }] }, findings: [], status: { kind: "eligible", trusted: [] } }, { version: 1, subject: { kind: "decision", moves: [{ ecosystem: "npm", name: "other", from: "1.0.0", to: "1.0.1" }] }, openedAt: BASE_SHA, findings: [], absences: [], attempts: [] }, BASE_SHA).body }),
+      // The tool's own, its record unreadable.
+      (issues: FakeIssues) => issues.issues.set(1, { ...SOMEONE, author: "leanish", labels: [ISSUE_LABEL], body: "## secure-it" }),
+      // Deleted or transferred.
+      (issues: FakeIssues) => issues.gone.set("getIssue", 410),
+      (issues: FakeIssues) => issues.gone.set("getIssue", 301),
+      () => undefined,
+    ]) {
+      const { h, issues, result } = await reviewed(arrange);
+      expect(result).toMatchObject({ reviewed: [{ number: 7, outcome: "left-alone", detail: REASON }] });
+      expect(h.github.prs.get(7)!.body).toBe(pr.body);
+      expect(h.workspace.publications).toEqual([]);
+      expect(h.agentCalls).toEqual([]);
+      expect(issues.calls).toEqual([]);
+    }
+  });
+
+  it("checks the saved publication's `Tracks` line before it restores that publication", async () => {
+    const previous = await vitePr();
+    const saved = withMarker(RULES, withPlanSection("Fixes vite.\n\nTracks #1.", planOf(previous.body)!), { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 });
+    const h = harness({ prs: [{ ...previous, headSha: PUSHED_SHA }] });
+    await h.journal.pushed(REPO, 7, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: previous.title, body: saved, adaptations: 0 } });
+    (h.context.issues as FakeIssues).issues.set(1, { number: 1, url: "https://github.com/acme/widget/issues/1", title: "Roadmap", body: "Our own roadmap issue.", state: "open", stateReason: null, author: "someone", labels: [] });
+    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "left-alone" }] });
+    expect(h.github.prs.get(7)!.body).toBe(previous.body);
   });
 
   it("never rebases a tracked PR into another decision: the next run moves it through that decision's issue", async () => {
@@ -1917,7 +1960,7 @@ describe("secure-it review", () => {
     expect(changed.h.workspace.publications).toEqual([]);
     expect(changed.h.github.prs.get(7)!.body).toBe(pr.body);
     expect(changed.issues.comments.get(1)!.map((comment) => comment.body)).toEqual([expect.stringContaining("a different decision than this issue tracks")]);
-    // A `Tracks` line naming someone else's issue: review still leaves the PR, but says nothing on that issue.
+    // A `Tracks` line naming someone else's issue: review leaves the PR, and says nothing on that issue.
     const foreign = async () => {
       const h = harness({ prs: [pr], baseSha: NEW_BASE, fixes: [vite({ to: { version: "9.0.2", line: "9", aged: true, major: true, blockers: [] } })] });
       h.workspace.setRemoteHead("secure-it/2026-10-05-vite-major", HEAD_SHA);
@@ -1926,7 +1969,7 @@ describe("secure-it review", () => {
       return { h, issues, result: await secureIt(h.deps).review(h.context) };
     };
     const elsewhere = await foreign();
-    expect(elsewhere.result).toMatchObject({ reviewed: [{ number: 7, outcome: "deferred" }] });
+    expect(elsewhere.result).toMatchObject({ reviewed: [{ number: 7, outcome: "left-alone" }] });
     expect(elsewhere.h.workspace.publications).toEqual([]);
     expect(elsewhere.issues.comments.get(1) ?? []).toEqual([]);
     // The same decision on the new base rebases as before, still tracking #1.
@@ -2109,12 +2152,12 @@ describe("secure-it review", () => {
     expect(await secureIt({ ...h.deps, verify }).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "adaptation-unchanged" }] });
     expect(h.workspace.publications).toEqual([]);
     expect(issues.comments.get(3)!.map((comment) => comment.body)).toEqual([expect.stringContaining("secure-it didn't update #7: on the new base, verification found young versions no grant covers: `esbuild@0.30.1`")]);
-    // The same PR tracking someone else's issue: still not published, and nothing said on that issue.
+    // The same PR tracking someone else's issue: not even adapted, and nothing said on that issue.
     const elsewhere = harness({ prs: [pr], answer: { outcome: "applied", summary: "adapted", publication } });
     elsewhere.github.checks = RED;
     const theirs = elsewhere.context.issues as FakeIssues;
     theirs.issues.set(3, { number: 3, url: "https://github.com/acme/widget/issues/3", title: "Roadmap", body: "Our own roadmap issue.", state: "open", stateReason: null, author: "someone", labels: [] });
-    expect(await secureIt({ ...elsewhere.deps, verify }).review(elsewhere.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "adaptation-unchanged" }] });
+    expect(await secureIt({ ...elsewhere.deps, verify }).review(elsewhere.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "left-alone" }] });
     expect(elsewhere.workspace.publications).toEqual([]);
     expect(theirs.comments.get(3) ?? []).toEqual([]);
   });

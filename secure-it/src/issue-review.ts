@@ -78,18 +78,32 @@ async function stillYoung(client: ReviewIssues, grant: Grant): Promise<YoungVers
   return young;
 }
 
+function foreignLinkLeft(number: number): Left {
+  return { kind: "leave", reason: `it tracks #${number}, which isn't this decision's issue` };
+}
+
+/**
+ * Leaves a PR whose `Tracks` line names an issue that fails the ownership and decision checks (`decisionIssue`), before
+ * review changes anything: any update would publish that false link again. Fixing the link needs to know where it came
+ * from, which nothing records yet. Reads only. A PR with no `Tracks` line is `reviewDisposition`'s to judge.
+ */
+export async function foreignLink(client: ReviewIssues, pr: GitHubPullRequest, plan: ChangePlan): Promise<Left | undefined> {
+  const number = trackedIssueOf(pr.body);
+  if (number === undefined) return undefined;
+  return await decisionIssue(client, number, plan) === undefined ? foreignLinkLeft(number) : undefined;
+}
+
 /** `early` learns what this read found, whatever it decides, so this tick asks the issue nothing more about it. */
 export async function reviewDisposition(client: ReviewIssues, pr: GitHubPullRequest, plan: ChangePlan, early: EarlyPrs): Promise<ReviewDisposition> {
   const number = trackedIssueOf(pr.body);
   if (number === undefined) return { kind: "leave", reason: "it tracks no issue; close it by hand and run secure-it again" };
   const scope = await scopeOf(client, pr, plan, number);
   early.remember(pr, scope);
-  // A PR taken early that its issue can't confirm (gone, unreadable, no running attempt) fails closed: nothing on it
-  // says it's ordinary now. Any other without its issue, or with no early attempt there, is an ordinary PR: fine while
-  // it holds no young version.
-  if (scope.kind === "foreign") {
-    return youngIn(client, plan).length === 0 && !takenEarlyOf(pr.body) ? { kind: "proceed", permit: ORDINARY } : { kind: "leave", reason: `it tracks #${number}, which isn't this decision's issue` };
-  }
+  // An issue that isn't this decision's (gone, unreadable, someone else's) is a false link, which an update would publish
+  // again (`foreignLink` stops it earlier; this is for one that went since). No notice: it isn't this decision's to get.
+  if (scope.kind === "foreign") return foreignLinkLeft(number);
+  // A PR taken early that its issue can't confirm (no running attempt) fails closed: nothing on it says it's ordinary now.
+  // Any other with no early attempt there is an ordinary PR: fine while it holds no young version.
   if (scope.kind === "ordinary") {
     return youngIn(client, plan).length === 0 && !takenEarlyOf(pr.body) ? { kind: "proceed", permit: { ...ORDINARY, issue: number } } : leave(client, number, `no-attempt:${pr.number}`, pr, "no running early attempt on its issue is this PR's");
   }

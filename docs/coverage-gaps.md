@@ -75,8 +75,9 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   account's repository, which has no Triage role, everyone who can edit secure-it's issues can push anyway. Until a
   release stops trusting a record someone else edited, give Triage only to people you'd trust with a `take-early`
   label. A PR's `Tracks` line is read from the PR's description the same way: review reads its last recognized
-  `Tracks` line and keeps that issue number when it publishes an update, even when it names an unrelated issue (it
-  posts no notice there); a regular run that redoes the PR replaces it with the current decision's issue.
+  `Tracks` line. It leaves the PR untouched when that names an issue that isn't this decision's (it posts no notice
+  there) and doesn't fix the link, since nothing records where it came from; a regular run that redoes the PR replaces it
+  with the current decision's issue.
 - **A person using the token's account can look like secure-it closing an issue (secure-it)**: secure-it tells its
   own closing from a person's by the token's login and the event boundary it recorded with the closing (or, for a
   closing recorded before boundaries were kept, its notice's time). A person using that same account who closes and
