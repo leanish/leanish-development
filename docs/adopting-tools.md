@@ -108,16 +108,22 @@ Leave other permissions and account permissions unset.
 - Pull requests write also covers PR labels/comments via the Issues endpoints.
   secure-it's write PAT also needs Issues read and write: it tracks every finding
   in an issue and reads the `take-early` label there
-  ([issues](../secure-it/README.md#issues-decide-what-runs)). Without it, the
-  issue sync fails as soon as GitHub refuses one of its issue calls, and that run
-  executes nothing: a refused write says the write PAT needs Issues: read and
-  write; a refused read (on a private repository) reports GitHub's error. A sync
-  that needs no write doesn't find out: on a public repository, where reading
-  issues needs no permission, it succeeds with nothing to track or with issues it
-  leaves unchanged, and the run goes on, PRs and a floor removal included (showing
-  a published PR on its issue then fails with a logged warning). The missing
-  permission shows at the first sync that has to write an issue. bump-it's doesn't
-  need it.
+  ([issues](../secure-it/README.md#issues-decide-what-runs)). bump-it's doesn't
+  need it. Without it:
+  - The issue sync fails when GitHub refuses one of its issue reads or writes
+    (with the one exception below), and that run executes nothing. A refused write while applying the issues'
+    changes says the write PAT needs Issues: read and write; other refusals
+    report GitHub's error (a read refused on a private repository, say).
+  - One refused write doesn't stop it: returning a `take-early` label after its
+    attempt's PR closed. Every later run tries that again, and notes it when it
+    still fails.
+  - A sync that needs no write doesn't find out. On a public repository, where
+    reading issues needs no permission, it succeeds with nothing to track or
+    with issues it leaves unchanged, and the run goes on, PRs and a floor removal
+    included. That run's later issue writes fail: an early attempt GitHub won't
+    record fails its unit, and showing a published PR on its issue is only
+    logged. The missing permission shows at the first sync that has to write an
+    issue.
 - The tools read CI from Actions workflow runs/jobs and commit statuses, so
   checks-only results from other apps must be exposed as commit statuses to be
   seen.
