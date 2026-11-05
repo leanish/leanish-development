@@ -10,7 +10,9 @@
  *     findings: a decision may split or merge), or as resolved when a complete assessment no longer finds any of them.
  *   - A complete assessment records, on every issue still tracking a finding, the commit where it's absent: that
  *     finding's episode ended, so its return is new and opens a new issue, past any dismissal and without any grant.
- *   - An incomplete assessment closes and resolves nothing.
+ *   - An incomplete assessment never takes a finding for gone: it resolves nothing and closes no issue whose subject
+ *     it no longer finds. It closes only a duplicate whose findings its survivor already tracks, and finishes a closing
+ *     an earlier run recorded.
  */
 import { versionKey } from "@leanish/gate/package-version";
 

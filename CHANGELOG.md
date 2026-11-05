@@ -53,6 +53,8 @@
 - A secure-it run whose issues couldn't be synced (a write PAT without Issues permission, or GitHub failing) reports
   it as an error, so a batch reads it as failed rather than completed; one whose issues didn't settle says so in a
   note. Either way it still executes nothing.
+- The docs say what a scan with coverage gaps still closes: a duplicate issue whose findings the surviving one already
+  tracks, and a closing an earlier run recorded; it never takes a finding for gone.
 - The docs state what a dismissal covers: no new issue for a subject whose findings are all dismissed, but one that
   also has a finding not dismissed opens an issue showing them all (a decision's PR then fixes them all); closing an
   issue doesn't close an open ordinary PR for it, which review keeps going, and a PR taken early is left alone only
