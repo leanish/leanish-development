@@ -4,10 +4,9 @@
 
 ### Changed
 
-- The release process states what blocks a candidate: only regressions against the deployed release. Problems in
-  what a release adds that aren't regressions become known limitations, a tool that skips or delays something with a
-  visible note doesn't block, and docs block only when they would lead to a wrong action. The unprimed and last
-  reviews are each one exhaustive pass, and a candidate's fixes land together ([releasing](docs/releasing.md)).
+- Every release review is one exhaustive pass that reports all its findings at once, and a candidate's fixes land
+  together in the next candidate. Minor findings (a nit, a small inaccuracy that leads no one to a wrong action)
+  don't block; they go to the next patch ([releasing](docs/releasing.md)).
 
 ## 0.11.0 - 2026-11-05
 

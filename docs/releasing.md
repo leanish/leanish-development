@@ -54,8 +54,8 @@ unreleased changes collect under its "Unreleased" heading.
      a PR (compare) and a default-branch push (scan) through Actions, not only
      the CLI.
    - Review the candidate in three steps, each only if the one before found no
-     blocker. The second and third steps are each one exhaustive pass: they go
-     through every changed area and report every finding, of any severity, in
+     blocker. Every review, in every step, is one exhaustive pass: it goes
+     through every changed area and reports every finding, of any severity, in
      one reply, without stopping at the first blocker. All the fixes a candidate
      gets land together in a new candidate (what goes to the next release or
      patch stays there), which starts again at the first step:
@@ -81,22 +81,20 @@ unreleased changes collect under its "Unreleased" heading.
      judged across releases.
 
    A fix found here lands on main through its own PR and gets a new candidate,
-   `rc.<n+1>`, which is run and reviewed again. A candidate blocks only on
-   regressions against the deployed release: something that worked there and no
-   longer does, or works worse.
+   `rc.<n+1>`, which is run and reviewed again. A candidate blocks only on what
+   is new in the release or worse than the deployed release:
    - Findings that weaken verification or the gate, produce wrong data, or abort
      whole runs, compared with the deployed release, block.
-   - A tool that skips or delays something with a visible note doesn't block,
-     nor does an automatic update attempt that fails visibly with no effect
-     beyond leaving the update undone: document it as a known limitation and fix
-     it later.
-   - A problem the deployed release already has doesn't block either, nor does
-     one in what the release adds that isn't a regression: document it as a
-     known limitation in [coverage gaps](coverage-gaps.md) and fix it in the
-     next release. Holding a release for them would keep the deployed release,
-     which has them or lacks the feature, running longer.
-   - Docs block only when they would lead someone to a wrong action; smaller
-     inaccuracies go to the next patch.
+   - Minor findings don't block: a nit, or a small inaccuracy in docs or text
+     that leads no one to a wrong action and weakens nothing. They go to the next
+     patch.
+   - A finding whose only effect is that a tool doesn't update something
+     automatically (it skips it with a note, or the attempt fails visibly)
+     doesn't block: document it as a known limitation and fix it later.
+   - A problem the deployed release already has doesn't block either: document
+     it as a known limitation in [coverage gaps](coverage-gaps.md) and fix it in
+     the next release. Holding a release for every older problem a fresh review
+     finds would keep the deployed release, which has them all, running longer.
 3. Open `release/<version>` from the reviewed candidate's commit; if main moved
    past it, those commits need a candidate of their own first. Set the root
    version in `package.json` and both root version fields in `package-lock.json`;
