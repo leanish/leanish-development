@@ -1081,57 +1081,69 @@ What each step added, with rough API-equivalent cost (about $98.6 in all):
 
 ## Release reviews and candidates of 0.11.0 — 2026-11-04 to 2026-11-05
 
-0.11.0 makes secure-it track every finding in an issue and open a PR only once the fix is past the release-age wait,
-with `take-early` for a person who wants a waiting fix sooner (#352–#356); trusted packages wait when leaving malware
-(#351) and the `ownPackages` alias is gone (#357). A simplification pass (#375–#378 and the following PRs) removed held-PR
-claims, package-overlap matching and extra Gradle preflight references before rc.7. Every other PR up to #404 fixed a
-finding from a candidate's review or real run.
+0.11.0 makes secure-it track findings in issues and wait before opening a version-fix PR. A trusted package's ordinary
+fix still goes ahead right away, and a person with write access can take a waiting decision early with `take-early`
+(#352–#356). Trusted packages wait when leaving malware (#351), and the `ownPackages` alias is gone (#357). The
+simplification landed in #375–#377 and #379–#383, recorded in #384, all in rc.7; #378 names known planning causes in
+unassessed issues. The other PRs fixed review findings and real-run problems, alongside the minimatch security update
+(#367) and temporary exceptions for the young XML fixes (#389).
 
-It took 26 candidates. Each one was installed and run for real (`secure-it review` and `run` on this repository), had a
+It took 26 candidates. Each was installed and run for real (`secure-it review` and `run` on this repository), had a
 Haiku pair on the diff from the previous candidate, then a fresh unprimed Sol review; Astra ran only on candidates Sol
 found clean. Fixture passes ran once per adapter on most candidates (Claude Code with Haiku medium, Codex with Terra
-medium) through `release-pass.sh`, each compared with the previous candidates' cells.
+medium), through `core/setup/scripts/fixture-pass.sh` driven by the owner's bench wrapper, each compared with earlier
+candidates' cells.
 
 - **rc.2**: the real run on this repository opened duplicate issues, because GitHub's filtered issue listing lags its
   writes by seconds. Fixed by reading issues back by number (#366); rc.3's run closed the duplicates as superseded.
-- **rc.3 to rc.22**: each unprimed Sol review found one to four blockers, mostly wrong text on issues (a waiting issue
-  claiming a resolution, a refused candidate that was only undecided, a dismissal's reach) and a few run-wide
-  failures (a transferred issue's 301 deferring every unit, a label's casing opening a duplicate issue every run, a
-  sync failure reading as success in a batch). rc.18 to rc.20 were docs only, around the Issues permission. Sol's
-  rc.20 review was clean; Astra found one false module comment, fixed in rc.21.
+- **rc.3 to rc.22**: the reviews found wrong issue state and text (a waiting issue claiming a resolution, a candidate
+  only undecided reported as refused, a dismissal's reach) and run-wide failures (a label's casing opening a duplicate
+  issue every run, a sync failure reading as success in a batch). rc.18 fixed transferred issues, whose 301 deferred
+  every unit (#396); rc.19 and rc.20 corrected the Issues-permission docs (#397, #398). Sol's rc.20 review was clean;
+  Astra found an incorrect early-PR graduation comment, corrected in rc.21 (#399).
 - **rc.23**: from here on, at the owner's request, a release review is one exhaustive pass that reports every finding
-  at once. Sol found that the hidden record in an issue's description can be edited by anyone who can edit issues
-  (Triage included), and can then authorize an early fix or a closing. Fixing it needs record provenance; the owner
-  made it a documented known limitation for the next release (rc.24 kept notices and markers to the tool's own
-  comments and documented Issues as a prerequisite).
-- **rc.24 and rc.25**: a close race with another account, notices posted on a foreign `Tracks` issue, a stale "In
-  progress", and issues shared across base branches. Fixed or documented as limits.
-- **rc.26 (`73a5588`)**: from here on, at the owner's request, only regressions against v0.10.1 block. Haiku ×2 and
-  Sol found none. Astra first called one a regression: an existing ordinary PR isn't updated when a Gradle parent
-  probe brings a young version into a new configuration, and `take-early` can't reach it. Astra then agreed it is the
-  0.11.0 wait applied as designed, with a note on the issue, and a limit of `take-early`, which v0.10.1 didn't have.
-  Both fixture passes matched the references (12 of 12 tool+repo runs); Terra's 22 PRs were green after re-running
-  gate jobs that failed on network errors (a Gradle read timeout, a 504 from services.gradle.org, a 429 from Maven
-  Central).
+  at once. Sol found that the hidden record in an issue's description can be edited by anyone who can edit issues,
+  Triage included. An edited record can widen an early attempt a writer authorized, while its label and reason stand;
+  without one, it can still retire a draft early, resolve an issue falsely or track a dismissal wrongly. Fixing it
+  needs record provenance; the owner made it a documented known limitation for the next release, and #402 kept
+  notices and markers to the tool's own comments and documented Issues as a prerequisite.
+- **rc.24 and rc.25**: #403 told another account's closing apart from the tool's, kept notices off foreign `Tracks`
+  issues, and removed a retired PR from its issue's "In progress". #404 (rc.26) named every ecosystem in mixed titles
+  and documented issues shared across base branches and recovery's stale retirement snapshot.
+- **rc.26 (`73a5588`)**: from here on, at the owner's request, only regressions against v0.10.1 block; a tool that
+  skips or delays something with a visible note doesn't. Haiku ×2 found no regression. Sol found none, and reported
+  as not blocking that `take-early` can't reach an existing ordinary PR whose new base brings in a young version
+  through a Gradle parent probe. Astra, challenging, called that case a regression and found the coverage-gaps line
+  on already-present Maven versions overstated. After my rebuttal, Astra accepted both for 0.11.1: the stricter wait is
+  intended, the verified PR is deferred visibly, and the unreachable authorization is a limit of the new
+  `take-early`. Both fixture cells matched the references (12 of 12 tool+repo runs, 18 skill runs each, none
+  failed); Haiku's 22 PRs were green, and Terra's after re-running gate jobs that failed on network errors (a Gradle
+  read timeout, a 504 from services.gradle.org, a 429 from Maven Central).
 - **Release**: v0.11.0 (`3d537dd`) is rc.26 plus its release metadata (#405). `publish-agent-runtime.yml` stopped at
   the missing `npm` environment again, so `@leanish/agent-runtime` is published by hand.
-- **Repins**: the gate changed (#351, #357), so the six fixtures (`fixture-repin`) and the adopters move to v0.11.0.
+- **Repins**: the gate changed (#351, #357), so the six fixtures (`fixture-repin`) and the adopters moved to v0.11.0,
+  this repository's `released-supply-chain.yml` included (#406). The incubator's repin stays open: its CI is off,
+  so no CI ran on it.
 
-Known limitations, for the next release: an issue's record is only as trusted as whoever can edit issues; issues carry
-no base branch; a closing by someone on the token's own account counts as the tool's; review keeps a foreign `Tracks`
-line's issue number; a recovered early PR isn't retired in the same run ([coverage gaps](coverage-gaps.md#limits)); and
-`take-early` can't reach an existing ordinary PR whose new base brings in a young version (that PR waits, with a note
-on its issue, until the version ages). The coverage-gaps line on a Maven version already resolved elsewhere overstates
-what publishes without a grant for parent-probe moves; it is corrected in 0.11.1.
+Known limitations, for the next release ([coverage gaps](coverage-gaps.md#limits)): an issue's record is only as
+trusted as whoever can edit issues; issues carry no base branch; a person using the token's account who closes and
+reopens an issue after the recorded closing boundary can be mistaken for the tool's closing; review keeps a foreign
+`Tracks` line's issue number; a recovered early PR isn't retired in the same run. Not yet in coverage gaps, recorded
+here for 0.11.1: an existing ordinary PR whose recorded plan stays the same keeps `take-early` from being used when a
+parent probe newly finds an induced young version; review says why it defers, and a later review updates it once the
+version ages; closing the PR instead lets a later run open a new early PR through the issue, while a valid
+`take-early` stands. The coverage-gaps line, and CHANGELOG 0.11.0, saying an already-present Maven version
+publishes without a grant need the parent-probe qualification; that correction is planned for 0.11.1.
 
 What each step added, with rough API-equivalent cost (about $594 counted; the first part is missing):
 - Real runs: the rc.2 duplicate-issue blocker, which no review had found, and a clean check on every later candidate.
 - Haiku, 1,535 requests (about $1.9): a few real findings on fix PRs (a README contradiction on #402, a missed
-  wording on #399); every candidate-level point they raised was dismissed and agreed by Sol.
-- Sol, 97 retained calls (about $384): every candidate blocker from rc.3 to rc.25 and the plans to fix them. The
-  four-eyes logs keep only the last 100 calls, so the calls before 2026-11-04 17:29 (the simplification and rc.2 to
-  rc.9) aren't counted.
-- Astra, 3 calls (about $37): rc.20's false comment; on rc.26, two items for 0.11.1 and no blocker.
+  wording on #399); every candidate-level point they raised was settled with Sol: dismissed, or
+  accepted as a non-blocking limitation for later.
+- Sol, 97 retained calls (about $384): candidate review findings and fix planning. The four-eyes logs keep only the
+  last 100 calls, so the calls before 2026-11-04 17:29 (the simplification and rc.2 to rc.9) aren't counted.
+- Astra, 3 calls (about $37): rc.20's incorrect graduation comment; on rc.26, the ordinary-PR limitation and the
+  coverage-gaps overstatement, accepted for 0.11.1 after challenge and rebuttal.
 - Claude main session (about $161 from 2026-11-04; the earlier session of the same day isn't counted): planned and
   wrote most fix PRs, ran the reviews, cut and ran the candidates, released and repinned.
 - Fixture passes: 13 Terra cells (about $6.9) and 14 Haiku cells (about $3.1, Claude Code's own estimate).
