@@ -12,8 +12,8 @@
   trusted package's ordinary fix still goes ahead right away, as a trusted exception. A person with write access takes
   a waiting fix early by commenting `take-early: <reason>` and adding the `take-early` label: the next run fixes exactly
   that decision, once per label, and says on the issue whenever it won't. Issues are never edited into another
-  decision: a changed one opens a new issue and closes the old as superseded, a finding no complete scan sees any more
-  closes its issue as resolved, and an issue a person closes stays dismissed. PRs say `Tracks #N.` rather than closing
+  decision: a changed one opens a new issue and closes the old as superseded, an issue closes as resolved once a
+  complete scan sees none of its tracked findings, and an issue a person closes stays dismissed. PRs say `Tracks #N.` rather than closing
   their issue. A PR taken early is retired once its granted versions aged, and its attempt ends. Verification finding
   a young version planning didn't choose stops publication and says so on the issue. **secure-it's write PAT now needs Issues: read and write**
   ([adopting the tools](docs/adopting-tools.md)); without it a run executes nothing and says why.
@@ -53,6 +53,8 @@
 - A secure-it run whose issues couldn't be synced (a write PAT without Issues permission, or GitHub failing) reports
   it as an error, so a batch reads it as failed rather than completed; one whose issues didn't settle says so in a
   note. Either way it still executes nothing.
+- The docs say what a scan with coverage gaps still closes: a duplicate issue whose findings the surviving one already
+  tracks, and a closing an earlier run recorded; it never takes a finding for gone.
 - The docs state what a dismissal covers: no new issue for a subject whose findings are all dismissed, but one that
   also has a finding not dismissed opens an issue showing them all (a decision's PR then fixes them all); closing an
   issue doesn't close an open ordinary PR for it, which review keeps going, and a PR taken early is left alone only
