@@ -91,8 +91,11 @@ Both tools are in this tree: [`secure-it`](../secure-it) and [`bump-it`](../bump
 - **secure-it's issues are output, with two inputs.** The issues it opens are written by the tool alone, from its own
   assessment, and its record in them is read back only from issues the token's login opened, at the end of its own
   section. Issue text never selects versions: the code decides every move. A person has two inputs. Closing an issue
-  dismisses its findings: secure-it stops tracking and fixing them until a complete assessment records them gone
-  ([details](../secure-it/README.md#issues-decide-what-runs)), so closing one is a decision, not housekeeping. And the
+  dismisses its findings: secure-it opens no new issue for a decision whose findings are all dismissed, until a
+  complete assessment records them gone. It doesn't take dismissed findings' moves out of another decision (one that
+  also fixes a finding not dismissed opens an issue showing them all, and its PR fixes them all), and it doesn't close
+  an open ordinary PR for the closed issue: close that too ([details](../secure-it/README.md#dismissing-findings)). So
+  closing one is a decision, not housekeeping. And the
   `take-early` label, which counts only when someone with write, maintain or admin access added it after their own
   `take-early: <reason>` comment, unedited since; it covers the exact young versions the decision took then, and one
   label runs one attempt ([details](../secure-it/README.md#taking-a-fix-early-take-early)). The issues client runs

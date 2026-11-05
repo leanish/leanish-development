@@ -12,9 +12,9 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
 
 ## Issues decide what runs
 
-Every finding a run sees on the default branch, minus those a valid exception covers, is tracked by an issue the tool
-opens with the write PAT (it needs **Issues: read and write**, see
-[adopting the tools](../docs/adopting-tools.md)). An issue tracks one subject:
+Every finding a run sees on the default branch, minus those a valid exception covers or a person
+[dismissed](#dismissing-findings), is tracked by an issue the tool opens with the write PAT (it needs **Issues: read
+and write**, see [adopting the tools](../docs/adopting-tools.md)). An issue tracks one subject:
 
 - **A decision:** the exact moves a unit would make. Past the release-age wait, or a trusted package's ordinary fix
   (said as a trusted exception), a run fixes it right away. Its PR says `Tracks #N.`, never a closing keyword. A PR
@@ -45,10 +45,23 @@ so a PR taken early goes on under its recorded attempt and grant.
 
 Issues don't change subject: when a decision changes (another version, another grouping), the run opens the new issue
 first, then closes the old one as superseded by it. Once a complete scan no longer sees a finding, its issue closes as
-resolved; a scan with coverage gaps closes nothing. An issue a person closes is dismissed: the run doesn't reopen it
-for the same findings, and only a finding that comes back after it was gone opens a new one. Issue text never selects
-versions: the code decides. A person's input changes two things: closing an issue dismisses its findings, and a
-`take-early` label lets a waiting decision run early.
+resolved; a scan with coverage gaps closes nothing. Issue text never selects versions: the code decides. A person's
+input changes two things: closing an issue [dismisses its findings](#dismissing-findings), and a `take-early` label lets
+a waiting decision run early.
+
+### Dismissing findings
+
+An issue a person closes is dismissed, with its findings, and the run never reopens it. Dismissal holds back a new
+issue only for a decision whose findings are all dismissed; it doesn't take dismissed findings' moves out of another
+decision. So a new issue still opens:
+
+- for a dismissed finding that comes back after a complete assessment recorded it gone;
+- for a decision that also fixes a finding not dismissed (the routine batch, say). That issue shows every finding the
+  decision fixes, and its PR fixes the dismissed ones too.
+
+Closing an issue doesn't close an open PR for it either. Review keeps an ordinary PR going (it may adapt it or mark it
+ready), so close that PR too. A PR taken early is left to its owner once its issue is closed: its grant no longer
+stands.
 
 ### Taking a fix early: `take-early`
 

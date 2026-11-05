@@ -37,6 +37,9 @@ export interface Tracking {
   readonly sync: SyncResult;
 }
 
+/** Why nothing executes on issues still changing when the sync's rounds ran out. */
+export const UNSETTLED = "the issues didn't settle this run";
+
 /**
  * Whether `plan` may execute now, by its decision's current issue. An early attempt reserves `branch(labelEventId)` and
  * is written to the issue before this returns "proceed", so a crash after it can never start a second one.
@@ -48,7 +51,7 @@ export async function issueDisposition(
   branch: (labelEventId: number) => string,
 ): Promise<Disposition> {
   // Issues still changing when the rounds ran out may not say what this run assessed: nothing executes on them.
-  if (!tracking.sync.settled) return { kind: "defer", reason: "the issues didn't settle this run" };
+  if (!tracking.sync.settled) return { kind: "defer", reason: UNSETTLED };
   const id = subjectId({ kind: "decision", moves: decisionMoves(plan) });
   const subject = tracking.assessment.subjects.find((entry) => subjectId(entry.subject) === id);
   if (subject === undefined) return { kind: "defer", reason: "no assessed decision matches this plan" };

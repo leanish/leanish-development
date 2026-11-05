@@ -6,7 +6,8 @@ uses one local app task per tool and GitHub owner, with review→run chains and 
 explicitly consented real test run. The manual path below stays the reference for
 people who prefer to configure and operate the tools themselves.
 
-The tools run on your machine and propose draft PRs; people merge them. Each has
+The tools run on your machine and propose draft PRs (secure-it also opens issues that track its findings); people
+merge them. Each has
 its own config, default Keychain services and two schedules: `run` plans changes,
 `review` revisits its open PRs. Either command can push or change a PR. There is
 **no tool dry-run flag**: start with the candidate preview below before enabling
@@ -195,10 +196,15 @@ updates or verify an agent's edits. The first actual tool run below can publish.
 ## First manual publication and review
 
 Run one opted-in repository interactively before installing schedules. These
-commands may open/update draft PRs; review may also mark them ready or close
-them. Neither merges. secure-it holds versions younger than the release-age wait
-in draft PRs with a [warning](../secure-it/README.md#the-cooldown-warning); require the gate's
-`supply-chain / cooldown` check too (see the gate's
+commands may open/update draft PRs, and secure-it's run opens, updates and closes
+its issues; review may also mark PRs ready or close them. Neither merges. A
+secure-it fix that takes a non-trusted version younger than the release-age wait
+opens no PR: it waits in its [issue](../secure-it/README.md#issues-decide-what-runs)
+until those versions are past the wait, unless someone with write access takes it
+early (`take-early`), which opens a draft PR with a
+[warning](../secure-it/README.md#the-cooldown-warning). A trusted package's
+ordinary fix goes ahead right away. Require the gate's `supply-chain / cooldown`
+check too (see the gate's
 [adoption steps](../core/gate/README.md#adopting-the-gate)).
 
 ```bash

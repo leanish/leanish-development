@@ -51,7 +51,7 @@ import { assessmentOf, decisionMoves, type PlannedUnit, youngOf } from "./issue-
 import { type ObservedFinding, type PackageVersion, subjectId } from "./issue-model.ts";
 import { postNotice } from "./issue-notices.ts";
 import { syncIssues } from "./issue-sync.ts";
-import { attemptBranches, type Disposition, inactiveLabelNotices, issueDisposition, type Tracking, type TrackedExecution } from "./issue-tracking.ts";
+import { attemptBranches, type Disposition, inactiveLabelNotices, issueDisposition, type Tracking, type TrackedExecution, UNSETTLED } from "./issue-tracking.ts";
 import { type AttemptClient, type AttemptPatch, endAttempt, recoverAttempts, settleAttempt, showPullRequest } from "./issue-attempts.ts";
 import { EarlyPrs, takenEarlyOf, trackedIssueOf } from "./decision-issues.ts";
 import { earlyDecisions, reviewClosed, reviewDisposition, reviewExecution, type ReviewIssues, type ReviewPermit } from "./issue-review.ts";
@@ -310,7 +310,7 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   const selection = await coupledWork(planned.fixes, planned.peers);
   const waiting = selection.blocked.flatMap((group) => group.reasons);
   // A direct-peer set whose checks failed is the same: an error, and its packages' PRs are kept.
-  const errors = errorsOf([...undecided, ...(selection.undecided ?? []).map((set) => set.reason)]);
+  const failedChecks = [...undecided, ...(selection.undecided ?? []).map((set) => set.reason)];
   const undecidedPackages = byPackage([
     ...found.fixes.filter((fix) => fix.undecided === true).map((fix) => [packageKey(fix), fix.carries === undefined ? "publisher identity" : "carrier move"] as const),
     ...(selection.undecided ?? []).flatMap((set) => set.packages.map((key) => [key, "direct-peer set"] as const)),
@@ -329,6 +329,11 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
     tracking = asError(error);
     context.logger.warn("secure-it: the issues couldn't be synced; nothing executes this run", { error: tracking.message });
   }
+  // A sync that failed is a broken integration (a missing Issues permission, say): an error, so the run reads as one
+  // that broke. One that didn't settle is retryable state: a note, so a summary still shows nothing executed.
+  const unsynced = tracking instanceof Error ? `the issues couldn't be synced: ${tracking.message}` : undefined;
+  const unsettled = !(tracking instanceof Error) && !tracking.sync.settled ? UNSETTLED : undefined;
+  const errors = errorsOf([...failedChecks, ...(unsynced === undefined ? [] : [unsynced])]);
   // A PR taken early whose granted versions all aged is retired before any unit runs, as review would: this run plans
   // that work afresh, so no second PR for it opens beside it.
   const retired = tracking instanceof Error
@@ -356,10 +361,9 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   }
   if (!found.fixes.some((fix) => fix.malicious) && (await floorsOf(tree)).some((floor) => floor.purpose === "security")) {
     // A run whose issues couldn't be synced, or didn't settle, executes nothing, a floor removal included.
-    const unsynced = tracking instanceof Error ? `the issues couldn't be synced: ${tracking.message}`
-      : !tracking.sync.settled ? "the issues didn't settle this run" : undefined;
-    if (unsynced !== undefined) {
-      results.push({ topic: "floor-removal", outcome: "deferred", reason: unsynced });
+    const held = unsynced ?? unsettled;
+    if (held !== undefined) {
+      results.push({ topic: "floor-removal", outcome: "deferred", reason: held });
     } else {
       try {
         const removal = await computeRemoval(execution, base);
@@ -371,10 +375,13 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
       }
     }
   }
-  if (results.length === 0) return { ...report, outcome: "nothing-to-fix", waiting, blocked: selection.blocked, units: [], ...errors };
+  if (results.length === 0) {
+    const notes = [...new Set([...(found.notes ?? []), ...(unsettled === undefined ? [] : [unsettled])])];
+    return { ...report, outcome: "nothing-to-fix", ...(notes.length === 0 ? {} : { notes }), waiting, blocked: selection.blocked, units: [], ...errors };
+  }
   const outcome = results.length === 1 ? results[0]! : { outcome: "completed" };
   const unitNotes = Array.isArray(outcome["notes"]) ? outcome["notes"] : [];
-  const notes = [...new Set([...(found.notes ?? []), ...unitNotes])];
+  const notes = [...new Set([...(found.notes ?? []), ...unitNotes, ...(unsettled === undefined ? [] : [unsettled])])];
   return { ...report, ...outcome, ...(notes.length === 0 ? {} : { notes }), waiting, blocked: selection.blocked, units: results, ...errors };
 }
 

@@ -46,9 +46,17 @@
   closing keyword too, so merging a PR never closes the issue it tracks. An ordinary unit's published PR shows on its
   issue right away ("In progress") when it carries the whole decision, not only after the next run's sync.
 - An issue names as its PR only one recording exactly its decision, never one a run would reuse for another
-  (until that run redoes it, which then shows it on the issue). The docs say closing an issue is an input too (it
-  dismisses its findings), and that a Maven version already on the base elsewhere isn't held or refused when an aged
-  update brings it into another configuration.
+  (once a run publishes it carrying the whole decision, it shows on the issue). A ready issue says secure-it tries to
+  open or redo a PR on its next run. The docs say closing an issue is an input too (it dismisses its findings), and
+  that a Maven version already on the base elsewhere isn't held or refused when an aged update brings it into another
+  configuration.
+- A secure-it run whose issues couldn't be synced (a write PAT without Issues permission, say) reports it as an error,
+  so a batch reads it as failed rather than completed; one whose issues didn't settle says so in a note. Either way it
+  still executes nothing.
+- The docs state what a dismissal covers: no new issue for a decision whose findings are all dismissed, but a decision
+  that also fixes a finding not dismissed opens an issue showing them all, and its PR fixes them all; and closing an
+  issue doesn't close an open ordinary PR for it, which review keeps going. The adoption guide's first run describes
+  waiting issues instead of held draft PRs.
 - A first `take-early` label authorizes only the young versions its issue showed: one the issue never displayed (an
   update that couldn't be written, say) needs a new label once the issue shows it.
 - While an incomplete assessment (a lasting coverage gap, say) no longer finds an open issue's decision, the issue stays
