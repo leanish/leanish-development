@@ -81,6 +81,23 @@ describe("batch runner", () => {
     expect(JSON.stringify(records)).not.toContain("sentinel");
   });
 
+  it("reads secure-it's failed issue sync as an error and an unsettled one as a note, without their text", async () => {
+    const secureIt = { ...options, tool: "secure-it" as const };
+    const records: Readonly<Record<string, unknown>>[] = [];
+    const deferred = (reason: string) => ({ topic: "security", outcome: "deferred", reason });
+    expect(await executeBatch(secureIt, ["acme/one", "acme/two"], async (repo, action) => {
+      if (action === "review") return ok();
+      return { code: 0, report: { ...report, tool: "secure-it", result: repo === "acme/one"
+        ? { outcome: "deferred", reason: "secret-sentinel", units: [deferred("secret-sentinel")], errors: ["the issues couldn't be synced: secret-sentinel"] }
+        : { outcome: "deferred", reason: "secret-sentinel", units: [deferred("secret-sentinel")], notes: ["the issues didn't settle this run"] } } };
+    }, (record) => records.push(record))).toBe(1);
+    const run = (repo: string) => records.find((record) => record["action"] === "run" && record["repo"] === repo);
+    expect(run("acme/one")).toMatchObject({ outcome: "error", errors: 1 });
+    expect(run("acme/two")).toMatchObject({ outcome: "completed", errors: 0, notes: 1 });
+    expect(records.at(-1)).toMatchObject({ action: "summary", outcome: "partial-failure", failed: 1 });
+    expect(JSON.stringify(records)).not.toContain("secret-sentinel");
+  });
+
   it("counts only the result's own gaps, not a nested breakdown next to the total", async () => {
     const records: Readonly<Record<string, unknown>>[] = [];
     await executeBatch(options, ["acme/one"], async (_repo, action) => action === "review" ? ok()

@@ -623,8 +623,11 @@ describe("secure-it run", () => {
       seen.push(args[3]);
       return h.deps.candidates(...args);
     } };
-    // That state isn't a real scan, so the issues can't be synced from it: nothing executes, and the run says why.
-    expect(await secureIt(deps).run(h.context)).toMatchObject({ outcome: "deferred", reason: expect.stringContaining("the issues couldn't be synced") });
+    // That state isn't a real scan, so the issues can't be synced from it: nothing executes, and the run says why, as an error.
+    expect(await secureIt(deps).run(h.context)).toMatchObject({
+      outcome: "deferred", reason: expect.stringContaining("the issues couldn't be synced"),
+      errors: [expect.stringContaining("the issues couldn't be synced")],
+    });
     expect(seen).toEqual([state]);
     expect(scan).toHaveBeenCalledOnce();
     expect(h.agentCalls).toHaveLength(0);
@@ -696,6 +699,37 @@ describe("secure-it run", () => {
     const flow = (h: Harness, published = "2026-10-05T00:00:00Z") => secureIt({ ...h.deps, gate: async () => scanned(published), scan: readScanState });
     const issuesOf = (h: Harness) => h.context.issues as FakeIssues;
 
+    it("says so with nothing to fix too: a failed sync as an error, one that didn't settle as a note", async () => {
+      const failed = harness({ fixes: [] });
+      issuesOf(failed).forbidden.add("createIssue");
+      const broken = await flow(failed).run(failed.context);
+      expect(broken).toMatchObject({ outcome: "nothing-to-fix", errors: [expect.stringContaining("the write PAT needs Issues: read and write")] });
+      const unsettled = harness({ fixes: [] });
+      // Every issue the sync opens is gone when read back, so the rounds run out without settling.
+      const issues = issuesOf(unsettled);
+      const create = issues.createIssue.bind(issues);
+      issues.createIssue = async (args) => {
+        const issue = await create(args);
+        issues.issues.delete(issue.number);
+        return issue;
+      };
+      const result = await flow(unsettled).run(unsettled.context);
+      expect(result).toMatchObject({ outcome: "nothing-to-fix", notes: expect.arrayContaining(["the issues didn't settle this run"]) });
+      expect(result).not.toHaveProperty("errors");
+    });
+
+    it("reports a write PAT without Issues permission as an error, executing nothing", async () => {
+      const h = harness({ fixes: [young] });
+      issuesOf(h).forbidden.add("createIssue");
+      const result = await flow(h).run(h.context);
+      expect(result).toMatchObject({
+        outcome: "deferred", reason: expect.stringContaining("the write PAT needs Issues: read and write"),
+        errors: [expect.stringContaining("the write PAT needs Issues: read and write")],
+      });
+      expect(h.agentCalls).toHaveLength(0);
+      expect(h.workspace.publications).toHaveLength(0);
+    });
+
     it("opens an issue for a young fix and runs nothing until the wait ends, then leaves the issue alone", async () => {
       const h = harness({ fixes: [young] });
       const verify = vi.fn(h.deps.verify);
@@ -721,6 +755,16 @@ describe("secure-it run", () => {
       expect(h.agentCalls).toHaveLength(1);
     });
 
+    it("keeps reviewing an ordinary PR whose issue a person closed: closing the issue doesn't close its PR", async () => {
+      const h = harness();
+      expect(await flow(h, OLD).run(h.context)).toMatchObject({ outcome: "published" });
+      const issue = issuesOf(h).issues.get(1)!;
+      issuesOf(h).issues.set(1, { ...issue, state: "closed" });
+      const pr = [...h.github.prs.values()].find((entry) => trackedIssueOf(entry.body) === 1)!;
+      const client = { issues: h.context.issues, github: h.github, repo: REPO, clean: (body: string) => body, ours: () => true, now: NOW, trusted: () => false, retire: async () => "closed" as const, eligibleAt: async () => undefined };
+      expect(await reviewDisposition(client, pr, planOf(pr.body)!, new EarlyPrs({ issues: h.context.issues, repo: REPO }))).toEqual({ kind: "proceed", permit: { early: false, young: [] } });
+    });
+
     it("shows a PR carrying part of the decision (a retry reduced it) as that decision's PR, which the run then redoes whole", async () => {
       const h = harness({ prs: [await vitePr()], fixes: [vite(), leftPad()] });
       h.workspace.setRemoteHead("secure-it/2026-10-05-security", HEAD_SHA);
@@ -737,7 +781,8 @@ describe("secure-it run", () => {
       expect(await flow(h, OLD).run(h.context)).toMatchObject({ outcome: "cannot-apply" });
       const body = issuesOf(h).issues.get(1)!.body;
       expect(recordOf(body)!.subject).toMatchObject({ kind: "decision", moves: [{ name: "left-pad" }] });
-      expect(body).toContain("**Ready.**");
+      // The next run may redo that PR rather than open one, and may not manage it: the text promises neither.
+      expect(body).toContain("**Ready.** secure-it tries to open or redo a PR for this fix on its next run.");
       expect(body).not.toContain("#7");
     });
 
@@ -769,6 +814,9 @@ describe("secure-it run", () => {
       const deps = { ...h.deps, floorProbe: async () => { proofs++; return f.probe(); }, gate: async () => scanned("2026-10-05T00:00:00Z"), scan: readScanState };
       const result = await secureIt(deps).run(h.context);
       expect(result).toMatchObject({ units: expect.arrayContaining([{ topic: "floor-removal", outcome: "deferred", reason: "the issues didn't settle this run" }]) });
+      // Retryable state, not a broken integration: a note the run's summary counts, never an error.
+      expect(result).toMatchObject({ notes: expect.arrayContaining(["the issues didn't settle this run"]) });
+      expect(result).not.toHaveProperty("errors");
       expect(proofs).toBe(0);
       expect(h.workspace.publications).toHaveLength(0);
     });
@@ -1986,7 +2034,10 @@ describe("secure-it floor-removal units", () => {
     let proofs = 0;
     // A state that isn't a real scan: the issues can't be synced from it.
     const deps = { ...h.deps, scan: async () => ({ marker: "not a scan" }) as unknown as ScanState, floorProbe: async () => { proofs++; return f.probe(); } };
-    expect(await secureIt(deps).run(h.context)).toMatchObject({ outcome: "deferred", topic: "floor-removal", reason: expect.stringContaining("the issues couldn't be synced") });
+    expect(await secureIt(deps).run(h.context)).toMatchObject({
+      outcome: "deferred", topic: "floor-removal", reason: expect.stringContaining("the issues couldn't be synced"),
+      errors: [expect.stringContaining("the issues couldn't be synced")],
+    });
     expect(proofs).toBe(0);
     expect(h.workspace.publications).toHaveLength(0);
   });

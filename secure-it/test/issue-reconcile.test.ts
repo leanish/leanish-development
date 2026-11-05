@@ -136,6 +136,17 @@ describe("reconcile", () => {
     expect(aliasOnly[0]!.record.absences).toEqual([{ finding: { ecosystem: "npm", name: "lib", ids: ["CVE-1", "GHSA-1"] }, at: LATER }]);
   });
 
+  it("doesn't take a dismissed finding's move out of a decision that also fixes one not dismissed", () => {
+    const [issue] = converge(assessed([decision([move("lib")], [finding("lib", ["GHSA-1"])])])).issues;
+    const dismissed: TrackedIssue = { ...issue!, state: "closed" };
+    // The routine batch now also fixes other: its decision isn't covered by the dismissal, and its issue shows both.
+    const batch = decision([move("lib"), move("other")], [finding("lib", ["GHSA-1"]), finding("other", ["GHSA-2"])]);
+    const created = converge(assessed([batch]), [dismissed]).issues.find((tracked) => tracked.number !== dismissed.number)!;
+    expect(created.state).toBe("open");
+    expect(created.record.findings.map((tracked) => tracked.name).sort()).toEqual(["lib", "other"]);
+    expect(created.record.subject).toMatchObject({ kind: "decision", moves: [{ name: "lib" }, { name: "other" }] });
+  });
+
   it("keeps a dismissal when the dismissed finding gets a different fix", () => {
     const fixA = decision([move("lib", "1.0.1")], [finding("lib", ["GHSA-1"])]);
     const [issue] = converge(assessed([fixA])).issues;

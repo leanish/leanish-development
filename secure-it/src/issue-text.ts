@@ -170,7 +170,7 @@ function essentialLines(assessment: SubjectAssessment, record: IssueRecord): str
       break;
     case "eligible":
       lines.push(status.pr === undefined
-        ? "**Ready.** secure-it opens a PR for this fix on its next run."
+        ? "**Ready.** secure-it tries to open or redo a PR for this fix on its next run."
         : `**In progress:** #${status.pr.number}. This issue stays open until the fix is merged and an assessment confirms it.`);
       if (status.trusted.length > 0) {
         lines.push("", `Trusted-package exception (no release-age wait for these): ${status.trusted.map((pkg) => literal(`${pkg.name}@${pkg.version}`)).join(", ")}.`);
