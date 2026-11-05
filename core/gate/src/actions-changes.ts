@@ -56,9 +56,10 @@ export interface ActionChanges {
 
 /**
  * Each `uses:` occurrence is judged on its own: one is new or changed unless
- * base has the same file, action, ref and comment. So removing a comment,
- * repointing a ref, or copying an unpinned ref into another workflow all
- * count as changes.
+ * base has the same file, action, ref and comment, in or out of a job or step
+ * alike. So removing a comment, repointing a ref, copying an unpinned ref into
+ * another workflow, or moving it into or out of a step all count as changes.
+ * Moving it between jobs and steps doesn't.
  */
 export async function actionChanges(
   base: ActionsInventory,
@@ -131,9 +132,12 @@ export function actionGaps(inventory: ActionsInventory, resolutions: ReadonlyMap
   return gaps;
 }
 
-/** How problems and gaps name a use: the action, the folder in its repository when it names one, its ref, and the file. */
+/**
+ * How problems and gaps name a use: the action, the folder in its repository when it names one, its ref, the file, and
+ * when it's outside a job or step, since that's a separate occurrence that would otherwise read the same.
+ */
 function labelOf(use: ActionUse): string {
-  return `${use.name}${use.path === undefined ? "" : `/${use.path}`}@${use.ref} (${use.file})`;
+  return `${use.name}${use.path === undefined ? "" : `/${use.path}`}@${use.ref} (${use.file}${use.executable ? "" : ", outside a job or step"})`;
 }
 
 /** The gap an unpinned or unverified use leaves, worded alike by compare and a full scan. */

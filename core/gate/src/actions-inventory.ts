@@ -30,6 +30,11 @@ export interface ActionUse {
   readonly comment: string | undefined;
   /** The file it's used in. */
   readonly file: string;
+  /**
+   * Whether it sits where the walk recognizes GitHub running a `uses:`: a job or a step. It's what the walk read, not a
+   * check against GitHub's whole workflow schema.
+   */
+  readonly executable: boolean;
 }
 
 export interface ActionsInventory {
@@ -86,9 +91,9 @@ export function parseUses(text: string, file: string): { uses: ActionUse[]; loca
           const comment = (isScalar(pair.value) ? pair.value.comment : undefined) ?? (isAlias(pair.value) ? pair.value.comment : undefined) ?? (isScalar(value) ? value.comment : undefined);
           if (place === "runner") {
             if (!isScalar(value) || typeof value.value !== "string") throw new Error(`${file}: a \`uses:\` isn't a string`);
-            record(value.value.trim(), comment?.trim() || undefined);
+            record(value.value.trim(), comment?.trim() || undefined, true);
           } else if (isScalar(value) && typeof value.value === "string" && readsAsAction(value.value.trim())) {
-            record(value.value.trim(), comment?.trim() || undefined);
+            record(value.value.trim(), comment?.trim() || undefined, false);
           }
         }
         walk(pair.value, inside, place === "jobs" ? "runner" : key === "jobs" ? "jobs" : key === "steps" ? "steps" : "other");
@@ -97,13 +102,13 @@ export function parseUses(text: string, file: string): { uses: ActionUse[]; loca
       for (const item of node.items) walk(item, inside, place === "steps" ? "runner" : "other");
     }
   };
-  const record = (value: string, comment: string | undefined) => {
+  const record = (value: string, comment: string | undefined, executable: boolean) => {
     if (value.startsWith("./")) local.push(value);
     else if (value.startsWith("docker://")) docker.push(`${value} (${file})`);
     else {
       const match = remoteAction(value);
       if (match === undefined) throw new Error(`${file}: can't read \`uses: ${value}\``);
-      uses.push({ name: `${match[1]}/${match[2]}`.toLowerCase(), path: match[3]?.slice(1), ref: match[4]!, comment, file });
+      uses.push({ name: `${match[1]}/${match[2]}`.toLowerCase(), path: match[3]?.slice(1), ref: match[4]!, comment, file, executable });
     }
   };
   walk(doc.contents);
@@ -186,11 +191,12 @@ export function resolutionKey(use: ActionUse): string {
 }
 
 /**
- * One occurrence: where, what (subdirectory included) and how it's annotated; a changed comment or a new file is a
- * change. Structured, so a ref or comment holding a separator can't pass for another occurrence.
+ * One occurrence: where, what (subdirectory included) and how it's annotated; a changed comment, a new file or a move
+ * into or out of a job or step is a change. Structured, so a ref or comment holding a separator can't pass for another
+ * occurrence.
  */
 export function occurrenceKey(use: ActionUse): string {
-  return JSON.stringify([use.file, use.name, use.path ?? null, use.ref, use.comment ?? null]);
+  return JSON.stringify([use.file, use.executable, use.name, use.path ?? null, use.ref, use.comment ?? null]);
 }
 
 /** Whether a use is pinned to a commit whose comment names a tag that GitHub says points at it. */

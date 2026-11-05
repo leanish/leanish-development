@@ -132,7 +132,7 @@ jobs:
 });
 
 describe("resolving uses", () => {
-  const use = (ref: string, comment: string | undefined) => ({ name: "actions/checkout", path: undefined, ref, comment, file: "ci.yml" });
+  const use = (ref: string, comment: string | undefined) => ({ name: "actions/checkout", path: undefined, ref, comment, file: "ci.yml", executable: true });
   const inventory = (...uses: ReturnType<typeof use>[]): ActionsInventory => ({ uses, docker: [], files: ["ci.yml"], gaps: [] });
 
   it("pins a commit whose comment names a tag pointing at it, annotated tags included", async () => {
@@ -192,7 +192,7 @@ describe("resolving uses", () => {
   });
 
   it("words an unchanged use's gap as a full scan does, folder included", async () => {
-    const unpinned = { name: "acme/tools", path: "lint", ref: "v1", comment: undefined, file: "ci.yml" };
+    const unpinned = { name: "acme/tools", path: "lint", ref: "v1", comment: undefined, file: "ci.yml", executable: true };
     const uncommented = { ...unpinned, path: "build", ref: CHECKOUT_SHA };
     const tree: ActionsInventory = { uses: [unpinned, uncommented], docker: [], files: ["ci.yml"], gaps: [] };
     const gh = github();
@@ -206,7 +206,7 @@ describe("resolving uses", () => {
   });
 
   it("fails a changed action without a published release, unless it's a trusted action", async () => {
-    const trusted = { name: "acme/tools", path: undefined, ref: CHECKOUT_SHA, comment: "v1.0.0", file: "ci.yml" };
+    const trusted = { name: "acme/tools", path: undefined, ref: CHECKOUT_SHA, comment: "v1.0.0", file: "ci.yml", executable: true };
     const gh = github({
       [`${API}/repos/acme/tools/git/ref/tags/v1.0.0`]: { body: { object: { type: "commit", sha: CHECKOUT_SHA } } },
     });
@@ -223,7 +223,7 @@ describe("resolving uses", () => {
 
 describe("mutable releases", () => {
   // A mutable release's tag can be moved to newer code, which would then inherit the release's age.
-  const use = { name: "acme/tools", path: undefined, ref: CHECKOUT_SHA, comment: "v2.0.0", file: "ci.yml" };
+  const use = { name: "acme/tools", path: undefined, ref: CHECKOUT_SHA, comment: "v2.0.0", file: "ci.yml", executable: true };
   const tags = {
     [`${API}/repos/acme/tools/git/ref/tags/v2.0.0`]: { body: { object: { type: "commit", sha: CHECKOUT_SHA } } },
   };
@@ -257,7 +257,7 @@ describe("mutable releases", () => {
 });
 
 describe("occurrences and edge cases", () => {
-  const use = (ref: string, comment: string | undefined, file = "ci.yml") => ({ name: "actions/checkout", path: undefined, ref, comment, file });
+  const use = (ref: string, comment: string | undefined, file = "ci.yml") => ({ name: "actions/checkout", path: undefined, ref, comment, file, executable: true });
   const inventory = (...uses: ReturnType<typeof use>[]): ActionsInventory => ({ uses, docker: [], files: ["ci.yml"], gaps: [] });
 
   it("judges each occurrence: a dropped comment, or an unpinned ref copied to another workflow, is a change", async () => {
@@ -278,7 +278,7 @@ describe("occurrences and edge cases", () => {
   it("counts occurrences, subdirectory included: another action of the same repository, a second copy or an aliased step is new", async () => {
     const gh = github();
     const config = parseConfig({});
-    const at = (path: string | undefined, file = "ci.yml") => ({ name: "acme/actions", path, ref: "main", comment: undefined, file });
+    const at = (path: string | undefined, file = "ci.yml") => ({ name: "acme/actions", path, ref: "main", comment: undefined, file, executable: true });
     const of = (...uses: ReturnType<typeof at>[]): ActionsInventory => ({ uses, docker: [], files: ["ci.yml"], gaps: [] });
     const base = of(at("safe"), at("safe"));
     const resolutions = await resolveUses([base], gh);
@@ -296,7 +296,7 @@ describe("occurrences and edge cases", () => {
 
   it("keeps occurrences apart whose ref or comment holds a separator", async () => {
     const gh = github({ [`${API}/repos/acme/actions/git/ref/tags/v1.2.3`]: { body: { object: { type: "commit", sha: CHECKOUT_SHA } } } });
-    const at = (ref: string, comment: string) => ({ name: "acme/actions", path: undefined, ref, comment, file: "ci.yml" });
+    const at = (ref: string, comment: string) => ({ name: "acme/actions", path: undefined, ref, comment, file: "ci.yml", executable: true });
     const of = (...uses: ReturnType<typeof at>[]): ActionsInventory => ({ uses, docker: [], files: ["ci.yml"], gaps: [] });
     const base = of(at(CHECKOUT_SHA, "reviewed|note v1.2.3"));
     const head = of(at(`${CHECKOUT_SHA}|reviewed`, "note v1.2.3"));
@@ -304,6 +304,78 @@ describe("occurrences and edge cases", () => {
     expect((await actionChanges(base, head, resolutions, gh, parseConfig({}))).problems).toEqual([
       `acme/actions@${CHECKOUT_SHA}|reviewed (ci.yml) is new or changed, so it must be pinned to a full commit SHA with a \`# vX.Y.Z\` comment`,
     ]);
+  });
+
+  describe("moving a use between what runs and what doesn't", () => {
+    const read = (yaml: string): ActionsInventory => ({ ...parseUses(yaml, "ci.yml"), files: ["ci.yml"], gaps: [] });
+    const inEnv = (uses: string) => `env:\n  X:\n    uses: ${uses}\njobs:\n  a:\n    steps:\n      - run: echo\n`;
+    const inStep = (uses: string) => `jobs:\n  a:\n    steps:\n      - uses: ${uses}\n`;
+    const compare = async (base: ActionsInventory, head: ActionsInventory) => {
+      const gh = github();
+      return actionChanges(base, head, await resolveUses([base, head], gh), gh, parseConfig({}));
+    };
+    const mustPin = (label: string) => `${label} is new or changed, so it must be pinned to a full commit SHA with a \`# vX.Y.Z\` comment`;
+
+    it("tells what the walk recognizes as running from what it only reads as an action", () => {
+      const places = (yaml: string) => parseUses(yaml, "ci.yml").uses.map((use) => use.executable);
+      expect(places(inEnv("acme/tool@main"))).toEqual([false]);
+      expect(places(inStep("acme/tool@main"))).toEqual([true]);
+      expect(places("jobs:\n  a:\n    uses: acme/tool/.github/workflows/x.yml@main\n")).toEqual([true]);
+      expect(places("runs:\n  using: composite\n  steps:\n    - uses: acme/tool@main\n")).toEqual([true]);
+      // A step's inputs aren't a step, and the fallback still reads them.
+      expect(places("jobs:\n  a:\n    steps:\n      - run: echo\n        with:\n          uses: acme/tool@main\n")).toEqual([false]);
+    });
+
+    it("fails an unpinned use moved into a step, or out of one", async () => {
+      const unpinned = "acme/tool@main";
+      expect(await compare(read(inEnv(unpinned)), read(inStep(unpinned)))).toEqual({ problems: [mustPin("acme/tool@main (ci.yml)")], gaps: [], changes: [] });
+      expect(await compare(read(inStep(unpinned)), read(inEnv(unpinned)))).toEqual({ problems: [mustPin("acme/tool@main (ci.yml, outside a job or step)")], gaps: [], changes: [] });
+    });
+
+    it("checks a pinned use moved into a step like a new one", async () => {
+      const pinned = `actions/checkout@${CHECKOUT_SHA} # v7.0.1`;
+      expect(await compare(read(inEnv(pinned)), read(inStep(pinned)))).toEqual({
+        problems: [],
+        gaps: [],
+        changes: [{ pkg: { ecosystem: "GitHub Actions", name: "actions/checkout", version: "v7.0.1" }, published: new Date("2026-04-10T17:31:14Z"), replaced: [] }],
+      });
+    });
+
+    it("leaves a use moved between jobs and steps of the same file unchanged, as a gap", async () => {
+      const base = read("jobs:\n  a:\n    steps:\n      - uses: acme/tool@main\n");
+      const anotherJob = read("jobs:\n  b:\n    steps:\n      - run: echo\n      - uses: acme/tool@main\n");
+      const aJob = read("jobs:\n  b:\n    uses: acme/tool@main\n");
+      const gap = "GitHub Actions acme/tool@main (ci.yml): not pinned to a commit, so its version (and advisories) can't be told";
+      expect(await compare(base, anotherJob)).toEqual({ problems: [], gaps: [gap], changes: [] });
+      expect(await compare(base, aJob)).toEqual({ problems: [], gaps: [gap], changes: [] });
+    });
+
+    it("counts each place's copies apart, an alias where it's instantiated", async () => {
+      const envOnly = read("env:\n  X: &use\n    uses: acme/tool@main\n");
+      const aliasedIntoStep = read("env:\n  X: &use\n    uses: acme/tool@main\njobs:\n  a:\n    steps:\n      - *use\n");
+      expect(aliasedIntoStep.uses.map((use) => use.executable)).toEqual([false, true]);
+      const result = await compare(envOnly, aliasedIntoStep);
+      expect(result.problems).toEqual([mustPin("acme/tool@main (ci.yml)")]);
+      expect(result.gaps).toEqual(["GitHub Actions acme/tool@main (ci.yml, outside a job or step): not pinned to a commit, so its version (and advisories) can't be told"]);
+      // Dropping one place's copy while another place gains one isn't a wash.
+      const twoSteps = read("jobs:\n  a:\n    steps:\n      - uses: acme/tool@main\n      - uses: acme/tool@main\n");
+      expect((await compare(aliasedIntoStep, twoSteps)).problems).toEqual([mustPin("acme/tool@main (ci.yml)")]);
+    });
+
+    it("judges a comment the same in either place: unchanged stays, changed is a change", async () => {
+      const commented = (comment: string) => read(inEnv(`acme/tool@main # ${comment}`));
+      expect((await compare(commented("note"), commented("note"))).problems).toEqual([]);
+      expect((await compare(commented("note"), commented("other"))).problems).toEqual([mustPin("acme/tool@main (ci.yml, outside a job or step)")]);
+    });
+
+    it("names both places in a full scan", async () => {
+      const both = read("env:\n  X:\n    uses: acme/tool@main\njobs:\n  a:\n    steps:\n      - uses: acme/tool@main\n");
+      const gh = github();
+      expect(actionGaps(both, await resolveUses([both], gh))).toEqual([
+        "GitHub Actions acme/tool@main (ci.yml, outside a job or step): not pinned to a commit, so its version (and advisories) can't be told",
+        "GitHub Actions acme/tool@main (ci.yml): not pinned to a commit, so its version (and advisories) can't be told",
+      ]);
+    });
   });
 
   it("refuses YAML whose aliases expand past a budget", () => {

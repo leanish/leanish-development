@@ -9,6 +9,12 @@
   general rules. There, every release review is one exhaustive pass, the reviewer is picked per iteration, and minor
   findings don't block: a new candidate cut for another reason fixes them all, and otherwise they go to the next patch.
 
+### Fixed
+
+- The gate now fails an unpinned action moved into a step or job from a key it only reads as an action, such as an `env`
+  map, instead of reporting a gap. A pinned one gets a new use's checks. Moving one out of a step counts as a change too,
+  so it must be pinned as well. Problems and gaps name such a use as `(file, outside a job or step)`.
+
 ## 0.11.0 - 2026-11-05
 
 ### Changed
