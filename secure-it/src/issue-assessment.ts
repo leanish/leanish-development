@@ -92,6 +92,18 @@ export async function assessmentOf(inputs: AssessmentInputs): Promise<Assessment
   return { sha: inputs.sha, at: inputs.now.toISOString(), complete: inputs.complete, subjects, excepted: inputs.excepted };
 }
 
+/**
+ * `assessment` without PR `number`: a ready subject it named as its PR is ready with none. For rendering an issue
+ * after the run closed that PR, with an assessment read before.
+ */
+export function withoutPr(assessment: Assessment, number: number): Assessment {
+  const subjects = assessment.subjects.map((entry): SubjectAssessment => {
+    if (entry.status.kind !== "eligible" || entry.status.pr?.number !== number) return entry;
+    return { ...entry, status: { kind: "eligible", trusted: entry.status.trusted } };
+  });
+  return { ...assessment, subjects };
+}
+
 /** The plan's moves as a decision: exactly what it changes, each once. */
 export function decisionMoves(plan: ChangePlan): DecisionMove[] {
   const seen = new Map<string, DecisionMove>();

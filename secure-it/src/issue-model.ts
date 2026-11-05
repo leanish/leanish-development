@@ -131,7 +131,9 @@ export interface Attempt {
 
 /**
  * A closing the tool intends, written before it closes the issue: a closed issue without one is a person's
- * dismissal. Both close as the PAT's login, so the record, not the actor, tells them apart.
+ * dismissal. A person may close as the PAT's login too, so the record tells them apart first; within a recorded
+ * closing, only a closing by the token's login after `afterEvent` is taken for the tool's (a person using that same
+ * account can still be mistaken for it: a documented limit).
  */
 export interface PendingClose {
   readonly id: string;
@@ -142,7 +144,8 @@ export interface PendingClose {
   readonly at: string;
   /**
    * The id of the issue's last event when the tool recorded this closing (0 with none): its own closing is the first
-   * `closed` event after it, so a person's earlier closing and reopening never read as coming after the tool's.
+   * `closed` event by the token's login after it, so a person's earlier closing and reopening never read as coming
+   * after the tool's, nor does another account's closing and reopening after it.
    */
   readonly afterEvent?: number;
 }

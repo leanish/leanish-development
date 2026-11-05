@@ -817,7 +817,8 @@ async function withoutAgedEarly(execution: Execution, own: ReadonlyArray<GitHubP
       kept.push(pr);
       continue;
     }
-    // Closed: its attempt ends here, or, if that write fails, at the next run's recovery from the PR's history.
+    // Closed: its attempt ends here, or, if that write fails, at the next run's recovery from the PR's history. The issue
+    // then reads as ready until a new PR publishes (`settleAttempt` renders it without the closed one).
     await settleAttempt(attemptClient(execution), number!, attempt!.id, { outcome: "pr-closed" }, tracking.assessment).catch((error: unknown) => {
       if (rateLimited(error)) throw error;
       context.logger.warn("secure-it: a retired PR's attempt couldn't be ended; the next run's recovery ends it", { pr: pr.number, error: asError(error).message });
@@ -1136,8 +1137,13 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
     const verified = await verifyWithRetry(execution, base, plan, content, { admits });
     if (verified.unplanned !== undefined) {
       const unplanned = verified.unplanned;
-      await postNotice(issues, tracked, `unplanned-young:${pr.number}:${unplanned.join(",")}`,
-        `secure-it didn't update #${pr.number}: on the new base, verification found young versions no grant covers: ${unplanned.map((entry) => `\`${entry}\``).join(", ")}. It tries again on a later review, and goes ahead once they're past the wait.`);
+      // Said only on this decision's own issue, as its disposition found it: an ordinary PR whose `Tracks` line names
+      // another issue still gets here, and gets no notice.
+      const notified = permitOf(pr).issue;
+      if (notified !== undefined) {
+        await postNotice(issues, notified, `unplanned-young:${pr.number}:${unplanned.join(",")}`,
+          `secure-it didn't update #${pr.number}: on the new base, verification found young versions no grant covers: ${unplanned.map((entry) => `\`${entry}\``).join(", ")}. It tries again on a later review, and goes ahead once they're past the wait.`);
+      }
       return { deferred: `verification found young versions no grant covers: ${unplanned.join(", ")}` } as const;
     }
     if (verified.deferred !== undefined) return { deferred: verified.deferred } as const;

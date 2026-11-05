@@ -10,6 +10,7 @@
 import type { GitHubClient, GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
 import type { GitHubIssues } from "@leanish/tool-runtime/github-issues";
 
+import { withoutPr } from "./issue-assessment.ts";
 import { type Assessment, type Attempt, type IssueRecord, subjectId } from "./issue-model.ts";
 import { recordShows, type TrackedIssue } from "./issue-reconcile.ts";
 import { hasLabel, isLabel, issueWriter, recordOf, TAKE_EARLY_LABEL } from "./issue-text.ts";
@@ -40,9 +41,12 @@ export async function settleAttempt(client: AttemptClient, number: number, id: s
   const settled: Attempt = { ...attempt, ...patch };
   const updated: IssueRecord = { ...record, attempts: record.attempts.map((entry) => (entry.id === id ? settled : entry)) };
   // Only an open issue the run's sync rendered: a closed one (dismissed, superseded, resolved) or one waiting to close
-  // keeps the text it was left with.
+  // keeps the text it was left with. An assessment read while the attempt's PR was open may still name it as the
+  // decision's PR: once that PR closed, it's rendered without it, so a text rendered here never says a closed PR is in
+  // progress. Without an assessment (a review's), the text stays as the last sync left it, until the next one.
   const current = issue.state === "open" && updated.pendingClose === undefined;
-  await client.issues.updateIssue({ repo: client.repo, number, body: bodyWith(client, issue.body, updated, current ? assessment : undefined) });
+  const rendered = current && assessment !== undefined && settled.outcome === "pr-closed" && settled.pr !== undefined ? withoutPr(assessment, settled.pr) : assessment;
+  await client.issues.updateIssue({ repo: client.repo, number, body: bodyWith(client, issue.body, updated, current ? rendered : undefined) });
   if (settled.outcome !== "pr-closed") return;
   try {
     await returnLabel(client, number, settled.grantEventId);

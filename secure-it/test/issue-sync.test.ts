@@ -154,6 +154,75 @@ describe("syncIssues", () => {
     expect(back.tracked.filter((issue) => issue.state === "open" && recordOf(issue.body)!.pendingClose === undefined).map((issue) => issue.number)).toEqual([3]);
   });
 
+  /** The issues open for the subject with no closing pending: a fresh one when the tool's closing wasn't a dismissal. */
+  const freshOpen = (result: Awaited<ReturnType<typeof syncIssues>>) => result.tracked.filter((issue) => issue.state === "open" && recordOf(issue.body)!.pendingClose === undefined).map((issue) => issue.number);
+
+  /** Supersedes #1 while `actor` closes and reopens it between the recorded closing (and its notice) and the tool's close. */
+  async function raceDuringClose(actor: string): Promise<FakeIssues> {
+    const issues = new FakeIssues();
+    await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+    const comment = issues.createComment.bind(issues);
+    let raced = false;
+    issues.createComment = async (args) => {
+      const posted = await comment(args);
+      if (!raced) {
+        raced = true;
+        issues.setState(1, "closed", actor);
+        issues.setState(1, "open", actor);
+      }
+      return posted;
+    };
+    await syncIssues(sync(issues), assessed([waiting("lib", "1.0.2")], LATER));
+    expect(issues.issues.get(1)!.state).toBe("closed");
+    return issues;
+  }
+
+  it("doesn't take a person's close and reopen while the tool closes an issue for the tool's closing", async () => {
+    const issues = await raceDuringClose("owner");
+    // Back to the first decision: the tool closed it last, so it isn't dismissed, and the subject gets a fresh issue.
+    expect(freshOpen(await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")])))).toEqual([3]);
+  });
+
+  it("can't tell that race apart when the person uses the token's own account (a documented limit)", async () => {
+    const issues = await raceDuringClose("leanish");
+    // The person's closing reads as the tool's, and the tool's later one as a dismissal after a reopening: no fresh issue.
+    expect(freshOpen(await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")])))).toEqual([]);
+  });
+
+  it("finishes an interrupted closing without taking a person's close and reopen meanwhile for the tool's", async () => {
+    const issues = new FakeIssues();
+    await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+    // The run records the closing and posts its notice, then crashes before closing; a person closes and reopens it.
+    const update = issues.updateIssue.bind(issues);
+    let crashed = false;
+    issues.updateIssue = async (args) => {
+      if (args.state === "closed" && !crashed) {
+        crashed = true;
+        throw new Error("socket hang up");
+      }
+      return update(args);
+    };
+    await expect(syncIssues(sync(issues), assessed([waiting("lib", "1.0.2")], LATER))).rejects.toThrow("socket hang up");
+    issues.setState(1, "closed", "owner");
+    issues.setState(1, "open", "owner");
+    // The next run finishes the recorded closing; back to the first decision, the subject gets a fresh issue.
+    await syncIssues(sync(issues), assessed([waiting("lib", "1.0.2")], LATER));
+    expect(issues.issues.get(1)!.state).toBe("closed");
+    expect(freshOpen(await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")])))).toEqual([3]);
+  });
+
+  it("keeps a person's dismissal after they reopened an issue the tool closed and closed it again", async () => {
+    const issues = new FakeIssues();
+    await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+    await syncIssues(sync(issues), assessed([waiting("lib", "1.0.2")], LATER));
+    issues.setState(1, "open", "owner", "2026-11-03T09:10:00Z");
+    issues.setState(1, "closed", "owner", "2026-11-03T09:20:00Z");
+    // Back to the first decision: #1 is the person's dismissal of it, so no issue opens for it again.
+    const back = await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+    expect(freshOpen(back)).toEqual([]);
+    expect(issues.issues.get(1)!.state).toBe("closed");
+  });
+
   it("takes an issue a person reopened after the tool closed it for retired, and opens a fresh one for its subject", async () => {
     const issues = new FakeIssues();
     await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
