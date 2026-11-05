@@ -40,8 +40,10 @@
   later reports only by another id still matches: it doesn't read as resolved, and a person's dismissal still covers
   it. A held PR's cooldown warning dates only the gate's red `cooldown` check, and says that secure-it keeps a PR taken
   early a draft until every version its issue's grant covers is past the wait, which can be later.
-- An issue GitHub answers is deleted (410) counts as gone when secure-it reads a tracked PR's issue, as a transferred
-  one (404) already did, instead of failing the run.
+- An issue GitHub answers is deleted (410), or transferred to a repository the token reads (301), counts as gone when
+  secure-it reads a tracked PR's issue, as one transferred out of the token's reach (404) already did, instead of
+  failing the run. The issues client never follows a redirect, so the token never goes where it points: it reads the
+  301 as an answer.
 - A PR's text and commit message defuse `GH-12` references and `http://` or `www.github.com` issue links after a
   closing keyword too, so merging a PR never closes the issue it tracks. An ordinary unit's published PR shows on its
   issue right away ("In progress") when it carries the whole decision, not only after the next run's sync.

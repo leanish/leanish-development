@@ -113,8 +113,9 @@ export function createGitHubIssues(options: CreateGitHubIssuesOptions): GitHubIs
           ...(init?.body !== undefined ? { "content-type": "application/json" } : {}),
         },
         ...(init?.body !== undefined ? { body: init.body } : {}),
-        // Never carry the token to wherever a redirect points.
-        redirect: "error",
+        // Never follow a redirect, so the token never goes where it points; its status comes back as a refusal the caller
+        // can read (an issue transferred to another repository the token reads answers 301).
+        redirect: "manual",
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
@@ -245,7 +246,10 @@ export function createGitHubIssues(options: CreateGitHubIssuesOptions): GitHubIs
 /** Why GitHub refused a request, as the shared client says it: a rate limit whose headers say so, or a refusal. */
 function refusal(operation: string, response: Response): GitHubApiError {
   const limited = response.headers.get("x-ratelimit-remaining") === "0" || response.headers.has("retry-after");
-  const reason = limited && (response.status === 403 || response.status === 429) ? "rate limited" : response.status === 403 ? "forbidden" : "unexpected response";
+  const reason = limited && (response.status === 403 || response.status === 429) ? "rate limited"
+    : response.status === 403 ? "forbidden"
+    : response.status >= 300 && response.status < 400 ? "moved"
+    : "unexpected response";
   return new GitHubApiError(operation, reason, response.status);
 }
 

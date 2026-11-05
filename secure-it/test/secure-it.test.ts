@@ -765,6 +765,35 @@ describe("secure-it run", () => {
       expect(await reviewDisposition(client, pr, planOf(pr.body)!, new EarlyPrs({ issues: h.context.issues, repo: REPO }))).toEqual({ kind: "proceed", permit: { early: false, young: [] } });
     });
 
+    it("leaves a PR that says it was taken early once its issue is transferred away (301): nothing confirms its grant", async () => {
+      const h = harness();
+      expect(await flow(h, OLD).run(h.context)).toMatchObject({ outcome: "published" });
+      const published = [...h.github.prs.values()].find((entry) => trackedIssueOf(entry.body) === 1)!;
+      const pr = { ...published, body: published.body.replace("Tracks #1.", "Tracks #1, taken early.") };
+      expect(takenEarlyOf(pr.body)).toBe(true);
+      const issues = issuesOf(h);
+      issues.getIssue = async () => {
+        throw new GitHubApiError("getIssue", "moved", 301);
+      };
+      const client = { issues, github: h.github, repo: REPO, clean: (body: string) => body, ours: () => true, now: NOW, trusted: () => false, retire: async () => "closed" as const, eligibleAt: async () => undefined };
+      expect(await reviewDisposition(client, pr, planOf(pr.body)!, new EarlyPrs({ issues, repo: REPO }))).toMatchObject({ kind: "leave" });
+    });
+
+    it("goes on when an open PR's issue was transferred away (301): it's no issue of this decision's, and nothing defers", async () => {
+      const pr = await vitePr();
+      const h = harness({ prs: [{ ...pr, body: `Tracks #42.\n\n${pr.body}` }], fixes: [vite(), leftPad()] });
+      h.workspace.setRemoteHead("secure-it/2026-10-05-security", HEAD_SHA);
+      const issues = issuesOf(h);
+      const getIssue = issues.getIssue.bind(issues);
+      issues.getIssue = async (args) => {
+        if (args.number === 42) throw new GitHubApiError("getIssue", "moved", 301);
+        return getIssue(args);
+      };
+      const result = await flow(h, OLD).run(h.context);
+      expect(result).not.toHaveProperty("errors");
+      expect(result).toMatchObject({ outcome: "updated", number: 7 });
+    });
+
     it("shows a PR carrying part of the decision (a retry reduced it) as that decision's PR, which the run then redoes whole", async () => {
       const h = harness({ prs: [await vitePr()], fixes: [vite(), leftPad()] });
       h.workspace.setRemoteHead("secure-it/2026-10-05-security", HEAD_SHA);
