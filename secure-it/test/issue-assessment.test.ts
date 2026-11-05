@@ -48,8 +48,8 @@ describe("assessmentOf", () => {
     to: undefined, problem: undefined, ...overrides,
   });
   // Through `selectWork`, as a run builds it: the blocked groups are the rule's own.
-  const assess = (observations: ObservedFinding[], fixes: SecurityFix[], undecided = new Map<string, string>()) => assessmentOf({
-    sha: "a".repeat(40), complete: true, observations, excepted: [], units: [], blocked: selectWork(fixes).blocked, planningCauses: new Map(), undecided, trusted: () => false,
+  const assess = (observations: ObservedFinding[], fixes: SecurityFix[], undecided = new Map<string, string>(), planningCauses = new Map<string, string>()) => assessmentOf({
+    sha: "a".repeat(40), complete: true, observations, excepted: [], units: [], blocked: selectWork(fixes).blocked, planningCauses, undecided, trusted: () => false,
     eligibleAt: async () => undefined, now: new Date("2026-11-04T00:00:00Z"), prOf: () => undefined,
   });
   const report = fix({ problem: "lib@1.0.0 is affected by GHSA-lib, only in the project's repository advisories: no fix is proposed until a reviewed source lists it", unreviewedOnly: true });
@@ -75,6 +75,11 @@ describe("assessmentOf", () => {
     const failed = fix({ problem: "lib@1.0.0's publisher identity couldn't be read (HTTP 503)", undecided: true });
     const { subjects } = await assess([finding("lib", true)], [failed], new Map([["npm|lib", "lib@1.0.0's publisher identity couldn't be read (HTTP 503)"]]));
     expect(subjects[0]!.status).toEqual({ kind: "blocked", reason: "unassessed", detail: "a check failed for it this run: lib@1.0.0's publisher identity couldn't be read (HTTP 503)" });
+  });
+
+  it("names both a failed check and a planning failure of the same package", async () => {
+    const { subjects } = await assess([finding("lib", true)], [], new Map([["npm|lib", "identity lookup failed"]]), new Map([["npm|lib", "lockfile unreadable"]]));
+    expect(subjects[0]!.status).toEqual({ kind: "blocked", reason: "unassessed", detail: "a check failed for it this run: identity lookup failed; its planning failed too: lockfile unreadable" });
   });
 
   it("doesn't take a package for only reported when a failed check also left it undecided", async () => {

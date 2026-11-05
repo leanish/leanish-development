@@ -81,7 +81,7 @@ export async function assessmentOf(inputs: AssessmentInputs): Promise<Assessment
       ? { kind: "informational" }
       : failed !== undefined
         // A check that failed decided nothing: the run couldn't assess it, whatever else blocks the package.
-        ? { kind: "blocked", reason: "unassessed", detail: `a check failed for it this run: ${failed}` }
+        ? { kind: "blocked", reason: "unassessed", detail: `a check failed for it this run: ${failed}${cause === undefined ? "" : `; its planning failed too: ${cause}`}` }
         : blocked !== undefined
           ? { kind: "blocked", reason: "not-taken", detail: blocked.reasons.join("; ") }
           : { kind: "blocked", reason: "unassessed", detail: cause === undefined

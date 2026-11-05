@@ -1272,6 +1272,24 @@ describe("secure-it run", () => {
     expect(incomplete.agentCalls).toEqual([]);
   });
 
+  it("says a failed carrier move's carried packages couldn't be assessed either, with the check that failed", async () => {
+    const problem = "left-pad@1.0.0's carrier move can't be decided: the version listing failed with HTTP 503";
+    const carrier = leftPad({ to: undefined, problem, undecided: true, carries: [{ name: "vite", from: ["8.3.1"], to: [], locations: ["node_modules/vite"], advisories: ["GHSA-rq7h-c2jc-7f22"] }] });
+    const h = harness({ fixes: [carrier], observations: [VITE_FINDING] });
+    await secureIt(h.deps).run(h.context);
+    const vite = [...(h.context.issues as FakeIssues).issues.values()].find((issue) => issue.title.includes("vite"))!;
+    expect(vite.body).toContain(`the fix couldn't be assessed this run. \`a check failed for it this run: ${problem}\``);
+  });
+
+  it("shows only a failed check's first line on its issue, with credentials and URL secrets redacted", async () => {
+    const problem = "vite@8.3.1's publisher identity can't be decided: https://user:secret@registry.example/vite?token=abc#x answered ghp_abcdef123456 (HTTP 503)\n    at stack line";
+    const h = harness({ fixes: [vite({ to: undefined, problem, undecided: true })] });
+    await secureIt(h.deps).run(h.context);
+    const body = [...(h.context.issues as FakeIssues).issues.values()].find((issue) => issue.title.includes("vite"))!.body;
+    expect(body).toContain("a check failed for it this run: vite@8.3.1's publisher identity can't be decided: https://registry.example/vite answered [redacted] (HTTP 503)");
+    for (const leak of ["secret", "token=abc", "ghp_abcdef123456", "stack line"]) expect(body).not.toContain(leak);
+  });
+
   it("keeps a package a failed check left undecided tracked, while a finding gone elsewhere resolves its issue", async () => {
     // A failed check decides nothing, but it doesn't make the scan incomplete: what it saw is still there.
     const problem = "vite@8.3.1's publisher identity can't be decided: attestation lookup failed with HTTP 503";
@@ -1512,6 +1530,9 @@ describe("secure-it run", () => {
     });
     expect(failed.h.github.prs.get(7)).toEqual(pr);
     expect(failed.h.workspace.publications.map((entry) => entry.prepared.branch)).toEqual(["secure-it/2026-10-07-rollup-major"]);
+    // Its issue says vite couldn't be assessed, naming the failed check, not that the rule refused it.
+    const viteIssue = (h: Harness) => [...(h.context.issues as FakeIssues).issues.values()].find((issue) => issue.title.includes("vite"))!.body;
+    expect(viteIssue(failed.h)).toContain(`a check failed for it this run: ${PEER_UNDECIDED}`);
     // A set the rules refuse reports as before: waiting, no error, and the routine moves the rest.
     const refused = await run(false);
     expect(refused.result).toMatchObject({ waiting: [PEER_UNDECIDED], units: [{ topic: "security", outcome: "updated" }, { topic: "rollup-major", outcome: "published" }] });

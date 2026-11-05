@@ -394,7 +394,11 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
 function undecidedCauses(fixes: ReadonlyArray<SecurityFix>, peers: ReadonlyArray<{ readonly packages: ReadonlyArray<string>; readonly reason: string }>): Map<string, string> {
   const causes = new Map<string, string[]>();
   const add = (key: string, why: string) => causes.set(key, [...new Set([...causes.get(key) ?? [], planningCause(why)])]);
-  for (const fix of fixes) if (fix.undecided === true && fix.problem !== undefined) add(packageKey(fix), fix.problem);
+  // A carrier's packages wait with it, as for a planning failure (`trackIssues`): its issue says what failed too.
+  for (const fix of fixes) {
+    if (fix.undecided !== true || fix.problem === undefined) continue;
+    for (const key of [packageKey(fix), ...(fix.carries ?? []).map((carried) => packageKey({ ecosystem: fix.ecosystem, name: carried.name }))]) add(key, fix.problem);
+  }
   for (const set of peers) for (const key of set.packages) add(key, set.reason);
   return new Map([...causes].map(([key, why]) => [key, why.join("; ")]));
 }
