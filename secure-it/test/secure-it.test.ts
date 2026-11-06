@@ -719,7 +719,7 @@ describe("secure-it run", () => {
       const failed = harness({ fixes: [] });
       issuesOf(failed).forbidden.add("createIssue");
       const broken = await flow(failed).run(failed.context);
-      expect(broken).toMatchObject({ outcome: "nothing-to-fix", errors: [expect.stringContaining("the write PAT needs Issues: read and write")] });
+      expect(broken).toMatchObject({ outcome: "nothing-to-fix", errors: [expect.stringContaining("check that the write PAT has Issues: read and write")] });
       const unsettled = harness({ fixes: [] });
       // Every issue the sync opens is gone when read back, so the rounds run out without settling.
       const issues = issuesOf(unsettled);
@@ -739,8 +739,8 @@ describe("secure-it run", () => {
       issuesOf(h).forbidden.add("createIssue");
       const result = await flow(h).run(h.context);
       expect(result).toMatchObject({
-        outcome: "deferred", reason: expect.stringContaining("the write PAT needs Issues: read and write"),
-        errors: [expect.stringContaining("the write PAT needs Issues: read and write")],
+        outcome: "deferred", reason: expect.stringContaining("check that the write PAT has Issues: read and write"),
+        errors: [expect.stringContaining("check that the write PAT has Issues: read and write")],
       });
       expect(h.agentCalls).toHaveLength(0);
       expect(h.workspace.publications).toHaveLength(0);
@@ -884,6 +884,19 @@ describe("secure-it run", () => {
       const body = issuesOf(h).issues.get(1)!.body;
       expect(body).toContain("**Taken early.**");
       expect(body).not.toContain("Taking it early");
+    });
+
+    it("says what to check, and runs nothing, when recording an early attempt is refused as forbidden", async () => {
+      const h = harness({ fixes: [young] });
+      await flow(h).run(h.context);
+      issuesOf(h).permissions.set("owner", "admin");
+      issuesOf(h).comment(1, "owner", "take-early: the dev server is exposed on our staging host");
+      issuesOf(h).label(1, "owner", "take-early");
+      issuesOf(h).forbidden.add("updateIssue");
+      const refused = await flow(h).run(h.context);
+      expect(JSON.stringify(refused)).toContain("check that the write PAT has Issues: read and write");
+      expect(h.agentCalls).toEqual([]);
+      expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toEqual([]);
     });
 
     it("keeps an early attempt running on the PR it opened when a later publication step fails", async () => {
@@ -1258,7 +1271,7 @@ describe("secure-it run", () => {
     it("runs nothing when the write PAT can't write issues, and says what to fix", async () => {
       const h = harness();
       issuesOf(h).forbidden.add("createIssue");
-      expect(await flow(h, OLD).run(h.context)).toMatchObject({ outcome: "deferred", reason: expect.stringContaining("the write PAT needs Issues: read and write") });
+      expect(await flow(h, OLD).run(h.context)).toMatchObject({ outcome: "deferred", reason: expect.stringContaining("check that the write PAT has Issues: read and write") });
       expect(h.agentCalls).toEqual([]);
     });
   });

@@ -20,6 +20,8 @@
 
 - Both tools recognize their PR label in any casing, as GitHub does, so a PR recognized only by its label isn't missed, and
   a label already there isn't added again, when the repository's label was created as, say, `Leanish:Secure-It`.
+- Every issue write of secure-it's now says to check the write PAT's Issues permission when GitHub refuses it as
+  forbidden, not only the sync's. Rate limits stay rate limits.
 
 ### Fixed
 

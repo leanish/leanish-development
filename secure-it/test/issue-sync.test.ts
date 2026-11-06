@@ -300,7 +300,7 @@ describe("syncIssues", () => {
   it("says what to fix when the write PAT can't write issues, and never falls back", async () => {
     const issues = new FakeIssues();
     issues.forbidden.add("createIssue");
-    await expect(syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]))).rejects.toThrow("the write PAT needs Issues: read and write");
+    await expect(syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]))).rejects.toThrow("check that the write PAT has Issues: read and write");
   });
 
   it("says Issues are disabled when GitHub answers an issue create as gone, and only then", async () => {
