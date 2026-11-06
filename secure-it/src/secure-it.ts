@@ -1412,11 +1412,12 @@ async function trackIssues(execution: Execution, inputs: TrackingInputs): Promis
   const synced = await syncIssues(syncing, assessment);
   // Before any disposition: an attempt a previous run left running is settled from its PR, or ends as interrupted.
   const recovered = await recoverAttempts(attemptClient(execution), synced.tracked, assessment);
+  // Ahead of reading the issues again: what was written stays written, and said, even if that reading fails.
+  for (const note of [...synced.notes, ...recovered.notes]) context.logger.warn("secure-it: issues", { note });
   // Recovery can attach a PR to its attempt: execution must not reuse assessment's earlier ownership answer, and retirement
   // and the notices below must go by what the issues say now. A failed reading stops the run's tracking: nothing executes.
   if (recovered.settled.size > 0) execution.early.forget();
   const sync = recovered.settled.size === 0 ? synced : { ...synced, ...await readAgain(syncing, synced, recovered.settled) };
-  for (const note of [...sync.notes, ...recovered.notes]) context.logger.warn("secure-it: issues", { note });
   // Labels where they authorize nothing are said so too, whether or not anything here would execute.
   await inactiveLabelNotices({ issues: context.issues, repo: context.repo.repo, clean: issueCleaner(context) }, { assessment, sync });
   return { assessment, sync };

@@ -999,8 +999,10 @@ describe("secure-it run", () => {
           }
           return read(args);
         };
+        const warned = vi.spyOn(later.logger, "warn");
         const result = await tool([vite()]).run(later);
         expect(result).toMatchObject({ outcome, errors: [expect.stringContaining("the issues couldn't be synced")] });
+        expect(warned).toHaveBeenCalledWith("secure-it: issues", { note: expect.stringContaining("has PR #42") });
         expect(h.github.prs.get(42)?.state).toBe("open");
         expect([...h.github.prs.values()].filter((pr) => pr.state === "open")).toHaveLength(1);
       });
