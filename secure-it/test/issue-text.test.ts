@@ -105,7 +105,7 @@ describe("an early attempt on a waiting decision", () => {
 
   it("says versions were selected before their wait ended, true even once their date has passed", () => {
     const text = body([]);
-    expect(text).toContain("The fix takes versions selected before their wait ended; secure-it opens its PR once a run finds them past it.");
+    expect(text).toContain("The fix takes versions selected before their wait ended; secure-it tries to open its PR once a run finds them past it.");
     expect(text).toContain("Selected before their wait ended:\n- `npm lib@1.0.1`, past it on `2026-11-10T00:00:00.000Z`");
     expect(text).not.toContain("inside the wait");
     expect(body([attempt])).toContain("The versions selected before their wait ended are listed after the moves.");

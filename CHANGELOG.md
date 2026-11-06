@@ -68,7 +68,7 @@
   already did, instead of failing the run. The issues client never follows a redirect, so the token never goes where it points: it reads the
   301 as an answer.
 - A PR's text and commit message defuse `GH-12` references and `http://` or `www.github.com` issue links after a
-  closing keyword too, so merging a PR never closes the issue it tracks. An ordinary unit's published PR shows on its
+  closing keyword too, so merging a PR doesn't close the issue it tracks through those references. An ordinary unit's published PR shows on its
   issue right away ("In progress") when it carries the whole decision, not only after the next run's sync.
 - An issue names as its PR only one recording exactly its decision, never one a run would reuse for another
   (once a run publishes it carrying the whole decision, it shows on the issue). A ready issue says secure-it tries to

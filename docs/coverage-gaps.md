@@ -44,13 +44,15 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   unrelated fixes included, until it ages.
 - **`take-early` doesn't reach an existing ordinary PR (secure-it)**: when an open PR's recorded plan stays the same but
   a Gradle parent probe newly finds a young version, a run keeps that PR before any issue decides, so a valid label isn't
-  used, and review leaves the PR until the version ages.
+  used. On a moved base review then leaves the PR until the version ages; on an unchanged base it goes by the recorded
+  plan and CI, so it can mark the PR ready while its issue still waits.
 - **How much of its issues a run reads (secure-it)**: 5,000 entries of its labelled listing, closed issues and any
   labelled PR included, and 1,000 comments or events per issue. Past either, the read fails and the run says so: it never
   goes on with part of a history.
 - **Removing an issue's label (secure-it)**: a run lists only labelled issues, so it opens another for what an open one
   tracked, leaving that one open and unmanaged, and a closed one's dismissal stops holding back its findings. Review still reads an issue a PR names by its
-  number.
+  number, but a run's retirement goes by the listing: a PR taken early under such an issue stays open past its wait, and
+  a regrouped fix opens beside it.
 - **A run whose planning fails changes no issue (secure-it)**: when candidate planning throws or the inventory is
   incomplete, the run executes nothing and leaves the issues as they are. While that persists (on a repository's first
   run, say), a finding the scan sees has no issue yet.

@@ -42,7 +42,7 @@ A run whose candidate planning fails, or whose inventory is incomplete, executes
 failing to plan leaves its findings tracked and retires nothing.
 
 Every issue the tool opens carries the `leanish:secure-it-issue` label, and a run lists only issues with it, so the
-login's PRs and other issues never crowd its listing. Removing the label takes an issue out of a run's listing: the run
+login's PRs and other issues without it never crowd its listing. Removing the label takes an issue out of a run's listing: the run
 opens another for what it tracked, and a closed one's dismissal stops counting. Review still reads the issue a PR names
 (`Tracks #N.`) by its number, label or not, so a PR taken early goes on under its recorded attempt and grant.
 
@@ -79,7 +79,7 @@ other.
 ### Taking a fix early: `take-early`
 
 Someone with write, maintain or admin access comments `take-early: <reason>` on a waiting decision's issue, then adds
-the `take-early` label. The next run fixes exactly that decision, with the young versions it took then (or fewer as
+the `take-early` label. The next run tries to fix exactly that decision, with the young versions it took then (or fewer as
 they age), on a branch reserved for that label, and opens a draft PR, with the [cooldown warning](#the-cooldown-warning)
 when the gate's comparison holds a version (it can hold none, as its view of what's new is narrower than the issue's).
 It stays a draft until those granted versions are past the wait; then review retires it and the next run

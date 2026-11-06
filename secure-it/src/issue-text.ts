@@ -177,7 +177,7 @@ function essentialLines(assessment: SubjectAssessment, record: IssueRecord): str
         break;
       }
       lines.push(
-        "**Waiting for the release-age wait.** The fix takes versions selected before their wait ended; secure-it opens its PR once a run finds them past it. Until then the vulnerable versions stay installed.",
+        "**Waiting for the release-age wait.** The fix takes versions selected before their wait ended; secure-it tries to open its PR once a run finds them past it. Until then the vulnerable versions stay installed.",
         "",
         "Its checks run on the PR secure-it opens then.",
       );

@@ -60,7 +60,8 @@ export type RepositoryPermission = "admin" | "maintain" | "write" | "triage" | "
 export interface GitHubIssues {
   /**
    * Every issue (open and closed, never a PR) `creator` opened in `repo` with `label`. The label keeps the listing to the
-   * tool's own issues, so the login's PRs and other issues, however many, never fill its pages.
+   * tool's own issues, so the login's PRs and other issues without it, however many, never fill its pages. A PR carrying
+   * the label is dropped here, but counts toward the listing's limit first.
    */
   listIssues(args: { readonly repo: string; readonly creator: string; readonly label: string }): Promise<ReadonlyArray<GitHubIssue>>;
   getIssue(args: { readonly repo: string; readonly number: number }): Promise<GitHubIssue>;
@@ -114,7 +115,8 @@ export function createGitHubIssues(options: CreateGitHubIssuesOptions): GitHubIs
         },
         ...(init?.body !== undefined ? { body: init.body } : {}),
         // Never follow a redirect, so the token never goes where it points; its status comes back as a refusal the caller
-        // can read (an issue transferred to another repository the token reads answers 301, and any 301 reads as gone).
+        // can read (an issue transferred to another repository the token reads answers 301, which callers reading a
+        // tracked issue take as gone).
         redirect: "manual",
         signal: AbortSignal.timeout(timeoutMs),
       });
