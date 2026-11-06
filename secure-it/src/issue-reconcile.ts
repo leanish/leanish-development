@@ -335,7 +335,7 @@ function withAbsences(record: IssueRecord, present: ReadonlyArray<FindingKey>, a
 
 /**
  * What the valid exceptions covering `record`'s findings say, for the comment closing it as resolved; empty when none
- * covers any. Cut by whole lines to `MAX_EXCEPTED_NOTE_CHARS`, saying how many were left out.
+ * covers any. Its entries are cut by whole lines to `MAX_EXCEPTED_NOTE_CHARS`, saying how many were left out.
  */
 function exceptedNote(record: IssueRecord, excepted: ReadonlyArray<ExceptedFinding>): string {
   const lines = excepted.filter((finding) => record.findings.some((tracked) => sameFinding(tracked, finding))).flatMap((finding) => finding.covered.map((entry) =>
