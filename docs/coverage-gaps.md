@@ -40,6 +40,9 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 - **A run whose planning fails changes no issue (secure-it)**: when candidate planning throws or the inventory is
   incomplete, the run executes nothing and leaves the issues as they are. While that persists (on a repository's first
   run, say), a finding the scan sees has no issue yet.
+- **A report-only entry holds back a Gradle parent's move (secure-it)**: when a package has an advisory only its own
+  repository publishes beside a fix a proved parent move replaces, that report keeps the package blocked, and the
+  dependency folded into its move waits with it, unassessed, until a reviewed source lists the advisory.
 - **A `take-early` attempt ends on any failure (secure-it)**: an agent that couldn't apply it, a failed verification
   or a crash ends it, a transient one included; only a new reason and label start another.
 - **A fix that only breaks once its versions aged has no deadline (secure-it)**: a waiting decision's PR opens only
