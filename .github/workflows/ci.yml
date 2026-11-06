@@ -39,6 +39,15 @@ jobs:
           distribution: temurin
           java-version: 25
       - run: npm ci --ignore-scripts
+      # The Gradle tests' only network is this distribution, and a read timeout downloading it isn't a test failure: it
+      # gets a few tries here, and they start with it in place. Anything failing in the tests themselves stays visible.
+      - name: Download the Gradle the tests use
+        run: |
+          for attempt in 1 2 3; do
+            core/gate/test/fixtures/gradle-wrapper/gradlew --version && exit 0
+            sleep $((attempt * 15))
+          done
+          exit 1
       - run: npm run check
         env:
           SUPPLY_CHAIN_GRADLE_TESTS: "1"
