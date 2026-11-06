@@ -13,8 +13,9 @@ open PRs. Either command can push or change a PR. There is
 **no tool dry-run flag**: start with the candidate preview below before enabling
 publication or a schedule.
 
-Tool PRs carry the `leanish:secure-it` or `leanish:bump-it` label and a matching
-body marker (`<!-- leanish:secure-it -->` or `<!-- leanish:bump-it -->`).
+Tool PRs carry the `leanish:secure-it` or `leanish:bump-it` label (in any casing,
+as on GitHub) and a matching body marker (`<!-- leanish:secure-it -->` or
+`<!-- leanish:bump-it -->`).
 
 Adopt [the CI gate](../core/gate/README.md#adopting-the-gate) first. The tools
 compute their own plans from the repository and the registries, and read their

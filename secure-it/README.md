@@ -78,8 +78,8 @@ other.
 
 ### Taking a fix early: `take-early`
 
-Someone with write, maintain or admin access comments `take-early: <reason>` on a waiting decision's issue, then adds
-the `take-early` label. The next run tries to fix exactly that decision, with the young versions it took then (or fewer as
+Someone with write, maintain or admin access comments `take-early: <reason>`, with that prefix in lower case, on a
+waiting decision's issue, then adds the `take-early` label. The next run tries to fix exactly that decision, with the young versions it took then (or fewer as
 they age), on a branch reserved for that label, and opens a draft PR, with the [cooldown warning](#the-cooldown-warning)
 when the gate's comparison holds a version (it can hold none, as its view of what's new is narrower than the issue's).
 It stays a draft until those granted versions are past the wait; then review retires it and the next run

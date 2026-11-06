@@ -16,6 +16,11 @@
   the comment can be written. [Coverage gaps](docs/coverage-gaps.md) add the limits of what a run reads from its issues,
   what removing an issue's label does, and two limits of young versions a Gradle parent probe brings in.
 
+### Fixed
+
+- Both tools recognize their PR label in any casing, as GitHub does, so a PR recognized only by its label isn't missed, and
+  a label already there isn't added again, when the repository's label was created as, say, `Leanish:Secure-It`.
+
 ## 0.11.0 - 2026-11-05
 
 ### Changed

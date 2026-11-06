@@ -12,6 +12,8 @@ describe("own PRs", () => {
     expect(rules.marker).toBe(`<!-- leanish:${tool} -->`);
     expect(isOwnPullRequest(rules, pr, "leanish/widget", "main")).toBe(true);
     expect(isOwnPullRequest(rules, { ...pr, body: rules.marker, labels: [] }, "leanish/widget", "main")).toBe(true);
+    // A label-only PR, in the casing someone created the repository's label with.
+    expect(isOwnPullRequest(rules, { ...pr, labels: [`Leanish:${tool.toUpperCase()}`] }, "leanish/widget", "main")).toBe(true);
     const other = tool === "secure-it" ? "bump-it" : "secure-it";
     expect(isOwnPullRequest(rules, { ...pr, labels: [`leanish:${other}`] }, "leanish/widget", "main")).toBe(false);
     expect(isOwnPullRequest(rules, { ...pr, labels: [], body: ownPullRequests(other).marker }, "leanish/widget", "main")).toBe(false);
