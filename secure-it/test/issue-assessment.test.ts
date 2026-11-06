@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 
 import { assessmentOf, type AssessmentInputs, youngOf } from "../src/issue-assessment.ts";
 import type { ObservedFinding } from "../src/issue-model.ts";
+import { reconcile } from "../src/issue-reconcile.ts";
+import { ISSUE_WRITER, recordOf } from "../src/issue-text.ts";
 import { type ChangePlan, type SecurityUnit, selectWork } from "../src/plan.ts";
 
 describe("youngOf", () => {
@@ -92,6 +94,25 @@ describe("assessmentOf", () => {
     it("says a reason two groups share once", async () => {
       const { subjects } = await assessWith([refusal, shared], [finding("lib", true)]);
       expect(subjects[0]!.status).toEqual({ kind: "blocked", reason: "not-taken", detail: "strictly pinned; no candidate passes" });
+    });
+
+    it("keeps its issue writable when each reason fits but their union doesn't, whether it's new or already open", async () => {
+      const long = (letter: string) => ({ packages: ["npm|lib"], reasons: [letter.repeat(34_000)] });
+      const assessed = await assessWith([long("a"), long("b")], [finding("lib", true)]);
+      const created = reconcile(assessed, [], ISSUE_WRITER);
+      expect(created.notes).toEqual([]);
+      const create = created.operations[0]!;
+      if (create.kind !== "create") throw new Error("expected a create");
+      expect(create.body).toContain("[truncated]");
+      expect(create.body).toContain("**Blocked:** secure-it can't take a fix for it this run:");
+
+      const short = await assessWith([{ packages: ["npm|lib"], reasons: ["no candidate passes"] }], [finding("lib", true)]);
+      const { operations: [first] } = reconcile(short, [], ISSUE_WRITER);
+      if (first?.kind !== "create") throw new Error("expected a create");
+      const open = { number: 1, state: "open" as const, body: first.body, record: recordOf(first.body)!, reopened: false };
+      const updated = reconcile(assessed, [open], ISSUE_WRITER);
+      expect(updated.notes).toEqual([]);
+      expect(updated.operations).toEqual([expect.objectContaining({ kind: "update", number: 1, body: expect.stringContaining("[truncated]") })]);
     });
 
     it("keeps a failed check ahead of them", async () => {
