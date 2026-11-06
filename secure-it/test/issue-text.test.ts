@@ -103,13 +103,13 @@ describe("an early attempt on a waiting decision", () => {
     expect(text).not.toContain("Taken early");
   });
 
-  it("says versions were selected before the wait ended, true even once their date has passed", () => {
+  it("says versions were selected before their wait ended, true even once their date has passed", () => {
     const text = body([]);
-    expect(text).toContain("The fix takes versions selected before the wait ended; secure-it opens its PR once a run finds them past it.");
-    expect(text).toContain("Selected before the wait ended:\n- `npm lib@1.0.1`, past it on `2026-11-10T00:00:00.000Z`");
+    expect(text).toContain("The fix takes versions selected before their wait ended; secure-it opens its PR once a run finds them past it.");
+    expect(text).toContain("Selected before their wait ended:\n- `npm lib@1.0.1`, past it on `2026-11-10T00:00:00.000Z`");
     expect(text).not.toContain("inside the wait");
-    expect(body([attempt])).toContain("The versions selected before the wait ended are listed after the moves.");
-    expect(body([{ ...attempt, pr: 9 }])).toContain("The versions selected before the wait ended are listed after the moves.");
+    expect(body([attempt])).toContain("The versions selected before their wait ended are listed after the moves.");
+    expect(body([{ ...attempt, pr: 9 }])).toContain("The versions selected before their wait ended are listed after the moves.");
   });
 
   it("says when a version's publication date can't be read, instead of a date", () => {
