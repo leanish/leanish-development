@@ -21,6 +21,19 @@ describe("issueWriter", () => {
     expect(recordOf(rendered.body)).toEqual(record);
   });
 
+  it("cleans a local path straddling a refusal's longer cut too", () => {
+    const subject = { kind: "package" as const, ecosystem: "npm" as const, name: "lib" };
+    const assessment: SubjectAssessment = { subject, findings: [], status: { kind: "blocked", reason: "not-taken",
+      detail: `${"x".repeat(9_970)} /Users/leandro.aguiar/private.txt ${"y".repeat(100)}` } };
+    const record: IssueRecord = { version: 1, subject, openedAt: "a".repeat(40), findings: [], absences: [], attempts: [] };
+    const writer = issueWriter((body) => cleanBody(body, { workingCopy: [], other: ["/Users/leandro.aguiar"] }));
+    const rendered = writer.render(assessment, record, record.openedAt);
+    expect(rendered.body).toContain("<local path>");
+    expect(rendered.body).not.toContain("/Users");
+    expect(rendered.body).toContain("[truncated]");
+    expect(recordOf(rendered.body)).toEqual(record);
+  });
+
   it("cuts a planning detail without leaving half a surrogate pair", () => {
     const subject = { kind: "package" as const, ecosystem: "npm" as const, name: "lib" };
     const end = 1_000 - " ... [truncated]".length;
