@@ -927,6 +927,85 @@ describe("secure-it run", () => {
       expect(body).not.toContain("**In progress:** #42.");
     });
 
+    describe("an early PR a crash left unattached, once its versions aged", () => {
+      const scenario = async () => {
+        const h = harness({ fixes: [young] });
+        const holding = (isYoung: boolean) => async (inputs: VerifyInputs) => {
+          inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held: isYoung ? [{ ecosystem: "npm", name: "vite", version: "8.3.3", replaced: ["8.3.1"], published: "2026-10-05T00:00:00.000Z", eligibleAt: "2026-10-12T00:00:00.000Z", justification: "security-fix" }] : [] });
+          return [];
+        };
+        const tool = (fixes: SecurityFix[]) => secureIt({ ...h.deps, gate: async () => scanned("2026-10-05T00:00:00Z"), scan: readScanState, verify: holding(fixes.some((fix) => fix.to?.aged === false)),
+          candidates: async () => ({ fixes, incomplete: [], gaps: [], notes: [], osvScannerVersion: "2.6.0" }) });
+        await tool([young]).run(h.context);
+        issuesOf(h).permissions.set("owner", "admin");
+        issuesOf(h).comment(1, "owner", "take-early: urgent");
+        issuesOf(h).label(1, "owner", "take-early");
+        await tool([young]).run(h.context);
+        // What the crash leaves: the PR published, its attempt not yet told.
+        const record = recordOf(issuesOf(h).issues.get(1)!.body)!;
+        const { pr: _published, ...unattached } = record.attempts[0]!;
+        const issue = issuesOf(h).issues.get(1)!;
+        issuesOf(h).issues.set(1, { ...issue, body: ISSUE_WRITER.withRecord(issue.body, { ...record, attempts: [unattached] }) });
+        return { h, tool, later: { ...h.context, now: new Date("2026-10-14T06:00:00Z") } };
+      };
+
+      it("is retired in the run that recovers it, so no second PR opens beside it", async () => {
+        const { h, tool, later } = await scenario();
+        const replaced = await tool([vite()]).run(later);
+        expect(replaced).toMatchObject({ outcome: "published" });
+        expect(h.github.prs.get(42)?.state).toBe("closed");
+        expect([...h.github.prs.values()].filter((pr) => pr.state === "open")).toHaveLength(1);
+        expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 42, outcome: "pr-closed" }]);
+      });
+
+      it("is retired too when the fixes regroup, with no overlapping PR", async () => {
+        const { h, tool, later } = await scenario();
+        const regrouped = await tool([vite(), leftPad()]).run(later);
+        expect(h.github.prs.get(42)?.state).toBe("closed");
+        expect(regrouped).toMatchObject({ outcome: "published" });
+        const open = [...h.github.prs.values()].filter((pr) => pr.state === "open");
+        expect(open).toHaveLength(1);
+        expect(open[0]!.number).not.toBe(42);
+      });
+
+      it("stays a person's once they marked it ready, recovered but not retired", async () => {
+        const { h, tool, later } = await scenario();
+        h.github.prs.set(42, { ...h.github.prs.get(42)!, isDraft: false });
+        await tool([vite()]).run(later);
+        expect(h.github.prs.get(42)?.state).toBe("open");
+        expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 42 }]);
+      });
+
+      it.each([
+        { when: "once", failures: 1, outcome: "already-open" },
+        { when: "for the whole run", failures: Number.POSITIVE_INFINITY, outcome: "failed" },
+      ])("executes nothing when the issues can't be read again after recovering it, failing $when", async ({ failures, outcome }) => {
+        const { h, tool, later } = await scenario();
+        const issues = issuesOf(h);
+        const read = issues.getIssue.bind(issues);
+        const update = issues.updateIssue.bind(issues);
+        let recovered = false;
+        let failed = 0;
+        // Recovery's write is the one that attaches the PR: the next read is the one after recovery.
+        issues.updateIssue = async (args) => {
+          const updated = await update(args);
+          if (args.body !== undefined && recordOf(args.body)?.attempts[0]?.pr === 42) recovered = true;
+          return updated;
+        };
+        issues.getIssue = async (args) => {
+          if (recovered && failed < failures) {
+            failed += 1;
+            throw new GitHubApiError("getIssue", "server error", 500);
+          }
+          return read(args);
+        };
+        const result = await tool([vite()]).run(later);
+        expect(result).toMatchObject({ outcome, errors: [expect.stringContaining("the issues couldn't be synced")] });
+        expect(h.github.prs.get(42)?.state).toBe("open");
+        expect([...h.github.prs.values()].filter((pr) => pr.state === "open")).toHaveLength(1);
+      });
+    });
+
     it("never leaves the issue naming a retired early PR as in progress when its fresh replacement doesn't publish", async () => {
       const h = harness({ fixes: [young] });
       const holding = (young: boolean) => async (inputs: VerifyInputs): Promise<string[]> => {

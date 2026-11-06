@@ -9,6 +9,11 @@
   general rules. There, every release review is one exhaustive pass, the reviewer is picked per iteration, and minor
   findings don't block: a new candidate cut for another reason fixes them all, and otherwise they go to the next patch.
 
+### Fixed
+
+- secure-it reads an issue again after recovering an attempt on it, so the same run can retire a recovered early PR whose
+  versions aged, instead of opening a second PR beside it when the fixes regroup. If that reading fails, nothing executes.
+
 ## 0.11.0 - 2026-11-05
 
 ### Changed

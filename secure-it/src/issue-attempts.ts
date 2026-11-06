@@ -71,10 +71,12 @@ export async function endAttempt(client: AttemptClient, number: number, id: stri
  * Attempts a previous run left running, settled from what GitHub shows: a PR from the attempt's branch (open, closed or
  * merged, kept after its branch is deleted) is attached, and ends the attempt when it's closed; an attempt that never
  * got one was interrupted, and only a new label authorizes another. A closed attempt's label whose removal failed is
- * removed again. Called before any disposition of this run.
+ * removed again. Called before any disposition of this run. `settled` says which issues it wrote an attempt to, which
+ * the caller's reading of them no longer reflects.
  */
-export async function recoverAttempts(client: AttemptClient, tracked: ReadonlyArray<TrackedIssue & { readonly labels: ReadonlyArray<string> }>, assessment: Assessment): Promise<string[]> {
+export async function recoverAttempts(client: AttemptClient, tracked: ReadonlyArray<TrackedIssue & { readonly labels: ReadonlyArray<string> }>, assessment: Assessment): Promise<{ readonly notes: ReadonlyArray<string>; readonly settled: ReadonlySet<number> }> {
   const notes: string[] = [];
+  const settled = new Set<number>();
   // Closed issues too: one superseded or resolved in this run's sync may still record an attempt to settle, or a label to
   // return. Bookkeeping only: nothing executes for a closed issue.
   for (const issue of tracked) {
@@ -95,10 +97,11 @@ export async function recoverAttempts(client: AttemptClient, tracked: ReadonlyAr
       const patch: AttemptPatch = pr === undefined ? { outcome: "interrupted" } : { pr: pr.number, ...ended(pr) };
       if (attempt.pr === pr?.number && patch.outcome === undefined) continue;
       await settleAttempt(client, issue.number, attempt.id, patch, assessment);
+      settled.add(issue.number);
       notes.push(`#${issue.number}: attempt ${attempt.id} ${describe(patch)}`);
     }
   }
-  return notes;
+  return { notes, settled };
 }
 
 /**

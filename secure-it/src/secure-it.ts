@@ -49,7 +49,7 @@ import { assessmentOf, decisionMoves, type PlannedUnit, youngOf } from "./issue-
 import { type PackageVersion, subjectId } from "./issue-model.ts";
 import { observationsOf } from "./issue-observations.ts";
 import { postNotice } from "./issue-notices.ts";
-import { syncIssues } from "./issue-sync.ts";
+import { readAgain, syncIssues } from "./issue-sync.ts";
 import { attemptBranches, type Disposition, inactiveLabelNotices, issueDisposition, type Tracking, type TrackedExecution, UNSETTLED } from "./issue-tracking.ts";
 import { type AttemptClient, type AttemptPatch, endAttempt, recoverAttempts, settleAttempt, showPullRequest } from "./issue-attempts.ts";
 import { EarlyPrs, takenEarlyOf, trackedIssueOf } from "./decision-issues.ts";
@@ -1408,12 +1408,15 @@ async function trackIssues(execution: Execution, inputs: TrackingInputs): Promis
       return found === undefined ? undefined : { number: found.pr.number, url: found.pr.url };
     },
   });
-  const sync = await syncIssues({ issues: context.issues, repo: context.repo.repo, clean: issueCleaner(context), ...(execution.deps.clock === undefined ? {} : { clock: execution.deps.clock }) }, assessment);
+  const syncing = { issues: context.issues, repo: context.repo.repo, clean: issueCleaner(context), ...(execution.deps.clock === undefined ? {} : { clock: execution.deps.clock }) };
+  const synced = await syncIssues(syncing, assessment);
   // Before any disposition: an attempt a previous run left running is settled from its PR, or ends as interrupted.
-  const recovered = await recoverAttempts(attemptClient(execution), sync.tracked, assessment);
-  // Recovery can attach a PR to its attempt: execution must not reuse assessment's earlier ownership answer.
-  if (recovered.length > 0) execution.early.forget();
-  for (const note of [...sync.notes, ...recovered]) context.logger.warn("secure-it: issues", { note });
+  const recovered = await recoverAttempts(attemptClient(execution), synced.tracked, assessment);
+  // Recovery can attach a PR to its attempt: execution must not reuse assessment's earlier ownership answer, and retirement
+  // and the notices below must go by what the issues say now. A failed reading stops the run's tracking: nothing executes.
+  if (recovered.settled.size > 0) execution.early.forget();
+  const sync = recovered.settled.size === 0 ? synced : { ...synced, ...await readAgain(syncing, synced, recovered.settled) };
+  for (const note of [...sync.notes, ...recovered.notes]) context.logger.warn("secure-it: issues", { note });
   // Labels where they authorize nothing are said so too, whether or not anything here would execute.
   await inactiveLabelNotices({ issues: context.issues, repo: context.repo.repo, clean: issueCleaner(context) }, { assessment, sync });
   return { assessment, sync };

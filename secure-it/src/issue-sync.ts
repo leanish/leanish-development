@@ -103,14 +103,37 @@ async function unchanged(sync: IssueSync, read: { readonly number: number; reado
  */
 async function readTracked(sync: IssueSync, login: string, written: ReadonlySet<number>): Promise<Pick<SyncResult, "tracked" | "unreadable">> {
   const listed = await sync.issues.listIssues({ repo: sync.repo, creator: login, label: ISSUE_LABEL });
+  return classified(sync, login, [...listed.filter((issue) => !written.has(issue.number)), ...await writtenIssues(sync, login, written)]);
+}
+
+/**
+ * The sync's reading with the issues in `written`, which something wrote to after it, read again by their numbers and by
+ * the same rules: what's decided from here on goes by what they say now. The rest stand as read, where a new listing could
+ * show older copies of what the sync itself just wrote.
+ */
+export async function readAgain(sync: IssueSync, read: Pick<SyncResult, "tracked" | "unreadable">, written: ReadonlySet<number>): Promise<Pick<SyncResult, "tracked" | "unreadable">> {
+  const login = await sync.issues.login();
+  const fresh = await classified(sync, login, await writtenIssues(sync, login, written));
+  return {
+    tracked: [...read.tracked.filter((issue) => !written.has(issue.number)), ...fresh.tracked],
+    unreadable: [...read.unreadable.filter((number) => !written.has(number)), ...fresh.unreadable],
+  };
+}
+
+/** The issues in `written` as GitHub has them now, kept as a listing would keep them. */
+async function writtenIssues(sync: IssueSync, login: string, written: ReadonlySet<number>): Promise<GitHubIssue[]> {
   const fresh: GitHubIssue[] = [];
   for (const number of written) {
     const issue = await readWritten(sync, number);
     if (issue !== undefined && issue.author === login && hasLabel(issue.labels, ISSUE_LABEL)) fresh.push(issue);
   }
+  return fresh;
+}
+
+async function classified(sync: IssueSync, login: string, issues: ReadonlyArray<GitHubIssue>): Promise<Pick<SyncResult, "tracked" | "unreadable">> {
   const tracked: Array<TrackedIssue & { readonly labels: ReadonlyArray<string> }> = [];
   const unreadable: number[] = [];
-  for (const issue of [...listed.filter((issue) => !written.has(issue.number)), ...fresh]) {
+  for (const issue of issues) {
     const record = recordOf(issue.body);
     if (record === undefined) {
       // A closed one without a readable record stays out of everything; an open one blocks creates (`reconcile`).
