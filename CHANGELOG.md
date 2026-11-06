@@ -14,7 +14,8 @@
 - The docs promise less where 0.11.0 promised too much: a run tries to fix a decision rather than fixes it, a PR taken
   early has the cooldown warning only when the gate's comparison holds a version, and a refusal shows on the issue when
   the comment can be written. [Coverage gaps](docs/coverage-gaps.md) add the limits of what a run reads from its issues,
-  what removing an issue's label does, and two limits of young versions a Gradle parent probe brings in.
+  what removing an issue's label does, and two limits of young versions a Gradle parent probe brings in. They also say
+  what can bring in such a young version, and that a closing reference can look like a dismissal.
 
 ### Fixed
 
@@ -22,9 +23,6 @@
   a label already there isn't added again, when the repository's label was created as, say, `Leanish:Secure-It`.
 - Every issue write of secure-it's now says to check the write PAT's Issues permission when GitHub refuses it as
   forbidden, not only the sync's. Rate limits stay rate limits.
-
-### Fixed
-
 - secure-it uses every blocked group naming a package in its issue, whatever their order: no group can hide another's
   refusal behind a report of unreviewed-only advisories. An issue showing their refusals says each reason once, and cuts
   a detail past 10,000 characters visibly, so one too long no longer keeps the issue from being written.
