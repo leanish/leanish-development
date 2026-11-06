@@ -41,7 +41,9 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   still waits for it, even when the comparison sees it elsewhere on the base.
 - **One young version a parent probe brings holds its whole batch (secure-it)**: splitting fixes by age looks only at
   the targets the rule chose, so a young version a Gradle parent probe resolved makes the whole routine decision wait,
-  unrelated fixes included, until it ages.
+  unrelated fixes included, until it ages. A parent past the wait doesn't bound every version Gradle resolves after its
+  move: dynamic selections, constraints or resolution rules can bring in a younger one even with exact declarations. A
+  publication date that can't be read also keeps the decision waiting.
 - **`take-early` doesn't reach an existing ordinary PR (secure-it)**: when an open PR's recorded plan stays the same but
   a Gradle parent probe newly finds a young version, a run keeps that PR before any issue decides, so a valid label isn't
   used. On a moved base review then leaves the PR until the version ages; on an unchanged base it goes by the recorded
@@ -64,6 +66,11 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   opens an issue showing them all, and a decision's PR fixes the dismissed ones too. Closing an issue leaves an open
   ordinary PR for it to review, which may adapt it or mark it ready; close that PR by hand
   ([dismissing findings](../secure-it/README.md#dismissing-findings)).
+- **A closing reference can look like a dismissal (secure-it)**: a PR or commit that names a tracked issue after a
+  closing keyword (`Fixes #12`) can make GitHub close it once it reaches the default branch, and secure-it takes a
+  closing it didn't record for a dismissal, so findings still there can get no new issue or fix. Reopen the issue if
+  they should stay tracked. The gate's findings aren't affected. secure-it defuses the references it recognizes in what
+  it publishes, as best effort: that doesn't prove GitHub reads no other form as one, and it can't cover what people write.
 - **Version-fix PRs from before issues (secure-it)**: review leaves a version-fix PR without a `Tracks` line to its
   owner for good, and nothing closes it. A run still matches one to a fix it plans by its kind and topic alone: it
   keeps it, refreshing only its plan notes, when the plan is unchanged, or redoes it, then with a `Tracks` line, when the plan changed. The
