@@ -399,7 +399,7 @@ describe("issue text", () => {
     const taken = ISSUE_WRITER.render(subject, { ...record, attempts: [{ id: "a1", grantEventId: 7, branch: "b", startedAt: "2026-11-03T09:00:00Z", pr: 42 }] }, SHA).body;
     expect(taken).toContain("Taken early");
     expect(taken).not.toContain("Its checks run on the PR secure-it opens then.");
-    expect(body).toContain("secure-it opens its PR once they're past the wait. Until then the vulnerable versions stay installed.\n\nIts checks run on the PR secure-it opens then.");
+    expect(body).toContain("secure-it opens its PR once a run finds them past it. Until then the vulnerable versions stay installed.\n\nIts checks run on the PR secure-it opens then.");
   });
 
   it("refuses a body that would cut the decision a label authorizes", () => {
