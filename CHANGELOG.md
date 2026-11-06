@@ -9,6 +9,12 @@
   general rules. There, every release review is one exhaustive pass, the reviewer is picked per iteration, and minor
   findings don't block: a new candidate cut for another reason fixes them all, and otherwise they go to the next patch.
 
+### Fixed
+
+- secure-it's PR text no longer closes an issue through a link after a closing keyword. A real merge showed GitHub honors
+  those in a PR's description, whatever the link says (`Fixes [the bug](url)`, a reference-style link, `<url>`,
+  `<a href="url">`), so they now become code spans, as the other closing references already did.
+
 ## 0.11.0 - 2026-11-05
 
 ### Changed

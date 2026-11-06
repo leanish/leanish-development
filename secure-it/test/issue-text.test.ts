@@ -111,6 +111,36 @@ describe("withoutClosingKeywords", () => {
     expect(withoutClosingKeywords("Fixes gh-12, closes GH-3, fixed http://www.github.com/acme/widget/issues/7; see GH-8"))
       .toBe("Fixes `gh-12`, closes `GH-3`, fixed `http://www.github.com/acme/widget/issues/7`; see GH-8");
   });
+
+  const URL = "https://github.com/acme/widget/issues/4";
+
+  // The forms a real squash-merge closed an issue with, through a PR's description.
+  it.each([
+    [`Fixes [the bug](${URL})`, `Fixes \`[the bug](${URL})\``],
+    [`Fixes: [the bug](${URL})`, `Fixes: \`[the bug](${URL})\``],
+    [`Fixes [#4](${URL})`, `Fixes \`[#4](${URL})\``],
+    [`Fixes [the bug](${URL} "title")`, `Fixes \`[the bug](${URL} "title")\``],
+    [`Fixes [the bug](${URL}#issuecomment-1)`, `Fixes \`[the bug](${URL}#issuecomment-1)\``],
+    [`Fixes [the bug](<${URL}>)`, `Fixes \`[the bug](<${URL}>)\``],
+    [`Fixes [](${URL})`, `Fixes \`[](${URL})\``],
+    [`Fixes [**the [x] bug**](${URL})`, `Fixes \`[**the [x] bug**](${URL})\``],
+    [`Fixes [the bug][1]\n\n[1]: ${URL}`, `Fixes \`[the bug][1]\`\n\n[1]: ${URL}`],
+    [`Fixes [the bug]\n\n[the bug]: ${URL}`, `Fixes \`[the bug]\`\n\n[the bug]: ${URL}`],
+    [`Fixes <${URL}>`, `Fixes \`<${URL}>\``],
+    [`Fixes <a href="${URL}">the bug</a>, and more`, `Fixes \`<a href="${URL}">the bug</a>\`, and more`],
+    [`FIXES <A HREF="${URL}">the bug</A>`, `FIXES \`<A HREF="${URL}">the bug</A>\``],
+  ])("defuses a link after a keyword: %s", (text, defused) => {
+    expect(withoutClosingKeywords(text)).toBe(defused);
+  });
+
+  it("keeps a link's own backticks inside its code span", () => {
+    expect(withoutClosingKeywords(`Fixes [the \`bug\`](${URL})`)).toBe(`Fixes \`\`[the \`bug\`](${URL})\`\``);
+  });
+
+  it("leaves links no keyword names alone", () => {
+    const text = `See [the bug](${URL}), <${URL}> and <a href="${URL}">it</a>. **Fixes** nothing, and [Fixes](${URL}) neither.`;
+    expect(withoutClosingKeywords(text)).toBe(text);
+  });
 });
 
 describe("trackingContent", () => {
