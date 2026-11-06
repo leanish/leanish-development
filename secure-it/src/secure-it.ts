@@ -299,8 +299,9 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   const base = { tree, gradle: await inventories.ofCommit(tree) };
   const scanned = await deps.scan(tree, env, { head: base.gradle });
   const found = await deps.candidates(tree, env, { head: base.gradle }, scanned);
-  // A fix that can't be decided (its publisher identity, a carrier's reads) is blocked like a refused one, but it's a
-  // check that failed: reported as an error, so the run reads as one that broke, while the other units still go on.
+  // A fix that can't be decided (its publisher identity, a carrier's reads) has no move, so its package is blocked, but
+  // nothing refused it: it's a check that failed, reported as an error, so the run reads as one that broke, while the
+  // other units still go on.
   // Spread last in every result, so no unit's own keys can replace it.
   const undecided = undecidedProblems(found.fixes);
   const report = { gaps: found.gaps.length, ...((found.notes?.length ?? 0) === 0 ? {} : { notes: found.notes }) };

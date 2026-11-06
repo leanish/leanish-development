@@ -9,9 +9,9 @@ import { GitHubApiError } from "@leanish/agent-runtime/github/github-client";
 
 const API_ORIGIN = "https://api.github.com";
 const PAGE_SIZE = 100;
-/** Hard stop on pagination: 1,000 issues, comments or events; past it a call fails rather than read part of a history. */
+/** Hard stop on pagination: 1,000 comments or events; past it a call fails rather than read part of a history. */
 const MAX_PAGES = 10;
-/** A tool's own issues, open and closed, for as long as it runs on a repository: 5,000 before it says so. */
+/** A tool's own issues, open and closed, for as long as it runs on a repository: 5,000 entries, as GitHub lists them, before it says so. */
 const ISSUE_PAGES = 50;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -60,7 +60,8 @@ export type RepositoryPermission = "admin" | "maintain" | "write" | "triage" | "
 export interface GitHubIssues {
   /**
    * Every issue (open and closed, never a PR) `creator` opened in `repo` with `label`. The label keeps the listing to the
-   * tool's own issues, so the login's PRs and other issues, however many, never fill its pages.
+   * tool's own issues, so the login's PRs and other issues without it, however many, never fill its pages. A PR carrying
+   * the label is dropped here, but counts toward the listing's limit first.
    */
   listIssues(args: { readonly repo: string; readonly creator: string; readonly label: string }): Promise<ReadonlyArray<GitHubIssue>>;
   getIssue(args: { readonly repo: string; readonly number: number }): Promise<GitHubIssue>;
@@ -114,7 +115,8 @@ export function createGitHubIssues(options: CreateGitHubIssuesOptions): GitHubIs
         },
         ...(init?.body !== undefined ? { body: init.body } : {}),
         // Never follow a redirect, so the token never goes where it points; its status comes back as a refusal the caller
-        // can read (an issue transferred to another repository the token reads answers 301).
+        // can read (an issue transferred to another repository the token reads answers 301, which callers reading a
+        // tracked issue take as gone).
         redirect: "manual",
         signal: AbortSignal.timeout(timeoutMs),
       });

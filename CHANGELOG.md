@@ -8,6 +8,13 @@
   [release-flow](https://github.com/leanish/leanish-skills/blob/main/skills/wip/release-flow/SKILL.md) skill for the
   general rules. There, every release review is one exhaustive pass, the reviewer is picked per iteration, and minor
   findings don't block: a new candidate cut for another reason fixes them all, and otherwise they go to the next patch.
+- secure-it's waiting issues say their versions were selected before their wait ended, rather than that they're
+  still inside it, which isn't so once a selected version's date has passed. What runs and what a label authorizes don't change.
+  A version whose publication date can't be read says so instead of showing `unknown` as a date.
+- The docs promise less where 0.11.0 promised too much: a run tries to fix a decision rather than fixes it, a PR taken
+  early has the cooldown warning only when the gate's comparison holds a version, and a refusal shows on the issue when
+  the comment can be written. [Coverage gaps](docs/coverage-gaps.md) add the limits of what a run reads from its issues,
+  what removing an issue's label does, and two limits of young versions a Gradle parent probe brings in.
 
 ### Fixed
 
@@ -61,12 +68,12 @@
   later reports only by another id still matches: it doesn't read as resolved, and a person's dismissal still covers
   it. A held PR's cooldown warning dates only the gate's red `cooldown` check, and says that secure-it keeps a PR taken
   early a draft until every version its issue's grant covers is past the wait, which can be later.
-- An issue GitHub answers is deleted (410), or transferred to a repository the token reads (301), counts as gone when
-  secure-it reads a tracked PR's issue, as one transferred out of the token's reach (404) already did, instead of
-  failing the run. The issues client never follows a redirect, so the token never goes where it points: it reads the
+- An issue GitHub answers is deleted (410), or with a 301 (as a transfer to a repository the token reads does, and any
+  other 301 counts the same), counts as gone when secure-it reads a tracked PR's issue, as one transferred out of the token's reach (404)
+  already did, instead of failing the run. The issues client never follows a redirect, so the token never goes where it points: it reads the
   301 as an answer.
 - A PR's text and commit message defuse `GH-12` references and `http://` or `www.github.com` issue links after a
-  closing keyword too, so merging a PR never closes the issue it tracks. An ordinary unit's published PR shows on its
+  closing keyword too, so merging a PR doesn't close the issue it tracks through those references. An ordinary unit's published PR shows on its
   issue right away ("In progress") when it carries the whole decision, not only after the next run's sync.
 - An issue names as its PR only one recording exactly its decision, never one a run would reuse for another
   (once a run publishes it carrying the whole decision, it shows on the issue). A ready issue says secure-it tries to

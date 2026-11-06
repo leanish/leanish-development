@@ -1518,6 +1518,19 @@ describe("secure-it run", () => {
     expect(h.workspace.publications.map((entry) => entry.prepared.branch)).toEqual(["secure-it/2026-10-07-rollup-major"]);
   });
 
+  it("keeps a PR's carrier, carried work included, when a package it carries has a failed check of its own", async () => {
+    const problem = "left-pad@1.0.0's publisher identity can't be decided: attestation lookup failed with HTTP 503";
+    const carrier = vite({ carries: [{ name: "left-pad", from: ["1.0.0"], to: ["1.0.1"], locations: ["node_modules/vite/node_modules/left-pad"], advisories: ["GHSA-pad"] }] });
+    const pr = await batchPr([carrier]);
+    const h = harness({ prs: [pr], fixes: [carrier, leftPad({ to: undefined, problem, undecided: true })] });
+    h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
+    // The guard compares recorded move names, and left-pad isn't one: the carrier's claim holds because the carrier is
+    // still decided, so the recomputed plan is the recorded one and nothing rewrites the carried work away.
+    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "already-open", errors: [problem] });
+    expect(h.github.prs.get(7)).toEqual(pr);
+    expect(h.workspace.publications).toEqual([]);
+  });
+
   it("names every cause when a package's publisher identity and its direct-peer set both can't be decided", async () => {
     const problem = "left-pad@1.0.0's publisher identity can't be decided: attestation lookup failed with HTTP 503";
     // other still moves, so the routine runs and meets #7, which records vite and left-pad.

@@ -18,12 +18,12 @@ except where a person [dismissed](#dismissing-findings) it: a dismissed finding 
 subject also has a finding not dismissed, or once it came back after it was gone. An issue tracks one subject:
 
 - **A decision:** the exact moves a unit would make. Past the release-age wait, or a trusted package's ordinary fix
-  (said as a trusted exception), a run fixes it right away. Its PR says `Tracks #N.`, never a closing keyword. A PR
+  (said as a trusted exception), a run tries to fix it right away. Its PR says `Tracks #N.`, never a closing keyword. A PR
   may carry out only part of its decision (verification refused a package; the PR says what it left out), and the issue
   stays open while a scan still finds the rest; review never turns a tracked PR into another decision: its next run does,
   through that decision's issue.
 - **A decision waiting for the wait:** it takes a version younger than `releaseAgeDays`. No PR opens: the issue says
-  when each young version is past the wait, and a run fixes it then. Age always counts from the version's registry
+  when each young version is past the wait, and a run tries to fix it then. Age always counts from the version's registry
   publication, never from the author's repository. A malware fix's destination always waits, trusted packages included.
 - **A package without a decision:** blocked (no fix the run can take: no version fixes it, the rule refused every
   candidate, or the rule couldn't be applied, as the issue's reasons say), informational (only the project's own
@@ -42,9 +42,9 @@ A run whose candidate planning fails, or whose inventory is incomplete, executes
 failing to plan leaves its findings tracked and retires nothing.
 
 Every issue the tool opens carries the `leanish:secure-it-issue` label, and a run lists only issues with it, so the
-login's PRs and other issues never crowd its listing. Removing the label takes an issue out of a run's listing: the run
-opens another for what it tracked. Review still reads the issue a PR names (`Tracks #N.`) by its number, label or not,
-so a PR taken early goes on under its recorded attempt and grant.
+login's PRs and other issues without it never crowd its listing. Removing the label takes an issue out of a run's listing: the run
+opens another for what it tracked, and a closed one's dismissal stops counting. Review still reads the issue a PR names
+(`Tracks #N.`) by its number, label or not, so a PR taken early goes on under its recorded attempt and grant.
 
 Issues don't change subject: when a decision changes (another version, another grouping), the run opens the new issue
 first, then closes the old one as superseded by it. Once a complete scan sees none of an issue's findings outside a
@@ -79,8 +79,9 @@ other.
 ### Taking a fix early: `take-early`
 
 Someone with write, maintain or admin access comments `take-early: <reason>`, with that prefix in lower case, on a
-waiting decision's issue, then adds the `take-early` label. The next run fixes exactly that decision, with the young versions it took then (or fewer as
-they age), on a branch reserved for that label, and opens a draft PR with the [cooldown warning](#the-cooldown-warning).
+waiting decision's issue, then adds the `take-early` label. The next run tries to fix exactly that decision, with the young versions it took then (or fewer as
+they age), on a branch reserved for that label, and opens a draft PR, with the [cooldown warning](#the-cooldown-warning)
+when the gate's comparison holds a version (it can hold none, as its view of what's new is narrower than the issue's).
 It stays a draft until those granted versions are past the wait; then review retires it and the next run
 fixes that work afresh, in the batch it now belongs to.
 
@@ -90,9 +91,10 @@ fixes that work afresh, in the batch it now belongs to.
 - **A label covers what the issue showed when it was added.** A young version the issue shows only later (the same
   moves now bring in another, say) needs a new reason and label. It counts as shown only once a later read of the
   issue confirms it was published (plus two minutes for clock skew); until then no label authorizes anything there.
-- **Every refusal is said on the issue**, once: no write access, no reason before the label, a reason edited since,
-  a decision that now takes a young version the label didn't cover, or a label on an issue that isn't a current
-  decision (closed, superseded, a package without a decision).
+- **Every refusal is said on the issue**, once, when the comment can be written (a write that fails shows in the run's
+  result, and a later run tries again): no write access, no reason before the label, a reason edited since, a decision
+  that now takes a young version the label didn't cover, or a label on an issue that isn't a current decision (closed,
+  superseded, a package without a decision).
 - **Removing the label withdraws it:** review leaves the PR to its owner and says so on the issue. So does a moved
   base that changes the decision or takes a young version the label didn't cover. Whether a PR was taken early is
   read from its issue's attempt, not from the gate's cooldown.
