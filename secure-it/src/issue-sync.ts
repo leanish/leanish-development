@@ -7,8 +7,8 @@
  * is listed with its old body), while reading an issue by its number doesn't. So every issue the sync wrote is read
  * back by number in the rounds after: a round never takes the listing's stale copy for the truth and writes again.
  *
- * A write GitHub refuses as forbidden is a setup problem, likely the write PAT's Issues permission. So is a create
- * GitHub answers as gone: the repository has Issues disabled. Either fails the sync with that, never a fallback; a rate
+ * A write GitHub refuses as forbidden may be a setup problem, likely the write PAT's Issues permission. A create GitHub
+ * answers as gone is one: the repository has Issues disabled. Either fails the sync with that, never a fallback; a rate
  * limit stays a rate limit (`issueWrite`).
  */
 import { GitHubApiError } from "@leanish/agent-runtime/github/github-client";

@@ -10,7 +10,6 @@
 import type { GitHubClient, GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
 import type { GitHubIssues } from "@leanish/tool-runtime/github-issues";
 
-import { issueWrite } from "./issue-access.ts";
 import { withoutPr } from "./issue-assessment.ts";
 import { type Assessment, type Attempt, type IssueRecord, subjectId } from "./issue-model.ts";
 import { recordShows, type TrackedIssue } from "./issue-reconcile.ts";
@@ -47,7 +46,7 @@ export async function settleAttempt(client: AttemptClient, number: number, id: s
   // progress. Without an assessment (a review's), the text stays as the last sync left it, until the next one.
   const current = issue.state === "open" && updated.pendingClose === undefined;
   const rendered = current && assessment !== undefined && settled.outcome === "pr-closed" && settled.pr !== undefined ? withoutPr(assessment, settled.pr) : assessment;
-  await issueWrite(() => client.issues.updateIssue({ repo: client.repo, number, body: bodyWith(client, issue.body, updated, current ? rendered : undefined) }));
+  await client.issues.updateIssue({ repo: client.repo, number, body: bodyWith(client, issue.body, updated, current ? rendered : undefined) });
   if (settled.outcome !== "pr-closed") return;
   try {
     await returnLabel(client, number, settled.grantEventId);
@@ -117,7 +116,7 @@ export async function showPullRequest(client: AttemptClient, number: number, pr:
     subjects: assessment.subjects.map((subject) => (subjectId(subject.subject) === id && subject.status.kind === "eligible" ? { ...subject, status: { ...subject.status, pr } } : subject)),
   };
   const body = bodyWith(client, issue.body, record, shown);
-  if (body !== issue.body) await issueWrite(() => client.issues.updateIssue({ repo: client.repo, number, body }));
+  if (body !== issue.body) await client.issues.updateIssue({ repo: client.repo, number, body });
 }
 
 /**
@@ -151,7 +150,7 @@ function ended(pr: GitHubPullRequest): Pick<Attempt, "outcome"> {
 async function returnLabel(client: AttemptClient, number: number, grantEventId: number): Promise<void> {
   const events = await client.issues.listEvents({ repo: client.repo, number });
   const current = events.filter((event) => isLabel(event.label, TAKE_EARLY_LABEL) && (event.event === "labeled" || event.event === "unlabeled")).at(-1);
-  if (current?.event === "labeled" && current.id === grantEventId) await issueWrite(() => client.issues.removeLabel({ repo: client.repo, number, label: TAKE_EARLY_LABEL }));
+  if (current?.event === "labeled" && current.id === grantEventId) await client.issues.removeLabel({ repo: client.repo, number, label: TAKE_EARLY_LABEL });
 }
 
 function describe(patch: AttemptPatch): string {
