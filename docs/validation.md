@@ -1147,3 +1147,28 @@ What each step added, with rough API-equivalent cost (about $594 counted; the fi
 - Claude main session (about $161 from 2026-11-04; the earlier session of the same day isn't counted): planned and
   wrote most fix PRs, ran the reviews, cut and ran the candidates, released and repinned.
 - Fixture passes: 13 Terra cells (about $6.9) and 14 Haiku cells (about $3.1, Claude Code's own estimate).
+
+## Release reviews and candidate of 0.11.1 — 2026-11-06 to 2026-11-07
+
+0.11.1 fixes what 0.11.0 left, after sorting each open point by who could trigger it, whom it affects and how much:
+the expired exceptions went (#442), the issue flow promises less where it promised too much (#457), a carrier's work
+is pinned when what it carries can't be decided (#454), both tools match their PR label in any casing (#449),
+secure-it uses every blocked group naming a package (#452), CI downloads the tests' Gradle first (#456), and every
+refused issue write says to check the PAT's Issues permission (#458). #459 documented that a closing reference can
+look like a dismissal, and what brings in a young version through a Gradle parent probe. Points that didn't hold up
+were closed or moved to 0.12.0. A real-merge probe on a disposable repository showed which closing references GitHub
+honors; asking GitHub what closed an issue is planned for 0.12.0 (#426), instead of more text defusing.
+
+One candidate, rc.1 (a2d3671), installed from its prerelease:
+
+- **Haiku pair** on the diff from v0.11.0: no blocker. Sol upheld the six points dismissed as not new or not worse.
+- **Sol, unprimed**: no blocker; two pre-existing doc imprecisions for the next patch (an early PR's cooldown warning
+  in requirements, the Maven parent-probe qualification in the 0.11.0 CHANGELOG).
+- **Astra**, last: no blocker; one new minor for the next patch. Combining every blocked group's reasons can make an
+  update of an issue with a large record fail visibly (the issue keeps its text), so the CHANGELOG's "no longer keeps
+  the issue from being written" is too strong.
+- **Fixture passes**: Codex with Terra medium matched both rc.26 cells (22/22 PRs green). Claude Code with Haiku medium
+  had 21/21 green, but its agent refused the java-conventions plugin major on TEST_conventions, reading the plan's
+  `:buildscript.classpath` location as missing. Rerun alone from clean branches, it applied the same plan.
+
+The real runs on the owner's repositories come from the scheduled passes, which moved to v0.11.1 with the release.
