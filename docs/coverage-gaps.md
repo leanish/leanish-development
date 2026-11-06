@@ -42,6 +42,9 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   run, say), a finding the scan sees has no issue yet.
 - **A `take-early` attempt ends on any failure (secure-it)**: an agent that couldn't apply it, a failed verification
   or a crash ends it, a transient one included; only a new reason and label start another.
+- **An early PR a person took over doesn't hold back a regrouped fix (secure-it)**: once they mark it ready it's theirs,
+  and it isn't retired when its versions age. A later run whose fixes regroup into a larger decision opens its PR beside
+  it, overlapping it; close one of them by hand.
 - **A fix that only breaks once its versions aged has no deadline (secure-it)**: a waiting decision's PR opens only
   then, and may still need adapting.
 - **A dismissal holds back only what it fully covers (secure-it)**: a subject that also has a finding not dismissed
