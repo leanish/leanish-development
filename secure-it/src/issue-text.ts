@@ -16,6 +16,11 @@ import { type IssueRecord, type ObservedFinding, parseRecord, type SubjectAssess
 const HEADING = "## secure-it";
 /** Cleaned detail before quoting, including the cut marker; fences can expand it to 3,004 of a section's 43,000 characters. */
 const MAX_UNASSESSED_DETAIL_CHARS = 1_000;
+/**
+ * The same for a block's other details, which can join many reasons: fences can expand it to 30,004 of those characters,
+ * which a package's line must fit whole in, or its issue can't be written at all.
+ */
+const MAX_BLOCKED_DETAIL_CHARS = 10_000;
 const DETAIL_CUT = " ... [truncated]";
 /** The label a person adds, after a `take-early: <reason>` comment, to let secure-it fix a waiting decision now. */
 export const TAKE_EARLY_LABEL = "take-early";
@@ -53,7 +58,7 @@ export function issueWriter(clean: (body: string) => string): IssueWriter {
   return {
     render: (assessment, record, sha) => {
       const status = assessment.status;
-      const prepared = status.kind === "blocked" && status.reason === "unassessed"
+      const prepared = status.kind === "blocked"
         ? { ...assessment, status: { ...status, detail: clean(defused(status.detail)) } } : assessment;
       const text = render(prepared, record, sha);
       return { title: text.title, body: clean(text.body) };
@@ -160,7 +165,7 @@ function essentialLines(assessment: SubjectAssessment, record: IssueRecord): str
       lines.push("**Reported only.** Only the package's own repository publishes these advisories: secure-it doesn't act on them until GitHub's advisory database or OSV does.");
       break;
     case "blocked": {
-      const detail = status.reason === "unassessed" ? shortenedDetail(status.detail) : status.detail;
+      const detail = shortenedDetail(status.detail, status.reason === "unassessed" ? MAX_UNASSESSED_DETAIL_CHARS : MAX_BLOCKED_DETAIL_CHARS);
       lines.push(`**Blocked:** ${blockedReason(status.reason)} ${literal(detail)}`);
       break;
     }
@@ -206,9 +211,9 @@ function essentialLines(assessment: SubjectAssessment, record: IssueRecord): str
   return lines;
 }
 
-function shortenedDetail(detail: string): string {
-  if (detail.length <= MAX_UNASSESSED_DETAIL_CHARS) return detail;
-  let end = MAX_UNASSESSED_DETAIL_CHARS - DETAIL_CUT.length;
+function shortenedDetail(detail: string, limit: number): string {
+  if (detail.length <= limit) return detail;
+  let end = limit - DETAIL_CUT.length;
   const last = detail.charCodeAt(end - 1);
   if (last >= 0xd800 && last <= 0xdbff) end--;
   return `${detail.slice(0, end)}${DETAIL_CUT}`;

@@ -23,6 +23,12 @@
 - Every issue write of secure-it's now says to check the write PAT's Issues permission when GitHub refuses it as
   forbidden, not only the sync's. Rate limits stay rate limits.
 
+### Fixed
+
+- secure-it uses every blocked group naming a package in its issue, whatever their order: no group can hide another's
+  refusal behind a report of unreviewed-only advisories. An issue showing their refusals says each reason once, and cuts
+  a detail past 10,000 characters visibly, so one too long no longer keeps the issue from being written.
+
 ## 0.11.0 - 2026-11-05
 
 ### Changed
