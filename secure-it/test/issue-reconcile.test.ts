@@ -482,7 +482,7 @@ describe("reconcile with findings a valid exception covers", () => {
   describe("closing an issue as resolved under an exception", () => {
     const one = informational("lib", [finding("lib", ["GHSA-1"], { reviewed: false })]);
     const two = informational("lib", [finding("lib", ["GHSA-1"], { reviewed: false }), finding("lib", ["GHSA-2"], { reviewed: false })]);
-    const covered = (version: string, expires: string, paths = ["package-lock.json"]) => ({ version, expires, paths });
+    const covered = (version: string, expires: string, locations = ["package-lock.json"]) => ({ version, expires, locations });
     const closingOf = (issues: TrackedIssue[], assessment: Assessment) => {
       const close = reconcile(assessment, issues, ISSUE_WRITER).operations.find((operation) => operation.kind === "close");
       if (close?.kind !== "close") throw new Error("expected a closing");
@@ -526,6 +526,15 @@ describe("reconcile with findings a valid exception covers", () => {
       expect(comment.body.length).toBeLessThan(4_300);
       expect(comment.body).toMatch(/\n- and \d+ more$/);
       expect(comment.body.split("\n").filter((line) => line.startsWith("- `lib@")).every((line) => line.endsWith("package-lock.json`"))).toBe(true);
+    });
+
+    it("keeps a version with many locations on its line, saying how many it left out", () => {
+      const [issue] = converge(assessed([one])).issues;
+      const everywhere = Array.from({ length: 100 }, (_, at) => `${"p".repeat(60)}/${at}`);
+      const { comment } = closingOf([issue!], assessed([], true, LATER, [{ ...key("lib", ["GHSA-1"]), covered: [covered("1.0.0", "2027-01-01", everywhere)] }]));
+      expect(comment.body).toContain("`lib@1.0.0`");
+      expect(comment.body).toContain("and 95 more");
+      expect(comment.body).not.toContain("/5`");
     });
 
     it("opens no issue for wholly excepted findings, and an exception expiring doesn't undo a dismissal", () => {

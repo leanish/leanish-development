@@ -12,8 +12,8 @@
 ### Added
 
 - When secure-it closes an issue as resolved while a valid exception still covers some of its findings, its closing
-  comment says which versions, through what date and at which paths, as the exception itself says. A closing an
-  interrupted run left to finish keeps the plain comment.
+  comment says which versions, where they are and through what date. A closing an interrupted run left to finish keeps
+  the plain comment.
 
 ## 0.11.0 - 2026-11-05
 

@@ -48,13 +48,13 @@ export interface ObservedFinding extends FindingKey {
   readonly severity: string | undefined;
 }
 
-/** A finding a valid exception covers, with what that exception says for each version it covers, sorted by version. */
+/** A finding a valid exception covers, with each version it covers, sorted by version. */
 export interface ExceptedFinding extends FindingKey {
   readonly covered: ReadonlyArray<{
     readonly version: string;
-    /** The lockfile paths or Gradle configurations the exception names. */
-    readonly paths: ReadonlyArray<string>;
-    /** The last UTC day it's valid. */
+    /** Where the version is (lockfile paths or Gradle configurations), sorted: an exception may name more than these. */
+    readonly locations: ReadonlyArray<string>;
+    /** The last UTC day its exception is valid. */
     readonly expires: string;
   }>;
 }

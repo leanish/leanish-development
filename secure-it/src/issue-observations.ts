@@ -41,7 +41,7 @@ export function observationsOf(packages: ReadonlyArray<Located>, snapshot: Snaps
     const exception = excusingException(finding, exceptions, snapshot, today);
     const groups = exception === undefined ? observed : excepted;
     const key = `${finding.ecosystem}|${finding.name}|${finding.advisory}`;
-    if (exception !== undefined) covered.set(key, [...covered.get(key) ?? [], { version: finding.version, paths: exception.paths, expires: exception.expires }]);
+    if (exception !== undefined) covered.set(key, [...covered.get(key) ?? [], { version: finding.version, locations: [...finding.locations].sort(), expires: exception.expires }]);
     const group = groups.get(key) ?? { ecosystem: finding.ecosystem, name: finding.name, ids: new Set<string>(), versions: new Set<string>(), reviewed: false, malicious: false, severity: undefined };
     for (const id of finding.ids) group.ids.add(id);
     group.ids.add(finding.advisory);
@@ -58,7 +58,7 @@ export function observationsOf(packages: ReadonlyArray<Located>, snapshot: Snaps
     }))),
     excepted: sorted([...excepted].map(([key, group]) => ({
       ecosystem: group.ecosystem, name: group.name, ids: [...group.ids].sort(),
-      covered: covered.get(key)!.sort((a, b) => a.version.localeCompare(b.version)),
+      covered: covered.get(key)!.sort((a, b) => a.version.localeCompare(b.version, "en", { numeric: true })),
     }))),
   };
 }

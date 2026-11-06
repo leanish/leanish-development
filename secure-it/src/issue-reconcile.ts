@@ -24,6 +24,7 @@ import { hasLabel, type IssueWriter, TAKE_EARLY_LABEL } from "./issue-text.ts";
 
 /** How much a resolved issue's closing comment says about the exceptions covering its findings: GitHub caps a comment. */
 const MAX_EXCEPTED_NOTE_CHARS = 4_000;
+const MAX_EXCEPTED_LOCATIONS = 5;
 
 /** An issue the tool opened, with its record read back. */
 export interface TrackedIssue {
@@ -338,7 +339,7 @@ function withAbsences(record: IssueRecord, present: ReadonlyArray<FindingKey>, a
  */
 function exceptedNote(record: IssueRecord, excepted: ReadonlyArray<ExceptedFinding>): string {
   const lines = excepted.filter((finding) => record.findings.some((tracked) => sameFinding(tracked, finding))).flatMap((finding) => finding.covered.map((entry) =>
-    `- ${literal(`${finding.name}@${entry.version}`)} (${finding.ids.map((id) => literal(id)).join(", ")}): excepted through ${entry.expires} (UTC) at ${entry.paths.map((path) => literal(path)).join(", ")}`));
+    `- ${literal(`${finding.name}@${entry.version}`)} (${finding.ids.map((id) => literal(id)).join(", ")}): excepted through ${entry.expires} (UTC) at ${shownLocations(entry.locations)}`));
   if (lines.length === 0) return "";
   const shown: string[] = [];
   let length = 0;
@@ -349,6 +350,13 @@ function exceptedNote(record: IssueRecord, excepted: ReadonlyArray<ExceptedFindi
   }
   const left = lines.length - shown.length;
   return `\n\nStill there under a valid exception:\n${[...shown, ...(left === 0 ? [] : [`- and ${left} more`])].join("\n")}`;
+}
+
+/** The first locations of a version, so one with many leaves room for the others, saying how many it left out. */
+function shownLocations(locations: ReadonlyArray<string>): string {
+  const shown = locations.slice(0, MAX_EXCEPTED_LOCATIONS).map((location) => literal(location));
+  const left = locations.length - shown.length;
+  return [...shown, ...(left === 0 ? [] : [`and ${left} more`])].join(", ");
 }
 
 /**
