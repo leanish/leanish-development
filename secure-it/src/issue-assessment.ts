@@ -70,20 +70,21 @@ export async function assessmentOf(inputs: AssessmentInputs): Promise<Assessment
   for (const finding of inputs.observations) if (!covered.has(finding)) rest.set(packageKey(finding), [...rest.get(packageKey(finding)) ?? [], finding]);
   for (const [key, findings] of rest) {
     const { ecosystem, name } = findings[0]!;
-    const blocked = inputs.blocked.find((group) => group.packages.includes(key));
+    // Every group naming the package counts, whatever their order: a package can be held back for more than one reason.
+    const blocks = inputs.blocked.filter((group) => group.packages.includes(key));
     const cause = inputs.planningCauses.get(key);
     const failed = inputs.undecided.get(key);
     // Only the package's own repository publishing them: reported, never a candidate the rule refused, when all that
     // holds the package back is that report. Any other block (a strict pin, a check that failed) is shown as one.
     const reportedOnly = failed === undefined && findings.every((finding) => !finding.reviewed && !finding.malicious)
-      && (blocked === undefined || blocked.reportsOnly === true);
+      && blocks.every((group) => group.reportsOnly === true);
     const status: SubjectAssessment["status"] = reportedOnly
       ? { kind: "informational" }
       : failed !== undefined
         // A check that failed decided nothing: the run couldn't assess it, whatever else blocks the package.
         ? { kind: "blocked", reason: "unassessed", detail: `a check failed for it this run: ${failed}${cause === undefined ? "" : `; its planning failed too: ${cause}`}` }
-        : blocked !== undefined
-          ? { kind: "blocked", reason: "not-taken", detail: blocked.reasons.join("; ") }
+        : blocks.length > 0
+          ? { kind: "blocked", reason: "not-taken", detail: [...new Set(blocks.flatMap((group) => group.reasons))].join("; ") }
           : { kind: "blocked", reason: "unassessed", detail: cause === undefined
             ? "no fix was planned for it this run (malware goes first, or its planning failed)"
             : `no fix was planned for it this run: ${cause}` };

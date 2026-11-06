@@ -9,6 +9,11 @@
   general rules. There, every release review is one exhaustive pass, the reviewer is picked per iteration, and minor
   findings don't block: a new candidate cut for another reason fixes them all, and otherwise they go to the next patch.
 
+### Fixed
+
+- secure-it uses every blocked group naming a package in its issue, whatever their order: all their reasons show, and a
+  package counts as only reported when each of them is only a report.
+
 ## 0.11.0 - 2026-11-05
 
 ### Changed

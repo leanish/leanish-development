@@ -1,7 +1,7 @@
 import type { SecurityFix } from "@leanish/gate/candidates";
 import { describe, expect, it } from "vitest";
 
-import { assessmentOf, youngOf } from "../src/issue-assessment.ts";
+import { assessmentOf, type AssessmentInputs, youngOf } from "../src/issue-assessment.ts";
 import type { ObservedFinding } from "../src/issue-model.ts";
 import { type ChangePlan, type SecurityUnit, selectWork } from "../src/plan.ts";
 
@@ -64,6 +64,40 @@ describe("assessmentOf", () => {
     const { subjects } = await assess([finding("lib", false)], [report, pinned]);
     expect(subjects[0]!.status).toEqual(expect.objectContaining({ kind: "blocked", reason: "not-taken" }));
     expect(subjects[0]!.status).toEqual(expect.objectContaining({ detail: expect.stringContaining("lib@1.5.0: strictly pinned") }));
+  });
+
+  describe("with several blocked groups naming a package", () => {
+    const assessWith = (blocked: AssessmentInputs["blocked"], observations: ObservedFinding[], undecided = new Map<string, string>()) => assessmentOf({
+      sha: "a".repeat(40), complete: true, observations, excepted: [], units: [], blocked, planningCauses: new Map(), undecided, trusted: () => false,
+      eligibleAt: async () => undefined, now: new Date("2026-11-04T00:00:00Z"), prOf: () => undefined,
+    });
+    const reportOnly = { packages: ["npm|lib"], reasons: ["only in the project's repository advisories"], reportsOnly: true as const };
+    const refusal = { packages: ["npm|lib", "npm|other"], reasons: ["strictly pinned"] };
+    const shared = { packages: ["npm|lib"], reasons: ["strictly pinned", "no candidate passes"] };
+
+    it.each([
+      { order: "report first", blocked: [reportOnly, refusal] },
+      { order: "refusal first", blocked: [refusal, reportOnly] },
+    ])("blocks it on any refusal, with both reasons, $order", async ({ blocked }) => {
+      const { subjects } = await assessWith(blocked, [finding("lib", false)]);
+      expect(subjects[0]!.status).toEqual({ kind: "blocked", reason: "not-taken", detail: expect.stringContaining("strictly pinned") });
+      expect(subjects[0]!.status).toEqual(expect.objectContaining({ detail: expect.stringContaining("only in the project's repository advisories") }));
+    });
+
+    it("only reports it when every group is only a report", async () => {
+      const { subjects } = await assessWith([reportOnly, { ...reportOnly, reasons: ["another repository advisory"] }], [finding("lib", false)]);
+      expect(subjects[0]!.status).toEqual({ kind: "informational" });
+    });
+
+    it("says a reason two groups share once", async () => {
+      const { subjects } = await assessWith([refusal, shared], [finding("lib", true)]);
+      expect(subjects[0]!.status).toEqual({ kind: "blocked", reason: "not-taken", detail: "strictly pinned; no candidate passes" });
+    });
+
+    it("keeps a failed check ahead of them", async () => {
+      const { subjects } = await assessWith([reportOnly, refusal], [finding("lib", true)], new Map([["npm|lib", "identity lookup failed"]]));
+      expect(subjects[0]!.status).toEqual({ kind: "blocked", reason: "unassessed", detail: "a check failed for it this run: identity lookup failed" });
+    });
   });
 
   it("says no fix can be taken for a reviewed finding the rule held back, with its reasons", async () => {
