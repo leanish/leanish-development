@@ -169,15 +169,15 @@ function essentialLines(assessment: SubjectAssessment, record: IssueRecord): str
       // attempt that ended before publishing, or whose PR was closed, changed nothing: the decision waits again, its
       // attempts listed below.
       if (record.attempts.some((attempt) => attempt.pr !== undefined && attempt.outcome !== "pr-closed")) {
-        lines.push("**Taken early.** A `take-early` authorization let secure-it carry out these moves in a PR before the wait ends; see the attempts below. The versions still inside the wait are listed after the moves.");
+        lines.push("**Taken early.** A `take-early` authorization let secure-it carry out these moves in a PR before the wait ends; see the attempts below. The versions selected before their wait ended are listed after the moves.");
         break;
       }
       if (record.attempts.some((attempt) => attempt.outcome === undefined)) {
-        lines.push("**Taking it early.** A `take-early` authorization started an attempt at these moves; it hasn't published a PR yet (see the attempts below). The versions still inside the wait are listed after the moves.");
+        lines.push("**Taking it early.** A `take-early` authorization started an attempt at these moves; it hasn't published a PR yet (see the attempts below). The versions selected before their wait ended are listed after the moves.");
         break;
       }
       lines.push(
-        "**Waiting for the release-age wait.** The fix takes versions published too recently; secure-it opens its PR once they're past the wait. Until then the vulnerable versions stay installed.",
+        "**Waiting for the release-age wait.** The fix takes versions selected before their wait ended; secure-it tries to open its PR once a run finds them past it. Until then the vulnerable versions stay installed.",
         "",
         "Its checks run on the PR secure-it opens then.",
       );
@@ -197,7 +197,7 @@ function essentialLines(assessment: SubjectAssessment, record: IssueRecord): str
       .map((move) => `| ${literal(`${move.ecosystem} ${move.name}`, { table: true })} | ${literal(move.from, { table: true })} | ${literal(move.to, { table: true })} |`));
   }
   if (status.kind === "waiting") {
-    lines.push("", "Still inside the wait:", ...status.young.map((young) => `- ${literal(`${young.ecosystem} ${young.name}@${young.version}`)}, past it on ${literal(young.eligibleAt)}`));
+    lines.push("", "Selected before their wait ended:", ...status.young.map((young) => `- ${literal(`${young.ecosystem} ${young.name}@${young.version}`)}, ${young.eligibleAt === "unknown" ? "whose publication date can't be read" : `past it on ${literal(young.eligibleAt)}`}`));
     lines.push(
       "",
       `To take it early: someone with write access comments \`${TAKE_EARLY_LABEL}: <reason>\`, then adds the \`${TAKE_EARLY_LABEL}\` label. It covers exactly the moves above; if they change, this issue is superseded and the label doesn't carry over.`,

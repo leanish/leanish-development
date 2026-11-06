@@ -69,7 +69,7 @@ export type SubjectStatus =
    * every candidate, or couldn't be applied, as its reasons say), or a check or the planning failed for it (`unassessed`).
    */
   | { readonly kind: "blocked"; readonly reason: "no-fix" | "not-taken" | "unassessed"; readonly detail: string }
-  /** A decision taking versions still inside the wait: deferred, `take-early` can authorize it. */
+  /** A decision taking versions selected before their wait ended: deferred, `take-early` can authorize it. */
   | { readonly kind: "waiting"; readonly young: ReadonlyArray<YoungVersion> }
   /**
    * A decision secure-it may carry out: everything past the wait, or a trusted package's ordinary fix (`trusted`), with
