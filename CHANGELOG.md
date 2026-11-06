@@ -11,8 +11,8 @@
 
 ### Fixed
 
-- secure-it uses every blocked group naming a package in its issue, whatever their order: all their reasons show, and a
-  package counts as only reported when each of them is only a report.
+- secure-it uses every blocked group naming a package in its issue, whatever their order: each of their reasons shows
+  once, and no group can hide another's refusal behind a report of unreviewed-only advisories.
 
 ## 0.11.0 - 2026-11-05
 
