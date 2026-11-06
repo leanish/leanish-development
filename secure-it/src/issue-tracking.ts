@@ -7,6 +7,7 @@
 import type { GitHubIssues } from "@leanish/tool-runtime/github-issues";
 
 import { grantStanding } from "./decision-issues.ts";
+import { issueWrite } from "./issue-access.ts";
 import { decisionMoves } from "./issue-assessment.ts";
 import type { Assessment, Attempt, IssueRecord, PackageVersion } from "./issue-model.ts";
 import { subjectId } from "./issue-model.ts";
@@ -95,7 +96,7 @@ export async function issueDisposition(
     id: `${decision.grant.labelEventId}-${client.now.getTime()}`, grantEventId: decision.grant.labelEventId, branch: branch(decision.grant.labelEventId), startedAt: client.now.toISOString(),
   };
   const record: IssueRecord = { ...current, grant: decision.grant, attempts: [...current.attempts, attempt] };
-  await client.issues.updateIssue({ repo: client.repo, number: issue.number, body: issueWriter(client.clean).render(subject, record, tracking.assessment.sha).body });
+  await issueWrite(() => client.issues.updateIssue({ repo: client.repo, number: issue.number, body: issueWriter(client.clean).render(subject, record, tracking.assessment.sha).body }));
   return early(attempt);
 }
 
