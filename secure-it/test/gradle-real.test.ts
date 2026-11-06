@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -248,8 +248,9 @@ describe.skipIf(process.env["SUPPLY_CHAIN_GRADLE_TESTS"] !== "1")("young Gradle 
   beforeAll(async () => {
     fixtureRoot = await mkdtemp(join(tmpdir(), "secure-it-held-gradle-"));
     // Its own Gradle home keeps the module cache apart, but a new home also makes the wrapper download its distribution,
-    // --offline or not, and a read timeout there failed CI. A distribution already on the machine is shared instead.
-    const dists = join(process.env["GRADLE_USER_HOME"] ?? join(homedir(), ".gradle"), "wrapper", "dists");
+    // --offline or not, the likely source of the read timeouts that failed CI. A distribution already on the machine is
+    // shared instead. Absolute, as a link's relative target would resolve from the link, not from here.
+    const dists = resolve(process.env["GRADLE_USER_HOME"] ?? join(homedir(), ".gradle"), "wrapper", "dists");
     if (existsSync(dists)) {
       await mkdir(join(fixtureRoot, "gradle-home", "wrapper"), { recursive: true });
       await symlink(dists, join(fixtureRoot, "gradle-home", "wrapper", "dists"));
