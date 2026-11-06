@@ -712,7 +712,10 @@ describe("secure-it run", () => {
       const [issue] = [...issues.issues.values()];
       expect(issue!.state).toBe("closed");
       expect(recordOf(issue!.body)).toMatchObject({ pendingClose: { reason: "resolved" }, absences: [] });
-      expect(issues.comments.get(issue!.number)!.at(-1)!.body).toContain("finds none of its advisories outside a valid exception");
+      const closed = issues.comments.get(issue!.number)!.at(-1)!.body;
+      expect(closed).toContain("finds none of its advisories outside a valid exception");
+      expect(closed).toContain("`vite@8.3.1`");
+      expect(closed).toContain("excepted through 2027-01-01 (UTC) at `node_modules/vite`");
     });
 
     it("says so with nothing to fix too: a failed sync as an error, one that didn't settle as a note", async () => {

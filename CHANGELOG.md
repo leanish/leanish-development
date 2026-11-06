@@ -9,6 +9,12 @@
   general rules. There, every release review is one exhaustive pass, the reviewer is picked per iteration, and minor
   findings don't block: a new candidate cut for another reason fixes them all, and otherwise they go to the next patch.
 
+### Added
+
+- When secure-it closes an issue as resolved while a valid exception still covers some of its findings, its closing
+  comment says which versions, through what date and at which paths, as the exception itself says. A closing an
+  interrupted run left to finish keeps the plain comment.
+
 ## 0.11.0 - 2026-11-05
 
 ### Changed

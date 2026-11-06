@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import { type Assessment, type DecisionMove, type FindingKey, type IssueRecord, type ObservedFinding, parseRecord, type SubjectAssessment, subjectId } from "../src/issue-model.ts";
+import { type Assessment, type DecisionMove, type ExceptedFinding, type FindingKey, type IssueRecord, type ObservedFinding, parseRecord, type SubjectAssessment, subjectId } from "../src/issue-model.ts";
 import { type IssueOperation, reconcile, recordShows, type TrackedIssue } from "../src/issue-reconcile.ts";
 import { ISSUE_WRITER, type IssueWriter, recordOf } from "../src/issue-text.ts";
 
@@ -23,7 +23,7 @@ function informational(name: string, findings: ObservedFinding[]): SubjectAssess
   return { subject: { kind: "package", ecosystem: "npm", name }, findings, status: { kind: "informational" } };
 }
 
-const assessed = (subjects: SubjectAssessment[], complete = true, sha = SHA, excepted: FindingKey[] = []): Assessment => ({ sha, at: "2026-11-03T00:00:00.000Z", complete, subjects, excepted });
+const assessed = (subjects: SubjectAssessment[], complete = true, sha = SHA, excepted: Array<FindingKey & Partial<ExceptedFinding>> = []): Assessment => ({ sha, at: "2026-11-03T00:00:00.000Z", complete, subjects, excepted: excepted.map((finding) => ({ covered: [], ...finding })) });
 
 /** Runs `reconcile` to completion against fake issues, applying each operation as GitHub would. */
 function converge(assessment: Assessment, issues: TrackedIssue[] = [], rounds = 5): { issues: TrackedIssue[]; operations: IssueOperation[][]; notes: string[] } {
@@ -477,6 +477,64 @@ describe("reconcile with findings a valid exception covers", () => {
     expect(during[0]!.record.absences).toEqual([]);
     // The exception expires and the source reports only the new alias: still dismissed, no new issue.
     expect(reconcile(assessed([informational("lib", [finding("lib", ["CVE-1"], { reviewed: false })])], true, LATER), during, ISSUE_WRITER).operations).toEqual([]);
+  });
+
+  describe("closing an issue as resolved under an exception", () => {
+    const one = informational("lib", [finding("lib", ["GHSA-1"], { reviewed: false })]);
+    const two = informational("lib", [finding("lib", ["GHSA-1"], { reviewed: false }), finding("lib", ["GHSA-2"], { reviewed: false })]);
+    const covered = (version: string, expires: string, paths = ["package-lock.json"]) => ({ version, expires, paths });
+    const closingOf = (issues: TrackedIssue[], assessment: Assessment) => {
+      const close = reconcile(assessment, issues, ISSUE_WRITER).operations.find((operation) => operation.kind === "close");
+      if (close?.kind !== "close") throw new Error("expected a closing");
+      return close;
+    };
+
+    it("says which versions each exception covers, through when and at which paths", () => {
+      const [issue] = converge(assessed([one])).issues;
+      const { comment } = closingOf([issue!], assessed([], true, LATER, [{ ...key("lib", ["CVE-1", "GHSA-1"]), covered: [covered("1.0.0", "2027-01-01"), covered("2.0.0", "2027-03-01", ["a/package-lock.json", "b/package-lock.json"])] }]));
+      expect(comment.body).toContain("outside a valid exception.\n\nStill there under a valid exception:");
+      expect(comment.body).toContain("- `lib@1.0.0` (`CVE-1`, `GHSA-1`): excepted through 2027-01-01 (UTC) at `package-lock.json`");
+      expect(comment.body).toContain("- `lib@2.0.0` (`CVE-1`, `GHSA-1`): excepted through 2027-03-01 (UTC) at `a/package-lock.json`, `b/package-lock.json`");
+    });
+
+    it("names only the excepted ones when the others are gone, and nothing for another issue's exception", () => {
+      const [issue] = converge(assessed([two])).issues;
+      const { comment } = closingOf([issue!], assessed([], true, LATER, [{ ...key("lib", ["GHSA-2"]), covered: [covered("1.0.0", "2027-01-01")] }, { ...key("other", ["GHSA-1"]), covered: [covered("9.0.0", "2028-01-01")] }]));
+      expect(comment.body).toContain("`lib@1.0.0` (`GHSA-2`)");
+      expect(comment.body).not.toContain("GHSA-1");
+      expect(comment.body).not.toContain("other@");
+    });
+
+    it("says nothing about exceptions when its findings are simply gone", () => {
+      const [issue] = converge(assessed([one])).issues;
+      const { comment } = closingOf([issue!], assessed([], true, LATER, [{ ...key("other", ["GHSA-9"]), covered: [covered("1.0.0", "2027-01-01")] }]));
+      expect(comment.body).not.toContain("Still there");
+    });
+
+    it("never invents one finishing a closing an earlier run decided", () => {
+      const [issue] = converge(assessed([one])).issues;
+      const decided = closingOf([issue!], assessed([], true, LATER));
+      const interrupted: TrackedIssue = { ...issue!, body: decided.body, record: recordOf(decided.body)! };
+      const { comment } = closingOf([interrupted], assessed([], true, LATER, [{ ...key("lib", ["GHSA-1"]), covered: [covered("1.0.0", "2027-01-01")] }]));
+      expect(comment).toEqual(decided.comment);
+    });
+
+    it("is cut by whole lines, saying how many it left out", () => {
+      const [issue] = converge(assessed([one])).issues;
+      const many = Array.from({ length: 200 }, (_, at) => covered(`1.0.${at}`, "2027-01-01", [`${"p".repeat(60)}/package-lock.json`]));
+      const { comment } = closingOf([issue!], assessed([], true, LATER, [{ ...key("lib", ["GHSA-1"]), covered: many }]));
+      expect(comment.body.length).toBeLessThan(4_300);
+      expect(comment.body).toMatch(/\n- and \d+ more$/);
+      expect(comment.body.split("\n").filter((line) => line.startsWith("- `lib@")).every((line) => line.endsWith("package-lock.json`"))).toBe(true);
+    });
+
+    it("opens no issue for wholly excepted findings, and an exception expiring doesn't undo a dismissal", () => {
+      expect(reconcile(assessed([], true, SHA, [{ ...key("lib", ["GHSA-1"]), covered: [covered("1.0.0", "2027-01-01")] }]), [], ISSUE_WRITER).operations).toEqual([]);
+      const [issue] = converge(assessed([one])).issues;
+      const dismissed: TrackedIssue = { ...issue!, state: "closed" };
+      const excepted = converge(assessed([], true, LATER, [{ ...key("lib", ["GHSA-1"]), covered: [covered("1.0.0", "2027-01-01")] }]), [dismissed]).issues;
+      expect(reconcile(assessed([one]), excepted, ISSUE_WRITER).operations).toEqual([]);
+    });
   });
 
   it("keeps an absence a complete assessment recorded before, when the finding returns under an exception", () => {

@@ -48,6 +48,17 @@ export interface ObservedFinding extends FindingKey {
   readonly severity: string | undefined;
 }
 
+/** A finding a valid exception covers, with what that exception says for each version it covers, sorted by version. */
+export interface ExceptedFinding extends FindingKey {
+  readonly covered: ReadonlyArray<{
+    readonly version: string;
+    /** The lockfile paths or Gradle configurations the exception names. */
+    readonly paths: ReadonlyArray<string>;
+    /** The last UTC day it's valid. */
+    readonly expires: string;
+  }>;
+}
+
 /** A package version, for the young versions a decision takes. */
 export interface PackageVersion {
   readonly ecosystem: Ecosystem;
@@ -100,7 +111,7 @@ export interface Assessment {
    * The findings a valid exception covers (`issue-observations.ts`): in no subject and no work, but still present, so
    * an issue's record learns their aliases and never takes their absence.
    */
-  readonly excepted: ReadonlyArray<FindingKey>;
+  readonly excepted: ReadonlyArray<ExceptedFinding>;
 }
 
 /** The `take-early` authorization an issue received: the label event, its reason comment and who did both. */

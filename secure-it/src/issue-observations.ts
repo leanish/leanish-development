@@ -5,11 +5,11 @@
  * dismissal of it holds when the exception expires).
  */
 import { severityRank } from "@leanish/gate/candidates";
-import { type Exceptions, unexcusedProblem } from "@leanish/gate/exceptions";
+import { type Exceptions, excusingException } from "@leanish/gate/exceptions";
 import { findingsOf, type Located } from "@leanish/gate/findings";
 import type { Snapshot } from "@leanish/gate/snapshot";
 
-import type { FindingKey, ObservedFinding } from "./issue-model.ts";
+import type { ExceptedFinding, FindingKey, ObservedFinding } from "./issue-model.ts";
 
 export interface Observations {
   /** One per package and advisory group a valid exception doesn't cover, with every version and alias seen. Sorted. */
@@ -17,9 +17,9 @@ export interface Observations {
   /**
    * One per package and advisory group with a version a valid exception covers, with every alias seen. A group can be
    * in both, when an exception covers only some of its versions; one covering only some of a version's locations
-   * excepts nothing. Sorted.
+   * excepts nothing. What each covered version's exception says comes with it. Sorted.
    */
-  readonly excepted: ReadonlyArray<FindingKey>;
+  readonly excepted: ReadonlyArray<ExceptedFinding>;
 }
 
 interface Group {
@@ -36,9 +36,12 @@ interface Group {
 export function observationsOf(packages: ReadonlyArray<Located>, snapshot: Snapshot, exceptions: Exceptions, today: string): Observations {
   const observed = new Map<string, Group>();
   const excepted = new Map<string, Group>();
+  const covered = new Map<string, ExceptedFinding["covered"][number][]>();
   for (const finding of findingsOf(packages, snapshot)) {
-    const groups = unexcusedProblem(finding, exceptions, snapshot, today) === undefined ? excepted : observed;
+    const exception = excusingException(finding, exceptions, snapshot, today);
+    const groups = exception === undefined ? observed : excepted;
     const key = `${finding.ecosystem}|${finding.name}|${finding.advisory}`;
+    if (exception !== undefined) covered.set(key, [...covered.get(key) ?? [], { version: finding.version, paths: exception.paths, expires: exception.expires }]);
     const group = groups.get(key) ?? { ecosystem: finding.ecosystem, name: finding.name, ids: new Set<string>(), versions: new Set<string>(), reviewed: false, malicious: false, severity: undefined };
     for (const id of finding.ids) group.ids.add(id);
     group.ids.add(finding.advisory);
@@ -53,7 +56,10 @@ export function observationsOf(packages: ReadonlyArray<Located>, snapshot: Snaps
       ecosystem: group.ecosystem, name: group.name, ids: [...group.ids].sort(), versions: [...group.versions].sort(),
       reviewed: group.reviewed, malicious: group.malicious, severity: group.severity,
     }))),
-    excepted: sorted([...excepted.values()].map((group) => ({ ecosystem: group.ecosystem, name: group.name, ids: [...group.ids].sort() }))),
+    excepted: sorted([...excepted].map(([key, group]) => ({
+      ecosystem: group.ecosystem, name: group.name, ids: [...group.ids].sort(),
+      covered: covered.get(key)!.sort((a, b) => a.version.localeCompare(b.version)),
+    }))),
   };
 }
 

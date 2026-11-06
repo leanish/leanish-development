@@ -142,16 +142,25 @@ export function isIsoDate(value: string): boolean {
 export function unexcusedProblem(finding: Finding, exceptions: Exceptions, snapshot: Snapshot, today: string): string | undefined {
   const label = `${finding.name}@${finding.version}: ${finding.advisory}`;
   if (finding.malicious) return `${label} is a known-malicious package (no exception can cover it)`;
-  const exception = exceptions.vulnerabilities.find(
+  const exception = exceptionNaming(finding, exceptions, snapshot);
+  if (exception === undefined) return `${label} has no exception`;
+  if (exception.expires < today) return `${label}: its exception expired on ${exception.expires}`;
+  const uncovered = finding.locations.filter((location) => !exception.paths.includes(location));
+  if (uncovered.length > 0) return `${label} at ${uncovered.join(", ")} isn't covered by its exception's paths`;
+  return undefined;
+}
+
+/** The exception that excuses `finding` (`unexcusedProblem` finds no problem), or undefined when none does. */
+export function excusingException(finding: Finding, exceptions: Exceptions, snapshot: Snapshot, today: string): VulnerabilityException | undefined {
+  return unexcusedProblem(finding, exceptions, snapshot, today) === undefined ? exceptionNaming(finding, exceptions, snapshot) : undefined;
+}
+
+function exceptionNaming(finding: Finding, exceptions: Exceptions, snapshot: Snapshot): VulnerabilityException | undefined {
+  return exceptions.vulnerabilities.find(
     (entry) =>
       (entry.ecosystem === undefined || entry.ecosystem === finding.ecosystem) &&
       entry.package === finding.name &&
       entry.version === finding.version &&
       snapshot.group(entry.id) === finding.advisory,
   );
-  if (exception === undefined) return `${label} has no exception`;
-  if (exception.expires < today) return `${label}: its exception expired on ${exception.expires}`;
-  const uncovered = finding.locations.filter((location) => !exception.paths.includes(location));
-  if (uncovered.length > 0) return `${label} at ${uncovered.join(", ")} isn't covered by its exception's paths`;
-  return undefined;
 }

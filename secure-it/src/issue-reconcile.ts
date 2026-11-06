@@ -17,9 +17,13 @@
  *     an earlier run recorded.
  */
 import { versionKey } from "@leanish/gate/package-version";
+import { literal } from "@leanish/tool-runtime/pr-text";
 
-import { type Assessment, type FindingKey, type IssueRecord, keyOf, type PackageVersion, sameFinding, SHOWN_PENDING, type SubjectAssessment, subjectId } from "./issue-model.ts";
+import { type Assessment, type ExceptedFinding, type FindingKey, type IssueRecord, keyOf, type PackageVersion, sameFinding, SHOWN_PENDING, type SubjectAssessment, subjectId } from "./issue-model.ts";
 import { hasLabel, type IssueWriter, TAKE_EARLY_LABEL } from "./issue-text.ts";
+
+/** How much a resolved issue's closing comment says about the exceptions covering its findings: GitHub caps a comment. */
+const MAX_EXCEPTED_NOTE_CHARS = 4_000;
 
 /** An issue the tool opened, with its record read back. */
 export interface TrackedIssue {
@@ -208,7 +212,7 @@ export function reconcile(assessment: Assessment, issues: ReadonlyArray<TrackedI
       }
       const successors = successorsOf(record, assessment.subjects);
       if (successors.length === 0) {
-        operations.push(closing(issue, record, writer, "resolved", [], assessment.sha));
+        operations.push(closing(issue, record, writer, "resolved", [], assessment.sha, exceptedNote(record, assessment.excepted)));
         return;
       }
       if (creating) {
@@ -328,7 +332,30 @@ function withAbsences(record: IssueRecord, present: ReadonlyArray<FindingKey>, a
   return ended.length === 0 ? record : { ...record, absences: [...record.absences, ...ended.map((finding) => ({ finding, at: assessment.sha }))] };
 }
 
-/** The close operation for `issue`, its pending closing recorded in its body first (kept when one is already there). */
+/**
+ * What the valid exceptions covering `record`'s findings say, for the comment closing it as resolved; empty when none
+ * covers any. Cut by whole lines to `MAX_EXCEPTED_NOTE_CHARS`, saying how many were left out.
+ */
+function exceptedNote(record: IssueRecord, excepted: ReadonlyArray<ExceptedFinding>): string {
+  const lines = excepted.filter((finding) => record.findings.some((tracked) => sameFinding(tracked, finding))).flatMap((finding) => finding.covered.map((entry) =>
+    `- ${literal(`${finding.name}@${entry.version}`)} (${finding.ids.map((id) => literal(id)).join(", ")}): excepted through ${entry.expires} (UTC) at ${entry.paths.map((path) => literal(path)).join(", ")}`));
+  if (lines.length === 0) return "";
+  const shown: string[] = [];
+  let length = 0;
+  for (const line of lines) {
+    if (length + line.length > MAX_EXCEPTED_NOTE_CHARS) break;
+    shown.push(line);
+    length += line.length + 1;
+  }
+  const left = lines.length - shown.length;
+  return `\n\nStill there under a valid exception:\n${[...shown, ...(left === 0 ? [] : [`- and ${left} more`])].join("\n")}`;
+}
+
+/**
+ * The close operation for `issue`, its pending closing recorded in its body first (kept when one is already there).
+ * `note` comes after what it says: only a closing decided now has one, as a pending one was decided from an earlier
+ * assessment, which today's exceptions don't describe.
+ */
 function closing(
   issue: TrackedIssue,
   record: IssueRecord,
@@ -336,10 +363,11 @@ function closing(
   reason: "superseded" | "resolved",
   successors: ReadonlyArray<number>,
   at: string,
+  note = "",
 ): IssueOperation {
   const pending = record.pendingClose ?? { id: `close:${issue.number}:${reason}:${at}`, reason, successors: [...successors], at };
   const said = pending.reason === "resolved"
-    ? `secure-it closes this issue: a complete assessment of \`${pending.at.slice(0, 12)}\` finds none of its advisories outside a valid exception.`
+    ? `secure-it closes this issue: a complete assessment of \`${pending.at.slice(0, 12)}\` finds none of its advisories outside a valid exception.${note}`
     : pending.successors.length === 0
       ? "secure-it closes this issue: its findings now belong to work a person dismissed earlier."
       : `secure-it closes this issue: superseded by ${pending.successors.map((number) => `#${number}`).join(", ")}, which tracks its findings now. Nothing here carries over, a \`take-early\` label included.`;

@@ -48,7 +48,8 @@ so a PR taken early goes on under its recorded attempt and grant.
 
 Issues don't change subject: when a decision changes (another version, another grouping), the run opens the new issue
 first, then closes the old one as superseded by it. Once a complete scan sees none of an issue's findings outside a
-valid exception, it closes as resolved; while its subject still has some, the issue stays open and records as absent
+valid exception, it closes as resolved, and its closing comment says which versions an exception still covers, through
+what date and at which paths; while its subject still has some, the issue stays open and records as absent
 those the scan no longer sees at all. A finding a valid exception covers gets no issue and no work, but it's still
 there: it's never recorded as absent, so a dismissal of it still holds when the exception expires. A scan with coverage
 gaps never takes a finding for gone: it makes no new resolution decision and leaves open an issue whose subject it no

@@ -28,14 +28,33 @@ describe("observationsOf", () => {
     const snap = snapshot({ "a@1.0.0": [advisory("GHSA-a")], "b@1.0.0": [advisory("GHSA-b", ["CVE-b"])] });
     const { observed, excepted } = observationsOf([npm("a", "1.0.0"), npm("b", "1.0.0")], snap, exception(), TODAY);
     expect(observed).toEqual([{ ecosystem: "npm", name: "a", ids: ["GHSA-a"], versions: ["1.0.0"], reviewed: true, malicious: false, severity: "HIGH" }]);
-    expect(excepted).toEqual([{ ecosystem: "npm", name: "b", ids: ["CVE-b", "GHSA-b"] }]);
+    expect(excepted).toEqual([{ ecosystem: "npm", name: "b", ids: ["CVE-b", "GHSA-b"], covered: [{ version: "1.0.0", paths: ["node_modules/b"], expires: "2027-01-01" }] }]);
+  });
+
+  it("says what each version's own exception does, with several dates and paths, named by any alias", () => {
+    const snap = snapshot({ "b@1.0.0": [advisory("GHSA-b", ["CVE-b"])], "b@2.0.0": [advisory("GHSA-b", ["CVE-b"])] });
+    const exceptions = parseExceptions({ vulnerabilities: [
+      { id: "CVE-b", package: "b", version: "2.0.0", paths: ["nested/b", "other/b"], reason: "build only", expires: "2027-03-01" },
+      { id: "GHSA-b", package: "b", version: "1.0.0", paths: ["node_modules/b"], reason: "build only", expires: "2027-01-01" },
+    ] });
+    const { excepted } = observationsOf([npm("b", "2.0.0", ["nested/b", "other/b"]), npm("b", "1.0.0")], snap, exceptions, TODAY);
+    expect(excepted).toEqual([{ ecosystem: "npm", name: "b", ids: ["CVE-b", "GHSA-b"], covered: [
+      { version: "1.0.0", paths: ["node_modules/b"], expires: "2027-01-01" },
+      { version: "2.0.0", paths: ["nested/b", "other/b"], expires: "2027-03-01" },
+    ] }]);
+  });
+
+  it("still excepts a finding on its exception's last day", () => {
+    const snap = snapshot({ "b@1.0.0": [advisory("GHSA-b")] });
+    const { excepted } = observationsOf([npm("b", "1.0.0")], snap, exception({ expires: TODAY }), TODAY);
+    expect(excepted).toMatchObject([{ covered: [{ expires: TODAY }] }]);
   });
 
   it("puts a group in both when its exception covers only some of its versions", () => {
     const snap = snapshot({ "b@1.0.0": [advisory("GHSA-b")], "b@1.0.1": [advisory("GHSA-b")] });
     const { observed, excepted } = observationsOf([npm("b", "1.0.0"), npm("b", "1.0.1", ["nested/node_modules/b"])], snap, exception(), TODAY);
     expect(observed).toMatchObject([{ name: "b", ids: ["GHSA-b"], versions: ["1.0.1"] }]);
-    expect(excepted).toEqual([{ ecosystem: "npm", name: "b", ids: ["GHSA-b"] }]);
+    expect(excepted).toEqual([{ ecosystem: "npm", name: "b", ids: ["GHSA-b"], covered: [{ version: "1.0.0", paths: ["node_modules/b"], expires: "2027-01-01" }] }]);
   });
 
   it("keeps a group observed when its exception covers only some of a version's locations", () => {
