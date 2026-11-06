@@ -68,11 +68,12 @@ export function issueWriter(clean: (body: string) => string): IssueWriter {
  * does too, whatever it says: `[text](url)`, `[text][label]` or `[text]` with its definition elsewhere, `<url>` and
  * `<a href="url">`, as a real merge shows. The tool's issues resolve only through an assessment, so such a reference, an
  * agent's say, becomes a code span, which GitHub neither links nor acts on. Any bracket after a keyword counts, as its
- * definition may be anywhere: a plain `fixes [this]` shows as code too, which costs nothing.
+ * definition may be anywhere: a plain `fixes [this]` shows as code too, inside a code block as well, which only changes
+ * how it reads. A link's text can run over lines up to a blank one, where it would end.
  */
 const NAMED = /(?:[\w.-]+\/[\w.-]+)?#\d+|gh-\d+|https?:\/\/(?:www\.)?github\.com\/[\w.-]+\/[\w.-]+\/issues\/\d+/;
-const MARKDOWN_LINK = /\[(?:[^[\]\n]|\[[^\]\n]*\])*\](?:\([^)\n]*\)|\[[^\]\n]*\])?/;
-const HTML_LINK = /<https?:\/\/[^>\n]*>|<a\s[^>\n]*>(?:[^\n]*?<\/a>)?/;
+const MARKDOWN_LINK = /\[(?:[^[\]\n]|\n(?![ \t]*\n)|\[[^\]\n]*\])*\](?:\((?:[^()\n]|\([^)\n]*\))*\)|\[[^\]\n]*\])?/;
+const HTML_LINK = /<https?:\/\/[^>\n]*>|<a\s(?:[^>\n]|\n(?![ \t]*\n))*>(?:[^\n]*?<\/a>)?/;
 const CLOSING = new RegExp(String.raw`\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)(:\s*|\s+(?::\s*)?)(${NAMED.source}|${MARKDOWN_LINK.source}|${HTML_LINK.source})`, "gi");
 
 export function withoutClosingKeywords(text: string): string {

@@ -129,6 +129,11 @@ describe("withoutClosingKeywords", () => {
     [`Fixes <${URL}>`, `Fixes \`<${URL}>\``],
     [`Fixes <a href="${URL}">the bug</a>, and more`, `Fixes \`<a href="${URL}">the bug</a>\`, and more`],
     [`FIXES <A HREF="${URL}">the bug</A>`, `FIXES \`<A HREF="${URL}">the bug</A>\``],
+    [`Fixes [the long bug\ndescription](${URL})`, `Fixes \`[the long bug description](${URL})\``],
+    [`Fixes [\nthe bug](${URL})`, `Fixes \`[ the bug](${URL})\``],
+    [`Fixes [the\nbug][1]\n\n[1]: ${URL}`, `Fixes \`[the bug][1]\`\n\n[1]: ${URL}`],
+    [`Fixes [the bug](${URL} "title (x)")`, `Fixes \`[the bug](${URL} "title (x)")\``],
+    [`Fixes <a\nhref="${URL}">the bug</a>`, `Fixes \`<a href="${URL}">the bug</a>\``],
   ])("defuses a link after a keyword: %s", (text, defused) => {
     expect(withoutClosingKeywords(text)).toBe(defused);
   });
