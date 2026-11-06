@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { GitHubApiError } from "@leanish/agent-runtime/github/github-client";
-import { createGitHubIssues, MAX_ISSUE_BODY_CHARS } from "../src/github-issues.ts";
+import { createGitHubIssues, MAX_ISSUE_BODY_CHARS, MAX_ISSUE_TITLE_CHARS } from "../src/github-issues.ts";
 
 const TOKEN = "ghp_secret-token-value";
 const REPO = "leanish/widget";
@@ -115,6 +115,15 @@ describe("createGitHubIssues", () => {
       ["PATCH", `https://api.github.com/repos/${REPO}/issues/12`, JSON.stringify({ state: "closed", state_reason: "not_planned" })],
       ["POST", `https://api.github.com/repos/${REPO}/issues/12/comments`, JSON.stringify({ body: "superseded by #13" })],
     ]);
+  });
+
+  it("takes a title at GitHub's limit, and refuses one past it before calling GitHub", async () => {
+    const refused = scripted();
+    await expect(issues(refused.fetch).createIssue({ repo: REPO, title: "t".repeat(MAX_ISSUE_TITLE_CHARS + 1), body: "b", labels: [] })).rejects.toThrow("title must have");
+    expect(refused.calls).toEqual([]);
+    const { fetch, calls } = scripted(json(apiIssue(), 201));
+    await issues(fetch).createIssue({ repo: REPO, title: "t".repeat(MAX_ISSUE_TITLE_CHARS), body: "b", labels: [] });
+    expect(calls).toHaveLength(1);
   });
 
   it("refuses invalid input before calling GitHub", async () => {

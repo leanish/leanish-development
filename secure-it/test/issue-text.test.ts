@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { MAX_ISSUE_BODY_CHARS } from "@leanish/tool-runtime/github-issues";
+import { MAX_ISSUE_BODY_CHARS, MAX_ISSUE_TITLE_CHARS } from "@leanish/tool-runtime/github-issues";
 import { cleanBody } from "@leanish/tool-runtime/publication-text";
 
 import type { IssueRecord, SubjectAssessment } from "../src/issue-model.ts";
@@ -101,6 +101,35 @@ describe("an early attempt on a waiting decision", () => {
     const text = body([{ ...attempt, pr: 9, outcome: "pr-closed" }]);
     expect(text).toContain("**Waiting for the release-age wait.**");
     expect(text).not.toContain("Taken early");
+  });
+
+  it("says versions were selected before the wait ended, true even once their date has passed", () => {
+    const text = body([]);
+    expect(text).toContain("The fix takes versions selected before the wait ended; secure-it opens its PR once a run finds them past it.");
+    expect(text).toContain("Selected before the wait ended:\n- `npm lib@1.0.1`, past it on `2026-11-10T00:00:00.000Z`");
+    expect(text).not.toContain("inside the wait");
+    expect(body([attempt])).toContain("The versions selected before the wait ended are listed after the moves.");
+    expect(body([{ ...attempt, pr: 9 }])).toContain("The versions selected before the wait ended are listed after the moves.");
+  });
+
+  it("says when a version's publication date can't be read, instead of a date", () => {
+    const unknown: SubjectAssessment = { ...assessment, status: { kind: "waiting", young: [{ ecosystem: "npm", name: "lib", version: "1.0.1", eligibleAt: "unknown" }] } };
+    const text = ISSUE_WRITER.render(unknown, { version: 1, subject, openedAt: "a".repeat(40), findings: [], absences: [], attempts: [] }, "a".repeat(40)).body;
+    expect(text).toContain("- `npm lib@1.0.1`, whose publication date can't be read");
+    expect(text).not.toContain("past it on");
+  });
+});
+
+describe("an issue's title", () => {
+  const record = (subject: IssueRecord["subject"]): IssueRecord => ({ version: 1, subject, openedAt: "a".repeat(40), findings: [], absences: [], attempts: [] });
+
+  it("stays within GitHub's limit, however long its names are", () => {
+    const name = `${"g".repeat(200)}:${"a".repeat(200)}`;
+    const subject = { kind: "decision" as const, moves: [name, `${name}2`, `${name}3`, `${name}4`].map((entry) => ({ ecosystem: "Maven" as const, name: entry, from: "1", to: "2" })) };
+    const assessment: SubjectAssessment = { subject, findings: [], status: { kind: "eligible", trusted: [] } };
+    const { title } = ISSUE_WRITER.render(assessment, record(subject), "a".repeat(40));
+    expect(title.length).toBeLessThanOrEqual(MAX_ISSUE_TITLE_CHARS);
+    expect(title).toContain("...");
   });
 });
 

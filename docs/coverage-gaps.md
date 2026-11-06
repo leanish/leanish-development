@@ -36,7 +36,21 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   until that version ages. Gradle dynamic versions (ranges, `latest`) can bring one in the same way, as can a young
   version already in the repository. A Maven version already resolved anywhere on the base isn't new to the
   comparison at all, so an aged update that brings it into another configuration (a young X runtime didn't have but
-  another configuration did) is neither held nor refused: it publishes without a grant, as in v0.10.1.
+  another configuration did) is neither held nor refused: it publishes without a grant, as in v0.10.1. A version a
+  Gradle parent probe resolved is the exception: it's dated per configuration, so its decision still waits for it, even
+  when the comparison sees it elsewhere on the base.
+- **One young version a parent probe brings holds its whole batch (secure-it)**: splitting fixes by age looks only at
+  the targets the rule chose, so a young version a Gradle parent probe resolved makes the whole routine decision wait,
+  unrelated fixes included, until it ages.
+- **`take-early` doesn't reach an existing ordinary PR (secure-it)**: when an open PR's recorded plan stays the same but
+  a Gradle parent probe newly finds a young version, a run keeps that PR before any issue decides, so a valid label isn't
+  used, and review leaves the PR until the version ages.
+- **How much of its issues a run reads (secure-it)**: 5,000 entries of its labelled issues, closed ones included, as
+  GitHub lists them, and 1,000 comments or events per issue. Past either, the read fails and the run says so: it never
+  goes on with part of a history.
+- **Removing an issue's label (secure-it)**: a run lists only labelled issues, so it opens another for what an open one
+  tracked, and a closed one's dismissal stops holding back its findings. Review still reads an issue a PR names by its
+  number.
 - **A run whose planning fails changes no issue (secure-it)**: when candidate planning throws or the inventory is
   incomplete, the run executes nothing and leaves the issues as they are. While that persists (on a repository's first
   run, say), a finding the scan sees has no issue yet.
