@@ -9,6 +9,11 @@
   general rules. There, every release review is one exhaustive pass, the reviewer is picked per iteration, and minor
   findings don't block: a new candidate cut for another reason fixes them all, and otherwise they go to the next patch.
 
+### Fixed
+
+- secure-it no longer keeps a refusal or an unreviewed-only report on a Gradle parent's own fix once a proved parent
+  move replaces it. A check that failed stays, since the move doesn't decide it.
+
 ## 0.11.0 - 2026-11-05
 
 ### Changed

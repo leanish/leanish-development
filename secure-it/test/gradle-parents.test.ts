@@ -11,7 +11,9 @@ import type { Tree } from "@leanish/gate/tree";
 import { fakeFetch } from "@leanish/gate/test/fake-fetch";
 import type { GradleTransform } from "@leanish/tool-runtime/inventories";
 import { withGradleParents } from "../src/gradle-parents.ts";
-import { planFor } from "../src/plan.ts";
+import { assessmentOf } from "../src/issue-assessment.ts";
+import type { ObservedFinding } from "../src/issue-model.ts";
+import { planFor, selectWork } from "../src/plan.ts";
 
 const NOW = new Date("2026-10-10T12:00:00Z");
 const OKHTTP = "com.squareup.okhttp3:okhttp";
@@ -118,6 +120,44 @@ describe("moving a Gradle parent instead of flooring what it brings", () => {
     expect(plan.moves.every((move) => move.vetoed === undefined && move.vetoesLeftOut === undefined)).toBe(true);
     expect(probes[0]).toBe("4.9.2");
     expect(plan.moves).toEqual([expect.objectContaining({ name: OKHTTP, from: "4.9.1", to: "4.12.0", advisories: ["GHSA-okhttp"], carries: [expect.objectContaining({ name: OKIO, advisories: ["GHSA-okio"] })] })]);
+  });
+
+  describe("when the parent's own fix had no move", () => {
+    const withoutMove = (overrides: Partial<SecurityFix>): SecurityFix => ({ ...okio(), name: OKHTTP, from: "4.9.1", targets: [], to: undefined, ...overrides });
+    const observed: ObservedFinding = { ecosystem: "Maven", name: OKHTTP, ids: ["GHSA-okhttp"], versions: ["4.9.1"], reviewed: true, malicious: false, severity: "HIGH" };
+    /** The fold, then what the run makes of it: the units it selects and what the issues say. */
+    const folded = async (own: SecurityFix, finding = observed) => {
+      const { fixes, plan } = await search([own, okio()], { base: "4.9.1" });
+      const selection = selectWork(fixes);
+      const { subjects } = await assessmentOf({
+        sha: "a".repeat(40), complete: true, observations: [finding], excepted: [], units: selection.units.map((unit) => ({ unit, plan })), blocked: selection.blocked,
+        planningCauses: new Map(), undecided: new Map(), trusted: () => false, eligibleAt: async () => "2026-06-08T00:00:00.000Z", now: NOW, prOf: () => undefined,
+      });
+      return { moved: fixes.find((fix) => fix.name === OKHTTP)!, selection, subjects };
+    };
+
+    it("drops a refusal the proved move answers, keeping what's still true of the fix", async () => {
+      const own = withoutMove({ targets: ["GHSA-okhttp", "GHSA-none"], unfixable: ["GHSA-none"], notes: ["left alone"], problem: "no candidate passes" });
+      const { moved, selection, subjects } = await folded(own);
+      expect(moved).toMatchObject({ to: { version: "4.12.0" }, problem: undefined, unfixable: ["GHSA-none"], notes: ["left alone"] });
+      expect(selection.blocked).toEqual([]);
+      expect(selection.units.flatMap((unit) => unit.work)).toEqual([moved]);
+      expect(subjects).toEqual([expect.objectContaining({ subject: { kind: "decision", moves: [expect.objectContaining({ name: OKHTTP, to: "4.12.0" })] }, status: { kind: "eligible", trusted: [] } })]);
+    });
+
+    it("drops a report of unreviewed-only advisories the proved move replaces", async () => {
+      const own = withoutMove({ problem: "okhttp@4.9.1 is affected by GHSA-repo, only in the project's repository advisories", unreviewedOnly: true });
+      const { moved, selection, subjects } = await folded(own, { ...observed, ids: ["GHSA-repo"], reviewed: false });
+      expect(moved.problem).toBeUndefined();
+      expect(moved.unreviewedOnly).toBeUndefined();
+      expect(selection.blocked).toEqual([]);
+      expect(subjects).toEqual([expect.objectContaining({ subject: expect.objectContaining({ kind: "decision" }), status: { kind: "eligible", trusted: [] } })]);
+    });
+
+    it("keeps a check that failed, which the move doesn't decide", async () => {
+      const { moved } = await folded(withoutMove({ problem: "okhttp@4.9.1's publisher identity couldn't be read (HTTP 503)", undecided: true }));
+      expect(moved).toMatchObject({ to: { version: "4.12.0" }, problem: "okhttp@4.9.1's publisher identity couldn't be read (HTTP 503)", undecided: true });
+    });
   });
 
   it("skips young parent versions", async () => {

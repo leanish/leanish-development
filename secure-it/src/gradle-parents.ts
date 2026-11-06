@@ -88,10 +88,9 @@ function fold(work: ReadonlyArray<FixWork>, fix: FixWork, floored: ReadonlyArray
   const rest = fix.locations.filter((location) => !floored.includes(location));
   const own = work.find((entry) => entry.ecosystem === "Maven" && entry.name === parent.name);
   const to = { version: parent.to, line: parent.line, aged: true, major: false, blockers: [] };
-  // The parent's own vetoes were recorded for its own choice; this one is another, so they don't carry over.
   const carrier: FixWork = own === undefined
     ? { ecosystem: "Maven", name: parent.name, from: parent.from, locations: parent.locations, targets: [], unfixable: [], malicious: false, severity: fix.severity, to, problem: undefined, carries: parent.carries }
-    : { ...withoutVetoes(own), locations: [...new Set([...own.locations, ...parent.locations])], to, carries: parent.carries };
+    : { ...withoutEarlierChoice(own), locations: [...new Set([...own.locations, ...parent.locations])], to, carries: parent.carries };
   // The probe that chose this move resolved all of it against the base, so its induced versions replace any an earlier
   // fold recorded: a version only a discarded probe brought is one the move doesn't take.
   const { induced: _earlier, ...unproved } = carrier;
@@ -103,9 +102,14 @@ function fold(work: ReadonlyArray<FixWork>, fix: FixWork, floored: ReadonlyArray
   }).concat(own === undefined ? [proved] : []);
 }
 
-function withoutVetoes(fix: FixWork): FixWork {
-  const { vetoed: _vetoed, vetoesLeftOut: _vetoesLeftOut, ...rest } = fix;
-  return rest;
+/**
+ * `fix` without what described its own choice, which a proved move replaces: the vetoes recorded around it, and why it
+ * had no move (a refusal, a report of unreviewed-only advisories). A check that failed (`undecided`) decided nothing,
+ * and this move doesn't decide it either: it stays, with the problem saying which.
+ */
+function withoutEarlierChoice(fix: FixWork): FixWork {
+  const { vetoed: _vetoed, vetoesLeftOut: _vetoesLeftOut, unreviewedOnly: _report, ...rest } = fix;
+  return fix.undecided === true ? rest : { ...rest, problem: undefined };
 }
 
 async function parentFor(fix: FixWork, floored: ReadonlyArray<string>, work: ReadonlyArray<FixWork>, inputs: GradleParentInputs): Promise<Parent | string> {
