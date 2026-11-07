@@ -82,7 +82,8 @@ describe("issueWriter", () => {
       else refused = middle;
     }
     expect(refusalAt(refused)?.message).toContain("the issue's decision doesn't fit its body");
-  });
+    // About ten renders of a record near the section's limit, each compressing it up to six times: ~3 s locally, ~10 s on CI.
+  }, 60_000);
 
   it("cuts a planning detail without leaving half a surrogate pair", () => {
     const subject = { kind: "package" as const, ecosystem: "npm" as const, name: "lib" };
