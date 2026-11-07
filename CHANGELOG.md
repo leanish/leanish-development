@@ -10,6 +10,12 @@
   parent probe counts the versions it newly resolves in each configuration, even when they're on the base elsewhere,
   and its decision waits for untrusted ones still inside the wait, or whose publication date can't be read.
 
+### Fixed
+
+- secure-it cuts a blocked issue's detail to the room its record leaves, visibly, so a long detail beside a large record
+  no longer keeps the issue's text from being updated. 0.11.1's cut at 10,000 characters didn't account for the record,
+  and could make such an update fail. An issue still refuses the write, visibly, when even a 500-character detail doesn't fit.
+
 ## 0.11.1 - 2026-11-07
 
 ### Changed
