@@ -136,10 +136,11 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   its `check` and `gate / supply-chain` checks green, watching main's `ci` runs still in progress on it for up to 20 minutes.
   A run that outlasts that, or one that doesn't exist yet when the publish lists them, fails it before packing (nothing
   publishes), and it isn't retried when they pass: re-run the publish run's failed jobs once they're green.
-- **A repository advisory range read too wide**: an AND range written upper bound first (`< 2.0.0, >= 1.0.0`) reads
-  as every version. This can still count versions outside it as affected when no reviewed record names the same
-  package and ecosystem. A non-withdrawn reviewed record that independently clears the version takes precedence;
-  the drop is reported as a note.
+- **A repository advisory range read too wide**: a lone upper bound followed by a closed interval
+  (`< 3.0.0, >= 1.0.0 < 2.0.0`) reads as either of them, as maintainers' comma-as-OR lists mean, so an AND range
+  written that way counts versions outside it as affected when no reviewed record names the same package and
+  ecosystem. A non-withdrawn reviewed record that independently clears the version takes precedence; the drop is
+  reported as a note. The two-bound form (`< 2.0.0, >= 1.0.0`) reads as its interval.
 - **GitHub source repository matching stays as in v0.5.2**: a repository URL whose host only ends in `github.com`
   (`notgithub.com/acme/lib`), or names it in a path, query or fragment, can be read as the wrong GitHub repository.
   A numeric port in a URL (`https://github.com:443/acme/lib`) can be read as the owner (`443/acme`). These limits
