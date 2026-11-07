@@ -38,7 +38,9 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   comparison at all, so an aged update that brings it into another configuration (a young X runtime didn't have but
   another configuration did) is neither held nor refused: it publishes without a grant, as in v0.10.1. A version a
   Gradle parent probe brings into a configuration is the exception: the assessment counts it there, so its decision
-  still waits for it, even when the comparison sees it elsewhere on the base.
+  still waits for it, even when the comparison sees it elsewhere on the base. secure-it doesn't guarantee refusing every
+  young version before build code loads it: keeping young direct dependencies out is the repository's responsibility,
+  and young transitive ones are a known limit.
 - **One young version a parent probe brings holds its whole batch (secure-it)**: splitting fixes by age looks only at
   the targets the rule chose, so a young version a Gradle parent probe resolved makes the whole routine decision wait,
   unrelated fixes included, until it ages. A parent past the wait doesn't bound every version Gradle resolves after its
@@ -95,8 +97,8 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   an edited record can make secure-it retire one of its own tracked draft PRs too early: review closes it and deletes
   its branch, under the usual ownership and head checks. And an edited record can make an issue close as
   resolved while its advisories are still there, or make a dismissal hide a finding that returned. On a personal
-  account's repository, which has no Triage role, everyone who can edit secure-it's issues can push anyway. Until a
-  release stops trusting a record someone else edited, give Triage only to people you'd trust with a `take-early`
+  account's repository, which has no Triage role, everyone who can edit secure-it's issues can push anyway.
+  secure-it keeps trusting a record someone else edited, so give Triage only to people you'd trust with a `take-early`
   label. A PR's `Tracks` line is read from the PR's description the same way: review reads its last recognized
   `Tracks` line and keeps that issue number when it publishes an update, even when it names an unrelated issue (it
   posts no notice there); a regular run that redoes the PR replaces it with the current decision's issue.
