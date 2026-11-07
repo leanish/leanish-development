@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Changed
+
+- The requirements no longer promise the cooldown warning on every PR taken early: it shows only when the gate's
+  comparison holds a version.
+- 0.11.0's note that a Maven version already on the base elsewhere isn't held or refused has an exception: a Gradle
+  parent probe counts the versions it newly resolves in each configuration, even when they're on the base elsewhere,
+  and its decision waits for untrusted ones still inside the wait, or whose publication date can't be read.
+
 ## 0.11.1 - 2026-11-07
 
 ### Changed
