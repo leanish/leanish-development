@@ -11,12 +11,14 @@ import { MAX_BODY_CHARS } from "@leanish/agent-runtime/github/github-client";
 import { isAdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import { heldEntry, heldUntil } from "@leanish/gate/cooldown";
 import { packageKey } from "@leanish/gate/package-version";
+import { type Ecosystem, ECOSYSTEMS } from "@leanish/gate/versions";
 import { MARKER_ROOM, stateOf } from "@leanish/tool-runtime/own-pr";
 import { defused, planPayload, planSection as sectionOf, TooLargeError, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
 import { literal } from "@leanish/tool-runtime/pr-text";
 
 import { advisoryNotice, EVIDENCE_LEFT_OUT, tableRowCount } from "./advisory-notice.ts";
 import { floorIdentity, validRemoval } from "./floor-removal.ts";
+import type { YoungVersion } from "./issue-model.ts";
 import type { ChangePlan, PlannedHold, PlannedMove } from "./plan.ts";
 
 const HEADING = "### What secure-it moved";
@@ -147,9 +149,10 @@ function withoutEvidence(plan: ChangePlan): ChangePlan | undefined {
 
 function composed(body: string, plan: ChangePlan, heldBodyTarget: number): string {
   const held = plan.cooldown ?? [];
+  const granted = plan.granted ?? [];
   const rest = replaced(withoutWarning(body), HEADING, planSection(plan));
-  if (cooldownWarning(held) === undefined) return rest;
-  const warned = (rows?: number) => `${cooldownWarning(held, rows === undefined ? {} : { rows })!}\n\n${rest}`;
+  if (cooldownWarning(held, { granted }) === undefined) return rest;
+  const warned = (rows?: number) => `${cooldownWarning(held, rows === undefined ? { granted } : { rows, granted })!}\n\n${rest}`;
   const fits = (text: string) => text.length <= heldBodyTarget;
   const full = warned();
   if (fits(full)) return full;
@@ -181,33 +184,62 @@ function withoutWarning(body: string): string {
   return `${body.slice(0, start)}${body.slice(end + WARNING_END.length)}`.replace(/^\s+/, "");
 }
 
-/** The warning a held PR opens with: what came early, why, what to check, and how the hold ends; `rows` as in advisoryNotice. */
-export function cooldownWarning(held: ReadonlyArray<PlannedHold>, options: { readonly rows?: number } = {}): string | undefined {
+/**
+ * The warning a held PR opens with: what came early, why, what to check, and how the hold ends; `rows` as in
+ * advisoryNotice. A PR taken early also lists its `granted` versions (none of them trimmed to fit): the gate's
+ * comparison doesn't hold those, so with nothing else held, its `cooldown` check can be green.
+ */
+export function cooldownWarning(
+  held: ReadonlyArray<PlannedHold>,
+  options: { readonly rows?: number; readonly granted?: ReadonlyArray<YoungVersion> } = {},
+): string | undefined {
+  const granted = options.granted ?? [];
   const until = heldUntil(held);
-  if (until === undefined) return undefined;
+  if (until === undefined && granted.length === 0) return undefined;
   const minute = (instant: string) => `${instant.slice(0, 10)} ${instant.slice(11, 16)}`;
   const why = { "security-fix": "the security fix the version rule picks", "bundle-fix": "the carrier version the rule picks for advisories in its bundle", required: "required by a security fix", exception: "a release-age exception", unjustified: "not justified: the gate fails it" } as const;
   const rows = held.map((entry) =>
     `> | ${entry.ecosystem} ${cell(entry.name)} | ${entry.replaced.length === 0 ? "new" : cell(entry.replaced.join(", "))} → ${cell(entry.version)} | ${minute(entry.published)} | ${minute(entry.eligibleAt)} | ${why[entry.justification]} | ${cell(entry.signals.join("; ")) || "—"} |`);
+  const grantedRows = granted.map((entry) =>
+    `> | ${entry.ecosystem} ${cell(entry.name)} | ${cell(entry.version)} | — | ${entry.eligibleAt === "unknown" ? "unknown: its date couldn't be read" : minute(entry.eligibleAt)} | the issue's \`take-early\` grant covers it as taken (a later rebase may have dropped it); the gate's comparison doesn't hold it | — |`);
+  const undated = granted.some((entry) => entry.eligibleAt === "unknown");
   const notice = advisoryNotice(held, options);
   const quoted = (lines: ReadonlyArray<string>) => lines.map((line) => (line === "" ? ">" : `> ${line}`));
   // Above the plan's section, so its block must stay the body's first: the advisory text in it comes from elsewhere.
   return defused([
     WARNING_START,
     "> [!WARNING]",
-    "> **Release-age cooldown bypassed.** This PR takes versions published less than the release-age wait ago. Needing them for a security fix, and passing every check, doesn't rule out malware: whoever controls a publisher can ship it inside a real fix, whatever the advisory's severity.",
+    `> **Release-age cooldown bypassed.** ${until === undefined ? "This PR remains under a `take-early` grant covering" : "This PR takes"} versions published less than the release-age wait ago${undated ? ", or whose publication date couldn't be read" : ""}. Needing them for a security fix, and passing every check, doesn't rule out malware: whoever controls a publisher can ship it inside a real fix, whatever the advisory's severity.`,
     ">",
     ...notice.paragraphs.flatMap((paragraph) => [`> ${paragraph}`, ">"]),
     "> | Package | Version | Published (UTC) | Held until (UTC) | Why | Signals |",
     "> |---|---|---|---|---|---|",
     ...rows,
+    ...grantedRows,
     ">",
     ...(notice.details.length === 0 ? [] : [...quoted(notice.details), ">"]),
-    `> The supply-chain gate's \`cooldown\` check stays red until ${minute(until)} UTC. secure-it keeps a PR taken early a draft until every version its issue's \`take-early\` grant covers is past the wait (the issue lists them; that can be after this table's dates); then it closes it, and its next run opens a freshly verified PR (held again only if something in it is still young).`,
-    ">",
-    "> To take it earlier, a person decides: every other check green, the reason written in a PR comment, then an admin merge past the red `cooldown` check (where no ruleset enforces it, a merge with the same written reason).",
+    ...(until === undefined ? grantedOnlyEnding() : heldEnding(minute(until), granted.length > 0)),
     WARNING_END,
   ].join("\n"));
+}
+
+/** How a hold the gate's comparison makes ends, and how a person takes it earlier. */
+function heldEnding(until: string, granted: boolean): string[] {
+  const rows = granted ? " for the versions it holds (not the rows its grant covers)" : "";
+  return [
+    `> The supply-chain gate's \`cooldown\` check stays red until ${until} UTC${rows}. secure-it keeps a PR taken early a draft until every version its issue's \`take-early\` grant covers is past the wait (the issue lists them; that can be after the gate's date); then it closes it, and its next run opens a freshly verified PR (held again only if something in it is still young).`,
+    ">",
+    "> To take it earlier, a person decides: every other check green, the reason written in a PR comment, then an admin merge past the red `cooldown` check (where no ruleset enforces it, a merge with the same written reason).",
+  ];
+}
+
+/** The same when only the grant covers young versions: the gate's `cooldown` check doesn't hold them. */
+function grantedOnlyEnding(): string[] {
+  return [
+    "> The supply-chain gate's `cooldown` check doesn't hold these versions, so it can be green. secure-it keeps this PR a draft until every version its issue's `take-early` grant covers is past the wait (the issue lists them); then it closes it, and its next run opens a freshly verified PR.",
+    ">",
+    "> To take it earlier, a person still decides: every check green, the reason written in a PR comment, then marking it ready and merging it.",
+  ];
 }
 
 /** The plan a PR's body carries, if it has one that parses. */
@@ -223,6 +255,7 @@ function validMetadata(plan: ChangePlan): boolean {
   if (typeof plan.topic !== "string") return false;
   if (plan.notes !== undefined && (!Array.isArray(plan.notes) || !plan.notes.every((note) => typeof note === "string"))) return false;
   if (plan.cooldown !== undefined && !validHolds(plan.cooldown)) return false;
+  if (plan.granted !== undefined && !validGranted(plan.granted)) return false;
   if (plan.requiredNpm !== undefined && (!Array.isArray(plan.requiredNpm) || !plan.requiredNpm.every((target) =>
     target !== null && typeof target === "object" && typeof target.exempt === "boolean" && [target.name, target.version, target.path, target.lockfile, target.key, target.range, target.reason, target.parent?.name, target.parent?.version, target.parent?.path, target.root?.name, target.root?.version, target.root?.path].every((value) => typeof value === "string")))) return false;
   if (!["routine", "major", "malware"].includes(plan.kind)) return false;
@@ -255,6 +288,17 @@ function isCarried(entry: unknown): boolean {
   const c = entry as Record<string, unknown>;
   const strings = (value: unknown) => Array.isArray(value) && value.every((item) => typeof item === "string");
   return typeof c["name"] === "string" && strings(c["from"]) && strings(c["to"]) && strings(c["locations"]) && strings(c["advisories"]);
+}
+
+/** Granted young versions: any ecosystem a grant can name, a name, a version, and an instant or "unknown". */
+function validGranted(granted: unknown): boolean {
+  if (!Array.isArray(granted)) return false;
+  return granted.every((entry: unknown) => {
+    if (typeof entry !== "object" || entry === null) return false;
+    const { ecosystem, name, version, eligibleAt } = entry as Record<string, unknown>;
+    return ECOSYSTEMS.includes(ecosystem as Ecosystem) && typeof name === "string" && typeof version === "string"
+      && typeof eligibleAt === "string" && (eligibleAt === "unknown" || !Number.isNaN(Date.parse(eligibleAt)));
+  });
 }
 
 function validHolds(held: unknown): boolean {

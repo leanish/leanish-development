@@ -46,14 +46,14 @@ import { versionCatalogs } from "@leanish/gate/gate";
 import { isTrustedPackage } from "@leanish/gate/config";
 import { cleanBody, withCanonical } from "@leanish/tool-runtime/publication-text";
 import { assessmentOf, decisionMoves, type PlannedUnit, youngOf } from "./issue-assessment.ts";
-import { type PackageVersion, subjectId } from "./issue-model.ts";
+import { type PackageVersion, subjectId, type YoungVersion } from "./issue-model.ts";
 import { observationsOf } from "./issue-observations.ts";
 import { postNotice } from "./issue-notices.ts";
 import { syncIssues } from "./issue-sync.ts";
 import { attemptBranches, type Disposition, inactiveLabelNotices, issueDisposition, type Tracking, type TrackedExecution, UNSETTLED } from "./issue-tracking.ts";
 import { type AttemptClient, type AttemptPatch, endAttempt, recoverAttempts, settleAttempt, showPullRequest } from "./issue-attempts.ts";
 import { EarlyPrs, takenEarlyOf, trackedIssueOf } from "./decision-issues.ts";
-import { earlyDecisions, reviewClosed, reviewDisposition, reviewExecution, type ReviewIssues, type ReviewPermit } from "./issue-review.ts";
+import { datedYoung, earlyDecisions, reviewClosed, reviewDisposition, reviewExecution, type ReviewIssues, type ReviewPermit } from "./issue-review.ts";
 import { hasLabel, trackingContent } from "./issue-text.ts";
 import { removalTransform } from "./floor-gradle.ts";
 import { probeOnBase } from "./floor-probe.ts";
@@ -692,7 +692,9 @@ async function executeUnit(
   if (answer.outcome !== "applied" || answer.publication == null) return { ...details, outcome: "cannot-apply", summary: answer.summary };
   assertNoPlanMarker(answer.publication.body);
   const admits = await admitted(base.tree, tracked.young);
-  const verified = await verifyWithRetry(execution, base, plan, answer.publication, { retryRejected: true, admits });
+  // Only a grant's versions warn: an eligible decision's `young` are trusted exceptions, which need no warning.
+  const granted = tracked.attempt === undefined ? [] : await grantedYoung(execution, base.tree, tracked.young);
+  const verified = await verifyWithRetry(execution, base, plan, answer.publication, { retryRejected: true, admits, granted });
   const checked = {
     ...details, notes: verified.plan.notes ?? [], packages: verified.plan.packages, named: verified.named, leftOut: verified.leftOut,
     ...(verified.rejected === undefined ? {} : { rejected: verified.rejected }),
@@ -725,6 +727,16 @@ async function executeUnit(
   return created === undefined
     ? { ...checked, outcome: "nothing-changed", summary: answer.summary }
     : { ...checked, outcome: "published", pullRequest: created.url, number: created.number };
+}
+
+/** A grant's versions still young now, dated, as review reads them: for the early PR's warning. */
+async function grantedYoung(execution: Execution, base: Tree, grant: ReadonlyArray<PackageVersion>): Promise<YoungVersion[]> {
+  const { config } = await readSettings(base);
+  return datedYoung(grant, {
+    now: execution.context.now,
+    trusted: (pkg) => isTrustedPackage(config.trustedPackages, pkg),
+    eligibleAt: eligibleAtOf(execution, config),
+  });
 }
 
 /** Which held versions an execution may take: the ones its issue allows, and any trusted package's. */
@@ -888,6 +900,8 @@ async function verifyWithRetry(
      * or not: no retry runs what it found (`unplanned`).
      */
     readonly admits?: (held: HeldVersion) => boolean;
+    /** A PR taken early: its grant's versions still young, for the warning of those the comparison doesn't hold. */
+    readonly granted?: ReadonlyArray<YoungVersion>;
   } = {},
 ): Promise<VerifiedBatch> {
   const { context, deps, env, inventories } = execution;
@@ -907,7 +921,8 @@ async function verifyWithRetry(
   const first = await verifyEdit(context, deps, plan, env, inventories, base.tree, base.gradle, execution.npmFiles, heard);
   const firstFound = unplannedIn();
   if (firstFound.length > 0) return stopped({ plan, content, problems: first, named: [], leftOut: plan.leftOut ?? [] }, firstFound);
-  if (first.length === 0) return withCooldown(env, base.tree, { plan, content, problems: first, named: [], leftOut: plan.leftOut ?? [] }, cooldown);
+  const granted = options.granted ?? [];
+  if (first.length === 0) return withCooldown(env, base.tree, { plan, content, problems: first, named: [], leftOut: plan.leftOut ?? [] }, cooldown, granted);
   let problems = first;
   let rejected: Pick<VerifiedBatch, "rejected"> = {};
   // Why the feedback attempt never reached a verification; the reduction then works from the first refusal.
@@ -940,7 +955,7 @@ async function verifyWithRetry(
       context.logger.warn("secure-it: asking again didn't reach a verification", { why: unverified });
       problems = first;
     } else if (problems.length === 0) {
-      return withCooldown(env, base.tree, { plan, content, problems, named: [], leftOut: plan.leftOut ?? [], ...rejected }, cooldown);
+      return withCooldown(env, base.tree, { plan, content, problems, named: [], leftOut: plan.leftOut ?? [], ...rejected }, cooldown, granted);
     }
   }
   // A failed outcome keeps what stopped the attempt with the refusal; a passing one is never touched.
@@ -972,18 +987,28 @@ async function verifyWithRetry(
     return noted({ plan: retry.plan, content, problems: [`retry failed: ${error instanceof Error ? error.message : String(error)}`], named: retry.named, leftOut: retry.plan.leftOut ?? [], ...rejected });
   }
   const batch = { plan: retry.plan, content: answer.publication!, problems: remaining, named: [...retry.named, ...namedProblems(retry.plan, remaining)], leftOut: retry.plan.leftOut ?? [], ...rejected };
-  return noted(remaining.length === 0 ? await withCooldown(env, base.tree, batch, cooldown) : batch);
+  return noted(remaining.length === 0 ? await withCooldown(env, base.tree, batch, cooldown, granted) : batch);
 }
 
 /**
  * The verified plan with what the verifying comparison's cooldown holds (and
  * the signals and advisory evidence people weigh), or without any; a cooldown
- * the comparison couldn't evaluate is a problem, never "nothing held".
+ * the comparison couldn't evaluate is a problem, never "nothing held". A PR
+ * taken early also keeps, for its warning, the granted young versions the
+ * comparison doesn't hold. Both are rebuilt here from this verification alone.
  */
-async function withCooldown(env: GateEnvironment, base: Tree, batch: VerifiedBatch, cooldown: CooldownEvaluation | undefined): Promise<VerifiedBatch> {
+async function withCooldown(
+  env: GateEnvironment,
+  base: Tree,
+  batch: VerifiedBatch,
+  cooldown: CooldownEvaluation | undefined,
+  granted: ReadonlyArray<YoungVersion>,
+): Promise<VerifiedBatch> {
   if (cooldown?.evaluated === false) return { ...batch, problems: [`the cooldown can't be evaluated: ${cooldown.reason}`] };
-  const { cooldown: _previous, ...plan } = batch.plan;
+  const { cooldown: _previous, granted: _previousGranted, ...rest } = batch.plan;
   const held = cooldown?.held ?? [];
+  const unheld = granted.filter((young) => !held.some((entry) => versionKey(entry) === versionKey(young)));
+  const plan = unheld.length === 0 ? rest : { ...rest, granted: unheld };
   if (held.length === 0) return { ...batch, plan };
   const registry = new NpmRegistry(env.fetch);
   const { config } = await readSettings(base);
@@ -1135,7 +1160,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
     const tracked = trackedIssueOf(pr.body);
     if (tracked === undefined) throw new Error("a version PR can't be published without its decision's issue");
     const admits = await admitted(base.tree, permitOf(pr).young);
-    const verified = await verifyWithRetry(execution, base, plan, content, { admits });
+    const verified = await verifyWithRetry(execution, base, plan, content, { admits, granted: permitOf(pr).granted });
     if (verified.unplanned !== undefined) {
       const unplanned = verified.unplanned;
       // Said only on this decision's own issue, as its disposition found it: an ordinary PR whose `Tracks` line names

@@ -112,6 +112,12 @@ export interface ChangePlan {
    * the early PR's draft hold and graduation.
    */
   readonly cooldown?: ReadonlyArray<PlannedHold>;
+  /**
+   * Set with `cooldown`, for the warning only, never authority: the young versions a PR taken early carries under its
+   * issue's grant that the comparison doesn't hold (a version it sees elsewhere on the base, say). `eligibleAt` is
+   * "unknown" when its date couldn't be read.
+   */
+  readonly granted?: ReadonlyArray<import("./issue-model.ts").YoungVersion>;
   readonly requiredNpm?: ReadonlyArray<import("./npm-required-plan.ts").PlannedRequirement>;
   readonly notes?: ReadonlyArray<string>;
   readonly floorRemoval?: FloorRemoval;

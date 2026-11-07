@@ -10,6 +10,14 @@
   parent probe counts the versions it newly resolves in each configuration, even when they're on the base elsewhere,
   and its decision waits for untrusted ones still inside the wait, or whose publication date can't be read.
 
+### Fixed
+
+- A PR taken early no longer goes out without a cooldown warning when the gate's comparison holds none of its young
+  versions, such as one a Gradle parent probe brings that the base already resolves in another configuration. Its
+  warning now also lists the granted versions still young that the comparison doesn't hold, with the end of their wait
+  (or "unknown"), and says when the gate's `cooldown` check can be green. A PR taken early before this shows them from
+  its next verified publication.
+
 ## 0.11.1 - 2026-11-07
 
 ### Changed
