@@ -31,7 +31,7 @@ Environment:
 A finding is an advisory affecting a package version: **ecosystem + package + advisory**, where the advisory is its whole alias group (`GHSA-…`, `CVE-…`, `MAL-…` that name each other count as one). Version and location don't matter, so:
 
 - an upgrade that fixes A while B still affects the new version **passes**, B shows up as inherited and A as fixed;
-- an advisory published today on a dependency both sides share is **inherited**: a warning on the PR, a failure on `main`;
+- an advisory published today on a dependency both sides share is **inherited**: a warning on the PR, a failure on `main` (a warning there too when only its own repository reports it);
 - a new package, or a new version, that brings an advisory base didn't have **fails**, unless an exception covers it;
 - review status qualifies inheritance: a finding a reviewed source reports is inherited only when one of base's findings with its key is reviewed too; an unreviewed one is inherited from either ([how each source counts](#how-each-source-counts)). So moving from a version with a repository-only finding to one OSV lists for it **fails**;
 - **malware** (an OSV `MAL-*` id or alias, or a GitHub advisory tagged CWE-506) in head fails, inherited or bundled, and no exception covers it (only its own repository reporting it, it warns on code that didn't change). A bundled package is the one the lockfile records: the carrier's archive is compared with it only for bundle proofs and secure-it's bundled moves ([what it handles](../../docs/what-it-handles.md)).

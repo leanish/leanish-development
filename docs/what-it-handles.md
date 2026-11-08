@@ -17,7 +17,8 @@ code for major upgrades. The tool writes npm dependency files itself.
 
 A PR must not introduce a vulnerability the base branch did not have.
 Existing vulnerabilities are warnings on that PR. The default-branch scan fails
-on all vulnerabilities without a valid, reviewed exception.
+on all vulnerabilities without a valid, reviewed exception, except those only the
+package's own repository reports, which warn.
 
 A finding is a package and an advisory together. A CVE and GHSA for the same
 advisory count once. Another vulnerable copy of that package is not a new finding;
