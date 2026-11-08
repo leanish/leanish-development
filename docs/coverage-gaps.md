@@ -143,6 +143,10 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   possibly to an older version; tagging the other versions too could steer it. The version it lands on must be past
   the release-age wait and bring no advisory the installed version lacks, in OSV, GitHub's database or that
   repository, and a person merges the PR, so it stays as it is.
+- **A second use of an Action only its repository tags as malware (gate)**: the gate tracks an Action by the workflow
+  file using it, so a PR adding another use of the same version in that file, or a subdirectory of it, reads as
+  unchanged and warns. A new workflow file fails. Comes from the same rule as a repository-only finding on unchanged
+  code, and the workflow already ran that Action, so it stays as it is.
 - **A repository advisory range read too wide**: a lone upper bound followed by a closed interval
   (`< 3.0.0, >= 1.0.0 < 2.0.0`) reads as either of them, as maintainers' comma-as-OR lists mean, so an AND range
   written that way counts versions outside it as affected when no reviewed record names the same package and

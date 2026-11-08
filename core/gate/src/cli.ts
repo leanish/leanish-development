@@ -11,7 +11,7 @@
  * `compare` (pull requests) fails on findings head adds, on malware anywhere
  * in head, and on added or changed versions that fail the release-age,
  * source or identity checks. `scan` (the default branch) fails on every
- * finding without an exception. Both read files from git objects (or the
+ * finding without an exception, or warns when only its own repository reports it. Both read files from git objects (or the
  * working tree), never running anything from them; a Gradle build's
  * inventory comes from `gradle-inventory`, which does run the build (in CI, in
  * a job of its own), or inline for `--head worktree`. `candidates` prints, as

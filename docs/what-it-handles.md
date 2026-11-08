@@ -23,8 +23,9 @@ A finding is a package and an advisory together. A CVE and GHSA for the same
 advisory count once. Another vulnerable copy of that package is not a new finding;
 a different affected package is.
 
-Malware listed by the advisory sources always fails, even if it was already
-present. Exceptions cannot allow malware. This is advisory-based detection,
+Malware listed by the advisory sources fails, even if it was already present,
+unless only the package's own repository reports it and the code didn't change.
+ Exceptions cannot allow malware. This is advisory-based detection,
 not a scan of package contents for unknown malicious code.
 
 New or changed versions normally wait seven days (configurable); see the

@@ -2,8 +2,8 @@
 
 The CI gate. It reads what a repository installs (npm lockfiles, what Gradle builds really resolve, and the actions its workflows use), looks every package version up against **one advisory snapshot**, and:
 
-- on a **pull request** (`compare`), fails only on what the PR makes worse: a finding head has and base doesn't, malware anywhere in head, or an added or changed version that fails the release-age, source or identity checks;
-- on the **default branch** (`scan`), fails on every finding without a valid exception, so a dependency flagged after it merged turns `main` red.
+- on a **pull request** (`compare`), fails only on what the PR makes worse: a finding head has and base doesn't, malware anywhere in head (see [how each source counts](#how-each-source-counts) for what only its own repository reports), or an added or changed version that fails the release-age, source or identity checks;
+- on the **default branch** (`scan`), fails on every finding without a valid exception, so a dependency flagged after it merged turns `main` red; one only its own repository reports warns instead.
 
 It runs with Node 24 (type stripping) and four runtime dependencies: `yaml` (keeps the comments where actions name their versions), `semver` (npm ranges), `fast-xml-parser` (POMs and Maven metadata) and `smol-toml` (Gradle version catalogs). It reads files from git objects or the working tree. Only `gradle-inventory` runs code from the checked repository (its Gradle build, to learn what it resolves); in CI that's a job of its own, and the comparison only reads the JSON it wrote.
 
@@ -34,7 +34,7 @@ A finding is an advisory affecting a package version: **ecosystem + package + ad
 - an advisory published today on a dependency both sides share is **inherited**: a warning on the PR, a failure on `main`;
 - a new package, or a new version, that brings an advisory base didn't have **fails**, unless an exception covers it;
 - review status qualifies inheritance: a finding a reviewed source reports is inherited only when one of base's findings with its key is reviewed too; an unreviewed one is inherited from either ([how each source counts](#how-each-source-counts)). So moving from a version with a repository-only finding to one OSV lists for it **fails**;
-- **malware** (an OSV `MAL-*` id or alias, or a GitHub advisory tagged CWE-506) in head always fails, inherited or bundled, and no exception covers it. A bundled package is the one the lockfile records: the carrier's archive is compared with it only for bundle proofs and secure-it's bundled moves ([what it handles](../../docs/what-it-handles.md)).
+- **malware** (an OSV `MAL-*` id or alias, or a GitHub advisory tagged CWE-506) in head fails, inherited or bundled, and no exception covers it (only its own repository reporting it, it warns on code that didn't change). A bundled package is the one the lockfile records: the carrier's archive is compared with it only for bundle proofs and secure-it's bundled moves ([what it handles](../../docs/what-it-handles.md)).
 
 ## Where advisories come from
 

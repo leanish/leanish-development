@@ -9,7 +9,7 @@ name: supply-chain
 #                       while the PR adds or changes a version younger than the release-age wait, however justified
 #                       (core/gate/src/cooldown.ts): require it too.
 #   push to the default branch, schedule, workflow_dispatch
-#                       `scan` of the default branch: every finding fails unless excepted. Open PRs aren't rescanned:
+#                       `scan` of the default branch: every finding fails unless excepted (one only its own repository reports warns). Open PRs aren't rescanned:
 #                       a PR is checked when it's opened, pushed to, reopened or retargeted.
 #
 # Only the inventory job runs the repository's own code (Gradle runs the build); it gets a read-only token and its

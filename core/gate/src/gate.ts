@@ -3,7 +3,7 @@
  *   - `compare` (a pull request): base and head inventories, one advisory
  *     snapshot for both, and the checks on what head adds or changes;
  *   - `scan` (the default branch, on push and daily): every finding in one
- *     tree fails unless excepted.
+ *     tree fails unless excepted (one only its own repository reports warns).
  * Config and exceptions come from head: they're part of what would land.
  * Gradle inventories come in as data, made by whoever ran the build; actions
  * are read from the workflows and resolved with GitHub.
