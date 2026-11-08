@@ -23,6 +23,11 @@
 - secure-it cuts a blocked issue's detail to the room its record leaves, visibly, so a long detail beside a large record
   no longer keeps the issue's text from being updated. 0.11.1's cut at 10,000 characters didn't account for the record,
   and could make such an update fail. An issue still refuses the write, visibly, when even a 500-character detail doesn't fit.
+- A PR taken early no longer goes out without a cooldown warning when the gate's comparison holds none of its young
+  versions, such as one a Gradle parent probe brings that the base already resolves in another configuration. Its
+  warning now also lists the granted versions still young that the comparison doesn't hold, with the end of their wait
+  (or "unknown"), and says when the gate's `cooldown` check can be green. A PR taken early before this shows them from
+  its next verified publication.
 
 ## 0.11.1 - 2026-11-07
 

@@ -80,8 +80,9 @@ other.
 
 Someone with write, maintain or admin access comments `take-early: <reason>`, with that prefix in lower case, on a
 waiting decision's issue, then adds the `take-early` label. The next run tries to fix exactly that decision, with the young versions it took then (or fewer as
-they age), on a branch reserved for that label, and opens a draft PR, with the [cooldown warning](#the-cooldown-warning)
-when the gate's comparison holds a version (it can hold none, as its view of what's new is narrower than the issue's).
+they age), on a branch reserved for that label, and opens a draft PR with the [cooldown warning](#the-cooldown-warning):
+it lists what the gate's comparison holds and the granted versions still young that it doesn't (its view of what's new is
+narrower than the issue's).
 It stays a draft until those granted versions are past the wait; then review retires it and the next run
 fixes that work afresh, in the batch it now belongs to.
 
@@ -391,6 +392,14 @@ keeps a PR taken early a draft until every version its issue's grant covers aged
 dates), and how a person takes it earlier: every other check green, the reason written on the PR, an admin merge. A PR
 whose verification finds a young version its issue didn't authorize is not published; the issue says why.
 A cooldown the comparison couldn't evaluate fails verification.
+
+A PR taken early also lists the young versions its issue's grant covers that the comparison doesn't hold (a version the
+comparison sees elsewhere on the base, say), as the grant took them (a later rebase may have dropped one), with the end
+of their wait, or "unknown" when a date can't be read; each
+verification rebuilds that list, for the warning only: the issue's grant stays what authorizes them. When only such
+versions are young, the warning says the gate's `cooldown` check can be green, and that taking the PR earlier is still a
+person's call: every check green, the reason written on the PR, then marking it ready and merging it. A PR taken early
+before 0.12.0 shows them from its next verified publication.
 
 For every held version that fixes advisories (the gate records them, whether or not anything justified the version,
 and an exception's named one, reviewed or not), the warning also says where those advisories appear. After the

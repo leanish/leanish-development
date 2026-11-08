@@ -44,11 +44,13 @@ export interface ReviewIssues extends AttemptClient {
 export interface ReviewPermit {
   readonly early: boolean;
   readonly young: ReadonlyArray<PackageVersion>;
+  /** For the PR's warning only, never authority: the grant's versions still young now, dated ("unknown" unread). */
+  readonly granted: ReadonlyArray<YoungVersion>;
   /** The decision's own issue, where review's notices about the PR go: none when its `Tracks` line names another. */
   readonly issue?: number;
 }
 
-const ORDINARY: ReviewPermit = { early: false, young: [] };
+const ORDINARY: ReviewPermit = { early: false, young: [], granted: [] };
 
 type Left = { readonly kind: "leave"; readonly reason: string };
 
@@ -68,9 +70,20 @@ function youngIn(client: ReviewIssues, plan: ChangePlan) {
 }
 
 /** The versions a grant covered that are still younger than the wait now (an unreadable date counts as young). */
-async function stillYoung(client: ReviewIssues, grant: Grant): Promise<YoungVersion[]> {
+function stillYoung(client: ReviewIssues, grant: Grant): Promise<YoungVersion[]> {
+  return datedYoung(grant.young, client);
+}
+
+/**
+ * Of `versions`, those still younger than the wait now, each with when it ends: "unknown" when its date can't be read,
+ * which counts as young. A trusted package's never need a grant, so they're left out.
+ */
+export async function datedYoung(
+  versions: ReadonlyArray<PackageVersion>,
+  client: Pick<ReviewIssues, "now" | "trusted" | "eligibleAt">,
+): Promise<YoungVersion[]> {
   const young: YoungVersion[] = [];
-  for (const pkg of grant.young) {
+  for (const pkg of versions) {
     if (client.trusted(pkg)) continue;
     const eligibleAt = await client.eligibleAt(pkg).catch(() => undefined);
     if (youngAt(eligibleAt, client.now)) young.push({ ...pkg, eligibleAt: eligibleAt ?? "unknown" });
@@ -101,7 +114,7 @@ export async function reviewDisposition(client: ReviewIssues, pr: GitHubPullRequ
     return retired;
   }
   const standing = await grantFor(client, scope, young);
-  if (standing.kind === "stands") return { kind: "proceed", held: { until: latest(young) }, permit: { early: true, young: standing.grant.young, issue: number } };
+  if (standing.kind === "stands") return { kind: "proceed", held: { until: latest(young) }, permit: { early: true, young: standing.grant.young, granted: young, issue: number } };
   return leave(client, number, `left:${pr.number}:${standing.key}`, pr, standing.why);
 }
 

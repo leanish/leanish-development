@@ -12,6 +12,7 @@ import { InMemoryWorkspace } from "@leanish/agent-runtime/working-copy/in-memory
 import { ActionsGitHub } from "@leanish/gate/actions-github";
 import { located, readInventory, sourcesOf } from "@leanish/gate/inventory";
 import { versionKey } from "@leanish/gate/package-version";
+import type { HeldVersion } from "@leanish/gate/release-age";
 import { type Advisory, Snapshot } from "@leanish/gate/snapshot";
 import { gradleResolutionProblems, type GradleInventory } from "@leanish/gate/gradle";
 import type { AdvisoryEvidence } from "@leanish/gate/advisory-evidence";
@@ -669,6 +670,8 @@ describe("secure-it run", () => {
     expect(issue.body).not.toContain("**Waiting for the release-age wait.**");
     expect(permission).not.toHaveBeenCalled();
     expect(h.github.prs.get(42)!.isDraft).toBe(true);
+    // A trusted exception isn't a grant: nothing to warn about beyond what the comparison holds.
+    expect(planOf(h.github.prs.get(42)!.body)?.granted).toBeUndefined();
     expect(planOf(h.github.prs.get(42)!.body)?.cooldown ?? []).toEqual([]);
   });
 
@@ -778,7 +781,7 @@ describe("secure-it run", () => {
       issuesOf(h).issues.set(1, { ...issue, state: "closed" });
       const pr = [...h.github.prs.values()].find((entry) => trackedIssueOf(entry.body) === 1)!;
       const client = { issues: h.context.issues, github: h.github, repo: REPO, clean: (body: string) => body, ours: () => true, now: NOW, trusted: () => false, retire: async () => "closed" as const, eligibleAt: async () => undefined };
-      expect(await reviewDisposition(client, pr, planOf(pr.body)!, new EarlyPrs({ issues: h.context.issues, repo: REPO }))).toEqual({ kind: "proceed", permit: { early: false, young: [], issue: 1 } });
+      expect(await reviewDisposition(client, pr, planOf(pr.body)!, new EarlyPrs({ issues: h.context.issues, repo: REPO }))).toEqual({ kind: "proceed", permit: { early: false, young: [], granted: [], issue: 1 } });
     });
 
     it("leaves a PR that says it was taken early once its issue is transferred away (301): nothing confirms its grant", async () => {
@@ -2864,6 +2867,80 @@ describe("the cooldown hold", () => {
 
 
   const YOUNG_PAD = () => leftPad({ to: { version: "1.0.1", line: "1", aged: false, major: false, blockers: [] } });
+
+  /** A verification whose comparison holds exactly `held`. */
+  const comparisonHolding = (held: HeldVersion[]) => async (inputs: VerifyInputs) => {
+    inputs.cooldown?.({ evaluated: true, releaseAgeDays: 7, held });
+    return [];
+  };
+  /** An aged fix whose Gradle parent probe induces the young g:young (as the parent search records it). */
+  const inducingFix = () => {
+    const fix = { ...vite(), induced: [{ name: "g:young", version: "2.0.0" }] };
+    return fix;
+  };
+  const INDUCED_YOUNG = { ecosystem: "Maven" as const, name: "g:young", version: "2.0.0", replaced: [],
+    published: "2026-10-06T00:00:00.000Z", eligibleAt: "2026-10-13T00:00:00.000Z", justification: "required" as const };
+
+  it("warns on a granted young version the comparison doesn't hold, so a PR taken early never goes out unwarned", async () => {
+    // An aged fix whose parent probe induces a young version the comparison doesn't hold, as with a version the base
+    // already resolves in another configuration: only the issue's grant knows it's young.
+    const h = harness({ fixes: [inducingFix()] });
+    const tool = secureIt({ ...h.deps, verify: comparisonHolding([]) });
+    await grantWaiting(tool, h);
+    expect(await tool.run(h.context)).toMatchObject({ outcome: "published" });
+    const pr = [...h.github.prs.values()][0]!;
+    expect(pr.isDraft).toBe(true);
+    expect(pr.body.startsWith("<!-- secure-it cooldown warning -->\n> [!WARNING]\n> **Release-age cooldown bypassed.**")).toBe(true);
+    // The harness can't date g:young, so the row says so rather than invent a date.
+    expect(pr.body).toContain("> | Maven `g:young` | `2.0.0` | — | unknown: its date couldn't be read | the issue's `take-early` grant covers it as taken (a later rebase may have dropped it); the gate's comparison doesn't hold it | — |");
+    expect(pr.body).toContain("so it can be green");
+    expect(pr.body).not.toContain("admin merge");
+    expect(planOf(pr.body)).toMatchObject({ granted: [{ ecosystem: "Maven", name: "g:young", version: "2.0.0", eligibleAt: "unknown" }] });
+    expect(planOf(pr.body)?.cooldown).toBeUndefined();
+  });
+
+  it("lists a granted version the comparison also holds once, as the gate's hold", async () => {
+    const h = harness({ fixes: [inducingFix()] });
+    const tool = secureIt({ ...h.deps, verify: comparisonHolding([INDUCED_YOUNG]) });
+    await grantWaiting(tool, h);
+    expect(await tool.run(h.context)).toMatchObject({ outcome: "published" });
+    const body = [...h.github.prs.values()][0]!.body;
+    expect(body.match(/> \| Maven `g:young`/g)).toHaveLength(1);
+    expect(body).toContain("stays red until 2026-10-13 00:00 UTC.");
+    expect(planOf(body)?.granted).toBeUndefined();
+    expect(planOf(body)?.cooldown).toMatchObject([{ name: "g:young" }]);
+  });
+
+  it("rebuilds an early PR's granted versions from each verification, dropping what the last one recorded", async () => {
+    const stale = { ecosystem: "Maven" as const, name: "g:stale", version: "1.0.0", eligibleAt: "2026-10-13T00:00:00.000Z" };
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite",
+      body: withMarker(RULES, withPlanSection("Fixes vite.", { ...await heldPlan(YOUNG_VITE()), cooldown: [{ ...HELD, signals: [] }], granted: [stale] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    expect(pr.body).toContain("`g:stale`");
+    const h = harness({ prs: [pr], baseSha: "f".repeat(40), fixes: [YOUNG_VITE()] });
+    h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
+    await early(h, pr);
+    expect(await secureIt({ ...h.deps, verify: holdingVerify }).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "rebased" }] });
+    const body = h.github.prs.get(7)!.body;
+    expect(body).not.toContain("g:stale");
+    // vite is the grant's and the comparison's: shown once, as the gate's hold.
+    expect(planOf(body)?.granted).toBeUndefined();
+    expect(planOf(body)?.cooldown).toMatchObject([{ name: "vite" }]);
+  });
+
+  it("lists a granted version a rebase dropped as the grant's, not as one the PR still takes", async () => {
+    // The grant was taken with g:gone, which the decision no longer brings on the new base: review still lets it go on
+    // (nothing young outside the grant), and the warning keeps it as the grant's, without saying the PR carries it.
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite",
+      body: withMarker(RULES, withPlanSection("Fixes vite.", { ...await heldPlan(YOUNG_VITE()), cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pr], baseSha: "f".repeat(40), fixes: [YOUNG_VITE()] });
+    h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
+    await early(h, pr, [{ ecosystem: "npm", name: "vite", version: "8.3.3", eligibleAt: HELD.eligibleAt }, { ecosystem: "Maven", name: "g:gone", version: "1.0.0", eligibleAt: HELD.eligibleAt }]);
+    expect(await secureIt({ ...h.deps, verify: holdingVerify }).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "rebased" }] });
+    const body = h.github.prs.get(7)!.body;
+    expect(planOf(body)?.granted).toMatchObject([{ name: "g:gone" }]);
+    expect(body).toContain("> | Maven `g:gone` | `1.0.0` |");
+    expect(body).toContain("the issue's `take-early` grant covers it as taken (a later rebase may have dropped it)");
+  });
 
   it("keeps whole-plan feedback in one early attempt and refuses to execute a reduced decision", async () => {
     const induced = { ...vite(), induced: [{ name: "g:young", version: "2.0.0" }] };

@@ -6,7 +6,7 @@ import type { AdvisoryEvidence, EvidenceRecord, SourceEvidence } from "@leanish/
 
 import { advisoryNotice, EVIDENCE_DIFFERS, EVIDENCE_LEFT_OUT, INCOMPLETE, NOT_RECORDED, tableCut } from "../src/advisory-notice.ts";
 import type { ChangePlan, PlannedHold } from "../src/plan.ts";
-import { FRESH_HELD_BODY_TARGET, PUBLISHED_HELD_BODY_TARGET, cooldownWarning, planOf, planSection, withPlanSection } from "../src/plan-block.ts";
+import { FRESH_HELD_BODY_TARGET, PUBLISHED_HELD_BODY_TARGET, cooldownWarning, planDigest, planOf, planSection, withPlanSection } from "../src/plan-block.ts";
 import { ownPullRequests, withMarker } from "@leanish/tool-runtime/own-pr";
 import { planBlock } from "@leanish/tool-runtime/plan-blocks";
 import { cleanBody } from "@leanish/tool-runtime/publication-text";
@@ -169,6 +169,41 @@ describe("the advisory notice on a held PR", () => {
     expect(warning).toContain("> The supply-chain gate's `cooldown` check stays red until 2026-10-25 23:01 UTC.");
     expect(warning).toContain("secure-it keeps a PR taken early a draft until every version its issue's `take-early` grant covers is past the wait");
     expect(warning).not.toContain("a draft, and the supply-chain gate's `cooldown` check stays red, until");
+  });
+
+  it("warns on granted versions alone, saying the gate's check can be green and never dating a hold it doesn't make", () => {
+    const warning = cooldownWarning([], { granted: [{ ecosystem: "Maven", name: "g:a", version: "2.0.0", eligibleAt: "2026-10-25T23:01:30.000Z" }] })!;
+    expect(warning).toContain("> | Maven `g:a` | `2.0.0` | — | 2026-10-25 23:01 | the issue's `take-early` grant covers it as taken (a later rebase may have dropped it); the gate's comparison doesn't hold it | — |");
+    expect(warning).toContain("check doesn't hold these versions, so it can be green");
+    expect(warning).not.toContain("stays red");
+    expect(warning).not.toContain("admin merge");
+    expect(warning).toContain("This PR remains under a `take-early` grant covering versions published less than the release-age wait ago.");
+  });
+
+  it("says when a granted version's date couldn't be read, rather than promise one", () => {
+    const warning = cooldownWarning([], { granted: [{ ecosystem: "npm", name: "a", version: "1.0.1", eligibleAt: "unknown" }] })!;
+    expect(warning).toContain("| unknown: its date couldn't be read |");
+    expect(warning).toContain("or whose publication date couldn't be read.");
+  });
+
+  it("keeps the gate's red check for what it holds beside granted rows, saying which date is whose", () => {
+    const warning = cooldownWarning([hold()], { granted: [{ ecosystem: "Maven", name: "g:a", version: "2.0.0", eligibleAt: "2026-10-30T00:00:00.000Z" }] })!;
+    expect(warning).toContain(`> | Maven \`${PKG}\``);
+    expect(warning).toContain("> | Maven `g:a` | `2.0.0` | — | 2026-10-30 00:00 |");
+    expect(warning).toContain("stays red until 2026-10-25 23:01 UTC for the versions it holds (not the rows its grant covers).");
+    expect(warning).toContain("admin merge");
+  });
+
+  it("keeps granted versions of every ecosystem in the plan, out of its digest, and refuses an edited one", () => {
+    const granted = [
+      { ecosystem: "Maven" as const, name: "g:a", version: "2.0.0", eligibleAt: "unknown" },
+      { ecosystem: "GitHub Actions" as const, name: "actions/checkout", version: "v6.1.0", eligibleAt: "2026-10-25T23:01:30.000Z" },
+    ];
+    const plan: ChangePlan = { topic: `security-young-Maven|${PKG}`, malware: false, severity: "CRITICAL", kind: "routine", moves: [], packages: [], granted };
+    expect(planOf(withPlanSection("Description.", plan))).toEqual(plan);
+    expect(planDigest(plan)).toBe(planDigest({ ...plan, granted: undefined }));
+    expect(planOf(withPlanSection("Description.", { ...plan, granted: [{ ...granted[0]!, eligibleAt: "soon" }] }))).toBeUndefined();
+    expect(planOf(withPlanSection("Description.", { ...plan, granted: [{ ...granted[0]!, ecosystem: "pip" as never }] }))).toBeUndefined();
   });
 
   it("keeps the evidence in the plan, and refuses an edited one", () => {
