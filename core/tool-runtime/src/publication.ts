@@ -200,15 +200,14 @@ async function updateAfterPush(context: PublicationContext, number: number, head
 /** Closes a PR whose body lags behind the tool's push, while it's still the tool's draft at that head; says what happened. */
 async function retire(context: PublicationContext, number: number, head: string): Promise<string> {
   const { github, repo, base, rules } = context;
+  const left = "it no longer looks like the tool's draft at that head, so it's left open: if nobody took it over, close it, and a later run recomputes it";
   try {
     const current = await github.getPullRequest({ repo, number });
     // A moved head, a removed state or a PR marked ready: someone took it over, and it's theirs to decide.
-    if (!isOwnPullRequest(rules, current, repo, base) || current.headSha !== head || !current.isDraft || stateOf(current.body) === undefined) {
-      return "someone changed the PR since, so it's left to them";
-    }
+    if (!isOwnPullRequest(rules, current, repo, base) || current.headSha !== head || !current.isDraft || stateOf(current.body) === undefined) return left;
     const comment = `${rules.tool} couldn't update this PR's description after pushing to it, so the description no longer matches its head. Closing it: a later run recomputes the change from the default branch.`;
     const closed = await closeAndDelete(context, number, head, comment, { onlyDraft: true });
-    return closed === "closed" ? "closed the PR, and a later run recomputes it" : "someone changed the PR since, so it's left to them";
+    return closed === "closed" ? "closed the PR, and a later run recomputes it" : left;
   } catch (err) {
     return `and couldn't finish closing it (${reasonOf(err)}): the commit is published but the body doesn't say so. Close the PR by hand if it's still open, and a later run recomputes it`;
   }

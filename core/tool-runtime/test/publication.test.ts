@@ -240,7 +240,7 @@ describe("publication", () => {
   ])("leaves a PR someone took over ($taken) open when its body can't be updated", async ({ after }) => {
     const github = new FakeGitHub(ownPr());
     failingBodyUpdates(github, after);
-    await expect(publishUpdate(context(github), existing, 7, CONTENT)).rejects.toThrow(/couldn't update its body .*left to them/);
+    await expect(publishUpdate(context(github), existing, 7, CONTENT)).rejects.toThrow(/couldn't update its body .*left open: if nobody took it over, close it/);
     expect(github.prs.get(7)?.state).toBe("open");
     expect(github.calls.filter((call) => call.startsWith("closePullRequest"))).toEqual([]);
   });

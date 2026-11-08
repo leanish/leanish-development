@@ -15,7 +15,7 @@
 - The tools no longer keep a publication journal. When a PR's body can't be updated after a push, the tool tries once
   more, then closes the PR while it's still the tool's draft at that head, and a later run recomputes it; the run
   reports an error either way. A `take-early` PR closed this way needs a new authorization while its versions are
-  young. A `journal/` directory left under `dirs.state` is no longer read and can be deleted.
+  young. A `journal/` directory left under `dirs.state` is no longer read and can be deleted; a PR an earlier version left with its body behind its head stays alone until a person closes it.
 
 ### Fixed
 
