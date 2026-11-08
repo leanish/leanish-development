@@ -59,7 +59,8 @@ The gate also reads a dependency's own repository advisories, which name a fix d
 its database and OSV imports them. Whoever controls that repository and the package can publish an advisory and a
 "fixed" version together to get a young version proposed early. So such unreviewed advisories detect and rule
 versions out, but never trigger a fix nor justify a young version; one can still steer the choice by ruling a
-version out, which the plan records, and whatever comes early stays held. The rules:
+version out, which the plan records, and whatever comes early stays held. Nor do they fail what didn't change, so
+publishing one can't turn a repository's default branch or its unrelated PRs red. The rules:
 [how each source counts](../core/gate/README.md#how-each-source-counts). Details:
 [the gate's cooldown](../core/gate/README.md#the-cooldown-young-versions-are-held-however-justified) and
 [secure-it's warning](../secure-it/README.md#the-cooldown-warning).

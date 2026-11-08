@@ -310,7 +310,7 @@ export async function runScan(head: Tree, env: GateEnvironment, gradle: GradleIn
   const floorCheck = await checkFloors(floors, inventory, head);
   return {
     failures: [...verdict.failures, ...bundleFailures(inventory), ...npmSources, ...resolutionFailures(inventory, config, undefined), ...floorCheck.failures],
-    warnings: [],
+    warnings: verdict.warnings,
     notes: [...verdict.notes, ...snapshot.notes, ...floorCheck.notes],
     gaps: [...snapshot.gaps, ...actionGaps(inventory.actions, resolutions)],
     osvScannerVersion: version,

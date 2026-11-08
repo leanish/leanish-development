@@ -38,6 +38,24 @@ describe("reviewed-range decisions in the gate report", () => {
     expect(summary).not.toContain("Coverage gaps");
   });
 
+  it.each(["compare", "scan"] as const)("warns, without failing, on repository-only malware the code didn't change, for %s", async (mode) => {
+    const source = files();
+    const { env } = environment({ affected: {}, routes: {
+      "https://registry.npmjs.org/vite/8.3.2": { body: { repository: "github:owner/project" } },
+      "https://registry.npmjs.org/postcss/8.5.28": { body: { repository: "github:owner/project" } },
+      "https://api.github.com/repos/owner/project/security-advisories?state=published&per_page=100": { body: [{
+        ghsa_id: GHSA, state: "published", cwe_ids: ["CWE-506"], vulnerabilities: [
+          { package: { ecosystem: "npm", name: "vite" }, vulnerable_version_range: "<9.0.0" },
+        ],
+      }] },
+    } });
+    const outcome = mode === "compare"
+      ? await runCompare(tree(source), tree(source, "head"), env)
+      : await runScan(tree(source, "head"), env);
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.warnings).toEqual([expect.stringMatching(/vite@8\.3\.2: .*known-malicious.*only the package's own repository reports it/)]);
+  });
+
   it.each(["security", "bump"] as const)("preserves snapshot notes for %s planning even without a security fix", async (mode) => {
     const { env } = environment({ affected: {}, routes: {
       "https://registry.npmjs.org/vite/8.3.2": { body: { repository: "github:owner/project" } },

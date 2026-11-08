@@ -101,6 +101,8 @@ export interface Comparison {
   readonly added: ReadonlyArray<Finding>;
   /** In head, inherited from base's findings with its key (`inherits`): warnings. */
   readonly inherited: ReadonlyArray<Finding>;
+  /** The `inherited` findings on a version base has too: what the change left as it was. */
+  readonly unchanged: ReadonlySet<Finding>;
   /** In base, with a key head no longer has. */
   readonly fixed: ReadonlyArray<Finding>;
 }
@@ -110,9 +112,13 @@ export function compareFindings(base: ReadonlyArray<Finding>, head: ReadonlyArra
   const baseline = evidenceOf(base.map((finding) => [findingKey(finding), finding.reviewed]));
   const headKeys = new Set(head.map(findingKey));
   const inherited = (finding: Finding) => inherits(baseline, findingKey(finding), finding.reviewed);
+  const versioned = (finding: Finding) => `${findingKey(finding)}|${finding.version}`;
+  const onBase = new Set(base.map(versioned));
+  const kept = head.filter(inherited);
   return {
     added: head.filter((finding) => !inherited(finding)),
-    inherited: head.filter(inherited),
+    inherited: kept,
+    unchanged: new Set(kept.filter((finding) => onBase.has(versioned(finding)))),
     fixed: base.filter((finding) => !headKeys.has(findingKey(finding))),
   };
 }

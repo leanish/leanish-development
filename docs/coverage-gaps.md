@@ -138,6 +138,11 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   its `check` and `gate / supply-chain` checks green, watching main's `ci` runs still in progress on it for up to 20 minutes.
   A run that outlasts that, or one that doesn't exist yet when the publish lists them, fails it before packing (nothing
   publishes), and it isn't retried when they pass: re-run the publish run's failed jobs once they're green.
+- **A repository advisory tagged as malware can start a fix (secure-it)**: whoever controls a dependency's repository
+  can tag an advisory CWE-506 on the installed version, and secure-it plans a malware move with no reviewed source,
+  possibly to an older version; tagging the other versions too could steer it. The version it lands on must be past
+  the release-age wait and bring no advisory the installed version lacks, in OSV, GitHub's database or that
+  repository, and a person merges the PR, so it stays as it is.
 - **A repository advisory range read too wide**: a lone upper bound followed by a closed interval
   (`< 3.0.0, >= 1.0.0 < 2.0.0`) reads as either of them, as maintainers' comma-as-OR lists mean, so an AND range
   written that way counts versions outside it as affected when no reviewed record names the same package and
