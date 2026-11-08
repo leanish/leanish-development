@@ -215,6 +215,46 @@ describe("advisory ranges", () => {
     expect(inAdvisoryRange(npm, "<1.0.0 ||", "0.5.0")).toBeUndefined();
   });
 
+  it("reads an interval written upper bound first as that interval, and inverted as both open ends", () => {
+    for (const range of ["< 2.0.0, >= 1.0.0", "<2.0.0 >=1.0.0", "< 2.0.0; > 0.9.9"]) {
+      expect(inAdvisoryRange(npm, range, "0.5.0"), range).toBe(false);
+      expect(inAdvisoryRange(npm, range, "1.5.0"), range).toBe(true);
+      expect(inAdvisoryRange(npm, range, "2.0.0"), range).toBe(false);
+      expect(inAdvisoryRange(npm, range, "3.0.0"), range).toBe(false);
+    }
+    expect(inAdvisoryRange(maven, "<= 2.0, >= 1.0", "2.0")).toBe(true);
+    expect(inAdvisoryRange(maven, "<= 2.0, >= 1.0", "2.1")).toBe(false);
+    expect(parseAdvisoryRange("< 2.0.0, >= 1.0.0")).toEqual([
+      { lower: { version: "1.0.0", inclusive: true }, upper: { version: "2.0.0", inclusive: false } },
+    ]);
+    // Inverted, and a maintainer's OR list ending in a line with no fix: both open ends, as when written lower bound first.
+    for (const range of ["< 1.0.0, >= 2.0.0", "< 1.1.19, >= 2.0.0 < 2.1.5, >= 3.0.0"]) {
+      expect(inAdvisoryRange(npm, range, "0.5.0"), range).toBe(true);
+      expect(inAdvisoryRange(npm, range, "1.5.0"), range).toBe(false);
+      expect(inAdvisoryRange(npm, range, "3.5.0"), range).toBe(true);
+    }
+    expect(inAdvisoryRange(npm, "< 1.1.19, >= 2.0.0 < 2.1.5, >= 3.0.0", "2.5.0")).toBe(false);
+    // Empty, in either order: the union of both open ends, never nothing. A point stays a point.
+    for (const range of ["< 1.0.0, >= 1.0.0", ">= 1.0.0, < 1.0.0", "> 1.0.0, <= 1.0.0"]) {
+      for (const version of ["0.5.0", "1.0.0", "2.0.0"]) expect(inAdvisoryRange(npm, range, version), `${range} ${version}`).toBe(true);
+    }
+    for (const range of ["> 1.0.0, < 1.0.0", "< 1.0.0, > 1.0.0"]) {
+      expect(inAdvisoryRange(npm, range, "0.5.0"), range).toBe(true);
+      expect(inAdvisoryRange(npm, range, "1.0.0"), range).toBe(false);
+      expect(inAdvisoryRange(npm, range, "2.0.0"), range).toBe(true);
+    }
+    expect(inAdvisoryRange(npm, ">= 1.0.0, <= 1.0.0", "1.0.0")).toBe(true);
+    expect(inAdvisoryRange(npm, ">= 1.0.0, <= 1.0.0", "1.0.1")).toBe(false);
+    // Only right after the lone upper bound: a lower bound later in the list still opens its own interval.
+    expect(inAdvisoryRange(npm, "< 1.0.0, 1.5.0, >= 2.0.0", "3.0.0")).toBe(true);
+    expect(inAdvisoryRange(npm, "< 1.0.0, 1.5.0, >= 2.0.0", "1.2.0")).toBe(false);
+    // A lower bound a later upper bound closes is its own interval (the documented gap): `< 3.0.0` stays open below.
+    expect(inAdvisoryRange(npm, "< 3.0.0, >= 1.0.0 < 2.0.0", "2.5.0")).toBe(true);
+    // An X-range after a lone upper bound keeps its own bounds.
+    expect(inAdvisoryRange(npm, "< 1.0.0, 3.x", "3.4.0")).toBe(true);
+    expect(inAdvisoryRange(npm, "< 1.0.0, 3.x", "2.0.0")).toBe(false);
+  });
+
   it("returns undefined for what it can't read", () => {
     expect(inAdvisoryRange(npm, "", "1.0.0")).toBeUndefined();
     expect(inAdvisoryRange(npm, "~> 1.2", "1.0.0")).toBeUndefined();
