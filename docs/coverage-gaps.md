@@ -38,7 +38,9 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   comparison at all, so an aged update that brings it into another configuration (a young X runtime didn't have but
   another configuration did) is neither held nor refused: it publishes without a grant, as in v0.10.1. A version a
   Gradle parent probe brings into a configuration is the exception: the assessment counts it there, so its decision
-  still waits for it, even when the comparison sees it elsewhere on the base.
+  still waits for it, even when the comparison sees it elsewhere on the base. secure-it doesn't guarantee refusing every
+  young version before build code loads it: keeping young direct dependencies out is the repository's responsibility,
+  and young transitive ones are a known limit.
 - **One young version a parent probe brings holds its whole batch (secure-it)**: splitting fixes by age looks only at
   the targets the rule chose, so a young version a Gradle parent probe resolved makes the whole routine decision wait,
   unrelated fixes included, until it ages. A parent past the wait doesn't bound every version Gradle resolves after its
@@ -95,8 +97,8 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   an edited record can make secure-it retire one of its own tracked draft PRs too early: review closes it and deletes
   its branch, under the usual ownership and head checks. And an edited record can make an issue close as
   resolved while its advisories are still there, or make a dismissal hide a finding that returned. On a personal
-  account's repository, which has no Triage role, everyone who can edit secure-it's issues can push anyway. Until a
-  release stops trusting a record someone else edited, give Triage only to people you'd trust with a `take-early`
+  account's repository, which has no Triage role, everyone who can edit secure-it's issues can push anyway.
+  secure-it keeps trusting a record someone else edited, so give Triage only to people you'd trust with a `take-early`
   label. A PR's `Tracks` line is read from the PR's description the same way: review reads its last recognized
   `Tracks` line and keeps that issue number when it publishes an update, even when it names an unrelated issue (it
   posts no notice there); a regular run that redoes the PR replaces it with the current decision's issue.
@@ -136,10 +138,11 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   its `check` and `gate / supply-chain` checks green, watching main's `ci` runs still in progress on it for up to 20 minutes.
   A run that outlasts that, or one that doesn't exist yet when the publish lists them, fails it before packing (nothing
   publishes), and it isn't retried when they pass: re-run the publish run's failed jobs once they're green.
-- **A repository advisory range read too wide**: an AND range written upper bound first (`< 2.0.0, >= 1.0.0`) reads
-  as every version. This can still count versions outside it as affected when no reviewed record names the same
-  package and ecosystem. A non-withdrawn reviewed record that independently clears the version takes precedence;
-  the drop is reported as a note.
+- **A repository advisory range read too wide**: a lone upper bound followed by a closed interval
+  (`< 3.0.0, >= 1.0.0 < 2.0.0`) reads as either of them, as maintainers' comma-as-OR lists mean, so an AND range
+  written that way counts versions outside it as affected when no reviewed record names the same package and
+  ecosystem. A non-withdrawn reviewed record that independently clears the version takes precedence; the drop is
+  reported as a note. The two-bound form (`< 2.0.0, >= 1.0.0`) reads as its interval.
 - **GitHub source repository matching stays as in v0.5.2**: a repository URL whose host only ends in `github.com`
   (`notgithub.com/acme/lib`), or names it in a path, query or fragment, can be read as the wrong GitHub repository.
   A numeric port in a URL (`https://github.com:443/acme/lib`) can be read as the owner (`443/acme`). These limits

@@ -9,6 +9,17 @@
 - 0.11.0's note that a Maven version already on the base elsewhere isn't held or refused has an exception: a Gradle
   parent probe counts the versions it newly resolves in each configuration, even when they're on the base elsewhere,
   and its decision waits for untrusted ones still inside the wait, or whose publication date can't be read.
+- The coverage gaps no longer promise a release that stops trusting an issue record someone else edited, and say who
+  answers for a young version build code loads before secure-it can refuse it, which it doesn't guarantee: the
+  repository for its direct dependencies; transitive ones are a known limit.
+
+### Fixed
+
+- A repository advisory range written upper bound first (`< 2.0.0, >= 1.0.0`) now reads as the interval it names,
+  not as every version, so versions outside it are no longer counted as affected. Its coverage-gaps entry now covers
+  only a lone upper bound followed by a closed interval (`< 3.0.0, >= 1.0.0 < 2.0.0`), still read as either of them.
+  An empty range (`>= 1.0.0, < 1.0.0`) now reads like an inverted one, as the union of its two bounds, rather than as
+  no version.
 
 ### Fixed
 

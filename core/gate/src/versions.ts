@@ -288,10 +288,13 @@ export interface Interval {
  * lower bound (`4.0.0 < 4.1.2`); a bare partial npm version is its X-range
  * (`6` and `6.x` are 6.x, also in `6 <=6.1.8`); any other bare version is a single point.
  * `≤`/`=<` read as `<=`, `≥`/`=>` as `>=`.
- * `,` and `;` separate bounds; `||` also ends any open interval. That reading
- * gives the same answer for both comma conventions whenever the range is well
- * formed (an inverted interval, `>= 2.0.0, < 1.0.0`, reads as both open
- * ends). Undefined when anything in it doesn't parse.
+ * `,` and `;` separate bounds; `||` also ends any open interval. The comma's
+ * meaning (AND in GitHub's database, OR in maintainers' lists) is a heuristic:
+ * a lower bound nothing closes, right after a lone upper bound, closes with it,
+ * preferring the interval (`< 2.0.0, >= 1.0.0` is `>= 1.0.0, < 2.0.0`) to an OR
+ * that would cover every version. An inverted or empty interval
+ * (`>= 2.0.0, < 1.0.0`, `< 1.0.0, >= 2.0.0`, `< 1.0.0, >= 1.0.0`) reads as the
+ * union of its two open ends. Undefined when anything in it doesn't parse.
  */
 export function parseAdvisoryRange(range: string, partialsAreXRanges = false): Interval[] | undefined {
   const segments = range.split("||");
@@ -330,16 +333,27 @@ function parseSegment(segment: string, partialsAreXRanges: boolean): Interval[] 
   }
   const isUpper = (operator: string | undefined) => operator === "<" || operator === "<=";
   const intervals: Interval[] = [];
-  let pending: { lower: Bound; impliedUpper: Bound | undefined } | undefined;
+  // `completes`: the interval a lone upper bound wrote right before this lower bound.
+  let pending: { lower: Bound; impliedUpper: Bound | undefined; completes?: number } | undefined;
+  // The interval the previous token wrote when it was an upper bound with no lower bound before it.
+  let loneUpper: number | undefined;
   const flush = () => {
-    if (pending !== undefined) intervals.push({ lower: pending.lower, upper: pending.impliedUpper });
+    if (pending === undefined) return;
+    const completed = pending.completes === undefined ? undefined : intervals[pending.completes];
+    // A lower bound nothing closes, right after a lone upper bound, is the same interval written upper bound first
+    // (`< 2.0.0, >= 1.0.0`). Inverted or empty (`< 1.0.0, >= 2.0.0`), it still reads as both open ends, as before.
+    if (completed !== undefined) intervals[pending.completes!] = { lower: pending.lower, upper: completed.upper };
+    else intervals.push({ lower: pending.lower, upper: pending.impliedUpper });
     pending = undefined;
   };
   for (const [i, { operator, version }] of tokens.entries()) {
+    const previousLoneUpper = loneUpper;
+    loneUpper = undefined;
     if (operator === ">=" || operator === ">") {
       flush();
-      pending = { lower: { version, inclusive: operator === ">=" }, impliedUpper: undefined };
+      pending = { lower: { version, inclusive: operator === ">=" }, impliedUpper: undefined, completes: previousLoneUpper };
     } else if (isUpper(operator)) {
+      if (pending === undefined) loneUpper = intervals.length;
       intervals.push({ lower: pending?.lower, upper: { version, inclusive: operator === "<=" } });
       pending = undefined;
     } else {
@@ -363,12 +377,17 @@ function parseSegment(segment: string, partialsAreXRanges: boolean): Interval[] 
 }
 
 /**
- * An interval whose lower bound is above its upper one (`>= 2.0.0, < 1.0.0`)
- * only makes sense with the comma as OR: it reads as both open intervals.
+ * An interval whose lower bound is above its upper one (`>= 2.0.0, < 1.0.0`),
+ * or that is empty (`>= 1.0.0, < 1.0.0`), only makes sense with the comma as
+ * OR: it reads as both open intervals.
  */
 function splitInverted(scheme: VersionScheme): (interval: Interval) => Interval[] {
+  const empty = ({ lower, upper }: { lower: Bound; upper: Bound }) => {
+    const order = scheme.compare(lower.version, upper.version);
+    return order > 0 || (order === 0 && !(lower.inclusive && upper.inclusive));
+  };
   return (interval) =>
-    interval.lower !== undefined && interval.upper !== undefined && scheme.compare(interval.lower.version, interval.upper.version) > 0
+    interval.lower !== undefined && interval.upper !== undefined && empty({ lower: interval.lower, upper: interval.upper })
       ? [
           { lower: interval.lower, upper: undefined },
           { lower: undefined, upper: interval.upper },
