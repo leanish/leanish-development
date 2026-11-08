@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import { MAX_BODY_CHARS, MAX_TITLE_CHARS } from "@leanish/agent-runtime/github/github-client";
 import { ConsoleLogger } from "@leanish/agent-runtime/logger/console-logger";
+import type { GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
 import type { PreparedBranch, WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
 import { InMemoryWorkspace } from "@leanish/agent-runtime/working-copy/in-memory-workspace";
-import { MemoryJournal } from "./memory-journal.ts";
 import { ownPullRequests, stateOf, withMarker } from "../src/own-pr.ts";
 import { assertPublishable, clearLeftoverBranch, closeAndDelete, markReady, ownOpenPullRequests, publishNew, publishUpdate, recordState, rewriteText, type PublicationContext } from "../src/publication.ts";
 import { BASE_SHA, FakeGitHub, HEAD_SHA, OWN_BRANCH, ownPr, PUSHED_SHA, RULES } from "./fake-github.ts";
@@ -12,8 +12,18 @@ import { BASE_SHA, FakeGitHub, HEAD_SHA, OWN_BRANCH, ownPr, PUSHED_SHA, RULES } 
 const WC: WorkingCopy = { projectId: "leanish/widget", path: "/synthetic/leanish/widget", branch: "main", headSha: BASE_SHA, gitDir: "/x/.git" };
 const CONTENT = { title: "fixing snappy-java", body: "Moves snappy-java to 1.1.10.10.", commitMessage: "moving snappy-java to 1.1.10.10" };
 
-function context(github: FakeGitHub, workspace = new InMemoryWorkspace(), journal = new MemoryJournal()): PublicationContext {
-  return { rules: RULES, github, workspace, logger: new ConsoleLogger({ minLevel: "error" }), repo: "leanish/widget", base: "main", workingCopy: WC, journal, localRoots: ["/Users/dev"] };
+function context(github: FakeGitHub, workspace = new InMemoryWorkspace()): PublicationContext {
+  return { rules: RULES, github, workspace, logger: new ConsoleLogger({ minLevel: "error" }), repo: "leanish/widget", base: "main", workingCopy: WC, localRoots: ["/Users/dev"] };
+}
+
+/** Every body update fails, and leaves #7 as `after` says: by default at the tool's push, its body naming the old head. */
+function failingBodyUpdates(github: FakeGitHub, after: Partial<GitHubPullRequest> = { headSha: PUSHED_SHA }): void {
+  const fail = () => {
+    github.prs.set(7, { ...github.prs.get(7)!, ...after });
+    github.fail("updatePullRequest");
+    github.before("updatePullRequest", fail);
+  };
+  github.before("updatePullRequest", fail);
 }
 
 const fresh: PreparedBranch = { branch: "secure-it/2026-10-07-vite", baseSha: BASE_SHA, remoteHeadSha: null, preparedSha: BASE_SHA };
@@ -28,8 +38,7 @@ describe("publication", () => {
   ])("refuses $kind on $operation before any push or PR edit", async ({ operation, body }) => {
     const github = new FakeGitHub(...(operation === "update" ? [ownPr({ isDraft: false })] : []));
     const workspace = new InMemoryWorkspace();
-    const journal = new MemoryJournal();
-    const ctx = { ...context(github, workspace, journal), localRoots: ["/t"] };
+    const ctx = { ...context(github, workspace), localRoots: ["/t"] };
     // Raw text fits the client limit, but cleaning or the appended marker makes the actual body exceed it.
     expect(body.length).toBeLessThan(65_536);
     const publish = operation === "create"
@@ -38,7 +47,6 @@ describe("publication", () => {
     await expect(publish).rejects.toThrow(new RegExp(`would be [0-9]+ UTF-16 units, over the client's ${MAX_BODY_CHARS} limit`));
     expect(workspace.pushes).toEqual([]);
     expect(github.calls.filter((call) => /createPullRequest|updatePullRequest|convertToDraft/.test(call))).toEqual([]);
-    expect(await journal.last("leanish/widget", 7)).toBeUndefined();
     expect(github.prs.get(7)?.body).toBe(operation === "update" ? ownPr().body : undefined);
   });
 
@@ -205,35 +213,63 @@ describe("publication", () => {
     expect(stateOf(result.pr.body)).toEqual({ head: HEAD_SHA, base: BASE_SHA, adaptations: 1 });
   });
 
-  it("records the commit in the journal before pushing it, and pushes nothing when it can't", async () => {
-    const workspace = new InMemoryWorkspace();
-    const rejecting = { pushed: async () => { throw new Error("disk full"); }, last: async () => undefined };
-    await expect(publishUpdate({ ...context(new FakeGitHub(ownPr()), workspace), journal: rejecting }, existing, 7, CONTENT)).rejects.toThrow("disk full");
-    expect(workspace.publications).toHaveLength(1);
-  });
-
-  it("records a push in the journal before the body says so, so a failed update leaves a trace", async () => {
+  it("tries the body update once more after a push, closing nothing when that works", async () => {
     const github = new FakeGitHub(ownPr());
     github.fail("updatePullRequest");
-    const journal = new MemoryJournal();
-    const workspace = new InMemoryWorkspace();
-    await expect(publishUpdate(context(github, workspace, journal), existing, 7, CONTENT)).rejects.toThrow("unexpected response");
-    expect(workspace.pushes).toEqual([{ projectId: WC.projectId, branch: existing.branch, sha: PUSHED_SHA }]);
-    expect(await journal.last("leanish/widget", 7)).toEqual({ head: PUSHED_SHA, base: BASE_SHA,
-      publication: { title: CONTENT.title, body: withMarker(RULES, CONTENT.body, { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 }), adaptations: 0 } });
-    expect(stateOf(github.prs.get(7)!.body)?.head).toBe(HEAD_SHA);
+    const result = await publishUpdate(context(github), existing, 7, CONTENT);
+    expect(result.pushed).toBe(true);
+    expect(stateOf(result.pr.body)?.head).toBe(PUSHED_SHA);
+    expect(github.calls.filter((call) => call.startsWith("updatePullRequest"))).toHaveLength(2);
+    expect(github.calls.filter((call) => call.startsWith("closePullRequest"))).toEqual([]);
   });
 
-  it("publishes, journals and rewrites text with local paths cleaned, so a recovery restores the cleaned text", async () => {
+  it("closes the PR when its body can't be updated after a push, and still reports an error", async () => {
+    const github = new FakeGitHub(ownPr());
+    failingBodyUpdates(github);
+    const workspace = new InMemoryWorkspace();
+    await expect(publishUpdate(context(github, workspace), existing, 7, CONTENT)).rejects.toThrow(/pushed c+ to leanish\/widget#7 but couldn't update its body .*closed the PR, and a later run recomputes it/);
+    expect(github.prs.get(7)?.state).toBe("closed");
+    expect(github.calls).toContainEqual(expect.stringMatching(/^createComment 7 secure-it couldn't update this PR's description/));
+    expect(workspace.deletions).toHaveLength(1);
+  });
+
+  it.each([
+    { taken: "a moved head", after: { headSha: "9".repeat(40) } },
+    { taken: "being marked ready", after: { headSha: PUSHED_SHA, isDraft: false } },
+    { taken: "a removed state", after: { headSha: PUSHED_SHA, body: `Rewritten.\n\n${RULES.marker}\n` } },
+  ])("leaves a PR someone took over ($taken) open when its body can't be updated", async ({ after }) => {
+    const github = new FakeGitHub(ownPr());
+    failingBodyUpdates(github, after);
+    await expect(publishUpdate(context(github), existing, 7, CONTENT)).rejects.toThrow(/couldn't update its body .*left to them/);
+    expect(github.prs.get(7)?.state).toBe("open");
+    expect(github.calls.filter((call) => call.startsWith("closePullRequest"))).toEqual([]);
+  });
+
+  it("tells a person to close the PR when closing it fails too", async () => {
+    const github = new FakeGitHub(ownPr());
+    failingBodyUpdates(github);
+    github.fail("closePullRequest");
+    await expect(publishUpdate(context(github), existing, 7, CONTENT)).rejects.toThrow(/couldn't finish closing it .*Close the PR by hand/);
+    expect(github.prs.get(7)?.state).toBe("open");
+  });
+
+  it("doesn't retire a PR when the failed update followed no push", async () => {
+    const github = new FakeGitHub(ownPr());
+    github.fail("updatePullRequest");
+    const workspace = new InMemoryWorkspace();
+    workspace.setPublishUnchanged();
+    await expect(publishUpdate(context(github, workspace), existing, 7, CONTENT)).rejects.toThrow("unexpected response");
+    expect(github.calls.filter((call) => call.startsWith("closePullRequest"))).toEqual([]);
+  });
+
+  it("publishes and rewrites text with local paths cleaned", async () => {
     const leaky = { title: "fixing snappy-java", body: `Checked with \`GRADLE_USER_HOME=/Users/dev/cache ./gradlew check\` in ${WC.path}/lib.`, commitMessage: `moving snappy-java\n\nin ${WC.path}` };
     const cleanBody = "Checked with `GRADLE_USER_HOME=<local path> ./gradlew check` in lib.";
     const github = new FakeGitHub(ownPr());
-    github.fail("updatePullRequest");
-    const journal = new MemoryJournal();
     const workspace = new InMemoryWorkspace();
-    await expect(publishUpdate(context(github, workspace, journal), existing, 7, leaky)).rejects.toThrow("unexpected response");
+    const { pr } = await publishUpdate(context(github, workspace), existing, 7, leaky);
     expect(workspace.publications.at(-1)?.args.message).toBe("moving snappy-java\n\nin .");
-    expect((await journal.last("leanish/widget", 7))?.publication?.body).toBe(withMarker(RULES, cleanBody, { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 }));
+    expect(pr.body).toBe(withMarker(RULES, cleanBody, { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 }));
     const fresh2 = new FakeGitHub();
     await publishNew(context(fresh2), fresh, leaky);
     expect([...fresh2.prs.values()][0]?.body).toContain(cleanBody);

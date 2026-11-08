@@ -34,7 +34,6 @@
     "./github-issues": "./src/github-issues.ts",
     "./gradle-reference": "./src/gradle-reference.ts",
     "./inventories": "./src/inventories.ts",
-    "./journal": "./src/journal.ts",
     "./local-files": "./src/local-files.ts",
     "./manifest-format": "./src/manifest-format.ts",
     "./manifest-spec": "./src/manifest-spec.ts",
@@ -59,7 +58,6 @@
     "./undecided-moves": "./src/undecided-moves.ts",
     "./test/fake-github": "./test/fake-github.ts",
     "./test/fake-issues": "./test/fake-issues.ts",
-    "./test/memory-journal": "./test/memory-journal.ts",
     "./test/retarget-repository": "./test/retarget-repository.ts",
     "./test/rich-version-inventory": "./test/rich-version-inventory.ts",
     "./test/strict-pin-inventory": "./test/strict-pin-inventory.ts"

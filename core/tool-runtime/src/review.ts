@@ -3,12 +3,8 @@
  * every open PR of the tool, in this order, and never lets one PR's problem
  * stop the others:
  *
- *   1. someone else pushed (the head is neither the one the PR's body
- *      records nor, after a failed body update, the one the tool's journal
- *      records), someone removed the body's state, or an old journal entry
- *      records the head without its publication → leave the PR alone, report
- *      it; a publication the journal saved for the head is restored first
- *      (`ownership.ts`);
+ *   1. someone else pushed (the head isn't the one the PR's body records) or
+ *      removed the body's state → leave the PR alone, report it (`ownership.ts`);
  *   2. the base moved (any merge, conflicts or not) → `steps.rebase`, before
  *      anything else: the tool recomputes its plan on the new base, retires
  *      what the base already has, or merges the base and re-applies (the agent
@@ -31,9 +27,8 @@ import type { PreparedBranch, WorkingCopy } from "@leanish/agent-runtime/types/w
 import type { Workspace } from "@leanish/agent-runtime/working-copy/workspace";
 
 import { classifyCi, failingCheckNames, onlyCooldownHolds, unreportedRequired } from "./ci-state.ts";
-import type { PublicationJournal } from "./journal.ts";
 import { type OwnPullRequests, type PullRequestState, stateOf } from "./own-pr.ts";
-import { inspectOwnership, repairOwnership } from "./ownership.ts";
+import { inspectOwnership } from "./ownership.ts";
 import { closeAndDelete, markReady, ownOpenPullRequests, type PublicationContext, recordState } from "./publication.ts";
 
 /** How many times the agent may adapt one PR after a failed CI before the tool gives it up. */
@@ -109,7 +104,6 @@ export interface ReviewContext {
   readonly logger: Logger;
   readonly repo: string;
   readonly base: string;
-  readonly journal: PublicationJournal;
   /** Directories outside the working copy whose paths never reach a PR (see publication-text.ts). */
   readonly localRoots: ReadonlyArray<string>;
 }
@@ -135,18 +129,12 @@ export async function reviewOpenPullRequests(context: ReviewContext, steps: Revi
 async function reviewOne(context: ReviewContext, steps: ReviewSteps, pr: GitHubPullRequest): Promise<ReviewEntry> {
   const result = (outcome: ReviewOutcome, detail?: string): ReviewEntry => ({ number: pr.number, url: pr.url, outcome, detail });
   const publication: PublicationContext = { ...context };
-  const ownership = await inspectOwnership(publication, pr);
+  const ownership = inspectOwnership(pr);
   if (ownership.kind === "untracked") return result("left-alone", "its body no longer has the tool's state; someone rewrote it");
   if (ownership.kind === "pushed-by-someone-else") {
-    return result("left-alone", `someone else pushed (${pr.headSha.slice(0, 12)}, the tool published ${ownership.recordedHead.slice(0, 12)})`);
+    return result("left-alone", `someone else pushed (${pr.headSha.slice(0, 12)}, the tool published ${ownership.recordedHead.slice(0, 12)}), or the tool stopped right after pushing; in that case close it, and a later run recomputes it`);
   }
-  if (ownership.recovery === "state-removed") return result("left-alone", "its body no longer has the tool's state; someone rewrote it");
-  if (ownership.recovery === "legacy") return result("left-alone", "the journal has only its head; the tool's next run recomputes and republishes it");
-  // A push landing during the repair fails it (`repairOwnership`): the PR is reported, and left as it is.
-  pr = await repairOwnership(publication, ownership);
-  const recorded = stateOf(pr.body);
-  if (recorded?.head !== pr.headSha) throw new Error(`${pr.url}: its body doesn't record its head after recovery`);
-  const state: PullRequestState = recorded;
+  const state: PullRequestState = stateOf(pr.body)!;
 
   const disposition = await steps.disposition?.(pr);
   if (disposition?.kind === "leave") return result("left-alone", disposition.reason);

@@ -206,7 +206,7 @@ finding can open one again after a complete assessment records it absent and it 
    - A PR taken early belongs to its exact decision and the running attempt on its issue. Sharing a package or
      companion, or a sanitized branch name, cannot transfer that grant. Its descriptive topic can change without
      changing the decision. An ordinary eligible PR is matched by its kind and full recorded topic, before branch
-     sanitization. Ownership is read from the current head's journal publication when needed; human pushes and a
+     sanitization. Human pushes and a
      person marking an early draft ready remain protected.
    - If review finds an early decision changed on a moved base, it leaves the PR and says why on its issue; the next
      run tracks the new decision through its own issue. If no actionable fixes remain, review retires the PR. Once

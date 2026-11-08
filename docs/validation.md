@@ -295,7 +295,7 @@ Keep these records outside the tool agent's workspace when running fixture trial
 | bump-it Gradle wrapper | bump-it-wrapper | real tool run |
 | bump-it young locked npm copies (0.4.1) and remembered aged moves (0.4.2) | — | unit tests only (a seed stops being young after seven days) |
 | bump-it major cap and deferral | — | unit tests only |
-| Human pushes left alone; journal recovery; publication races | — | unit tests only |
+| Human pushes left alone; a failed body update closes the PR; publication races | — | unit tests only |
 | Local advisory cache | — | unit tests only (real passes use it) |
 | Claude Code as the coding agent | TEST_strict | real tool run (see above) |
 | Local paths kept out of published PR text | TEST_strict | real tool run: no local path in the three PRs; the cleanup itself is unit-tested |
