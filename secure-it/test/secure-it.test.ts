@@ -3308,6 +3308,15 @@ describe("the cooldown hold", () => {
     }
   });
 
+  it("doesn't touch an early PR whose state was removed once a person marked it ready", async () => {
+    const plan = await heldPlan(YOUNG_VITE());
+    const taken = ownPr({ headRef: "secure-it/2026-10-05-take-early-1001", headSha: PUSHED_SHA, isDraft: false, body: `${withPlanSection("Fixes vite.", plan)}\n\n${RULES.marker}\n` });
+    const h = harness({ prs: [taken], fixes: [YOUNG_VITE()] });
+    h.workspace.setRemoteHead(taken.headRef, PUSHED_SHA);
+    await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context);
+    expect(h.github.prs.get(7)).toEqual(taken);
+  });
+
   it("keeps an early PR a person marked ready without starting another attempt", async () => {
     const plan = await heldPlan(YOUNG_VITE());
     const taken = ownPr({ headRef: "secure-it/2026-10-05-take-early-1001", isDraft: false,

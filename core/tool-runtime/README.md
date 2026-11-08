@@ -67,7 +67,7 @@ package is the code around them. Setup and operation are in [Adopting the tools]
      and description with the agent's new verdict and check results, keeping the verified plan and publication state
      markers.
 
-  The tool's disposition runs after ownership recovery, before branch or CI work. It may leave the PR alone, report
+  The tool's disposition runs after the ownership check, before branch or CI work. It may leave the PR alone, report
   a graduation it completed, or proceed with `held.until`: display text that keeps a draft from becoming ready on
   green or cooldown-only CI. The runtime calculates no release ages. A person who marked a held PR ready owns it.
   Other CI failures still adapt, and base movement still recomputes the plan.

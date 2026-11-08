@@ -16,6 +16,17 @@ function context(github: FakeGitHub, workspace = new InMemoryWorkspace()): Publi
   return { rules: RULES, github, workspace, logger: new ConsoleLogger({ minLevel: "error" }), repo: "leanish/widget", base: "main", workingCopy: WC, localRoots: ["/Users/dev"] };
 }
 
+/** Records the title and body of every body update `github` is asked for. */
+function bodyUpdatesOf(github: FakeGitHub): Array<{ readonly title: string; readonly body: string }> {
+  const sent: Array<{ readonly title: string; readonly body: string }> = [];
+  const update = github.updatePullRequest.bind(github);
+  github.updatePullRequest = async (args) => {
+    sent.push({ title: args.title, body: args.body });
+    return update(args);
+  };
+  return sent;
+}
+
 /** Every body update fails, and leaves #7 as `after` says: by default at the tool's push, its body naming the old head. */
 function failingBodyUpdates(github: FakeGitHub, after: Partial<GitHubPullRequest> = { headSha: PUSHED_SHA }): void {
   const fail = () => {
@@ -213,14 +224,47 @@ describe("publication", () => {
     expect(stateOf(result.pr.body)).toEqual({ head: HEAD_SHA, base: BASE_SHA, adaptations: 1 });
   });
 
-  it("tries the body update once more after a push, closing nothing when that works", async () => {
+  it("tries the body update once more after a push, with the same text, closing nothing when that works", async () => {
     const github = new FakeGitHub(ownPr());
+    const sent = bodyUpdatesOf(github);
     github.fail("updatePullRequest");
     const result = await publishUpdate(context(github), existing, 7, CONTENT);
     expect(result.pushed).toBe(true);
     expect(stateOf(result.pr.body)?.head).toBe(PUSHED_SHA);
-    expect(github.calls.filter((call) => call.startsWith("updatePullRequest"))).toHaveLength(2);
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toEqual(sent[0]);
     expect(github.calls.filter((call) => call.startsWith("closePullRequest"))).toEqual([]);
+  });
+
+  it("covers a response lost after the update applied with the same retry", async () => {
+    const github = new FakeGitHub(ownPr());
+    const update = github.updatePullRequest.bind(github);
+    let lost = false;
+    github.updatePullRequest = async (args) => {
+      const updated = await update(args);
+      if (lost) return updated;
+      lost = true;
+      throw new Error("socket hang up");
+    };
+    const result = await publishUpdate(context(github), existing, 7, CONTENT);
+    expect(stateOf(result.pr.body)?.head).toBe(PUSHED_SHA);
+    expect(github.prs.get(7)?.state).toBe("open");
+  });
+
+  it("leaves the PR when someone removes its state right before the close", async () => {
+    const github = new FakeGitHub(ownPr());
+    failingBodyUpdates(github);
+    const workspace = new InMemoryWorkspace();
+    let reads = 0;
+    const read = github.getPullRequest.bind(github);
+    github.getPullRequest = async (args) => {
+      // Before the update, each attempt's own re-read, then retirement's two: the last is the one right before closing.
+      if (++reads === 5) github.prs.set(7, { ...github.prs.get(7)!, body: `Rewritten.\n\n${RULES.marker}\n` });
+      return read(args);
+    };
+    await expect(publishUpdate(context(github, workspace), existing, 7, CONTENT)).rejects.toThrow(/left open/);
+    expect(github.prs.get(7)?.state).toBe("open");
+    expect(workspace.deletions).toEqual([]);
   });
 
   it("closes the PR when its body can't be updated after a push, and still reports an error", async () => {

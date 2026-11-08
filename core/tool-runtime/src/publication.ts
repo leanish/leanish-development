@@ -201,13 +201,13 @@ async function updateAfterPush(context: PublicationContext, number: number, head
 async function retire(context: PublicationContext, number: number, head: string): Promise<string> {
   const { github, repo, base, rules } = context;
   const left = "it no longer looks like the tool's draft at that head, so it's left open: if nobody took it over, close it, and a later run recomputes it";
+  // A removed state or a PR marked ready: someone took it over, and it's theirs to decide.
+  const stillDraftWithState = (pr: GitHubPullRequest) => pr.isDraft && stateOf(pr.body) !== undefined;
   try {
     const current = await github.getPullRequest({ repo, number });
-    // A moved head, a removed state or a PR marked ready: someone took it over, and it's theirs to decide.
-    if (!isOwnPullRequest(rules, current, repo, base) || current.headSha !== head || !current.isDraft || stateOf(current.body) === undefined) return left;
+    if (!isOwnPullRequest(rules, current, repo, base) || current.headSha !== head || !stillDraftWithState(current)) return left;
     const comment = `${rules.tool} couldn't update this PR's description after pushing to it, so the description no longer matches its head. Closing it: a later run recomputes the change from the default branch.`;
-    const closed = await closeAndDelete(context, number, head, comment, { onlyDraft: true });
-    return closed === "closed" ? "closed the PR, and a later run recomputes it" : left;
+    return await closeIf(context, number, head, comment, stillDraftWithState) ? "closed the PR, and a later run recomputes it" : left;
   } catch (err) {
     return `and couldn't finish closing it (${reasonOf(err)}): the commit is published but the body doesn't say so. Close the PR by hand if it's still open, and a later run recomputes it`;
   }
@@ -261,10 +261,16 @@ export async function closeAndDelete(
   comment: string,
   options: { readonly onlyDraft?: boolean } = {},
 ): Promise<"closed" | "not-draft"> {
+  // A person who marked it ready took the decision over; it stays open.
+  const closed = await closeIf(context, number, expectedHead, comment, (current) => options.onlyDraft !== true || current.isDraft);
+  return closed ? "closed" : "not-draft";
+}
+
+/** `closeAndDelete`, once `eligible` holds for the PR as re-read right before closing; whether it closed it. */
+async function closeIf(context: PublicationContext, number: number, expectedHead: string, comment: string, eligible: (current: GitHubPullRequest) => boolean): Promise<boolean> {
   const { github, repo, logger, rules } = context;
   const current = await reReadOwn(context, number, expectedHead);
-  // A person who marked it ready took the decision over; it stays open.
-  if (options.onlyDraft === true && !current.isDraft) return "not-draft";
+  if (!eligible(current)) return false;
   await github.closePullRequest({ repo, number });
   try {
     await github.createComment({ repo, number, body: comment });
@@ -276,7 +282,7 @@ export async function closeAndDelete(
   if (deleted.kind === "moved") {
     logger.warn(`${rules.tool}: kept the closed PR's branch — it moved after the check`, { repo, number, branch: current.headRef, found: deleted.found });
   }
-  return "closed";
+  return true;
 }
 
 async function createDraftPullRequest(
