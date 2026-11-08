@@ -110,13 +110,30 @@ export function recordOf(body: string): IssueRecord | undefined {
 const BLOCK_OPENING = "<!-- leanish:plan";
 
 function render(assessment: SubjectAssessment, record: IssueRecord, sha: string): { readonly title: string; readonly body: string } {
-  const essential = essentialLines(assessment, record);
-  const people = [...essential, "", ...progressLines(record), "", ...findingLines(assessment.findings), "", `_Assessed at \`${sha.slice(0, 12)}\`._`].join("\n");
-  const section = planSection({ heading: HEADING, people, payload: record, name: "secure-it's issue record" });
-  // planSection cuts from the end when it must: what a label would authorize has to survive whole.
-  const missing = essential.filter((line) => line !== "" && !section.includes(line));
-  if (missing.length > 0) throw new TooLargeError(`the issue's decision doesn't fit its body (${missing.length} line(s) of it would be cut)`);
-  return { title: titleOf(assessment), body: section };
+  let missing = 0;
+  // The record shares the section's budget, so a blocked detail its own cap allows can still push the decision out: it's
+  // the one essential line that may give way, cut shorter (visibly) until the decision fits, never below MIN_DETAIL_CHARS.
+  for (const limit of detailLimits(assessment.status)) {
+    const essential = essentialLines(assessment, record, limit);
+    const people = [...essential, "", ...progressLines(record), "", ...findingLines(assessment.findings), "", `_Assessed at \`${sha.slice(0, 12)}\`._`].join("\n");
+    const section = planSection({ heading: HEADING, people, payload: record, name: "secure-it's issue record" });
+    // planSection cuts from the end when it must: what a label would authorize has to survive whole.
+    missing = essential.filter((line) => line !== "" && !section.includes(line)).length;
+    if (missing === 0) return { title: titleOf(assessment), body: section };
+  }
+  throw new TooLargeError(`the issue's decision doesn't fit its body (${missing} line(s) of it would be cut)`);
+}
+
+/** A blocked detail's cut can't go below this: shorter, it would no longer say why. */
+const MIN_DETAIL_CHARS = 500;
+
+/** The detail limits to try, longest first, halving down to MIN_DETAIL_CHARS itself: only a blocked detail can give way. */
+export function detailLimits(status: SubjectAssessment["status"]): number[] {
+  if (status.kind !== "blocked") return [MAX_BLOCKED_DETAIL_CHARS];
+  const limits: number[] = [];
+  for (let limit = status.reason === "unassessed" ? MAX_UNASSESSED_DETAIL_CHARS : MAX_BLOCKED_DETAIL_CHARS; limit > MIN_DETAIL_CHARS; limit = Math.floor(limit / 2)) limits.push(limit);
+  limits.push(MIN_DETAIL_CHARS);
+  return limits;
 }
 
 /**
@@ -157,7 +174,7 @@ function titleOf(assessment: SubjectAssessment): string {
   return assessment.subject.kind === "decision" ? `secure-it: fixing ${shown} (${ecosystems})` : `secure-it: advisories on ${shown} (${ecosystems})`;
 }
 
-function essentialLines(assessment: SubjectAssessment, record: IssueRecord): string[] {
+function essentialLines(assessment: SubjectAssessment, record: IssueRecord, detailLimit: number): string[] {
   const { status, subject } = assessment;
   const lines: string[] = [];
   switch (status.kind) {
@@ -165,7 +182,7 @@ function essentialLines(assessment: SubjectAssessment, record: IssueRecord): str
       lines.push("**Reported only.** Only the package's own repository publishes these advisories: secure-it doesn't act on them until GitHub's advisory database or OSV does.");
       break;
     case "blocked": {
-      const detail = shortenedDetail(status.detail, status.reason === "unassessed" ? MAX_UNASSESSED_DETAIL_CHARS : MAX_BLOCKED_DETAIL_CHARS);
+      const detail = shortenedDetail(status.detail, detailLimit);
       lines.push(`**Blocked:** ${blockedReason(status.reason)} ${literal(detail)}`);
       break;
     }

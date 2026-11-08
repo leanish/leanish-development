@@ -4,7 +4,7 @@ import { MAX_ISSUE_BODY_CHARS, MAX_ISSUE_TITLE_CHARS } from "@leanish/tool-runti
 import { cleanBody } from "@leanish/tool-runtime/publication-text";
 
 import type { IssueRecord, SubjectAssessment } from "../src/issue-model.ts";
-import { ISSUE_WRITER, issueWriter, recordOf, trackingContent, withoutClosingKeywords } from "../src/issue-text.ts";
+import { detailLimits, ISSUE_WRITER, issueWriter, recordOf, trackingContent, withoutClosingKeywords } from "../src/issue-text.ts";
 
 describe("issueWriter", () => {
   it.each(["", "<!-- leanish:plan "])("cleans a local path straddling the detail cut, including inside %s", (opening) => {
@@ -33,6 +33,57 @@ describe("issueWriter", () => {
     expect(rendered.body).toContain("[truncated]");
     expect(recordOf(rendered.body)).toEqual(record);
   });
+
+  it("cuts a refusal shorter when its record leaves too little room, keeping the record whole", () => {
+    const record = largeRecord(800);
+    const rendered = renderRefusal(record, `a short first reason; ${"a long second reason ".repeat(500)}`);
+    expect(rendered.body).toContain("a short first reason");
+    expect(rendered.body).toContain("[truncated]");
+    expect(blockedLine(rendered.body).length).toBeLessThan(10_000);
+    expect(rendered.body.length).toBeLessThanOrEqual(MAX_ISSUE_BODY_CHARS);
+    expect(recordOf(rendered.body)).toEqual(record);
+  });
+
+  it("cuts a refusal shorter when its backticks widen the code span around it", () => {
+    // One long backtick run: the span's fence grows with it, so the line takes about three times the detail's length.
+    const record = largeRecord(500);
+    const rendered = renderRefusal(record, `reason ${"`".repeat(9_000)} end`);
+    expect(rendered.body).toContain("[truncated]");
+    expect(rendered.body.length).toBeLessThanOrEqual(MAX_ISSUE_BODY_CHARS);
+    expect(recordOf(rendered.body)).toEqual(record);
+  });
+
+  it("cuts a shorter refusal without leaving half a surrogate pair", () => {
+    const record = largeRecord(800);
+    const rendered = renderRefusal(record, "😀".repeat(6_000));
+    expect(blockedLine(rendered.body).length).toBeLessThan(10_000);
+    expect(rendered.body).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u);
+    expect(recordOf(rendered.body)).toEqual(record);
+  });
+
+  it("refuses the decision itself, not the record, once even the shortest refusal doesn't fit beside it", () => {
+    // The room between the shortest cut no longer fitting and the record alone not fitting is a few hundred
+    // characters of record, so search for the first refused record rather than pin a count that only fits today.
+    const refusalAt = (count: number): Error | undefined => {
+      try {
+        renderRefusal(largeRecord(count), "x".repeat(10_000));
+        return undefined;
+      } catch (error) {
+        return error as Error;
+      }
+    };
+    let fits = 500;
+    let refused = 1_200;
+    expect(refusalAt(fits)).toBeUndefined();
+    expect(refusalAt(refused)).toBeDefined();
+    while (refused - fits > 1) {
+      const middle = Math.floor((fits + refused) / 2);
+      if (refusalAt(middle) === undefined) fits = middle;
+      else refused = middle;
+    }
+    expect(refusalAt(refused)?.message).toContain("the issue's decision doesn't fit its body");
+    // About ten renders of a record near the section's limit, each compressing it up to six times: ~3 s locally, ~10 s on CI.
+  }, 60_000);
 
   it("cuts a planning detail without leaving half a surrogate pair", () => {
     const subject = { kind: "package" as const, ecosystem: "npm" as const, name: "lib" };
@@ -130,6 +181,34 @@ describe("an early attempt on a waiting decision", () => {
     const text = ISSUE_WRITER.render(unknown, { version: 1, subject, openedAt: "a".repeat(40), findings: [], absences: [], attempts: [] }, "a".repeat(40)).body;
     expect(text).toContain("- `npm lib@1.0.1`, whose publication date can't be read");
     expect(text).not.toContain("past it on");
+  });
+});
+
+/** A record whose findings carry ids that don't compress, so it really takes most of the issue's section. */
+function largeRecord(count: number): IssueRecord {
+  const subject = { kind: "package" as const, ecosystem: "npm" as const, name: "lib" };
+  let seed = 7;
+  const id = () => Array.from({ length: 24 }, () => ((seed = (seed * 48_271) % 2_147_483_647) % 36).toString(36)).join("");
+  const findings = Array.from({ length: count }, () => ({ ecosystem: "npm" as const, name: `lib-${id()}`, ids: [`GHSA-${id()}`] }));
+  return { version: 1, subject, openedAt: "a".repeat(40), findings, absences: [], attempts: [] };
+}
+
+function renderRefusal(record: IssueRecord, detail: string): { readonly title: string; readonly body: string } {
+  const assessment: SubjectAssessment = { subject: record.subject, findings: [], status: { kind: "blocked", reason: "not-taken", detail } };
+  return issueWriter((body) => body).render(assessment, record, record.openedAt);
+}
+
+function blockedLine(body: string): string {
+  const line = body.split("\n").find((candidate) => candidate.startsWith("**Blocked:**"));
+  if (line === undefined) throw new Error("the body has no blocked line");
+  return line;
+}
+
+describe("detailLimits", () => {
+  it("halves a blocked detail's cut down to 500 characters itself, and leaves other statuses one try", () => {
+    expect(detailLimits({ kind: "blocked", reason: "not-taken", detail: "" })).toEqual([10_000, 5_000, 2_500, 1_250, 625, 500]);
+    expect(detailLimits({ kind: "blocked", reason: "unassessed", detail: "" })).toEqual([1_000, 500]);
+    expect(detailLimits({ kind: "eligible", trusted: [] })).toEqual([10_000]);
   });
 });
 
