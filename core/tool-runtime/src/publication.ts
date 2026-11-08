@@ -197,7 +197,7 @@ async function updateAfterPush(context: PublicationContext, number: number, head
   }
 }
 
-/** Closes a PR whose body lags behind the tool's push, while it's still the tool's draft at that head; says what happened. */
+/** Closes a PR whose body update couldn't be confirmed, while it's still the tool's draft at that head; says what happened. */
 async function retire(context: PublicationContext, number: number, head: string): Promise<string> {
   const { github, repo, base, rules } = context;
   const left = "it's no longer the tool's open draft at that head, so the tool leaves it: if it's still open and nobody took it over, close it, and a later run recomputes it";
