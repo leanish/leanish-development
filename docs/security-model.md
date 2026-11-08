@@ -58,7 +58,7 @@ The tools' policy fence prevents their proposals from editing that file.
 The gate also reads a dependency's own repository advisories, which name a fix days before GitHub reviews them into
 its database and OSV imports them. Whoever controls that repository and the package can publish an advisory and a
 "fixed" version together to get a young version proposed early. So such unreviewed advisories detect and rule
-versions out, but never trigger a fix nor justify a young version; one can still steer the choice by ruling a
+versions out, but never trigger a fix (malware-tagged ones aside) nor justify a young version; one can still steer the choice by ruling a
 version out, which the plan records, and whatever comes early stays held. Nor do they fail what didn't change, so
 publishing one can't turn a repository's default branch or its unrelated PRs red. The rules:
 [how each source counts](../core/gate/README.md#how-each-source-counts). Details:

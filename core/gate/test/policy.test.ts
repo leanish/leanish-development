@@ -203,6 +203,12 @@ describe("inheritance by review status", () => {
       expect(verdict([], [npm("lib", "2.0.0")], snap).failures).toEqual([`new: ${problem}`]);
     });
 
+    it("still fails malware the PR brings to a new location, at a version base already has", () => {
+      const snap = snapshot({ "lib@1.0.0": [sourced("GHSA-m", "repository", [], true)] });
+      const head = npm("lib", "1.0.0", ["node_modules/lib", "node_modules/other/node_modules/lib"]);
+      expect(verdict([npm("lib", "1.0.0")], [head], snap).failures).toEqual([`inherited: ${malware}`]);
+    });
+
     it("still fails malware a reviewed source reports too, on a version the PR leaves as it was", () => {
       const snap = snapshot({ "lib@1.0.0": [sourced("GHSA-m", "repository", [], true), sourced("MAL-2026-1", "osv", ["GHSA-m"], true)] });
       const result = verdict([npm("lib", "1.0.0")], [npm("lib", "1.0.0")], snap);

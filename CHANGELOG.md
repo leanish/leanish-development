@@ -14,7 +14,7 @@
   repository for its direct dependencies; transitive ones are a known limit.
 - An advisory only a dependency's own repository publishes no longer fails the gate on code that didn't change: a full
   scan, and a PR that leaves that version as it was, warn about it instead, tagged as malware or not, and its issue
-  still opens. A PR that adds it, or moves to a version with it, still fails.
+  still opens. A PR that adds it still fails, and so does malware the PR moves to or brings to a new location.
 
 ### Fixed
 

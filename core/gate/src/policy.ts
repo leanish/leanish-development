@@ -1,10 +1,11 @@
 /**
- * What fails. A PR fails on findings it adds (unless excepted) and on any
- * malware in head, inherited or not; inherited findings are warnings. A full
- * scan fails on every finding without a valid exception. A finding only the
- * package's own repository reports never fails what didn't change: anyone
- * controlling that repository could otherwise turn every PR and the default
- * branch red, with no exception possible when it's tagged as malware.
+ * What fails, with one exception. A PR fails on findings it adds (unless
+ * excepted) and on any malware in head, inherited or not; inherited findings
+ * are warnings. A full scan fails on every finding without a valid exception.
+ * The exception: a finding only the package's own repository reports never
+ * fails what didn't change, malware-tagged or not. Anyone controlling that
+ * repository could otherwise turn every PR and the default branch red, with
+ * no exception possible when it's tagged as malware.
  */
 import { unexcusedProblem, type Exceptions } from "./exceptions.ts";
 import type { Comparison, Finding } from "./findings.ts";

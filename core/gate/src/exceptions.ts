@@ -137,7 +137,7 @@ export function isIsoDate(value: string): boolean {
 
 /**
  * Why `finding` still fails under the exceptions, or undefined when an
- * unexpired exception covers it at every location. Malware always fails.
+ * unexpired exception covers it at every location. No exception covers malware.
  */
 export function unexcusedProblem(finding: Finding, exceptions: Exceptions, snapshot: Snapshot, today: string): string | undefined {
   const label = `${finding.name}@${finding.version}: ${finding.advisory}`;
