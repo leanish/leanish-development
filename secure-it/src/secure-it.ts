@@ -625,10 +625,9 @@ async function runUnit(
   const plan = await planUnit(execution, unit, base);
   const owned = await recognisedPlans(execution, own, { unit, plan });
   const already = owned.find((candidate) => samePlan(candidate.pr, planDigest(plan), digestOf));
-  // The reused PR is checked before anything repairs, refreshes or redoes it.
   const reused = already ?? owned[0];
   const details = { topic: plan.topic, packages: plan.packages, notes: plan.notes ?? [] };
-  if (reused !== undefined && !reused.pr.isDraft && await execution.early.is(reused.pr, plan)) {
+  if (await hasReadyEarlyPr(execution, own, plan)) {
     return { ...details, outcome: "deferred", reason: "a person marked the early PR ready" };
   }
   if (reused !== undefined) assertNoUndecidedMoves(planOf(reused.pr.body)?.moves, undecided);
@@ -1035,6 +1034,19 @@ async function recognisedPlans(execution: Execution, own: ReadonlyArray<GitHubPu
     if (matchesPlan(target, { pr, plan, early: await execution.early.is(pr, plan) })) owned.push(ownership);
   }
   return owned;
+}
+
+/**
+ * Whether a person marked ready a PR taken early for this decision. Not limited to the tool's own PRs: one whose state
+ * they also removed can't be changed any more, but the decision is still in their hands.
+ */
+async function hasReadyEarlyPr(execution: Execution, own: ReadonlyArray<GitHubPullRequest>, target: ChangePlan): Promise<boolean> {
+  for (const pr of own) {
+    if (pr.isDraft || topicOf(RULES, pr.headRef) === undefined) continue;
+    const plan = planOf(pr.body);
+    if (plan !== undefined && plan.kind === target.kind && decisionIdOf(plan) === decisionIdOf(target) && await execution.early.is(pr, plan)) return true;
+  }
+  return false;
 }
 
 /** Early PRs carry exact decisions; eligible ordinary PRs can reconcile their kind and full recorded topic. */

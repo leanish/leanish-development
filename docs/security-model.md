@@ -167,8 +167,8 @@ Both tools are in this tree: [`secure-it`](../secure-it) and [`bump-it`](../bump
   repository code and can misrepresent its own inventory, as noted above: this proof is not an independent Gradle
   resolver.
 - **A push and its plan stay together.** If the body update fails after a push, the tool tries once more, then closes the PR while it's still the tool's draft at that head, so a later run recomputes it. It reports an error either way
-  ([tool-runtime](../core/tool-runtime/README.md)). If the process dies between the two, or the PR can't be closed, the
-  head no longer matches its body and the tool leaves the PR alone until a person closes it.
+  ([tool-runtime](../core/tool-runtime/README.md)). If the process dies between the two, `git push` reports a failure after GitHub accepted it, or the PR can't be closed, the
+  head may no longer match its body; while it doesn't, the tool leaves the PR alone until a person closes it.
 
 Covered elsewhere, with the points that matter here:
 

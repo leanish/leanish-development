@@ -29,8 +29,8 @@ package is the code around them. Setup and operation are in [Adopting the tools]
     caller before the work a refusal would waste.
   - **External text** (`pr-text.ts`): `literal()` shows what registries, lockfiles and advisory sources supply (names,
     versions, paths, notes) as a code span, so a link, mention, comment or table pipe in it stays text.
-  - **A failed body update** (`publication.ts`): If the body update fails after a push, the tool tries once more, then closes the PR while it's still the tool's draft at that head, so a later run recomputes it. It reports an error either way. A PR someone changed meanwhile (a moved head, a removed
-    state, marked ready) is left to them.
+  - **A failed body update** (`publication.ts`): If the body update fails after a push, the tool tries once more, then closes the PR while it's still the tool's draft at that head, so a later run recomputes it. It reports an error either way. Closing leaves alone a PR someone changed meanwhile (a moved head, a removed
+    state, marked ready); a retry that succeeds writes its text like any update.
   - **Ownership** (`ownership.ts`): `inspectOwnership` tells whether an open PR is still the tool's: its body records
     its current head. Runs match their plans and secure-it matches early decisions by that body. `samePlan` tells an open PR already
     carrying a plan: only one whose body records its current head.

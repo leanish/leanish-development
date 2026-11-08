@@ -246,9 +246,12 @@ describe("publication", () => {
       lost = true;
       throw new Error("socket hang up");
     };
+    const sent = bodyUpdatesOf(github);
     const result = await publishUpdate(context(github), existing, 7, CONTENT);
     expect(stateOf(result.pr.body)?.head).toBe(PUSHED_SHA);
     expect(github.prs.get(7)?.state).toBe("open");
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toEqual(sent[0]);
   });
 
   it("leaves the PR when someone removes its state right before the close", async () => {
@@ -262,7 +265,7 @@ describe("publication", () => {
       if (++reads === 5) github.prs.set(7, { ...github.prs.get(7)!, body: `Rewritten.\n\n${RULES.marker}\n` });
       return read(args);
     };
-    await expect(publishUpdate(context(github, workspace), existing, 7, CONTENT)).rejects.toThrow(/left open/);
+    await expect(publishUpdate(context(github, workspace), existing, 7, CONTENT)).rejects.toThrow(/the tool leaves it/);
     expect(github.prs.get(7)?.state).toBe("open");
     expect(workspace.deletions).toEqual([]);
   });
@@ -271,9 +274,9 @@ describe("publication", () => {
     const github = new FakeGitHub(ownPr());
     failingBodyUpdates(github);
     const workspace = new InMemoryWorkspace();
-    await expect(publishUpdate(context(github, workspace), existing, 7, CONTENT)).rejects.toThrow(/pushed c+ to leanish\/widget#7 but couldn't update its body .*closed the PR, and a later run recomputes it/);
+    await expect(publishUpdate(context(github, workspace), existing, 7, CONTENT)).rejects.toThrow(/pushed c+ to leanish\/widget#7 but couldn't confirm its body update .*closed the PR, and a later run recomputes it/);
     expect(github.prs.get(7)?.state).toBe("closed");
-    expect(github.calls).toContainEqual(expect.stringMatching(/^createComment 7 secure-it couldn't update this PR's description/));
+    expect(github.calls).toContainEqual(expect.stringMatching(/^createComment 7 secure-it couldn't confirm updating this PR's description/));
     expect(workspace.deletions).toHaveLength(1);
   });
 
@@ -284,7 +287,7 @@ describe("publication", () => {
   ])("leaves a PR someone took over ($taken) open when its body can't be updated", async ({ after }) => {
     const github = new FakeGitHub(ownPr());
     failingBodyUpdates(github, after);
-    await expect(publishUpdate(context(github), existing, 7, CONTENT)).rejects.toThrow(/couldn't update its body .*left open: if nobody took it over, close it/);
+    await expect(publishUpdate(context(github), existing, 7, CONTENT)).rejects.toThrow(/couldn't confirm its body update .*the tool leaves it: if it's still open and nobody took it over, close it/);
     expect(github.prs.get(7)?.state).toBe("open");
     expect(github.calls.filter((call) => call.startsWith("closePullRequest"))).toEqual([]);
   });
@@ -293,7 +296,7 @@ describe("publication", () => {
     const github = new FakeGitHub(ownPr());
     failingBodyUpdates(github);
     github.fail("closePullRequest");
-    await expect(publishUpdate(context(github), existing, 7, CONTENT)).rejects.toThrow(/couldn't finish closing it .*Close the PR by hand/);
+    await expect(publishUpdate(context(github), existing, 7, CONTENT)).rejects.toThrow(/couldn't finish closing it .*nobody took it over, close it by hand/);
     expect(github.prs.get(7)?.state).toBe("open");
   });
 

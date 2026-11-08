@@ -3308,13 +3308,19 @@ describe("the cooldown hold", () => {
     }
   });
 
-  it("doesn't touch an early PR whose state was removed once a person marked it ready", async () => {
+  it.each([
+    { versions: "young", fix: YOUNG_VITE },
+    { versions: "aged", fix: () => vite({ to: { version: "8.3.3", line: "8", aged: true, major: false, blockers: [] } }) },
+  ])("leaves the decision to an early PR a person marked ready and removed the state from, its versions $versions", async ({ fix }) => {
     const plan = await heldPlan(YOUNG_VITE());
     const taken = ownPr({ headRef: "secure-it/2026-10-05-take-early-1001", headSha: PUSHED_SHA, isDraft: false, body: `${withPlanSection("Fixes vite.", plan)}\n\n${RULES.marker}\n` });
-    const h = harness({ prs: [taken], fixes: [YOUNG_VITE()] });
+    const h = harness({ prs: [taken], fixes: [fix()] });
     h.workspace.setRemoteHead(taken.headRef, PUSHED_SHA);
-    await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context);
-    expect(h.github.prs.get(7)).toEqual(taken);
+    const tracked = await early(h, taken, [{ ecosystem: "npm", name: "vite", version: "8.3.3", eligibleAt: HELD.eligibleAt }]);
+    expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({ outcome: "deferred", reason: "a person marked the early PR ready" });
+    expect(h.github.prs.get(7)).toEqual(tracked);
+    expect(h.github.prs.size).toBe(1);
+    expect([h.workspace.publications, h.agentCalls]).toEqual([[], []]);
   });
 
   it("keeps an early PR a person marked ready without starting another attempt", async () => {

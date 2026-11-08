@@ -130,6 +130,10 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
 - **A different token login (secure-it)**: issues are found by their creator, so a write PAT from another account
   starts over: it opens new issues, and the old ones' dismissals and attempts no longer count.
 
+- **A push that lands without the tool knowing (secure-it, bump-it)**: if the process dies right after a push, or
+  `git push` reports a failure GitHub didn't have, the PR's body still names the previous head. Runs read that as
+  someone else's push and leave the PR alone. Review reports it and says to close the PR if nobody took it over, after
+  which a later run recomputes it.
 - **An action with no immutable release, newly used (gate)**: a new or additional occurrence fails unless its
   owner is listed in `trustedPackages["GitHub Actions"].owners`. Existing uses do not authorize more copies.
   The gate documents the [scope and risks of trusting an owner](../core/gate/README.md#configuration-githubsupply-chainjson).

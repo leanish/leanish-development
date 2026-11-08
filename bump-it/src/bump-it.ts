@@ -236,7 +236,7 @@ async function runUnit(
   undecided: ReadonlyMap<string, ReadonlyArray<string>>,
 ): Promise<UnitReport> {
   const same = owned.find((candidate) => samePlan(candidate.pr, planDigest(computed.plan), digestOf));
-  // The PR this unit reuses, checked before anything repairs or redoes it, and before a unit left blocked or empty by
+  // The PR this unit reuses, checked before anything redoes it, and before a unit left blocked or empty by
   // what can't be decided reads as one with nothing to do.
   const reused = same ?? owned[0];
   if (reused !== undefined) {

@@ -193,23 +193,23 @@ async function updateAfterPush(context: PublicationContext, number: number, head
   try {
     return await update();
   } catch (err) {
-    throw new Error(`${context.rules.tool}: pushed ${head} to ${context.repo}#${number} but couldn't update its body (${reasonOf(err)}); ${await retire(context, number, head)}`, { cause: err });
+    throw new Error(`${context.rules.tool}: pushed ${head} to ${context.repo}#${number} but couldn't confirm its body update (${reasonOf(err)}); ${await retire(context, number, head)}`, { cause: err });
   }
 }
 
 /** Closes a PR whose body lags behind the tool's push, while it's still the tool's draft at that head; says what happened. */
 async function retire(context: PublicationContext, number: number, head: string): Promise<string> {
   const { github, repo, base, rules } = context;
-  const left = "it no longer looks like the tool's draft at that head, so it's left open: if nobody took it over, close it, and a later run recomputes it";
+  const left = "it's no longer the tool's open draft at that head, so the tool leaves it: if it's still open and nobody took it over, close it, and a later run recomputes it";
   // A removed state or a PR marked ready: someone took it over, and it's theirs to decide.
   const stillDraftWithState = (pr: GitHubPullRequest) => pr.isDraft && stateOf(pr.body) !== undefined;
   try {
     const current = await github.getPullRequest({ repo, number });
     if (!isOwnPullRequest(rules, current, repo, base) || current.headSha !== head || !stillDraftWithState(current)) return left;
-    const comment = `${rules.tool} couldn't update this PR's description after pushing to it, so the description no longer matches its head. Closing it: a later run recomputes the change from the default branch.`;
+    const comment = `${rules.tool} couldn't confirm updating this PR's description after pushing to it, so the description may not match its head. Closing it: a later run recomputes the change from the default branch.`;
     return await closeIf(context, number, head, comment, stillDraftWithState) ? "closed the PR, and a later run recomputes it" : left;
   } catch (err) {
-    return `and couldn't finish closing it (${reasonOf(err)}): the commit is published but the body doesn't say so. Close the PR by hand if it's still open, and a later run recomputes it`;
+    return `and couldn't finish closing it (${reasonOf(err)}): the commit is published but the body may not say so. If it's still open and nobody took it over, close it by hand, and a later run recomputes it`;
   }
 }
 
