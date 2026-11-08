@@ -20,9 +20,6 @@
   only a lone upper bound followed by a closed interval (`< 3.0.0, >= 1.0.0 < 2.0.0`), still read as either of them.
   An empty range (`>= 1.0.0, < 1.0.0`) now reads like an inverted one, as the union of its two bounds, rather than as
   no version.
-
-### Fixed
-
 - secure-it cuts a blocked issue's detail to the room its record leaves, visibly, so a long detail beside a large record
   no longer keeps the issue's text from being updated. 0.11.1's cut at 10,000 characters didn't account for the record,
   and could make such an update fail. An issue still refuses the write, visibly, when even a 500-character detail doesn't fit.
