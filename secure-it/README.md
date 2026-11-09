@@ -286,7 +286,7 @@ finding can open one again after a complete assessment records it absent and it 
    moves are claimed as applied. npm may still induce transitive changes, and these still face `compare`. The next
    run reconsiders omitted fixes.
 
-   Advisories only the project's own repository publishes (unreviewed) plan no fix: such a version is reported, and
+   Advisories only the project's own repository publishes (unreviewed), malware-tagged ones aside, plan no fix: such a version is reported, and
    waits for a reviewed source; when a reviewed fix moves the package anyway, they're a note on that fix instead.
    They still rule candidates out, and the plan notes the candidates ruled out that way ("ruled out by …, not
    corroborated by the sources this decision used"); the sampling and the required-npm-dependency case are in

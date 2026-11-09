@@ -16,6 +16,9 @@
   more, then closes the PR while it's still the tool's draft at that head, and a later run recomputes it; the run
   reports an error either way. A `take-early` PR closed this way needs a new authorization while its versions are
   young. A `journal/` directory left under `dirs.state` is no longer read and can be deleted; a PR an earlier version left with its body behind its head stays alone until a person closes it.
+- An advisory only a dependency's own repository publishes no longer fails the gate on code that didn't change: a full
+  scan, and a PR that leaves that version as it was, warn about it instead, tagged as malware or not, and its issue
+  still opens. A PR that adds it still fails, and so does malware the PR moves to or brings to a new location.
 
 ### Fixed
 

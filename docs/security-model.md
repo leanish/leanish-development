@@ -58,8 +58,9 @@ The tools' policy fence prevents their proposals from editing that file.
 The gate also reads a dependency's own repository advisories, which name a fix days before GitHub reviews them into
 its database and OSV imports them. Whoever controls that repository and the package can publish an advisory and a
 "fixed" version together to get a young version proposed early. So such unreviewed advisories detect and rule
-versions out, but never trigger a fix nor justify a young version; one can still steer the choice by ruling a
-version out, which the plan records, and whatever comes early stays held. The rules:
+versions out, but never trigger a fix (malware-tagged ones aside) nor justify a young version; one can still steer the choice by ruling a
+version out, which the plan records, and whatever comes early stays held. Nor do they fail what didn't change, so
+publishing one can't turn a repository's default branch or its unrelated PRs red. The rules:
 [how each source counts](../core/gate/README.md#how-each-source-counts). Details:
 [the gate's cooldown](../core/gate/README.md#the-cooldown-young-versions-are-held-however-justified) and
 [secure-it's warning](../secure-it/README.md#the-cooldown-warning).
@@ -104,6 +105,15 @@ Both tools are in this tree: [`secure-it`](../secure-it) and [`bump-it`](../bump
   included, and secure-it trusts it whoever edited it. The versions stay the code's, but an edited record can stretch
   a writer's label to more early work than it granted, retire one of secure-it's draft PRs too early, or change what the issue's findings,
   closing and dismissal are taken to be ([known limitation](coverage-gaps.md#limits)).
+- **Opening an issue starts nothing.** secure-it tracks only issues the token's login opened, so someone who can only
+  open issues can't start, force or steer a dependency change.
+- **Opening a PR gets nothing merged.** The tools never merge, and adopting a PR doesn't bypass the repository's rules.
+  They take a PR as theirs only when its branch is in the repository itself, so a fork's PR never is, whatever its
+  branch name or text says. Someone with write access can push such a branch and copy the tool's branch name, marker,
+  state and plan, or push to one of the tool's PRs and edit its recorded head: the tools neither compare a PR's author
+  nor can tell who wrote that record. The tool then treats the PR as its own, so it can run the agent on that code,
+  in its sandbox and on the owner's allowance, and publish more commits. A tool push also changes who made the latest
+  push, which can change who satisfies a rule requiring approval of it. A PR stays under the name of whoever opened it.
 - **PR CI reads use Actions and commit statuses**, so no Checks API permission is required
   ([what review reads](../core/tool-runtime/README.md)).
 - **Tool-run Gradle builds never reuse a daemon.** Every inventory and tool-run wrapper task passes `--no-daemon` (in CI, exported base and working tree), so any daemon it needs is single-use and starts inside the current build's sandbox: a reused daemon keeps the permissions of the sandbox that started it. Agent commands may still start or reuse daemons in the shared `GRADLE_USER_HOME`; tool-run commands never connect to them. The flag is explicit; `GRADLE_OPTS`, `org.gradle.jvmargs` and repository properties are left alone.
