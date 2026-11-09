@@ -102,10 +102,6 @@ export function isTrustedPackage(trusted: TrustedPackages, pkg: PackageName): bo
 
 export function parseConfig(raw: unknown): Config {
   const where = "supply-chain.json";
-  if (isObject(raw) && Object.hasOwn(raw, "ownPackages")) {
-    const fix = Object.hasOwn(raw, "trustedPackages") ? "delete it" : "rename the field";
-    throw new Error(`${where}: ownPackages was renamed trustedPackages in 0.10.0, and 0.11.0 removed the old name; ${fix}`);
-  }
   const root = object(raw, where, ["npm", "gradle", "maven", "releaseAgeDays", "trustedPackages", "repositories", "compatibleLines"]);
   const npm = root["npm"] === undefined ? {} : object(root["npm"], `${where}: npm`, ["lockfiles", "registries"]);
   const gradle = root["gradle"] === undefined ? {} : object(root["gradle"], `${where}: gradle`, ["builds", "ignoreConfigurations"]);

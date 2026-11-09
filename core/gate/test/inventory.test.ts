@@ -44,15 +44,15 @@ describe("npm lockfile selection", () => {
   it.each([
     [{ gradle: { builds: ["app"] } }, ["app"]],
     [{ gradle: { builds: [] } }, []],
-  ])("keeps a base's own Gradle builds while it's still on the removed ownPackages (%j)", async (sources, builds) => {
-    const config = JSON.stringify({ ...sources, npm: { lockfiles: ["tools/package-lock.json"] }, ownPackages: { npm: { scopes: ["@a"] } } });
+  ])("reads a base's lockfiles and Gradle builds from its own settings (%j)", async (sources, builds) => {
+    const config = JSON.stringify({ ...sources, npm: { lockfiles: ["tools/package-lock.json"] } });
     const base = tree({ ".github/supply-chain.json": config, "settings.gradle.kts": "", "tools/package-lock.json": LOCK }, "base");
     expect(await baseSources(base, { lockfiles: ["package-lock.json"], gradleBuilds: [] }))
       .toEqual({ lockfiles: ["package-lock.json", "tools/package-lock.json"], gradleBuilds: builds });
   });
 
-  it("falls back to the defaults for a base on the removed ownPackages whose other settings don't parse", async () => {
-    const base = tree({ ".github/supply-chain.json": JSON.stringify({ gradle: { builds: "app" }, ownPackages: {} }), "settings.gradle.kts": "" }, "base");
+  it("falls back to the defaults for a base whose settings don't parse", async () => {
+    const base = tree({ ".github/supply-chain.json": JSON.stringify({ gradle: { builds: "app" } }), "settings.gradle.kts": "" }, "base");
     expect((await baseSources(base, { lockfiles: [], gradleBuilds: [] })).gradleBuilds).toEqual(["."]);
   });
 
