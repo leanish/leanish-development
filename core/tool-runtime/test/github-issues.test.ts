@@ -46,6 +46,76 @@ function issues(fetchFn: typeof fetch, env: Record<string, string | undefined> =
   return createGitHubIssues({ env, fetch: fetchFn });
 }
 
+/** A GraphQL answer about the latest closing of each issue: its closer's type, or null when GitHub recorded none. */
+function closings(closers: Record<number, string | null>): Response {
+  const repository = Object.fromEntries(Object.entries(closers).map(([number, closer]) => [
+    `issue${number}`,
+    { timelineItems: { nodes: [{ closer: closer === null ? null : { __typename: closer } }] } },
+  ]));
+  return json({ data: { repository } });
+}
+
+describe("closedByReference", () => {
+  it("makes no request for no numbers", async () => {
+    const { fetch, calls } = scripted();
+    expect(await issues(fetch).closedByReference({ repo: REPO, numbers: [] })).toEqual(new Set());
+    expect(calls).toEqual([]);
+  });
+
+  it("counts any closer GitHub names, whatever its type, and only a null closer as none", async () => {
+    const { fetch, calls } = scripted(closings({ 1: "PullRequest", 2: "Commit", 3: "ProjectV2", 4: null }));
+    expect(await issues(fetch).closedByReference({ repo: REPO, numbers: [1, 2, 3, 4] })).toEqual(new Set([1, 2, 3]));
+    expect(calls[0]!.url).toBe("https://api.github.com/graphql");
+    expect(calls[0]!.init.method).toBe("POST");
+    const body = JSON.parse(String(calls[0]!.init.body)) as { query: string; variables: unknown };
+    expect(body.variables).toEqual({ owner: "leanish", name: "widget" });
+    expect(body.query).toContain("issue4: issue(number: 4)");
+  });
+
+  it("asks about 100 issues per request, each number once", async () => {
+    const numbers = Array.from({ length: 101 }, (_, i) => i + 1);
+    const firstHundred = Object.fromEntries(numbers.slice(0, 100).map((number) => [number, null]));
+    const { fetch, calls } = scripted(closings(firstHundred), closings({ 101: "PullRequest" }));
+    expect(await issues(fetch).closedByReference({ repo: REPO, numbers: [...numbers, 1] })).toEqual(new Set([101]));
+    expect(calls).toHaveLength(2);
+    expect((JSON.parse(String(calls[1]!.init.body)) as { query: string }).query).toContain("issue101:");
+  });
+
+  it("fails on errors beside partial data, even for what the data does answer", async () => {
+    const partial = { data: { repository: { issue1: { timelineItems: { nodes: [{ closer: null }] } }, issue2: null } }, errors: [{ type: "NOT_FOUND" }] };
+    await expect(issues(scripted(json(partial)).fetch).closedByReference({ repo: REPO, numbers: [1, 2] })).rejects.toThrow(GitHubApiError);
+  });
+
+  it("fails when a later batch does, rather than answer for the earlier ones", async () => {
+    const numbers = Array.from({ length: 101 }, (_, i) => i + 1);
+    const firstHundred = Object.fromEntries(numbers.slice(0, 100).map((number) => [number, "PullRequest"]));
+    await expect(issues(scripted(closings(firstHundred), json({ errors: [{ type: "FORBIDDEN" }] })).fetch).closedByReference({ repo: REPO, numbers })).rejects.toThrow(GitHubApiError);
+  });
+
+  it("fails on a refusal", async () => {
+    await expect(issues(scripted(json({}, 403)).fetch).closedByReference({ repo: REPO, numbers: [1] })).rejects.toMatchObject({ status: 403 });
+  });
+
+  it.each<[string, unknown]>([
+    ["no data", {}],
+    ["no repository", { data: { repository: null } }],
+    ["a missing alias", { data: { repository: {} } }],
+    ["a null issue", { data: { repository: { issue1: null } } }],
+    ["no timeline", { data: { repository: { issue1: {} } } }],
+    ["no closing", { data: { repository: { issue1: { timelineItems: { nodes: [] } } } } }],
+    ["no closer field", { data: { repository: { issue1: { timelineItems: { nodes: [{}] } } } } }],
+    ["a closer without a type", { data: { repository: { issue1: { timelineItems: { nodes: [{ closer: {} }] } } } } }],
+  ])("fails on %s, so what it can't read never reads as a person's closing", async (_, answer) => {
+    await expect(issues(scripted(json(answer)).fetch).closedByReference({ repo: REPO, numbers: [1] })).rejects.toThrow(GitHubApiError);
+  });
+
+  it("refuses an invalid number before any request", async () => {
+    const { fetch, calls } = scripted();
+    await expect(issues(fetch).closedByReference({ repo: REPO, numbers: [0] })).rejects.toThrow("invalid issue number");
+    expect(calls).toEqual([]);
+  });
+});
+
 describe("createGitHubIssues", () => {
   it("lists a creator's issues across pages, dropping PRs, with the token and no redirects", async () => {
     const full = Array.from({ length: 100 }, (_, i) => apiIssue({ number: i + 1 }));

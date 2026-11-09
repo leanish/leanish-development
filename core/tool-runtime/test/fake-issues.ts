@@ -11,6 +11,8 @@ export class FakeIssues implements GitHubIssues {
   readonly calls: string[] = [];
   /** Operations GitHub refuses as forbidden (a PAT without Issues write). */
   readonly forbidden = new Set<string>();
+  /** The numbers each `closedByReference` call asked about. */
+  readonly closingQueries: number[][] = [];
   /**
    * As GitHub's filtered listing does, list issues as they were at the previous listing: a write shows up one listing
    * late (a new issue missing, an edited one with its old body). Reading an issue by its number is never late.
@@ -21,6 +23,7 @@ export class FakeIssues implements GitHubIssues {
    * one by any casing gives it that casing, and filters and removals match it ignoring case.
    */
   readonly repoLabels = new Map<string, string>();
+  #referenceClosed = new Set<number>();
   #listed = new Map<number, GitHubIssue>();
   #next = 1;
   #ids = 1000;
@@ -79,6 +82,12 @@ export class FakeIssues implements GitHubIssues {
     return this.events.get(number) ?? [];
   }
 
+  async closedByReference({ numbers }: { repo: string; numbers: ReadonlyArray<number> }): Promise<ReadonlySet<number>> {
+    this.#refuse("closedByReference");
+    this.closingQueries.push([...numbers]);
+    return new Set(numbers.filter((number) => this.#referenceClosed.has(number)));
+  }
+
   async removeLabel({ number, label }: { repo: string; number: number; label: string }): Promise<void> {
     this.#refuse("removeLabel");
     const issue = await this.getIssue({ repo: "", number });
@@ -109,11 +118,18 @@ export class FakeIssues implements GitHubIssues {
     this.#event(number, { event: "labeled", actor, label: this.#cased(label), createdAt: at });
   }
 
-  /** A person closing or reopening an issue. */
+  /** A person closing or reopening an issue. Only the latest closing counts: this one names no closer. */
   setState(number: number, state: "open" | "closed", actor = this.me, at?: string): void {
     const issue = this.issues.get(number)!;
     this.issues.set(number, { ...issue, state });
+    this.#referenceClosed.delete(number);
     this.#event(number, { event: state === "open" ? "reopened" : "closed", actor, ...(at === undefined ? {} : { createdAt: at }) });
+  }
+
+  /** GitHub closing an issue because a PR or commit referenced it, which it records as that closing's closer. */
+  closeByReference(number: number, actor = "owner", at?: string): void {
+    this.setState(number, "closed", actor, at);
+    this.#referenceClosed.add(number);
   }
 
   #event(number: number, event: { event: string; actor: string; label?: string; createdAt?: string }): void {

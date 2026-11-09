@@ -68,11 +68,19 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   opens an issue showing them all, and a decision's PR fixes the dismissed ones too. Closing an issue leaves an open
   ordinary PR for it to review, which may adapt it or mark it ready; close that PR by hand
   ([dismissing findings](../secure-it/README.md#dismissing-findings)).
-- **A closing reference can look like a dismissal (secure-it)**: a PR or commit that names a tracked issue after a
-  closing keyword (`Fixes #12`) can make GitHub close it once it reaches the default branch, and secure-it takes a
-  closing it didn't record for a dismissal, so findings still there can get no new issue or fix. Reopen the issue if
-  they should stay tracked. The gate's findings aren't affected. secure-it defuses the references it recognizes in what
-  it publishes, as best effort: that doesn't prove GitHub reads no other form as one, and it can't cover what people write.
+- **A closing GitHub names no closer for reads as a dismissal (secure-it)**: secure-it asks GitHub what closed each issue
+  it didn't close itself, and treats one with a PR, commit or other closer as no dismissal. That was checked for a squash-merged
+  PR (and a closing by hand, which names none). Merge and rebase methods, direct pushes, references from another repository
+  and fine-grained tokens on private repositories weren't: a kind that comes back with no closer reads as a dismissal, so
+  findings still there get no new issue or fix until the issue is reopened. The gate's findings aren't affected. secure-it
+  also defuses the references it recognizes in what it publishes, as best effort: that doesn't prove GitHub reads no other
+  form as one, and it can't cover what people write.
+- **A closing whose origin can't be read stops the issue sync (secure-it)**: any error reading what closed an issue fails
+  the sync, and the run then defers every fix for that repository, rather than take the closing for a dismissal or a
+  reference. A lasting one (a closer the token isn't allowed to read, say) lasts until the token can read it or a person
+  reopens the issue and closes it by hand.
+- **A closing reference can leave two PRs (secure-it)**: when a reference closes an issue, a finding still there opens a new
+  one, and a later eligible fix can publish a PR beside one a person pushed to, which the tool never reuses. Close whichever isn't wanted.
 - **Version-fix PRs from before issues (secure-it)**: review leaves a version-fix PR without a `Tracks` line to its
   owner for good, and nothing closes it. A run still matches one to a fix it plans by its kind and topic alone: it
   keeps it, refreshing only its plan notes, when the plan is unchanged, or redoes it, then with a `Tracks` line, when the plan changed. The

@@ -78,6 +78,12 @@ export interface GitHubIssues {
   listComments(args: { readonly repo: string; readonly number: number }): Promise<ReadonlyArray<GitHubIssueComment>>;
   createComment(args: { readonly repo: string; readonly number: number; readonly body: string }): Promise<GitHubIssueComment>;
   listEvents(args: { readonly repo: string; readonly number: number }): Promise<ReadonlyArray<GitHubIssueEvent>>;
+  /**
+   * Which of the closed issues `numbers` GitHub last closed through a reference: a PR or commit naming it after a closing
+   * keyword, or anything else it records as the closer. Every number must be a closed issue: one with no closing to read
+   * throws, since that can't establish how it was closed.
+   */
+  closedByReference(args: { readonly repo: string; readonly numbers: ReadonlyArray<number> }): Promise<ReadonlySet<number>>;
   /** Resolves when the label is gone, including when it already was. */
   removeLabel(args: { readonly repo: string; readonly number: number; readonly label: string }): Promise<void>;
   /**
@@ -211,6 +217,23 @@ export function createGitHubIssues(options: CreateGitHubIssuesOptions): GitHubIs
       checkRepo(operation, repo);
       checkNumber(operation, number);
       return paged(operation, `/repos/${repo}/issues/${number}/events`, (value) => toEvent(operation, value));
+    },
+    async closedByReference({ repo, numbers }) {
+      const operation = "closedByReference";
+      checkRepo(operation, repo);
+      for (const number of numbers) checkNumber(operation, number);
+      const [owner, name] = repo.split("/");
+      const wanted = [...new Set(numbers)];
+      const closed = new Set<number>();
+      for (let start = 0; start < wanted.length; start += PAGE_SIZE) {
+        const batch = wanted.slice(start, start + PAGE_SIZE);
+        const answer = record(operation, await ok(operation, "/graphql", { method: "POST", body: JSON.stringify({ query: closingsQuery(batch), variables: { owner, name } }) }));
+        // GraphQL answers a partial failure with HTTP 200, the failed part null and the reason here: read before any data.
+        if (answer["errors"] !== undefined) throw new GitHubApiError(operation, "GraphQL errors");
+        const repository = record(operation, record(operation, answer["data"])["repository"]);
+        for (const number of batch) if (hasCloser(operation, repository[`issue${number}`])) closed.add(number);
+      }
+      return closed;
     },
     async removeLabel({ repo, number, label }) {
       const operation = "removeLabel";
@@ -348,6 +371,26 @@ function toEvent(operation: string, value: unknown): GitHubIssueEvent {
   const name = record(operation, event["label"])["name"];
   if (typeof name !== "string") throw new GitHubApiError(operation, "malformed event label");
   return { ...base, label: name };
+}
+
+/** One aliased selection per issue. The numbers went through `checkNumber`, and the repository travels as variables. */
+function closingsQuery(numbers: ReadonlyArray<number>): string {
+  const issues = numbers.map((number) => `issue${number}: issue(number: ${number}) { ...latestClosing }`).join(" ");
+  return `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { ${issues} } }
+fragment latestClosing on Issue { timelineItems(itemTypes: [CLOSED_EVENT], last: 1) { nodes { ... on ClosedEvent { closer { __typename } } } } }`;
+}
+
+/**
+ * Whether an issue's latest closing names a closer, of any type (GitHub's union has more than PRs and commits). Only a
+ * `null` closer says none was recorded: a missing issue, closing or field says nothing, so it throws rather than read as one.
+ */
+function hasCloser(operation: string, issue: unknown): boolean {
+  const nodes = record(operation, record(operation, issue)["timelineItems"])["nodes"];
+  if (!Array.isArray(nodes) || nodes.length !== 1) throw new GitHubApiError(operation, "malformed closing history");
+  const closer = record(operation, nodes[0])["closer"];
+  if (closer === null) return false;
+  if (typeof record(operation, closer)["__typename"] !== "string") throw new GitHubApiError(operation, "malformed closer");
+  return true;
 }
 
 const PERMISSIONS: ReadonlySet<string> = new Set<RepositoryPermission>(["admin", "maintain", "write", "triage", "read", "none"]);

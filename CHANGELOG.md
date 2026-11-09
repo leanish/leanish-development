@@ -19,6 +19,10 @@
 - An advisory only a dependency's own repository publishes no longer fails the gate on code that didn't change: a full
   scan, and a PR that leaves that version as it was, warn about it instead, tagged as malware or not, and its issue
   still opens. A PR that adds it still fails, and so does malware the PR moves to or brings to a new location.
+- secure-it no longer takes an issue GitHub closed through a PR or commit reference (`Fixes #12`) for a person's
+  dismissal: it stays closed, and a finding still there opens a new issue, with no grant or attempt of the old one. A
+  closing GitHub names no closer for is still a dismissal. Each run makes one more GraphQL request per 100 issues it
+  didn't close itself; if that read fails, the issue sync fails, and the run defers that repository's fixes.
 - The gate no longer helps with the rename of `ownPackages` to `trustedPackages`: a config with the old name now fails
   as an unknown field, and a PR making the rename compares against the default Gradle builds, and the lockfiles head
   selects plus the default ones. A repository still on it should

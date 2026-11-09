@@ -523,6 +523,33 @@ describe("secure-it run", () => {
     expect(stateOf(pr.body)).toEqual({ head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 });
   });
 
+  it("keeps managing an ordinary PR after a reference closes its issue, under the new issue a finding still there opens", async () => {
+    const h = harness({ prs: [await vitePr()] });
+    await track(h);
+    const issues = h.context.issues as FakeIssues;
+    const original = trackedIssueOf(h.github.prs.get(7)!.body)!;
+    await secureIt(h.deps).run(h.context);
+    issues.closeByReference(original);
+    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "already-open", pullRequest: "https://github.com/leanish/widget/pull/7" });
+    const replacements = [...issues.issues.values()].filter((issue) => issue.number !== original && issue.state === "open");
+    expect(replacements).toHaveLength(1);
+    expect(recordOf(replacements[0]!.body)).toMatchObject({ attempts: [] });
+    expect(recordOf(replacements[0]!.body)!.grant).toBeUndefined();
+    expect([h.agentCalls, h.workspace.publications]).toEqual([[], []]);
+  });
+
+  it("publishes beside a human-pushed draft once a reference closed its issue, as for any fix that draft can't carry", async () => {
+    const h = harness({ prs: [await vitePr()] });
+    await track(h);
+    await secureIt(h.deps).run(h.context);
+    const original = trackedIssueOf(h.github.prs.get(7)!.body)!;
+    h.github.prs.set(7, { ...h.github.prs.get(7)!, headSha: PUSHED_SHA });
+    (h.context.issues as FakeIssues).closeByReference(original);
+    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "published" });
+    expect(h.workspace.publications).toHaveLength(1);
+    expect(h.github.prs.get(7)?.headSha).toBe(PUSHED_SHA);
+  });
+
   it("rewrites an open PR's notes when the same plan now explains itself differently, without a commit or the agent", async () => {
     const plan = await planFor([vite()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined });
     const stale = ownPr({ headRef: branchFor(RULES, new Date("2026-10-05T00:00:00Z"), plan.topic), body: withMarker(RULES, `Fixes security findings.\n\n${planSection({ ...plan, notes: ["an outdated reason"] })}`, { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
@@ -1082,11 +1109,14 @@ describe("secure-it run", () => {
       expect(h.agentCalls).toEqual([]);
     });
 
-    it("ends the attempt of an issue a person closed without rendering its text again", async () => {
+    it.each([
+      ["a person", (issues: FakeIssues) => issues.setState(1, "closed", "owner")],
+      ["a reference", (issues: FakeIssues) => issues.closeByReference(1)],
+    ])("ends the attempt of an issue %s closed without rendering its text again", async (_, close) => {
       const h = harness({ fixes: [young] });
       const branch = await granted(h, (id) => ({ ...started(() => "")(id), branch: `secure-it/2026-10-07-take-early-${id}`, pr: 7 }));
       h.github.prs.set(7, ownPr({ number: 7, headRef: branch, state: "closed", merged: false }));
-      issuesOf(h).setState(1, "closed", "owner");
+      close(issuesOf(h));
       const text = (body: string) => body.slice(0, body.indexOf("<!-- leanish:plan"));
       const before = text(issuesOf(h).issues.get(1)!.body);
       await flow(h).run(h.context);
@@ -2293,7 +2323,7 @@ describe("the cooldown hold", () => {
   /** The tool's issues as a run reads them (`syncIssues`'s tracked list), without an assessment. */
   async function syncedIssues(h: Harness) {
     const issues = h.context.issues as FakeIssues;
-    return [...issues.issues.values()].map((issue) => ({ number: issue.number, state: issue.state, body: issue.body, record: recordOf(issue.body)!, reopened: false, labels: issue.labels }));
+    return [...issues.issues.values()].map((issue) => ({ number: issue.number, state: issue.state, body: issue.body, record: recordOf(issue.body)!, reopened: false, closedByReference: false, labels: issue.labels }));
   }
 
   /**

@@ -109,7 +109,7 @@ async function readTracked(sync: IssueSync, login: string, written: ReadonlySet<
     const issue = await readWritten(sync, number);
     if (issue !== undefined && issue.author === login && hasLabel(issue.labels, ISSUE_LABEL)) fresh.push(issue);
   }
-  const tracked: Array<TrackedIssue & { readonly labels: ReadonlyArray<string> }> = [];
+  const read: Array<Omit<TrackedIssue, "closedByReference"> & { readonly labels: ReadonlyArray<string> }> = [];
   const unreadable: number[] = [];
   for (const issue of [...listed.filter((issue) => !written.has(issue.number)), ...fresh]) {
     const record = recordOf(issue.body);
@@ -120,9 +120,13 @@ async function readTracked(sync: IssueSync, login: string, written: ReadonlySet<
     }
     // A reopening only matters where the tool recorded a closing: read the events there alone.
     const reopened = record.pendingClose !== undefined && await reopenedAfterClosing(sync, login, issue.number, record.pendingClose);
-    tracked.push({ number: issue.number, state: issue.state, body: issue.body, record, reopened, labels: issue.labels });
+    read.push({ number: issue.number, state: issue.state, body: issue.body, record, reopened, labels: issue.labels });
   }
-  return { tracked, unreadable };
+  // Only a closing the tool didn't record can be a dismissal, so only those need telling apart from a reference. A failure
+  // fails the sync: a closing whose origin can't be read is taken for neither.
+  const undecided = read.filter((issue) => issue.state === "closed" && (issue.record.pendingClose === undefined || issue.reopened)).map((issue) => issue.number);
+  const byReference = undecided.length === 0 ? new Set<number>() : await sync.issues.closedByReference({ repo: sync.repo, numbers: undecided });
+  return { tracked: read.map((issue) => ({ ...issue, closedByReference: byReference.has(issue.number) })), unreadable };
 }
 
 /**

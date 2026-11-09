@@ -38,7 +38,7 @@ function converge(assessment: Assessment, issues: TrackedIssue[] = [], rounds = 
     operations.push([...result.operations]);
     for (const operation of result.operations) {
       if (operation.kind === "create") {
-        state.push({ number: next++, state: "open", body: operation.body, record: recordOf(operation.body)!, reopened: false });
+        state.push({ number: next++, state: "open", body: operation.body, record: recordOf(operation.body)!, reopened: false, closedByReference: false });
         continue;
       }
       const issue = state.find((tracked) => tracked.number === operation.number)!;
@@ -120,6 +120,47 @@ describe("reconcile", () => {
     expect(first.state).toBe("closed");
     expect(first.record.pendingClose?.reason).toBe("superseded");
     expect(first.record.absences).toEqual([]);
+  });
+
+  describe("an issue a reference closed", () => {
+    const subject = () => decision([move("lib")], [finding("lib", ["GHSA-1"])]);
+    const closedBy = (issue: TrackedIssue): TrackedIssue => ({ ...issue, state: "closed", closedByReference: true });
+
+    it("isn't a dismissal: a finding still there opens a new issue, and the closed one stays closed", () => {
+      const [issue] = converge(assessed([subject()])).issues;
+      const result = converge(assessed([subject()]), [closedBy(issue!)]);
+      expect(result.issues.map((tracked) => [tracked.number, tracked.state])).toEqual([[1, "closed"], [2, "open"]]);
+    });
+
+    it("carries no grant or attempt over to the new issue", () => {
+      const [issue] = converge(assessed([subject()])).issues;
+      const grant = { labelEventId: 1, reasonCommentId: 2, actor: "owner", at: "2026-11-03T00:00:00.000Z", young: [{ ecosystem: "npm" as const, name: "lib", version: "1.0.1" }] };
+      const attempt = { id: "attempt", grantEventId: 1, branch: "secure-it/early", startedAt: "2026-11-03T00:00:00.000Z" };
+      const granted: TrackedIssue = closedBy({ ...issue!, record: { ...issue!.record, grant, attempts: [attempt] } });
+      const fresh = converge(assessed([subject()]), [granted]).issues.find((tracked) => tracked.number === 2)!;
+      expect(fresh.record.grant).toBeUndefined();
+      expect(fresh.record.attempts).toEqual([]);
+    });
+
+    it("still learns its findings' aliases and absences, like any closed issue", () => {
+      const [issue] = converge(assessed([subject()])).issues;
+      const gone = converge(assessed([], true, LATER), [closedBy(issue!)]);
+      expect(gone.operations.flat().map((operation) => operation.kind)).toEqual(["update"]);
+      expect(gone.issues[0]!.record.absences).toEqual([{ finding: { ecosystem: "npm", name: "lib", ids: ["GHSA-1"] }, at: LATER }]);
+    });
+
+    it("isn't a dismissal either when a person reopened it after the tool's closing and a reference closed it again", () => {
+      const start = converge(assessed([subject()])).issues;
+      const superseded = converge(assessed([decision([move("lib", "1.0.2")], [finding("lib", ["GHSA-1"])])]), start).issues;
+      const closedAgain = superseded.map((issue) => (issue.number === 1 ? { ...issue, reopened: true, closedByReference: true } : issue));
+      const back = converge(assessed([subject()]), closedAgain);
+      expect(open(back.issues).map((issue) => issue.number)).toEqual([3]);
+    });
+
+    it("leaves a closing without a named closer a dismissal", () => {
+      const [issue] = converge(assessed([subject()])).issues;
+      expect(reconcile(assessed([subject()]), [{ ...issue!, state: "closed", closedByReference: false }], ISSUE_WRITER).operations).toEqual([]);
+    });
   });
 
   it("keeps a dismissed finding's ended episode ended once it's reported only by an alias it gained after it returned", () => {

@@ -31,9 +31,14 @@ export interface TrackedIssue {
   /**
    * A person reopened it after the tool closed it (a `reopened` event after the tool's closing). Open, it's theirs:
    * left open but retired, never the current instance of its subject, so nothing it held (a grant) comes back. Closed
-   * again, that closing was theirs: a dismissal.
+   * again, that closing wasn't the tool's: a dismissal, unless `closedByReference` says a reference did it.
    */
   readonly reopened: boolean;
+  /**
+   * GitHub closed it last because a PR or commit referenced it, a closing the tool didn't record. Nobody decided to
+   * accept its findings then, so it's no dismissal. Read only for an issue that would otherwise be one.
+   */
+  readonly closedByReference: boolean;
   /** Its labels, where known: a duplicate a person labelled `take-early` is theirs to settle. */
   readonly labels?: ReadonlyArray<string>;
 }
@@ -91,16 +96,18 @@ export function recordShows(record: IssueRecord, subject: SubjectAssessment): bo
 
 /**
  * How a tracked issue stands: the subject's current instance, a closing still to finish, closed by the tool, reopened by
- * a person after that (retired, left alone), or dismissed.
+ * a person after that (retired, left alone), closed by a reference (it holds nothing back: a finding still there gets a
+ * new issue, with no grant or attempt of this one), or dismissed.
  */
-type Standing = "current" | "closing" | "closed-by-tool" | "reopened" | "dismissed";
+type Standing = "current" | "closing" | "closed-by-tool" | "reopened" | "closed-by-reference" | "dismissed";
 
 function standingOf(issue: TrackedIssue): Standing {
   if (issue.state === "open") {
     if (issue.record.pendingClose === undefined) return "current";
     return issue.reopened ? "reopened" : "closing";
   }
-  return issue.record.pendingClose === undefined || issue.reopened ? "dismissed" : "closed-by-tool";
+  if (issue.record.pendingClose !== undefined && !issue.reopened) return "closed-by-tool";
+  return issue.closedByReference ? "closed-by-reference" : "dismissed";
 }
 
 /**
@@ -165,7 +172,7 @@ export function reconcile(assessment: Assessment, issues: ReadonlyArray<TrackedI
       const standing = standingOf(issue);
       const id = subjectId(issue.record.subject);
       const record = recordOf(issue);
-      if (standing === "closed-by-tool" || standing === "dismissed" || standing === "reopened") {
+      if (standing === "closed-by-tool" || standing === "closed-by-reference" || standing === "dismissed" || standing === "reopened") {
         if (record !== issue.record) operations.push({ kind: "update", number: issue.number, body: writer.withRecord(issue.body, record) });
         // Its pending closing stays recorded: no grant on it ever counts again (`grantOf`), and its subject has a new issue.
         if (standing === "reopened") notes.push(`#${issue.number}: a person reopened it after secure-it closed it; it stays open, retired`);
