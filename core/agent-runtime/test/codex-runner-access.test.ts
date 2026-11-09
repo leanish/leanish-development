@@ -445,7 +445,7 @@ describe("CodexRunner login reuse", () => {
     const loginHome = await loginHomeWith('{"token":"original"}');
     const { bin } = await stubCodex(() => `${REPLACE_LOGIN}; sleep 5`);
 
-    const error = await new CodexRunner({ bin, suppressFlags: [], loginHome, timeoutMs: 1000 })
+    const error = await new CodexRunner({ bin, suppressFlags: [], loginHome, timeoutMs: 3000 })
       .run(invocation([]))
       .catch((err) => err);
     expect((error as Error).message).toMatch(/replaced the linked login/);

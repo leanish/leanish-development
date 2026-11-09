@@ -481,8 +481,9 @@ describe("ClaudeCodeRunner (against a stub binary)", () => {
 
   it("cleans up its staged dir and its empty working directory after a timeout", async () => {
     const stagingParentDir = await mkdtemp(join(tmpdir(), "claude-runner-staging-"));
-    const { bin, record } = await makeStub([result(ANSWER)], { script: "sleep 5" });
-    await expect(new ClaudeCodeRunner({ confinement: "sandbox", bin, stagingParentDir, timeoutMs: 200 }).run(call())).rejects.toThrowError(/did not return within 200ms/);
+    const { bin, record } = await makeStub([result(ANSWER)], { script: "sleep 30" });
+    // Long enough for the stub's shell to start and write `record` on a loaded machine: killed sooner, there's no record to read.
+    await expect(new ClaudeCodeRunner({ confinement: "sandbox", bin, stagingParentDir, timeoutMs: 3000 }).run(call())).rejects.toThrowError(/did not return within 3000ms/);
     expect(await readdir(stagingParentDir)).toEqual([]);
     const cwd = /^CWD=(.*)$/m.exec(await readFile(record, "utf8"))![1]!;
     expect(existsSync(cwd)).toBe(false);
