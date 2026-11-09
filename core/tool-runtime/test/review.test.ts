@@ -247,7 +247,7 @@ describe("reviewOpenPullRequests", () => {
       github.checks = RED;
       const calls: string[] = [];
       const entries = await reviewOpenPullRequests(context(github), steps(calls));
-      expect(entries[0]).toMatchObject({ outcome: "left-alone", detail: "its body has no state the tool signed: someone made or rewrote it" });
+      expect(entries[0]).toMatchObject({ outcome: "left-alone", detail: "its body has no valid state for the configured signing key: someone made or rewrote it, or the key changed" });
       expect(calls).toEqual([]);
       expect(github.calls.filter((call) => !call.startsWith("listOpenPullRequests"))).toEqual([]);
     }
@@ -256,7 +256,7 @@ describe("reviewOpenPullRequests", () => {
   it("leaves a PR whose state someone removed alone", async () => {
     const github = new FakeGitHub(ownPr({ headSha: PUSHED_SHA, body: `Rewritten.\n\n${RULES.marker}\n` }));
     const entries = await reviewOpenPullRequests(context(github, new InMemoryWorkspace(), workingCopy()), steps());
-    expect(entries[0]).toMatchObject({ outcome: "left-alone", detail: "its body has no state the tool signed: someone made or rewrote it" });
+    expect(entries[0]).toMatchObject({ outcome: "left-alone", detail: "its body has no valid state for the configured signing key: someone made or rewrote it, or the key changed" });
     expect(github.calls.filter((call) => !call.startsWith("listOpenPullRequests"))).toEqual([]);
   });
 

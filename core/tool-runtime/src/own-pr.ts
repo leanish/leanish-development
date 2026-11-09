@@ -80,9 +80,10 @@ function isOwnBranch(rules: OwnPullRequests, branch: string): boolean {
 }
 
 /**
- * A PR the tool may update, mark ready or close: an open PR from one of its
- * dated branches of `repo` itself (not a fork) into `base`, carrying the
- * marker or the label, so a PR whose labelling failed is still recognised.
+ * A candidate for the tool's own PR: an open PR from one of its dated branches
+ * of `repo` itself (not a fork) into `base`, carrying the marker or the label,
+ * so a PR whose labelling failed is still recognised. Being a candidate doesn't
+ * make it safe to adopt: that takes a state the tool signed for its head.
  */
 export function isOwnPullRequest(rules: OwnPullRequests, pr: GitHubPullRequest, repo: string, base: string): boolean {
   return (

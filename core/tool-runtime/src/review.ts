@@ -131,7 +131,7 @@ async function reviewOne(context: ReviewContext, steps: ReviewSteps, pr: GitHubP
   const result = (outcome: ReviewOutcome, detail?: string): ReviewEntry => ({ number: pr.number, url: pr.url, outcome, detail });
   const publication: PublicationContext = { ...context };
   const ownership = inspectOwnership(publication, pr);
-  if (ownership.kind === "untracked") return result("left-alone", "its body has no state the tool signed: someone made or rewrote it");
+  if (ownership.kind === "untracked") return result("left-alone", "its body has no valid state for the configured signing key: someone made or rewrote it, or the key changed");
   if (ownership.kind === "pushed-by-someone-else") {
     return result("left-alone", `someone else pushed (${pr.headSha.slice(0, 12)}, the tool published ${ownership.recordedHead.slice(0, 12)}), or the tool stopped right after pushing; in that case close it, and a later run recomputes it`);
   }
