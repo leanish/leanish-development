@@ -69,12 +69,14 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   ordinary PR for it to review, which may adapt it or mark it ready; close that PR by hand
   ([dismissing findings](../secure-it/README.md#dismissing-findings)).
 - **A closing GitHub names no closer for reads as a dismissal (secure-it)**: secure-it asks GitHub what closed each issue
-  it didn't close itself, and treats one with a PR, commit or other closer as no dismissal. That was checked for a squash-merged
-  PR (and a closing by hand, which names none). Merge and rebase methods, direct pushes, references from another repository
-  and fine-grained tokens on private repositories weren't: a kind that comes back with no closer reads as a dismissal, so
-  findings still there get no new issue or fix until the issue is reopened. The gate's findings aren't affected. secure-it
-  also defuses the references it recognizes in what it publishes, as best effort: that doesn't prove GitHub reads no other
-  form as one, and it can't cover what people write.
+  it didn't close itself, and treats one with a PR, commit or other closer as no dismissal. Checked on a private repository
+  with a classic-scope token: a PR merged by squash, merge commit or rebase, a commit reaching the default branch (rebased in
+  or pushed directly) and a PR from another private repository of the same owner all name one. A closing by hand or through
+  the API names none, whoever or whatever did it, an automation closing stale issues included: it reads as a dismissal, so
+  findings still there get no new issue or fix until the issue is reopened. Not checked: a token that can't read the closer,
+  such as a fine-grained one limited to the issue's repository. The gate's findings aren't affected. secure-it also defuses
+  the references it recognizes in what it publishes, as best effort: that doesn't prove GitHub reads no other form as one,
+  and it can't cover what people write.
 - **A closing whose origin can't be read stops the issue sync (secure-it)**: any error reading what closed an issue fails
   the sync, and the run then defers every fix for that repository, rather than take the closing for a dismissal or a
   reference. A lasting one (a closer the token isn't allowed to read, say) lasts until the token can read it or a person

@@ -80,7 +80,8 @@ An issue GitHub closed because a PR or commit referenced it (`Fixes #12`) isn't 
 its findings. It stays closed, and a finding still there opens a new issue, with no `take-early` grant or attempt of the
 old one. An open PR for that decision carries on as above, except one a person pushed to: the run leaves it alone and
 may open another beside it. To dismiss findings after such a closing, reopen the issue and close it by hand.
-GitHub doesn't name a closer for [every closing](../docs/coverage-gaps.md#limits); one without a closer is still a dismissal.
+A closing by hand or through the API names no closer and is still a dismissal
+([known limitation](../docs/coverage-gaps.md#limits)).
 
 ### Taking a fix early: `take-early`
 
