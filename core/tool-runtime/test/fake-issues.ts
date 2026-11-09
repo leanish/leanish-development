@@ -11,7 +11,7 @@ export class FakeIssues implements GitHubIssues {
   readonly calls: string[] = [];
   /** Operations GitHub refuses as forbidden (a PAT without Issues write). */
   readonly forbidden = new Set<string>();
-  /** The numbers each `closedByReference` call asked about. */
+  /** The numbers each `closedByPerson` call asked about. */
   readonly closingQueries: number[][] = [];
   /**
    * As GitHub's filtered listing does, list issues as they were at the previous listing: a write shows up one listing
@@ -23,7 +23,8 @@ export class FakeIssues implements GitHubIssues {
    * one by any casing gives it that casing, and filters and removals match it ignoring case.
    */
   readonly repoLabels = new Map<string, string>();
-  #referenceClosed = new Set<number>();
+  /** Issues whose latest closing wasn't a person's. Any other closing reads as one, as the tool's own does on GitHub. */
+  #closedByNoPerson = new Set<number>();
   #listed = new Map<number, GitHubIssue>();
   #next = 1;
   #ids = 1000;
@@ -64,6 +65,7 @@ export class FakeIssues implements GitHubIssues {
       ...(args.state === undefined ? {} : { state: args.state, stateReason: args.stateReason ?? null }),
     };
     this.issues.set(args.number, updated);
+    if (args.state !== undefined) this.#closedByNoPerson.delete(args.number);
     if (args.state === "closed" && issue.state === "open") this.#event(args.number, { event: "closed", actor: this.me });
     this.calls.push(`updateIssue #${args.number}${args.state === undefined ? "" : ` ${args.state}`}`);
     return updated;
@@ -82,10 +84,10 @@ export class FakeIssues implements GitHubIssues {
     return this.events.get(number) ?? [];
   }
 
-  async closedByReference({ numbers }: { repo: string; numbers: ReadonlyArray<number> }): Promise<ReadonlySet<number>> {
-    this.#refuse("closedByReference");
+  async closedByPerson({ numbers }: { repo: string; numbers: ReadonlyArray<number> }): Promise<ReadonlySet<number>> {
+    this.#refuse("closedByPerson");
     this.closingQueries.push([...numbers]);
-    return new Set(numbers.filter((number) => this.#referenceClosed.has(number)));
+    return new Set(numbers.filter((number) => !this.#closedByNoPerson.has(number)));
   }
 
   async removeLabel({ number, label }: { repo: string; number: number; label: string }): Promise<void> {
@@ -122,14 +124,20 @@ export class FakeIssues implements GitHubIssues {
   setState(number: number, state: "open" | "closed", actor = this.me, at?: string): void {
     const issue = this.issues.get(number)!;
     this.issues.set(number, { ...issue, state });
-    this.#referenceClosed.delete(number);
+    this.#closedByNoPerson.delete(number);
     this.#event(number, { event: state === "open" ? "reopened" : "closed", actor, ...(at === undefined ? {} : { createdAt: at }) });
   }
 
   /** GitHub closing an issue because a PR or commit referenced it, which it records as that closing's closer. */
   closeByReference(number: number, actor = "owner", at?: string): void {
     this.setState(number, "closed", actor, at);
-    this.#referenceClosed.add(number);
+    this.#closedByNoPerson.add(number);
+  }
+
+  /** An automation closing an issue through its own bot identity, not a person's token. */
+  closeByBot(number: number, at?: string): void {
+    this.setState(number, "closed", "github-actions[bot]", at);
+    this.#closedByNoPerson.add(number);
   }
 
   #event(number: number, event: { event: string; actor: string; label?: string; createdAt?: string }): void {

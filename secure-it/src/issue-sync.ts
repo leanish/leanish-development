@@ -109,7 +109,7 @@ async function readTracked(sync: IssueSync, login: string, written: ReadonlySet<
     const issue = await readWritten(sync, number);
     if (issue !== undefined && issue.author === login && hasLabel(issue.labels, ISSUE_LABEL)) fresh.push(issue);
   }
-  const read: Array<Omit<TrackedIssue, "closedByReference"> & { readonly labels: ReadonlyArray<string> }> = [];
+  const read: Array<Omit<TrackedIssue, "closedByPerson"> & { readonly labels: ReadonlyArray<string> }> = [];
   const unreadable: number[] = [];
   for (const issue of [...listed.filter((issue) => !written.has(issue.number)), ...fresh]) {
     const record = recordOf(issue.body);
@@ -122,11 +122,11 @@ async function readTracked(sync: IssueSync, login: string, written: ReadonlySet<
     const reopened = record.pendingClose !== undefined && await reopenedAfterClosing(sync, login, issue.number, record.pendingClose);
     read.push({ number: issue.number, state: issue.state, body: issue.body, record, reopened, labels: issue.labels });
   }
-  // Only a closing the tool didn't record can be a dismissal, so only those need telling apart from a reference. A failure
-  // fails the sync: a closing whose origin can't be read is taken for neither.
+  // Only a closing the tool didn't record can be a dismissal, so only those need asking whether a person made them. A
+  // failure fails the sync: a closing whose origin can't be read is taken neither for a person's nor for anything else.
   const undecided = read.filter((issue) => issue.state === "closed" && (issue.record.pendingClose === undefined || issue.reopened)).map((issue) => issue.number);
-  const byReference = undecided.length === 0 ? new Set<number>() : await sync.issues.closedByReference({ repo: sync.repo, numbers: undecided });
-  return { tracked: read.map((issue) => ({ ...issue, closedByReference: byReference.has(issue.number) })), unreadable };
+  const byPerson = undecided.length === 0 ? new Set<number>() : await sync.issues.closedByPerson({ repo: sync.repo, numbers: undecided });
+  return { tracked: read.map((issue) => ({ ...issue, closedByPerson: byPerson.has(issue.number) })), unreadable };
 }
 
 /**

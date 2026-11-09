@@ -2324,7 +2324,7 @@ describe("the cooldown hold", () => {
   /** The tool's issues as a run reads them (`syncIssues`'s tracked list), without an assessment. */
   async function syncedIssues(h: Harness) {
     const issues = h.context.issues as FakeIssues;
-    return [...issues.issues.values()].map((issue) => ({ number: issue.number, state: issue.state, body: issue.body, record: recordOf(issue.body)!, reopened: false, closedByReference: false, labels: issue.labels }));
+    return [...issues.issues.values()].map((issue) => ({ number: issue.number, state: issue.state, body: issue.body, record: recordOf(issue.body)!, reopened: false, closedByPerson: false, labels: issue.labels }));
   }
 
   /**

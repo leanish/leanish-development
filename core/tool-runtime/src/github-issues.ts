@@ -79,11 +79,12 @@ export interface GitHubIssues {
   createComment(args: { readonly repo: string; readonly number: number; readonly body: string }): Promise<GitHubIssueComment>;
   listEvents(args: { readonly repo: string; readonly number: number }): Promise<ReadonlyArray<GitHubIssueEvent>>;
   /**
-   * Which of the closed issues `numbers` GitHub last closed through a reference: a PR or commit naming it after a closing
-   * keyword, or anything else it records as the closer. Every number must be a closed issue: one with no closing to read
-   * throws, since that can't establish how it was closed.
+   * Which of the closed issues `numbers` a person last closed: GitHub records a user account as the actor and no closer.
+   * The actor alone proves nothing, since a merged PR's closing shows whoever merged it. A PR, a commit, a bot or a deleted
+   * account earns no place here. Every number must be a closed issue: one with no closing to read throws, since that can't
+   * establish how it was closed.
    */
-  closedByReference(args: { readonly repo: string; readonly numbers: ReadonlyArray<number> }): Promise<ReadonlySet<number>>;
+  closedByPerson(args: { readonly repo: string; readonly numbers: ReadonlyArray<number> }): Promise<ReadonlySet<number>>;
   /** Resolves when the label is gone, including when it already was. */
   removeLabel(args: { readonly repo: string; readonly number: number; readonly label: string }): Promise<void>;
   /**
@@ -218,8 +219,8 @@ export function createGitHubIssues(options: CreateGitHubIssuesOptions): GitHubIs
       checkNumber(operation, number);
       return paged(operation, `/repos/${repo}/issues/${number}/events`, (value) => toEvent(operation, value));
     },
-    async closedByReference({ repo, numbers }) {
-      const operation = "closedByReference";
+    async closedByPerson({ repo, numbers }) {
+      const operation = "closedByPerson";
       checkRepo(operation, repo);
       for (const number of numbers) checkNumber(operation, number);
       const [owner, name] = repo.split("/");
@@ -229,9 +230,10 @@ export function createGitHubIssues(options: CreateGitHubIssuesOptions): GitHubIs
         const batch = wanted.slice(start, start + PAGE_SIZE);
         const answer = record(operation, await ok(operation, "/graphql", { method: "POST", body: JSON.stringify({ query: closingsQuery(batch), variables: { owner, name } }) }));
         // GraphQL answers a partial failure with HTTP 200, the failed part null and the reason here: read before any data.
+        // A closer the token can't read comes back null, exactly as a person's closing would, with only this to tell them apart.
         if (answer["errors"] !== undefined) throw new GitHubApiError(operation, graphQLReason(answer["errors"]));
         const repository = record(operation, record(operation, answer["data"])["repository"]);
-        for (const number of batch) if (hasCloser(operation, repository[`issue${number}`])) closed.add(number);
+        for (const number of batch) if (lastClosedByPerson(operation, repository[`issue${number}`])) closed.add(number);
       }
       return closed;
     },
@@ -377,7 +379,7 @@ function toEvent(operation: string, value: unknown): GitHubIssueEvent {
 function closingsQuery(numbers: ReadonlyArray<number>): string {
   const issues = numbers.map((number) => `issue${number}: issue(number: ${number}) { ...latestClosing }`).join(" ");
   return `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { ${issues} } }
-fragment latestClosing on Issue { timelineItems(itemTypes: [CLOSED_EVENT], last: 1) { nodes { ... on ClosedEvent { closer { __typename } } } } }`;
+fragment latestClosing on Issue { timelineItems(itemTypes: [CLOSED_EVENT], last: 1) { nodes { ... on ClosedEvent { actor { __typename } closer { __typename } } } } }`;
 }
 
 /**
@@ -394,16 +396,25 @@ function graphQLReason(errors: unknown): string {
 }
 
 /**
- * Whether an issue's latest closing names a closer, of any type (GitHub's union has more than PRs and commits). Only a
- * `null` closer says none was recorded: a missing issue, closing or field says nothing, so it throws rather than read as one.
+ * Whether an issue's latest closing was a person's: no closer, of any type (GitHub's union has more than PRs and commits),
+ * and a user account as its actor. Both fields are checked whatever either says: a missing issue, closing, field or type
+ * says nothing, so it throws rather than read as an answer.
  */
-function hasCloser(operation: string, issue: unknown): boolean {
+function lastClosedByPerson(operation: string, issue: unknown): boolean {
   const nodes = record(operation, record(operation, issue)["timelineItems"])["nodes"];
   if (!Array.isArray(nodes) || nodes.length !== 1) throw new GitHubApiError(operation, "malformed closing history");
-  const closer = record(operation, nodes[0])["closer"];
-  if (closer === null) return false;
-  if (typeof record(operation, closer)["__typename"] !== "string") throw new GitHubApiError(operation, "malformed closer");
-  return true;
+  const closing = record(operation, nodes[0]);
+  const closer = typeOf(operation, closing["closer"], "malformed closer");
+  const actor = typeOf(operation, closing["actor"], "malformed actor");
+  return closer === null && actor === "User";
+}
+
+/** A GraphQL object's type, or null where GitHub sent an explicit null. */
+function typeOf(operation: string, value: unknown, malformed: string): string | null {
+  if (value === null) return null;
+  const type = record(operation, value)["__typename"];
+  if (typeof type !== "string") throw new GitHubApiError(operation, malformed);
+  return type;
 }
 
 const PERMISSIONS: ReadonlySet<string> = new Set<RepositoryPermission>(["admin", "maintain", "write", "triage", "read", "none"]);

@@ -223,7 +223,7 @@ describe("syncIssues", () => {
     expect(issues.issues.get(1)!.state).toBe("closed");
   });
 
-  describe("an issue a reference closed", () => {
+  describe("an issue no person closed", () => {
     const openNumbers = (issues: FakeIssues) => [...issues.issues.values()].filter((issue) => issue.state === "open").map((issue) => issue.number);
 
     it("opens a new issue for findings still there, and leaves the closed one closed", async () => {
@@ -255,6 +255,42 @@ describe("syncIssues", () => {
       expect(openNumbers(issues)).toEqual([2]);
     });
 
+    it("doesn't take a bot's closing for a dismissal", async () => {
+      const issues = new FakeIssues();
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      issues.closeByBot(1);
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      expect(openNumbers(issues)).toEqual([2]);
+    });
+
+    it("goes by the latest closing: a bot's after a person's doesn't dismiss", async () => {
+      const issues = new FakeIssues();
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      issues.setState(1, "closed", "owner");
+      issues.setState(1, "open", "owner");
+      issues.closeByBot(1);
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      expect(openNumbers(issues)).toEqual([2]);
+    });
+
+    it("goes by the latest closing: a person's after a bot's dismisses", async () => {
+      const issues = new FakeIssues();
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      issues.closeByBot(1);
+      issues.setState(1, "open", "owner");
+      issues.setState(1, "closed", "owner");
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      expect(openNumbers(issues)).toEqual([]);
+    });
+
+    it("takes a closing by hand with the tool's own login for a dismissal when the tool recorded no closing", async () => {
+      const issues = new FakeIssues();
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      issues.setState(1, "closed", issues.me);
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      expect(openNumbers(issues)).toEqual([]);
+    });
+
     it("doesn't dismiss an issue a person reopened after the tool closed it, when a reference closes it again", async () => {
       const issues = new FakeIssues();
       await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
@@ -282,7 +318,7 @@ describe("syncIssues", () => {
       const issues = new FakeIssues();
       await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
       issues.closeByReference(1);
-      issues.forbidden.add("closedByReference");
+      issues.forbidden.add("closedByPerson");
       issues.calls.length = 0;
       await expect(syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]))).rejects.toThrow(GitHubApiError);
       expect(issues.calls).toEqual([]);

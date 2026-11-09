@@ -19,10 +19,11 @@
 - An advisory only a dependency's own repository publishes no longer fails the gate on code that didn't change: a full
   scan, and a PR that leaves that version as it was, warn about it instead, tagged as malware or not, and its issue
   still opens. A PR that adds it still fails, and so does malware the PR moves to or brings to a new location.
-- secure-it no longer takes an issue GitHub closed through a PR or commit reference (`Fixes #12`) for a person's
-  dismissal: it stays closed, and a finding still there opens a new issue, with no grant or attempt of the old one. A
-  closing GitHub names no closer for is still a dismissal. Each round of the issue sync makes one more GraphQL request
-  per 100 issues it didn't close itself; if that read fails, the sync fails, and the run defers that repository's fixes.
+- secure-it takes only a person's closing for a dismissal: GitHub must record a user account as its actor and no closer.
+  An issue closed through a PR or commit reference (`Fixes #12`), by a bot or by an account since deleted stays closed,
+  and a finding still there opens a new issue, with no grant or attempt of the old one; that includes findings dismissed
+  earlier by an account since deleted. Each round of the issue sync makes one more GraphQL request per 100 issues it
+  didn't close itself; if that read fails, the sync fails, and the run defers that repository's fixes.
 - The tools sign the state line in their PRs with a per-tool key kept in the Keychain (`secrets.signing`, default
   `leanish-<tool>-signing`; 64 hexadecimal characters, `openssl rand -hex 32`), so someone with write access can't get a
   commit taken as the tool's by copying or editing that line. Both tools refuse to start without the key; reuse the same
