@@ -635,7 +635,7 @@ Known limitations, for 0.7.6:
 - After rolling back to v0.7.4, its review ticks act on PRs with a compressed plan block; remove duplicate blocks
   before rolling back (CHANGELOG).
 - A hand-typed malformed `:br` block before the plan hides the plan.
-- The early body check doesn't count the state markers (about 160 characters) added at publication, as before.
+- The early body check doesn't count the state markers (about 210 characters) added at publication, as before.
 - secure-it's agent can replace a planned Gradle floor with a parent move. The gate refuses it, so the fix waits for
   the parent to age (kryptovero, above).
 - The `git` guard doesn't recognise a push under an alias or one whose `receivePack` runs another command.

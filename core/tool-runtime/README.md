@@ -15,7 +15,7 @@ package is the code around them. Setup and operation are in [Adopting the tools]
     repository itself and carries its body marker (`<!-- leanish:<tool> -->`) or its label (`leanish:<tool>`).
     Publications and updates add the label.
   - **State:** the body records the head the tool pushed, the base it computed against, and how many times the agent
-    adapted it.
+    adapted it, signed with a per-tool key only the tool's process holds. The signature covers that line and nothing else.
   - **Race checks:** every write re-reads the PR first and stops unless it's still the tool's, open, and at the
     expected head.
   - **Published text** (`publication-text.ts`): the title, body and commit message keep the machine out. A path in the
@@ -31,8 +31,8 @@ package is the code around them. Setup and operation are in [Adopting the tools]
     versions, paths, notes) as a code span, so a link, mention, comment or table pipe in it stays text.
   - **A failed body update** (`publication.ts`): If the body update fails after a push, the tool tries once more, then closes the PR while it's still the tool's draft at that head, so a later run recomputes it. It reports an error either way. Closing leaves alone a PR someone changed meanwhile (a moved head, a removed
     state, marked ready); a retry that succeeds writes its text like any update.
-  - **Ownership** (`ownership.ts`): `inspectOwnership` tells whether an open PR is still the tool's: its body records
-    its current head. Runs match their plans and secure-it matches early decisions by that body. `samePlan` tells an open PR already
+  - **Ownership** (`ownership.ts`): `inspectOwnership` tells whether an open PR is still the tool's: its body carries
+    a state the tool signed (`withMarker`, `verifiedStateOf`) for its current head. Runs match their plans and secure-it matches early decisions by that body. `samePlan` tells an open PR already
     carrying a plan: only one whose body records its current head.
   - **Unit branches** (`branches.ts`): a unit reuses its open PR's branch with the base merged in, redone from a clean
     base once its head and the base are the expected ones, or takes a fresh branch, reserved for the rest of the run.
@@ -50,7 +50,7 @@ package is the code around them. Setup and operation are in [Adopting the tools]
   the original index expectation. Ignored build output is not a Git change. The error names the unexplained paths and
   stops the unit before the agent starts.
 - **The review tick** (`review.ts`) goes through every open PR of the tool, in this order:
-  1. Someone else pushed, or someone removed the body's state: leave the PR alone.
+  1. Someone else pushed, or the body has no state the tool signed: leave the PR alone.
   2. The base moved: the tool recomputes on the new base, before anything else, with the base merged in or the
      conflicting merge left in progress for it to resolve.
   3. CI pending: nothing. Green: mark a draft ready. When a check the base's rulesets require from Actions hasn't

@@ -154,6 +154,11 @@ tokens stay out of shell history and command arguments.
 | secure-it | `leanish-secure-it-write` | `leanish-secure-it-read` |
 | bump-it | `leanish-bump-it-write` | `leanish-bump-it-read` |
 
+Each tool also needs a signing key, in the service `leanish-<tool>-signing`: 64
+hexadecimal characters from `openssl rand -hex 32`, added the same way. Generate it
+once and use the same value on every machine that runs that tool: a new key leaves
+the tool's open PRs unrecognized.
+
 Omit `secrets` in `agent.yaml` to use these names; the
 [config reference](tool-configuration.md) covers overrides. No Keychain item is
 renamed automatically.

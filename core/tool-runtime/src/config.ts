@@ -14,6 +14,7 @@
  *   secrets:                     # optional macOS Keychain service overrides
  *     write: leanish-secure-it-write       # default: leanish-<tool>-write
  *     read: leanish-secure-it-read         # default: leanish-<tool>-read
+ *     signing: leanish-secure-it-signing   # default: leanish-<tool>-signing
  *   commitIdentity: { name: leanish, email: 5417585+leanish@users.noreply.github.com }
  *   dirs: { state: ~/.local/share/leanish/secure-it, cache: ~/.cache/leanish/secure-it }  # optional
  *   readDeny: [~/dev/private]    # optional: paths the agent's commands can't read
@@ -48,7 +49,7 @@ export interface ToolConfig {
   readonly repos: ReadonlyArray<ToolRepo>;
   readonly agent: { readonly codingAgent: CodingAgent; readonly model: string; readonly effort: string };
   /** Resolved Keychain service names: per-tool defaults with optional per-field overrides. */
-  readonly secrets: { readonly write: string; readonly read: string };
+  readonly secrets: { readonly write: string; readonly read: string; readonly signing: string };
   readonly commitIdentity: GitIdentity;
   readonly dirs: { readonly state: string; readonly cache: string };
   readonly readDeny: ReadonlyArray<string>;
@@ -95,10 +96,12 @@ export function parseToolConfig(tool: ToolName, text: string, where: string, hom
   if (!(CODING_AGENTS as ReadonlyArray<string>).includes(codingAgent)) {
     throw new Error(`${where}: agent.codingAgent must be one of ${CODING_AGENTS.join(", ")}; got '${codingAgent}'`);
   }
-  const secrets = root["secrets"] === undefined ? {} : object(root["secrets"], `${where}: secrets`, ["write", "read"]);
+  const secrets = root["secrets"] === undefined ? {} : object(root["secrets"], `${where}: secrets`, ["write", "read", "signing"]);
   const write = secrets["write"] === undefined ? `leanish-${tool}-write` : string(secrets["write"], `${where}: secrets.write`);
   const read = secrets["read"] === undefined ? `leanish-${tool}-read` : string(secrets["read"], `${where}: secrets.read`);
   if (write === read) throw new Error(`${where}: secrets.write and secrets.read must be different items: the agent only gets the read-only one`);
+  const signing = secrets["signing"] === undefined ? `leanish-${tool}-signing` : string(secrets["signing"], `${where}: secrets.signing`);
+  if (signing === write || signing === read) throw new Error(`${where}: secrets.signing must be its own item, not a token's`);
   const identity = object(root["commitIdentity"], `${where}: commitIdentity`, ["name", "email"]);
   const dirs = root["dirs"] === undefined ? {} : object(root["dirs"], `${where}: dirs`, ["state", "cache"]);
 
@@ -114,7 +117,7 @@ export function parseToolConfig(tool: ToolName, text: string, where: string, hom
       model: string(agent["model"], `${where}: agent.model`),
       effort: string(agent["effort"], `${where}: agent.effort`),
     },
-    secrets: { write, read },
+    secrets: { write, read, signing },
     commitIdentity: {
       name: string(identity["name"], `${where}: commitIdentity.name`),
       email: string(identity["email"], `${where}: commitIdentity.email`),

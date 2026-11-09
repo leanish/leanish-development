@@ -51,6 +51,7 @@ async function createExecution(context: ToolRunContext, deps: BumpItDeps): Promi
       workspace: context.workspace,
       logger: context.logger,
       repo: context.repo.repo,
+      signingKey: context.signingKey,
       base: context.base,
       workingCopy: context.workingCopy,
       localRoots: machineRoots(context.config.dirs),
@@ -197,7 +198,7 @@ function undecidedPeerKeys(computed: Computed): Array<readonly [string, string]>
 function recognised(execution: Execution, unit: Unit, own: ReadonlyArray<GitHubPullRequest>): Ours[] {
   const matches: Ours[] = [];
   for (const candidate of own) {
-    const ownership = inspectOwnership(candidate);
+    const ownership = inspectOwnership(execution.publication, candidate);
     // Someone else's push or rewrite is skipped.
     if (ownership.kind !== "ours") {
       continue;
@@ -235,7 +236,7 @@ async function runUnit(
   owned: ReadonlyArray<Ours>,
   undecided: ReadonlyMap<string, ReadonlyArray<string>>,
 ): Promise<UnitReport> {
-  const same = owned.find((candidate) => samePlan(candidate.pr, planDigest(computed.plan), digestOf));
+  const same = owned.find((candidate) => samePlan(candidate, planDigest(computed.plan), digestOf));
   // The PR this unit reuses, checked before anything redoes it, and before a unit left blocked or empty by
   // what can't be decided reads as one with nothing to do.
   const reused = same ?? owned[0];

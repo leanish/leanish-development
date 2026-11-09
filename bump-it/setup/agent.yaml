@@ -9,6 +9,7 @@ agent:
 secrets:
   write: leanish-bump-it-{{owner}}-write
   read: leanish-bump-it-{{owner}}-read
+  signing: leanish-bump-it-{{owner}}-signing
 commitIdentity: { name: dependency-bot, email: dependency-bot@users.noreply.github.com }
 dirs:
   state: ~/.local/share/leanish/installations/{{owner}}/bump-it

@@ -17,15 +17,17 @@ readDeny: [~/dev/private, /Volumes/vault]
 describe("tool config", () => {
   it.each(["secure-it", "bump-it"] as const)("defaults %s's Keychain services, allowing either or both to be overridden", (tool) => {
     const withoutSecrets = VALID.replace(/^secrets:.*\n/m, "");
-    const defaults = { write: `leanish-${tool}-write`, read: `leanish-${tool}-read` };
+    const defaults = { write: `leanish-${tool}-write`, read: `leanish-${tool}-read`, signing: `leanish-${tool}-signing` };
     const secretsOf = (text: string) => parseToolConfig(tool, text, "agent.yaml", HOME).secrets;
 
     expect(secretsOf(withoutSecrets)).toEqual(defaults);
     expect(secretsOf(`${withoutSecrets}secrets: {}\n`)).toEqual(defaults);
     expect(secretsOf(`${withoutSecrets}secrets: { write: shared-write }\n`)).toEqual({ ...defaults, write: "shared-write" });
     expect(secretsOf(`${withoutSecrets}secrets: { read: shared-read }\n`)).toEqual({ ...defaults, read: "shared-read" });
-    expect(secretsOf(`${withoutSecrets}secrets: { write: shared-write, read: shared-read }\n`)).toEqual({ write: "shared-write", read: "shared-read" });
+    expect(secretsOf(`${withoutSecrets}secrets: { write: shared-write, read: shared-read }\n`)).toEqual({ ...defaults, write: "shared-write", read: "shared-read" });
     expect(() => secretsOf(`${withoutSecrets}secrets: { write: ${defaults.read} }\n`)).toThrow("must be different items");
+    expect(secretsOf(`${withoutSecrets}secrets: { signing: shared-signing }\n`)).toEqual({ ...defaults, signing: "shared-signing" });
+    expect(() => secretsOf(`${withoutSecrets}secrets: { signing: ${defaults.write} }\n`)).toThrow("must be its own item");
   });
 
   it.each([
@@ -54,7 +56,7 @@ describe("tool config", () => {
         { repo: "leanish/dtv", branch: "main" },
       ],
       agent: { codingAgent: "codex", model: "sol", effort: "medium" },
-      secrets: { write: "leanish-secure-it-github", read: "leanish-secure-it-github-read" },
+      secrets: { write: "leanish-secure-it-github", read: "leanish-secure-it-github-read", signing: "leanish-secure-it-signing" },
       commitIdentity: { name: "leanish", email: "5417585+leanish@users.noreply.github.com" },
       dirs: { state: "/Users/dev/.local/share/leanish/secure-it", cache: "/Users/dev/.cache/leanish/secure-it" },
       readDeny: ["/Users/dev/dev/private", "/Volumes/vault"],

@@ -27,7 +27,7 @@ import type { PreparedBranch, WorkingCopy } from "@leanish/agent-runtime/types/w
 import type { Workspace } from "@leanish/agent-runtime/working-copy/workspace";
 
 import { classifyCi, failingCheckNames, onlyCooldownHolds, unreportedRequired } from "./ci-state.ts";
-import { type OwnPullRequests, type PullRequestState, stateOf } from "./own-pr.ts";
+import type { OwnPullRequests, PullRequestState } from "./own-pr.ts";
 import { inspectOwnership } from "./ownership.ts";
 import { closeAndDelete, markReady, ownOpenPullRequests, type PublicationContext, recordState } from "./publication.ts";
 
@@ -103,6 +103,7 @@ export interface ReviewContext {
   readonly workingCopy: WorkingCopy;
   readonly logger: Logger;
   readonly repo: string;
+  readonly signingKey: Uint8Array;
   readonly base: string;
   /** Directories outside the working copy whose paths never reach a PR (see publication-text.ts). */
   readonly localRoots: ReadonlyArray<string>;
@@ -129,12 +130,12 @@ export async function reviewOpenPullRequests(context: ReviewContext, steps: Revi
 async function reviewOne(context: ReviewContext, steps: ReviewSteps, pr: GitHubPullRequest): Promise<ReviewEntry> {
   const result = (outcome: ReviewOutcome, detail?: string): ReviewEntry => ({ number: pr.number, url: pr.url, outcome, detail });
   const publication: PublicationContext = { ...context };
-  const ownership = inspectOwnership(pr);
-  if (ownership.kind === "untracked") return result("left-alone", "its body no longer has the tool's state; someone rewrote it");
+  const ownership = inspectOwnership(publication, pr);
+  if (ownership.kind === "untracked") return result("left-alone", "its body has no valid state for the configured signing key: someone made or rewrote it, or the key changed");
   if (ownership.kind === "pushed-by-someone-else") {
     return result("left-alone", `someone else pushed (${pr.headSha.slice(0, 12)}, the tool published ${ownership.recordedHead.slice(0, 12)}), or the tool stopped right after pushing; in that case close it, and a later run recomputes it`);
   }
-  const state: PullRequestState = stateOf(pr.body)!;
+  const { state } = ownership;
 
   const disposition = await steps.disposition?.(pr);
   if (disposition?.kind === "leave") return result("left-alone", disposition.reason);

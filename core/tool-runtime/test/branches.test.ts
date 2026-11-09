@@ -5,7 +5,7 @@ import type { WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
 import { InMemoryWorkspace } from "@leanish/agent-runtime/working-copy/in-memory-workspace";
 import { prepareUnitBranch, type UnitBranch } from "../src/branches.ts";
 import type { PublicationContext } from "../src/publication.ts";
-import { BASE_SHA, FakeGitHub, HEAD_SHA, OWN_BRANCH, ownPr, RULES } from "./fake-github.ts";
+import { BASE_SHA, FakeGitHub, HEAD_SHA, OWN_BRANCH, ownPr, RULES, TEST_SIGNING_KEY } from "./fake-github.ts";
 
 const REPO = "leanish/widget";
 const NOW = new Date("2026-10-07T06:00:00Z");
@@ -14,7 +14,7 @@ const OTHER_SHA = "9".repeat(40);
 const WC: WorkingCopy = { projectId: REPO, path: "/synthetic/leanish/widget", branch: "main", headSha: BASE_SHA, gitDir: "/x/.git" };
 
 function context(github = new FakeGitHub(), workspace = new InMemoryWorkspace()): PublicationContext {
-  return { rules: RULES, github, workspace, logger: new ConsoleLogger({ minLevel: "error" }), repo: REPO, base: "main", workingCopy: WC, localRoots: [] };
+  return { rules: RULES, github, workspace, logger: new ConsoleLogger({ minLevel: "error" }), repo: REPO, signingKey: TEST_SIGNING_KEY, base: "main", workingCopy: WC, localRoots: [] };
 }
 
 function unit(overrides: Partial<UnitBranch> = {}): UnitBranch & { readonly reverted: string[] } {
