@@ -18,7 +18,7 @@ beforeEach(async () => {
 afterEach(async () => { await rm(home, { recursive: true, force: true }); });
 
 function machine(isPrivate = true) {
-  const secrets = { get: vi.fn(async (name: string): Promise<string> => name.endsWith("-write") ? WRITE : READ) };
+  const secrets = { get: vi.fn(async (name: string): Promise<string> => name.endsWith("-signing") ? "ab".repeat(32) : name.endsWith("-write") ? WRITE : READ) };
   const fetcher = vi.fn<typeof fetch>(async (url, init) => {
     expect(init?.method).toBeUndefined();
     expect(init?.redirect).toBe("error");
@@ -40,6 +40,8 @@ describe("human-only secret enrollment", () => {
       { role: "write", tokenUrl: expect.any(String), command: "security add-generic-password -U -s 'leanish-bump-it-acme-write' -a 'dev' -w" },
       { role: "read", tokenUrl: expect.any(String), command: "security add-generic-password -U -s 'leanish-bump-it-acme-read' -a 'dev' -w" },
     ]);
+    expect(value.data?.signingKey).toEqual({ service: "leanish-bump-it-acme-signing", generate: "openssl rand -hex 32 | pbcopy", command: "security add-generic-password -s 'leanish-bump-it-acme-signing' -a 'dev' -w" });
+    expect(value.message).toContain("reuse the same value");
     expect(value.data?.permissions).toHaveLength(7);
     expect(JSON.stringify(value)).not.toMatch(/secret-sentinel/);
     await expect(enrollment({ ...options, login: "x; echo bad" }, home)).rejects.toThrow("Invalid GitHub");
@@ -69,6 +71,16 @@ describe("human-only secret enrollment", () => {
     const names = (value.data?.commands as Array<{ tokenUrl: string }>).map(({ tokenUrl }) => new URL(tokenUrl).searchParams.get("name"));
     expect(names).toEqual([`leanish-secure-it-write-${owner}`.slice(0, 40), `leanish-secure-it-read-${owner}`.slice(0, 40)]);
     expect(names.every((name) => name!.length === 40)).toBe(true);
+  });
+
+  it.each(["not-a-key", ""])("blocks on a malformed signing key before any GitHub request, without showing it", async (key) => {
+    const fake = machine();
+    const tokens = fake.secrets.get.getMockImplementation()!;
+    fake.secrets.get.mockImplementation(async (name) => name.endsWith("-signing") ? key : tokens(name));
+    const value = await verifyTokens(options, home, fake);
+    expect(value).toMatchObject({ step: "signing-key", status: "blocked" });
+    expect(fake.fetch).not.toHaveBeenCalled();
+    if (key !== "") expect(JSON.stringify(value)).not.toContain(key);
   });
 
   it("refuses identical tokens before any GitHub request", async () => {

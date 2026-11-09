@@ -17,7 +17,7 @@ describe("documented agent configs", () => {
 
     expect(repoOf(config, "acme/widget").branch).toBe("main");
     expect(config.agent).toEqual({ codingAgent: "claude-code", model: "claude-haiku-5-5", effort: "high" });
-    expect(config.secrets).toEqual({ write: `leanish-${tool}-write`, read: `leanish-${tool}-read` });
+    expect(config.secrets).toEqual({ write: `leanish-${tool}-write`, read: `leanish-${tool}-read`, signing: `leanish-${tool}-signing` });
     expect(config.dirs).toEqual({ state: `${HOME}/.local/share/leanish/${tool}`, cache: `${HOME}/.cache/leanish/${tool}` });
     expect(config.readDeny).toEqual([]);
     expect(config.maxNewMajorsPerRun).toBe(tool === "bump-it" ? 3 : undefined);

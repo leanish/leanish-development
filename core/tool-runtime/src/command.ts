@@ -1,15 +1,16 @@
 /**
  * The command around one run of a tool: `<tool> run|review <owner/repo>
  * [--config <file>]`. It reads the config (the repository must be listed),
- * the two tokens from the config's resolved per-tool Keychain services
- * (defaults or explicit overrides; the write one for the tool's own
- * GitHub calls, clone and push; the read-only one, the only credential the
- * agent's commands get), syncs the working copy, wires the isolated coding
+ * the two tokens and the signing key from the config's resolved per-tool
+ * Keychain services (defaults or explicit overrides; the write one for the
+ * tool's own GitHub calls, clone and push; the read-only one, the only
+ * credential the agent's commands get), syncs the working copy, wires the isolated coding
  * agent, hands everything to the tool's `run` or `review`, and always ends with
  * a GitHub request summary and the `run finished` line on stderr,
  * interruptions included.
  */
 import { createGitHubIssues, type GitHubIssues } from "./github-issues.ts";
+import { signingKeyFrom } from "./secrets.ts";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -68,6 +69,8 @@ export interface ToolRunContext {
   readonly releaseAgeExclude: ReadonlyArray<string>;
   /** The agent's read-only token: for the gate's own GitHub reads (advisories, actions), never for writes. */
   readonly readToken: string;
+  /** Signs the state in the tool's PRs; never handed to the agent or to anything sandboxed. */
+  readonly signingKey: Uint8Array;
   /** How the agent is isolated; `runSandboxed` runs repository code the same way. */
   readonly isolation: IsolationPolicy;
   /** Runs a skill with write access and the read-only token; restoredFiles declares dependency restores to its guard only. */
@@ -146,6 +149,7 @@ export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray
     const write = await m.secrets.get(config.secrets.write);
     const read = await m.secrets.get(config.secrets.read);
     if (write === read) throw new Error(`${config.secrets.write} and ${config.secrets.read} hold the same token: the agent would get the write one`);
+    const signingKey = signingKeyFrom(await m.secrets.get(config.secrets.signing), config.secrets.signing);
     // The sandbox may write inside the cache but can't create it or its parents. The agent's runner creates its roots
     // before a call, but sandboxed commands (inventories, npm, Gradle) can run first: on a fresh installation's
     // missing `dirs.cache` they failed with EPERM.
@@ -198,6 +202,7 @@ export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray
       releaseAgeDays: repoConfig.releaseAgeDays,
       releaseAgeExclude,
       readToken: read,
+      signingKey,
       isolation,
       agent: async (call) => {
         await m.assertAgentWorkspace(workingCopy, call.input, call.restoredFiles);

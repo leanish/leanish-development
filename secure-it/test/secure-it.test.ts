@@ -34,7 +34,7 @@ import { fakeFetch } from "@leanish/gate/test/fake-fetch";
 import { archive, manifest, serving } from "@leanish/gate/test/tarballs";
 import { parseToolConfig } from "@leanish/tool-runtime/config";
 import { branchFor, stateOf, withMarker } from "@leanish/tool-runtime/own-pr";
-import { BASE_SHA, FakeGitHub, GREEN, HEAD_SHA, ownPr, PUSHED_SHA, RED } from "@leanish/tool-runtime/test/fake-github";
+import { BASE_SHA, FakeGitHub, GREEN, HEAD_SHA, ownPr, PUSHED_SHA, RED, SIGNED, TEST_SIGNING_KEY } from "@leanish/tool-runtime/test/fake-github";
 import { FakeIssues } from "@leanish/tool-runtime/test/fake-issues";
 import { cooldownWarning, planOf, planSection, withPlanSection } from "../src/plan-block.ts";
 import { EVIDENCE_DIFFERS, EVIDENCE_LEFT_OUT } from "../src/advisory-notice.ts";
@@ -144,6 +144,7 @@ function harness(options: { prs?: GitHubPullRequest[]; fixes?: SecurityFix[]; ob
     releaseAgeDays: 7,
     releaseAgeExclude: [],
     readToken: "read-token",
+    signingKey: TEST_SIGNING_KEY,
     fetch: globalThis.fetch,
     isolation: { readDenied: [], env: {}, buildCacheRoot: "/tmp/secure-it-cache" },
     agent: (async (call: { entrypoint: string; input: Record<string, unknown> }) => {
@@ -239,7 +240,7 @@ function requirement(name: string, version: string, rootName: string, rootVersio
 
 async function batchPr(fixes: SecurityFix[], overrides: Partial<GitHubPullRequest> = {}): Promise<GitHubPullRequest> {
   const plan = await planFor(fixes, { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined });
-  return ownPr({ headRef: branchFor(RULES, new Date("2026-10-05T00:00:00Z"), plan.topic), body: withMarker(RULES, `Fixes security findings.\n\n${planSection(plan)}`, { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }), ...overrides });
+  return ownPr({ headRef: branchFor(RULES, new Date("2026-10-05T00:00:00Z"), plan.topic), body: withMarker(SIGNED, `Fixes security findings.\n\n${planSection(plan)}`, { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }), ...overrides });
 }
 
 async function vitePr(overrides: Partial<GitHubPullRequest> = {}, fix = vite()): Promise<GitHubPullRequest> {
@@ -351,7 +352,7 @@ describe("secure-it run", () => {
       });
       const { workingCopy: wc, git, oldHead, oldBase, baseSha } = fixture;
       const previous = await planFor([fix], { named: undefined, lockfiles: new Map(), gradle: undefined, tagCommit: async () => "1".repeat(40) }, unit);
-      const pr = ownPr({ headRef: branch, labels: [RULES.label], headSha: oldHead, body: withMarker(RULES, planSection(previous), { head: oldHead, base: oldBase, adaptations: 0 }) });
+      const pr = ownPr({ headRef: branch, labels: [RULES.label], headSha: oldHead, body: withMarker(SIGNED, planSection(previous), { head: oldHead, base: oldBase, adaptations: 0 }) });
       const h = harness({ prs: [pr], fixes: [fix] });
       await track(h);
       h.workspace.prepareBranch = fixture.workspace.prepareBranch.bind(fixture.workspace);
@@ -408,7 +409,7 @@ describe("secure-it run", () => {
       }, command === "review");
       const { workingCopy: wc, git, oldHead, oldBase, baseSha } = fixture;
       const previous = await planFor([{ ...fix, to: { ...fix.to!, version: "v0.5.2" } }], { named: undefined, lockfiles: new Map(), gradle: undefined, tagCommit: async () => "b".repeat(40) }, unit);
-      const pr = ownPr({ headRef: branch, headSha: oldHead, body: withMarker(RULES, planSection(previous), { head: oldHead, base: oldBase, adaptations: 0 }) });
+      const pr = ownPr({ headRef: branch, headSha: oldHead, body: withMarker(SIGNED, planSection(previous), { head: oldHead, base: oldBase, adaptations: 0 }) });
       const h = harness({ prs: [pr], fixes: [fix] });
       h.workspace.prepareBranch = fixture.workspace.prepareBranch.bind(fixture.workspace);
       h.workspace.publishBranch = fixture.publishBranch;
@@ -552,7 +553,7 @@ describe("secure-it run", () => {
 
   it("rewrites an open PR's notes when the same plan now explains itself differently, without a commit or the agent", async () => {
     const plan = await planFor([vite()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined });
-    const stale = ownPr({ headRef: branchFor(RULES, new Date("2026-10-05T00:00:00Z"), plan.topic), body: withMarker(RULES, `Fixes security findings.\n\n${planSection({ ...plan, notes: ["an outdated reason"] })}`, { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const stale = ownPr({ headRef: branchFor(RULES, new Date("2026-10-05T00:00:00Z"), plan.topic), body: withMarker(SIGNED, `Fixes security findings.\n\n${planSection({ ...plan, notes: ["an outdated reason"] })}`, { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [stale] });
     expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "already-open", pullRequest: "https://github.com/leanish/widget/pull/7" });
     const body = h.github.prs.get(7)!.body;
@@ -1804,7 +1805,7 @@ describe("secure-it review", () => {
       "package-lock.json": json({ packages: { ...packages, "node_modules/vite": { version: "8.3.3" } } }),
       [FLOORS_PATH]: json({ floors: [floor, compatibility] }),
     };
-    const pr = ownPr({ headRef: "secure-it/2026-10-05-security", body: withMarker(RULES, planSection(plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security", body: withMarker(SIGNED, planSection(plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr], baseSha: NEW_BASE, files: baseFiles, fixes: [fix] });
     await track(h);
     h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
@@ -2114,7 +2115,7 @@ describe("secure-it review", () => {
     const held = { ecosystem: "npm" as const, name: "esbuild", version: "0.30.1", replaced: ["0.30.0"], published: "2026-10-06T00:00:00.000Z", eligibleAt: "2026-10-13T00:00:00.000Z", justification: "unjustified" as const };
     // A recorded hold is evidence from an older comparison, never this ordinary PR's authorization.
     const recorded = { ...planOf(previous.body)!, cooldown: [{ ...held, eligibleAt: "2026-10-01T00:00:00.000Z", signals: [] }] };
-    const pr = { ...previous, body: withMarker(RULES, withPlanSection("Fixes vite.\n\nTracks #3.", recorded), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) };
+    const pr = { ...previous, body: withMarker(SIGNED, withPlanSection("Fixes vite.\n\nTracks #3.", recorded), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) };
     const h = harness({ prs: [pr], answer: { outcome: "applied", summary: "adapted", publication } });
     await track(h);
     h.github.checks = RED;
@@ -2177,7 +2178,7 @@ function removalFixture(ecosystem = "npm") {
 async function removalPr(f: ReturnType<typeof removalFixture>, overrides: Partial<GitHubPullRequest> = {}): Promise<GitHubPullRequest> {
   const { plan } = await f.computed();
   return ownPr({ headRef: "secure-it/2026-10-05-floor-removal", labels: [RULES.label],
-    body: withMarker(RULES, planSection(plan!), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }), ...overrides });
+    body: withMarker(SIGNED, planSection(plan!), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }), ...overrides });
 }
 
 describe("secure-it floor-removal units", () => {
@@ -2237,7 +2238,7 @@ describe("secure-it floor-removal units", () => {
   it("rewrites an open removal PR's notes when they changed, keeping its commits", async () => {
     const f = removalFixture();
     const { plan } = await f.computed();
-    const pr = await removalPr(f, { body: withMarker(RULES, planSection({ ...plan!, floorRemoval: { ...plan!.floorRemoval!, notes: ["an outdated reason"] } }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const pr = await removalPr(f, { body: withMarker(SIGNED, planSection({ ...plan!, floorRemoval: { ...plan!.floorRemoval!, notes: ["an outdated reason"] } }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ fixes: [], observations: [], files: f.base, prs: [pr] });
     expect(await secureIt({ ...h.deps, floorProbe: f.probe }).run(h.context)).toMatchObject({ outcome: "already-open" });
     expect(h.github.prs.get(pr.number)!.body).not.toContain("an outdated reason");
@@ -2352,7 +2353,7 @@ describe("the cooldown hold", () => {
   it("keeps a held PR's cooldown warning and hold when rewriting its notes", async () => {
     const plan = await planFor([YOUNG_VITE()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined }, { kind: "routine", topic: "security-young-npm|vite" });
     const held = { ...plan, notes: ["an outdated reason"], cooldown: [{ ...HELD, signals: [] }] };
-    const h = harness({ fixes: [YOUNG_VITE()], prs: [ownPr({ headRef: branchFor(RULES, new Date("2026-10-05T00:00:00Z"), plan.topic), body: withMarker(RULES, withPlanSection("Fixes vite.", held), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) })] });
+    const h = harness({ fixes: [YOUNG_VITE()], prs: [ownPr({ headRef: branchFor(RULES, new Date("2026-10-05T00:00:00Z"), plan.topic), body: withMarker(SIGNED, withPlanSection("Fixes vite.", held), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) })] });
     await early(h, h.github.prs.get(7)!);
     expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "already-open" });
     const body = h.github.prs.get(7)!.body;
@@ -2377,7 +2378,7 @@ describe("the cooldown hold", () => {
     expect(planOf(published)?.cooldown?.[0]?.evidence).toEqual(evidence);
     const notes = Array.from({ length: 128 }, (_, i) => `vite@8.3.3 note ${i}: ${hex(`note-${i}`)}`);
     const requiredNpm: SecureItDeps["requiredNpm"] = async (_base, planned) => ({ ...planned, notes });
-    const h = harness({ fixes: [YOUNG_VITE()], prs: [ownPr({ headRef: branchFor(RULES, new Date("2026-10-05T00:00:00Z"), plan.topic), body: withMarker(RULES, published, { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) })] });
+    const h = harness({ fixes: [YOUNG_VITE()], prs: [ownPr({ headRef: branchFor(RULES, new Date("2026-10-05T00:00:00Z"), plan.topic), body: withMarker(SIGNED, published, { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) })] });
     await early(h, h.github.prs.get(7)!);
     expect(await secureIt({ ...h.deps, requiredNpm }).run(h.context)).toMatchObject({ outcome: "already-open" });
     const body = h.github.prs.get(7)!.body;
@@ -2506,10 +2507,10 @@ describe("the cooldown hold", () => {
     const full = (description: string) => `${cooldownWarning(planned.cooldown!)!}\n\n${description}\n\n${planSection(planned)}`;
     const description = "x".repeat(65_500 - full("").length);
     expect(full(description)).toHaveLength(65_500);
-    expect(withMarker(RULES, full(description), { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 }).length).toBeGreaterThan(65_536);
+    expect(withMarker(SIGNED, full(description), { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 }).length).toBeGreaterThan(65_536);
     // Fresh advisory metadata changes the plan digest, but not the exact moves the issue authorizes.
     const previous = { ...planned, moves: planned.moves.map((move) => ({ ...move, advisories: ["GHSA-old"] })) };
-    const stale = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite", body: withMarker(RULES, withPlanSection("Fixes vite.", previous), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const stale = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite", body: withMarker(SIGNED, withPlanSection("Fixes vite.", previous), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [stale], fixes: [YOUNG_VITE()], answer: { ...APPLIED, publication: { ...APPLIED.publication, body: description } } });
     h.workspace.setRemoteHead(stale.headRef, stale.headSha);
     await early(h, stale);
@@ -2793,7 +2794,7 @@ describe("the cooldown hold", () => {
       const plan = await planFor([fix], { lockfiles: new Map(), gradle: h.base, named: () => true, tagCommit: async () => undefined }, { kind: "routine", topic });
       // A held one as take-early published it: holding its own young versions, tracking its issue's grant.
       const held = fix.to!.aged ? plan : { ...plan, cooldown: plan.moves.map((move) => ({ ...HELD, ecosystem: "Maven" as const, name: move.name, version: move.to, replaced: [move.from], signals: [] })) };
-      const pr = ownPr({ number: i + 7, nodeId: `node${i + 7}`, url: `https://github.com/leanish/widget/pull/${i + 7}`, headRef: branchFor(RULES, new Date("2026-10-05T00:00:00Z"), topic), body: withMarker(RULES, withPlanSection("Fixes one.", held), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+      const pr = ownPr({ number: i + 7, nodeId: `node${i + 7}`, url: `https://github.com/leanish/widget/pull/${i + 7}`, headRef: branchFor(RULES, new Date("2026-10-05T00:00:00Z"), topic), body: withMarker(SIGNED, withPlanSection("Fixes one.", held), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
       h.github.prs.set(pr.number, fix.to!.aged ? pr : await early(h, pr));
       h.workspace.setRemoteHead(pr.headRef, pr.headSha);
     }
@@ -2903,7 +2904,7 @@ describe("the cooldown hold", () => {
   it("rebuilds an early PR's granted versions from each verification, dropping what the last one recorded", async () => {
     const stale = { ecosystem: "Maven" as const, name: "g:stale", version: "1.0.0", eligibleAt: "2026-10-13T00:00:00.000Z" };
     const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite",
-      body: withMarker(RULES, withPlanSection("Fixes vite.", { ...await heldPlan(YOUNG_VITE()), cooldown: [{ ...HELD, signals: [] }], granted: [stale] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+      body: withMarker(SIGNED, withPlanSection("Fixes vite.", { ...await heldPlan(YOUNG_VITE()), cooldown: [{ ...HELD, signals: [] }], granted: [stale] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     expect(pr.body).toContain("`g:stale`");
     const h = harness({ prs: [pr], baseSha: "f".repeat(40), fixes: [YOUNG_VITE()] });
     h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
@@ -2920,7 +2921,7 @@ describe("the cooldown hold", () => {
     // The grant was taken with g:gone, which the decision no longer brings on the new base: review still lets it go on
     // (nothing young outside the grant), and the warning keeps it as the grant's, without saying the PR carries it.
     const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite",
-      body: withMarker(RULES, withPlanSection("Fixes vite.", { ...await heldPlan(YOUNG_VITE()), cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+      body: withMarker(SIGNED, withPlanSection("Fixes vite.", { ...await heldPlan(YOUNG_VITE()), cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr], baseSha: "f".repeat(40), fixes: [YOUNG_VITE()] });
     h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
     await early(h, pr, [{ ecosystem: "npm", name: "vite", version: "8.3.3", eligibleAt: HELD.eligibleAt }, { ecosystem: "Maven", name: "g:gone", version: "1.0.0", eligibleAt: HELD.eligibleAt }]);
@@ -3061,7 +3062,7 @@ describe("the cooldown hold", () => {
 
   it("keeps a held PR on a failed aged plan rather than retiring it against a grouping without it", async () => {
     const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite",
-      body: withMarker(RULES, withPlanSection("Fixes vite.", { ...await heldPlan(YOUNG_VITE()), cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+      body: withMarker(SIGNED, withPlanSection("Fixes vite.", { ...await heldPlan(YOUNG_VITE()), cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr], baseSha: "f".repeat(40), fixes: [YOUNG_VITE(), leftPad()] });
     h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
     const tracked = await early(h, pr);
@@ -3078,7 +3079,7 @@ describe("the cooldown hold", () => {
   it("keeps a held PR whose fix has aged since when the aged plan fails, rather than retiring it", async () => {
     // No held unit remains, but had the aged plan succeeded, a young requirement could have held vite again.
     const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite",
-      body: withMarker(RULES, withPlanSection("Fixes vite.", { ...await heldPlan(YOUNG_VITE()), cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+      body: withMarker(SIGNED, withPlanSection("Fixes vite.", { ...await heldPlan(YOUNG_VITE()), cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr], baseSha: "f".repeat(40), fixes: [vite(), leftPad()] });
     h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
     const tracked = await early(h, pr);
@@ -3163,7 +3164,7 @@ describe("the cooldown hold", () => {
 
   it("keeps a held PR whose fix can't be planned apart any more, reporting its planning error", async () => {
     const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite",
-      body: withMarker(RULES, withPlanSection("Fixes vite.", { ...await heldPlan(YOUNG_VITE()), cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+      body: withMarker(SIGNED, withPlanSection("Fixes vite.", { ...await heldPlan(YOUNG_VITE()), cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr], baseSha: "f".repeat(40), fixes: [YOUNG_VITE(), YOUNG_PAD()] });
     h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
     const tracked = await early(h, pr);
@@ -3178,7 +3179,7 @@ describe("the cooldown hold", () => {
     // The old grant covers both moves; the remaining vite decision needs its own authorization.
     const plan = await planFor([YOUNG_PAD(), YOUNG_VITE()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined },
       { kind: "routine", topic: "security-young-npm|left-pad" });
-    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-left-pad", body: withMarker(RULES, withPlanSection("Fixes both.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-left-pad", body: withMarker(SIGNED, withPlanSection("Fixes both.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr], fixes: [YOUNG_VITE(), { ...YOUNG_PAD(), to: undefined, problem, undecided: true }] });
     h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
     const tracked = await early(h, pr, [{ ecosystem: "npm", name: "vite", version: "8.3.3", eligibleAt: HELD.eligibleAt }]);
@@ -3193,7 +3194,7 @@ describe("the cooldown hold", () => {
   it("reuses only the exact early decision when another young root shares its companion, even after its anchor changes", async () => {
     const plan = await planFor([YOUNG_VITE(), YOUNG_PAD()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined },
       { kind: "routine", topic: "security-young-npm|left-pad" });
-    const pr = ownPr({ body: withMarker(RULES, withPlanSection("Fixes vite with its companion.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const pr = ownPr({ body: withMarker(SIGNED, withPlanSection("Fixes vite with its companion.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr], fixes: [YOUNG_VITE(), YOUNG_PAD()] });
     const tracked = await early(h, pr, [{ ecosystem: "npm", name: "vite", version: "8.3.3", eligibleAt: HELD.eligibleAt }]);
     // Required planning adds left-pad as vite's companion; it is also an independently actionable young root.
@@ -3214,7 +3215,7 @@ describe("the cooldown hold", () => {
   it("leaves a changed early decision on review, and its grant cannot transfer to either split root on a run", async () => {
     const plan = await planFor([YOUNG_VITE(), YOUNG_PAD()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined },
       { kind: "routine", topic: "security-young-npm|left-pad" });
-    const pr = ownPr({ body: withMarker(RULES, withPlanSection("Fixes both.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const pr = ownPr({ body: withMarker(SIGNED, withPlanSection("Fixes both.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr], fixes: [YOUNG_VITE(), YOUNG_PAD()] });
     const tracked = await early(h, pr, [{ ecosystem: "npm", name: "vite", version: "8.3.3", eligibleAt: HELD.eligibleAt }]);
     const tool = secureIt(h.deps);
@@ -3242,7 +3243,7 @@ describe("the cooldown hold", () => {
 
   it("matches an early PR only when its issue records that PR as the running attempt", async () => {
     const plan = await heldPlan(YOUNG_VITE());
-    const first = ownPr({ body: withMarker(RULES, withPlanSection("Fixes vite.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const first = ownPr({ body: withMarker(SIGNED, withPlanSection("Fixes vite.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const second = { ...first, number: 8, nodeId: "node8", headRef: "secure-it/2026-10-05-take-early-1001", url: "https://github.com/leanish/widget/pull/8" };
     const h = harness({ prs: [first, second], fixes: [YOUNG_VITE()] });
     await early(h, second, [{ ecosystem: "npm", name: "vite", version: "8.3.3", eligibleAt: HELD.eligibleAt }]);
@@ -3262,7 +3263,7 @@ describe("the cooldown hold", () => {
     const plan = await heldPlan(first);
     const topic = `security-young-npm|${second.name}`;
     expect(branchFor(RULES, NOW, plan.topic)).toBe(branchFor(RULES, NOW, topic));
-    const pr = ownPr({ body: withMarker(RULES, withPlanSection("Fixes vite.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const pr = ownPr({ body: withMarker(SIGNED, withPlanSection("Fixes vite.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr], fixes: [second] });
     const tracked = await early(h, pr, [{ ecosystem: "npm", name: first.name, version: "8.3.3", eligibleAt: HELD.eligibleAt }]);
     const tool = secureIt(h.deps);
@@ -3279,7 +3280,7 @@ describe("the cooldown hold", () => {
 
   it("retires an early PR on a moved base only when its fixes are gone, ending its attempt and returning its label", async () => {
     const plan = await heldPlan(YOUNG_VITE());
-    const pr = ownPr({ body: withMarker(RULES, withPlanSection("Fixes vite.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const pr = ownPr({ body: withMarker(SIGNED, withPlanSection("Fixes vite.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr], fixes: [] });
     await early(h, pr, [{ ecosystem: "npm", name: "vite", version: "8.3.3", eligibleAt: HELD.eligibleAt }]);
     expect(await secureIt(h.deps).review({ ...h.context, workingCopy: { ...h.context.workingCopy, headSha: "f".repeat(40) } })).toMatchObject({ reviewed: [{ number: 7, outcome: "retired" }] });
@@ -3293,7 +3294,7 @@ describe("the cooldown hold", () => {
   it("keeps a human-pushed early PR without starting another attempt under a new label", async () => {
     const plan = await planFor([YOUNG_VITE()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined },
       { kind: "routine", topic: "security-young-npm|vite" });
-    const pushed = ownPr({ headRef: "secure-it/2026-10-05-take-early-1001", headSha: "9".repeat(40), body: withMarker(RULES, withPlanSection("Fixes vite.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const pushed = ownPr({ headRef: "secure-it/2026-10-05-take-early-1001", headSha: "9".repeat(40), body: withMarker(SIGNED, withPlanSection("Fixes vite.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pushed], fixes: [YOUNG_VITE()] });
     const protectedPr = await early(h, pushed, [{ ecosystem: "npm", name: "vite", version: "8.3.3", eligibleAt: HELD.eligibleAt }]);
     await (h.context.issues as FakeIssues).removeLabel({ repo: REPO, number: 1, label: "take-early" });
@@ -3319,7 +3320,7 @@ describe("the cooldown hold", () => {
       moves: plan.moves.map((move) => ({ ...move, advisories: ["GHSA-old"] })) } : plan;
     expect(decisionMoves(recorded)).toEqual(decisionMoves(plan));
     const pr = ownPr({ headRef: "secure-it/2026-10-05-take-early-1001",
-      body: withMarker(RULES, withPlanSection("Fixes vite.", recorded), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+      body: withMarker(SIGNED, withPlanSection("Fixes vite.", recorded), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr], fixes: [YOUNG_VITE()] });
     const taken = { ...await early(h, pr, [{ ecosystem: "npm", name: "vite", version: "8.3.3", eligibleAt: HELD.eligibleAt }]), isDraft: false };
     h.github.prs.set(7, taken);
@@ -3356,7 +3357,7 @@ describe("the cooldown hold", () => {
   it("keeps an early PR a person marked ready without starting another attempt", async () => {
     const plan = await heldPlan(YOUNG_VITE());
     const taken = ownPr({ headRef: "secure-it/2026-10-05-take-early-1001", isDraft: false,
-      body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+      body: withMarker(SIGNED, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [taken], fixes: [YOUNG_VITE()] });
     const protectedPr = await early(h, taken, [{ ecosystem: "npm", name: "vite", version: "8.3.3", eligibleAt: HELD.eligibleAt }]);
     await (h.context.issues as FakeIssues).removeLabel({ repo: REPO, number: 1, label: "take-early" });
@@ -3378,7 +3379,7 @@ describe("the cooldown hold", () => {
       { kind: "routine", topic: "security-young-npm|vite" });
     const heldPr = (eligibleAt: string) => ownPr({
       headRef: "secure-it/2026-10-05-security-young-npm-vite",
-      body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, eligibleAt, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }),
+      body: withMarker(SIGNED, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, eligibleAt, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }),
     });
     const waiting = harness({ prs: [heldPr("2026-10-13T00:00:00.000Z")] });
     (waiting.context.issues as FakeIssues).repoLabels.set("take-early", casing);
@@ -3422,7 +3423,7 @@ describe("the cooldown hold", () => {
     { ecosystem: "npm" as const, name: "vite", version: "8.3.4" },
   ])("runs a PR taken early's unchanged decision only with grant-covered versions, excluding $ecosystem $name@$version", async (extra) => {
     const plan = await heldPlan(YOUNG_VITE());
-    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite", body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite", body: withMarker(SIGNED, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr] });
     const tracked = await early(h, pr);
     const client = { issues: h.context.issues, github: h.github, repo: REPO, clean: (body: string) => body, ours: () => true, now: NOW, trusted: () => false, retire: async () => "closed" as const, eligibleAt: async () => "2026-10-13T00:00:00.000Z" };
@@ -3440,7 +3441,7 @@ describe("the cooldown hold", () => {
     { label: false, aged: false, outcome: { kind: "leave", reason: "its `take-early` label was removed" }, taken: true },
   ])("lets the retry guard reuse what review's disposition read (label kept: $label, aged: $aged), reading the issue no more", async ({ label, aged, outcome, taken }) => {
     const plan = await heldPlan(YOUNG_VITE());
-    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite", body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite", body: withMarker(SIGNED, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr] });
     // A plain `Tracks #1.` line: only the issue says it's taken early, so the guard depends on the shared answer.
     const tracked = await early(h, pr);
@@ -3467,7 +3468,7 @@ describe("the cooldown hold", () => {
     const extra = { ...HELD, name: "esbuild", version: "0.30.1", replaced: ["0.30.0"] };
     const recorded = covered ? [] : [{ ...HELD, signals: [] }, { ...extra, signals: [] }];
     const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite",
-      body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: recorded }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+      body: withMarker(SIGNED, withPlanSection("Fixes vite.", { ...plan, cooldown: recorded }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr] });
     await early(h, pr, [{ ecosystem: "npm", name: "vite", version: "8.3.3", eligibleAt: HELD.eligibleAt }]);
     h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
@@ -3491,7 +3492,7 @@ describe("the cooldown hold", () => {
   it("adapts an early PR on the grant its disposition saw, reading no issue after the agent; a label removed meanwhile leaves it next tick", async () => {
     const plan = await heldPlan(YOUNG_VITE());
     const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite",
-      body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+      body: withMarker(SIGNED, withPlanSection("Fixes vite.", { ...plan, cooldown: [] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr] });
     await early(h, pr, [{ ecosystem: "npm", name: "vite", version: "8.3.3", eligibleAt: HELD.eligibleAt }]);
     h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
@@ -3532,7 +3533,7 @@ describe("the cooldown hold", () => {
 
   it.each([{ aged: false, race: false }, { aged: true, race: false }, { aged: true, race: true }])("leaves an early PR a person marked ready, including at graduation (aged: $aged, raced: $race)", async ({ aged, race }) => {
     const plan = await heldPlan(YOUNG_VITE());
-    const pr = ownPr({ isDraft: race, body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const pr = ownPr({ isDraft: race, body: withMarker(SIGNED, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr] });
     const tracked = await early(h, pr);
     if (race) h.github.before("getPullRequest", () => h.github.prs.set(7, { ...h.github.prs.get(7)!, isDraft: false }));
@@ -3547,7 +3548,7 @@ describe("the cooldown hold", () => {
   it("knows a PR was taken early from its issue even when the gate held nothing in it", async () => {
     // The probe brought g:x@2 into a configuration where it's new; the gate saw it elsewhere in the repository already.
     const plan = await heldPlan(YOUNG_VITE());
-    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite", body: withMarker(RULES, withPlanSection("Fixes vite.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite", body: withMarker(SIGNED, withPlanSection("Fixes vite.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr] });
     const tracked = await early(h, pr, [{ ecosystem: "Maven", name: "g:x", version: "2", eligibleAt: "2026-10-13T00:00:00.000Z" }]);
     await (h.context.issues as FakeIssues).removeLabel({ repo: REPO, number: 1, label: "take-early" });
@@ -3558,7 +3559,7 @@ describe("the cooldown hold", () => {
 
   it("keeps a PR taken early a draft while its granted versions are young, even when the gate held nothing in it", async () => {
     const plan = await heldPlan(YOUNG_VITE());
-    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite", body: withMarker(RULES, withPlanSection("Fixes vite.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite", body: withMarker(SIGNED, withPlanSection("Fixes vite.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr] });
     await early(h, pr, [{ ecosystem: "Maven", name: "g:x", version: "2", eligibleAt: "2026-10-13T00:00:00.000Z" }]);
     h.github.checks = GREEN;
@@ -3568,7 +3569,7 @@ describe("the cooldown hold", () => {
 
   it("fails closed on a PR taken early whose issue is gone, even when the gate held nothing in it", async () => {
     const plan = await heldPlan(YOUNG_VITE());
-    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite", body: withMarker(RULES, withPlanSection("Fixes vite.\n\nTracks #5, taken early.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite", body: withMarker(SIGNED, withPlanSection("Fixes vite.\n\nTracks #5, taken early.", plan), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr] });
     h.github.checks = GREEN;
     // Issue #5 doesn't exist (deleted): nothing confirms the attempt, and nothing says the PR is ordinary now.
@@ -3578,7 +3579,7 @@ describe("the cooldown hold", () => {
 
   it("leaves a PR taken early to the owner once its label is removed, saying so on the issue once", async () => {
     const plan = await heldPlan(YOUNG_VITE());
-    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite", body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite", body: withMarker(SIGNED, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr] });
     const tracked = await early(h, pr);
     const issues = h.context.issues as FakeIssues;
@@ -3593,7 +3594,7 @@ describe("the cooldown hold", () => {
   it("makes a tracked PR whose plan records no cooldown ready on green, without asking for a grant", async () => {
     // What a trusted exception's PR looks like: the gate never holds a trusted package, so nothing keeps it a draft.
     const plan = await heldPlan(YOUNG_VITE());
-    const pr = ownPr({ headRef: "secure-it/2026-10-05-security", body: withMarker(RULES, withPlanSection("Fixes lib.\n\nTracks #1.", { ...plan, cooldown: [] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const pr = ownPr({ headRef: "secure-it/2026-10-05-security", body: withMarker(SIGNED, withPlanSection("Fixes lib.\n\nTracks #1.", { ...plan, cooldown: [] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr], files: { "package-lock.json": LOCK } });
     await track(h);
     h.github.checks = GREEN;
@@ -3604,7 +3605,7 @@ describe("the cooldown hold", () => {
   it("leaves version PRs without Tracks to the owner, without migration or execution", async () => {
     for (const cooldown of [[], [{ ...HELD, signals: [] }]]) for (const isDraft of [false, true]) {
       const plan = await heldPlan(YOUNG_VITE());
-      const pr = ownPr({ isDraft, body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+      const pr = ownPr({ isDraft, body: withMarker(SIGNED, withPlanSection("Fixes vite.", { ...plan, cooldown }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
       const h = harness({ prs: [pr], baseSha: "f".repeat(40) });
       expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ outcome: "left-alone", detail: "it tracks no issue; close it by hand and run secure-it again" }] });
       expect(h.github.prs.get(7)).toEqual(pr);
@@ -3618,7 +3619,7 @@ describe("the cooldown hold", () => {
       { kind: "routine", topic: "security-young-npm|vite" });
     const pr = ownPr({
       headRef: "secure-it/2026-10-05-security-young-npm-vite",
-      body: withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }),
+      body: withMarker(SIGNED, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }),
     });
     const h = harness({ prs: [pr], baseSha: "f".repeat(40), fixes: [vite()] });
     h.workspace.setRemoteHead(pr.headRef, HEAD_SHA);
@@ -3642,7 +3643,7 @@ describe("the cooldown hold", () => {
 
   it("refuses a held PR whose recorded hold doesn't read", async () => {
     const plan = await planFor([YOUNG_VITE()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined });
-    const body = withMarker(RULES, withPlanSection("Fixes vite.\n\nTracks #1.", { ...plan, cooldown: [{ ...HELD, eligibleAt: "soon", signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 });
+    const body = withMarker(SIGNED, withPlanSection("Fixes vite.\n\nTracks #1.", { ...plan, cooldown: [{ ...HELD, eligibleAt: "soon", signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 });
     const h = harness({ prs: [ownPr({ headRef: "secure-it/2026-10-05-security", body })] });
     await track(h);
     h.github.checks = GREEN;

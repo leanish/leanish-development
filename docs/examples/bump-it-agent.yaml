@@ -9,7 +9,7 @@ agent:
   effort: high
 # Default Keychain services: leanish-bump-it-write and leanish-bump-it-read.
 # Optional overrides; both tools may use the same write/read pair:
-# secrets: { write: shared-write, read: shared-read }
+# secrets: { write: shared-write, read: shared-read, signing: shared-signing }
 commitIdentity:
   name: dependency-bot
   email: dependency-bot@users.noreply.github.com

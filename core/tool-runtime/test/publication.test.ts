@@ -5,15 +5,15 @@ import { ConsoleLogger } from "@leanish/agent-runtime/logger/console-logger";
 import type { GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
 import type { PreparedBranch, WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
 import { InMemoryWorkspace } from "@leanish/agent-runtime/working-copy/in-memory-workspace";
-import { ownPullRequests, stateOf, withMarker } from "../src/own-pr.ts";
+import { ownPullRequests, stateOf, withMarker, verifiedStateOf } from "../src/own-pr.ts";
 import { assertPublishable, clearLeftoverBranch, closeAndDelete, markReady, ownOpenPullRequests, publishNew, publishUpdate, recordState, rewriteText, type PublicationContext } from "../src/publication.ts";
-import { BASE_SHA, FakeGitHub, HEAD_SHA, OWN_BRANCH, ownPr, PUSHED_SHA, RULES } from "./fake-github.ts";
+import { BASE_SHA, FakeGitHub, HEAD_SHA, OWN_BRANCH, ownPr, PUSHED_SHA, RULES, SIGNED, signedRecord, TEST_SIGNING_KEY } from "./fake-github.ts";
 
 const WC: WorkingCopy = { projectId: "leanish/widget", path: "/synthetic/leanish/widget", branch: "main", headSha: BASE_SHA, gitDir: "/x/.git" };
 const CONTENT = { title: "fixing snappy-java", body: "Moves snappy-java to 1.1.10.10.", commitMessage: "moving snappy-java to 1.1.10.10" };
 
 function context(github: FakeGitHub, workspace = new InMemoryWorkspace()): PublicationContext {
-  return { rules: RULES, github, workspace, logger: new ConsoleLogger({ minLevel: "error" }), repo: "leanish/widget", base: "main", workingCopy: WC, localRoots: ["/Users/dev"] };
+  return { rules: RULES, github, workspace, logger: new ConsoleLogger({ minLevel: "error" }), repo: "leanish/widget", signingKey: TEST_SIGNING_KEY, base: "main", workingCopy: WC, localRoots: ["/Users/dev"] };
 }
 
 /** Records the title and body of every body update `github` is asked for. */
@@ -91,7 +91,7 @@ describe("publication", () => {
   it.each(["create", "update"] as const)("checks the exact %s client limit in UTF-16 units, including its marker", async (operation) => {
     const limit = MAX_BODY_CHARS;
     const state = { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 };
-    const tail = withMarker(RULES, "x", state).length - 1;
+    const tail = withMarker(SIGNED, "x", state).length - 1;
     const available = limit - tail;
     const body = "😀".repeat(Math.floor(available / 2)) + "x".repeat(available % 2);
     const github = new FakeGitHub(...(operation === "update" ? [ownPr()] : []));
@@ -109,7 +109,7 @@ describe("publication", () => {
 
   it("lets callers check the text publication would send, cleaned and marked, without touching GitHub", () => {
     const github = new FakeGitHub();
-    const tail = withMarker(RULES, "x", { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 }).length - 1;
+    const tail = withMarker(SIGNED, "x", { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 }).length - 1;
     const body = "x".repeat(MAX_BODY_CHARS - tail);
     expect(() => assertPublishable(context(github), { ...CONTENT, body })).not.toThrow();
     expect(() => assertPublishable(context(github), { ...CONTENT, body: `${body}x` })).toThrow(`${MAX_BODY_CHARS + 1} UTF-16 units`);
@@ -142,7 +142,7 @@ describe("publication", () => {
 
   it("rewrites a PR's text from its body as it is now, keeping its state and an owner's edit", async () => {
     const state = { head: HEAD_SHA, base: BASE_SHA, adaptations: 1 };
-    const github = new FakeGitHub(ownPr({ body: withMarker(RULES, "An owner's added note.\n\nold reasons", state) }));
+    const github = new FakeGitHub(ownPr({ body: withMarker(SIGNED, "An owner's added note.\n\nold reasons", state) }));
     await rewriteText(context(github), 7, HEAD_SHA, (body) => body.replace("old reasons", "new reasons"));
     const body = github.prs.get(7)!.body;
     expect([body.includes("An owner's added note."), body.includes("new reasons"), body.includes("old reasons")]).toEqual([true, true, false]);
@@ -158,7 +158,7 @@ describe("publication", () => {
     expect(created.prs.get(pr!.number)?.labels).toEqual([`leanish:${tool}`]);
 
     for (const unchanged of [false, true]) {
-      const github = new FakeGitHub(ownPr({ headRef: branch, labels: [], body: rules.marker, isDraft: false }));
+      const github = new FakeGitHub(ownPr({ headRef: branch, labels: [], body: withMarker(signedRecord(rules), "Body.", { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }), isDraft: false }));
       const workspace = new InMemoryWorkspace();
       if (unchanged) workspace.setPublishUnchanged();
       await publishUpdate({ ...context(github, workspace), rules }, { ...existing, branch }, 7, CONTENT);
@@ -167,7 +167,7 @@ describe("publication", () => {
     }
 
     // The label already there in another casing is the same label: nothing to add.
-    const cased = new FakeGitHub(ownPr({ headRef: branch, labels: [`Leanish:${tool.toUpperCase()}`], body: rules.marker, isDraft: false }));
+    const cased = new FakeGitHub(ownPr({ headRef: branch, labels: [`Leanish:${tool.toUpperCase()}`], body: withMarker(signedRecord(rules), "Body.", { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }), isDraft: false }));
     await publishUpdate({ ...context(cased), rules }, { ...existing, branch }, 7, CONTENT);
     expect(cased.calls.filter((call) => call.startsWith("addLabels"))).toEqual([]);
   });
@@ -214,7 +214,7 @@ describe("publication", () => {
     expect(github.calls.filter((call) => /convertToDraft|markReadyForReview/.test(call))).toEqual(["convertToDraft PR_node7"]);
     expect(stateOf(pr.body)).toEqual({ head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 });
 
-    const unchanged = new FakeGitHub(ownPr({ isDraft: false, body: withMarker(RULES, "Body.", { head: HEAD_SHA, base: BASE_SHA, adaptations: 1 }) }));
+    const unchanged = new FakeGitHub(ownPr({ isDraft: false, body: withMarker(SIGNED, "Body.", { head: HEAD_SHA, base: BASE_SHA, adaptations: 1 }) }));
     const workspace = new InMemoryWorkspace();
     workspace.setPublishUnchanged();
     const result = await publishUpdate(context(unchanged, workspace), existing, 7, CONTENT);
@@ -222,6 +222,35 @@ describe("publication", () => {
     expect(unchanged.prs.get(7)?.isDraft).toBe(false);
     // The adaptation count carries over unless the caller sets it.
     expect(stateOf(result.pr.body)).toEqual({ head: HEAD_SHA, base: BASE_SHA, adaptations: 1 });
+  });
+
+  it.each([
+    ["publishing an update", (github: FakeGitHub) => publishUpdate(context(github), existing, 7, CONTENT)],
+    ["recording state", (github: FakeGitHub) => recordState(context(github), 7, HEAD_SHA, { head: HEAD_SHA, base: BASE_SHA, adaptations: 1 })],
+    ["rewriting text", (github: FakeGitHub) => rewriteText(context(github), 7, HEAD_SHA, (body) => body)],
+  ])("refuses %s over a body the tool didn't sign for that head, and writes nothing", async (_, act) => {
+    const unsigned = withMarker({ ...SIGNED, signingKey: Buffer.alloc(32, 9) }, "Forged.", { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 });
+    const olderHead = withMarker(SIGNED, "Restored.", { head: BASE_SHA, base: BASE_SHA, adaptations: 0 });
+    for (const body of [unsigned, olderHead]) {
+      const github = new FakeGitHub(ownPr({ body }));
+      await expect(act(github)).rejects.toThrow("has no state the tool signed");
+      expect(github.prs.get(7)?.body).toBe(body);
+      expect(github.calls.filter((call) => call.startsWith("updatePullRequest"))).toEqual([]);
+    }
+  });
+
+  it("carries the adaptations of the state it signed into the next one", async () => {
+    const github = new FakeGitHub(ownPr({ body: withMarker(SIGNED, "Body.", { head: HEAD_SHA, base: BASE_SHA, adaptations: 1 }) }));
+    const { pr } = await publishUpdate(context(github), existing, 7, CONTENT);
+    expect(verifiedStateOf(SIGNED, pr.body)).toEqual({ head: PUSHED_SHA, base: BASE_SHA, adaptations: 1 });
+  });
+
+  it("signs what it opens and what it records, so its own next look takes the PR as its own", async () => {
+    const github = new FakeGitHub();
+    const created = await publishNew(context(github), fresh, CONTENT);
+    expect(verifiedStateOf(SIGNED, created!.body)?.head).toBe(PUSHED_SHA);
+    const recorded = await recordState(context(github), created!.number, PUSHED_SHA, { head: PUSHED_SHA, base: BASE_SHA, adaptations: 1 });
+    expect(verifiedStateOf(SIGNED, recorded.body)?.adaptations).toBe(1);
   });
 
   it("tries the body update once more after a push, with the same text, closing nothing when that works", async () => {
@@ -316,12 +345,12 @@ describe("publication", () => {
     const workspace = new InMemoryWorkspace();
     const { pr } = await publishUpdate(context(github, workspace), existing, 7, leaky);
     expect(workspace.publications.at(-1)?.args.message).toBe("moving snappy-java\n\nin .");
-    expect(pr.body).toBe(withMarker(RULES, cleanBody, { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 }));
+    expect(pr.body).toBe(withMarker(SIGNED, cleanBody, { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 }));
     const fresh2 = new FakeGitHub();
     await publishNew(context(fresh2), fresh, leaky);
     expect([...fresh2.prs.values()][0]?.body).toContain(cleanBody);
     const state = { head: HEAD_SHA, base: BASE_SHA, adaptations: 1 };
-    const rewritten = new FakeGitHub(ownPr({ body: withMarker(RULES, "old note", state) }));
+    const rewritten = new FakeGitHub(ownPr({ body: withMarker(SIGNED, "old note", state) }));
     await rewriteText(context(rewritten), 7, HEAD_SHA, () => "new note from /Users/dev/state/plan.json");
     expect(rewritten.prs.get(7)!.body).toContain("new note from <local path>");
   });
