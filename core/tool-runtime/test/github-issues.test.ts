@@ -70,6 +70,8 @@ describe("closedByReference", () => {
     const body = JSON.parse(String(calls[0]!.init.body)) as { query: string; variables: unknown };
     expect(body.variables).toEqual({ owner: "leanish", name: "widget" });
     expect(body.query).toContain("issue4: issue(number: 4)");
+    // Only the latest closing counts: a reference's after a person's, or the other way around.
+    expect(body.query).toContain("timelineItems(itemTypes: [CLOSED_EVENT], last: 1)");
   });
 
   it("asks about 100 issues per request, each number once", async () => {
@@ -82,8 +84,17 @@ describe("closedByReference", () => {
   });
 
   it("fails on errors beside partial data, even for what the data does answer", async () => {
-    const partial = { data: { repository: { issue1: { timelineItems: { nodes: [{ closer: null }] } }, issue2: null } }, errors: [{ type: "NOT_FOUND" }] };
+    const closing = { timelineItems: { nodes: [{ closer: null }] } };
+    const partial = { data: { repository: { issue1: closing, issue2: closing } }, errors: [{ type: "FORBIDDEN" }] };
     await expect(issues(scripted(json(partial)).fetch).closedByReference({ repo: REPO, numbers: [1, 2] })).rejects.toThrow(GitHubApiError);
+  });
+
+  it.each<[string, unknown, string]>([
+    ["names GitHub's error types", [{ type: "FORBIDDEN", message: "secret detail" }, { type: "FORBIDDEN" }, { type: "NOT_FOUND" }], "GraphQL errors: FORBIDDEN, NOT_FOUND"],
+    ["says a rate limit as every other method does", [{ type: "RATE_LIMITED" }], "rate limited"],
+    ["stays generic without a usable type", [{ type: "not a type" }, null], "GraphQL errors"],
+  ])("%s", async (_, errors, reason) => {
+    await expect(issues(scripted(json({ errors })).fetch).closedByReference({ repo: REPO, numbers: [1] })).rejects.toMatchObject({ reason });
   });
 
   it("fails when a later batch does, rather than answer for the earlier ones", async () => {

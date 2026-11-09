@@ -3545,6 +3545,23 @@ describe("the cooldown hold", () => {
     expect(recordOf((h.context.issues as FakeIssues).issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 7 }]);
   });
 
+  it("leaves an open early PR to its owner after a reference closes its issue, and the new issue gets none of its grant", async () => {
+    const plan = await heldPlan(YOUNG_VITE());
+    const pr = ownPr({ body: withMarker(SIGNED, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
+    const h = harness({ prs: [pr], fixes: [YOUNG_VITE()] });
+    const tracked = await early(h, pr);
+    const issues = h.context.issues as FakeIssues;
+    issues.closeByReference(1);
+    await secureIt(h.deps).run(h.context);
+    const replacements = [...issues.issues.values()].filter((issue) => issue.state === "open");
+    expect(replacements.map((issue) => issue.number)).toEqual([2]);
+    expect(recordOf(replacements[0]!.body)!.grant).toBeUndefined();
+    expect(recordOf(replacements[0]!.body)!.attempts).toEqual([]);
+    expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "left-alone" }] });
+    expect(h.github.prs.get(7)!.headSha).toBe(tracked.headSha);
+    expect(h.workspace.publications).toEqual([]);
+  });
+
   it("knows a PR was taken early from its issue even when the gate held nothing in it", async () => {
     // The probe brought g:x@2 into a configuration where it's new; the gate saw it elsewhere in the repository already.
     const plan = await heldPlan(YOUNG_VITE());

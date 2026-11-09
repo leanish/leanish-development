@@ -229,7 +229,7 @@ export function createGitHubIssues(options: CreateGitHubIssuesOptions): GitHubIs
         const batch = wanted.slice(start, start + PAGE_SIZE);
         const answer = record(operation, await ok(operation, "/graphql", { method: "POST", body: JSON.stringify({ query: closingsQuery(batch), variables: { owner, name } }) }));
         // GraphQL answers a partial failure with HTTP 200, the failed part null and the reason here: read before any data.
-        if (answer["errors"] !== undefined) throw new GitHubApiError(operation, "GraphQL errors");
+        if (answer["errors"] !== undefined) throw new GitHubApiError(operation, graphQLReason(answer["errors"]));
         const repository = record(operation, record(operation, answer["data"])["repository"]);
         for (const number of batch) if (hasCloser(operation, repository[`issue${number}`])) closed.add(number);
       }
@@ -378,6 +378,19 @@ function closingsQuery(numbers: ReadonlyArray<number>): string {
   const issues = numbers.map((number) => `issue${number}: issue(number: ${number}) { ...latestClosing }`).join(" ");
   return `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { ${issues} } }
 fragment latestClosing on Issue { timelineItems(itemTypes: [CLOSED_EVENT], last: 1) { nodes { ... on ClosedEvent { closer { __typename } } } } }`;
+}
+
+/**
+ * What failed, by GitHub's error types alone (a lasting failure stops the sync, so a person needs to know which), and a
+ * rate limit as every other method says it. GraphQL reports one with HTTP 200, so `refusal` can't see it.
+ */
+function graphQLReason(errors: unknown): string {
+  const types = Array.isArray(errors) ? errors.flatMap((error: unknown) => {
+    const type = typeof error === "object" && error !== null ? (error as Record<string, unknown>)["type"] : undefined;
+    return typeof type === "string" && /^[A-Z_]+$/.test(type) ? [type] : [];
+  }) : [];
+  if (types.includes("RATE_LIMITED")) return "rate limited";
+  return types.length === 0 ? "GraphQL errors" : `GraphQL errors: ${[...new Set(types)].join(", ")}`;
 }
 
 /**
