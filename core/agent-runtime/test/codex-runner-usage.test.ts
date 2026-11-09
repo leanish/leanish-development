@@ -228,7 +228,7 @@ describe("CodexRunner usage", () => {
     const { usages, error } = await runWith(
       await harness(),
       { FAKE_ROLLOUTS: await rolloutsDir({ "rollout-root.jsonl": cut }), FAKE_EXEC_SLEEP: "5" },
-      { timeoutMs: 3000 },
+      { timeoutMs: 1500 },
     );
     expect((error as Error).message).toMatch(/did not return within/);
     expect(usages[0]).toMatchObject({ measurement: "partial" });
