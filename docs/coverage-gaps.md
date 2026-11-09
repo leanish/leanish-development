@@ -102,6 +102,15 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   label. A PR's `Tracks` line is read from the PR's description the same way: review reads its last recognized
   `Tracks` line and keeps that issue number when it publishes an update, even when it names an unrelated issue (it
   posts no notice there); a regular run that redoes the PR replaces it with the current decision's issue.
+- **Issues are as visible as the repository (secure-it)**: on a public repository they join what was already public,
+  the lockfile and the advisory, and add where it stands: still installed, waiting until a date, or left alone. That
+  makes picking a target cheaper, even by searching titles across GitHub, but it reveals no exploit and doesn't show the
+  code is reachable, and an advisory only the package's own repository reports may simply be wrong. The ones waiting
+  for the release-age period say the most. Outsiders see nothing of a private repository's issues. A closed issue
+  doesn't by itself mean dismissed: the tool also closes resolved and superseded ones. Draft repository advisories would
+  hide this, but need a token user who's an administrator or security manager and have no labels, which `take-early`
+  depends on. If confidentiality ever becomes a requirement, a separate private repository for the issues fits best,
+  with cross-repository references and permissions checked against the source repository still to work out.
 - **A person using the token's account can look like secure-it closing an issue (secure-it)**: secure-it tells its
   own closing from a person's by the token's login and the event boundary it recorded with the closing (or, for a
   closing recorded before boundaries were kept, its notice's time). A person using that same account who closes and
