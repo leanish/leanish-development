@@ -100,16 +100,6 @@ describe("a note about changes to the policy judging the PR", () => {
     expect(outcome.notes).toEqual([unknown]);
   });
 
-  it.each([["@a"], ["@a", "@widened"]])("lets a PR rename a base still on the removed ownPackages, noting only that it can't read base's policy (%s)", async (...scopes) => {
-    const outcome = await compare(json({ ownPackages: { npm: { scopes: ["@a"] } } }), json({ trustedPackages: { npm: { scopes } } }));
-    expect(outcome.failures).toEqual([]);
-    expect(outcome.notes).toEqual([unknown]);
-  });
-
-  it("fails a head still on the removed ownPackages", async () => {
-    await expect(compare("{}", json({ ownPackages: { npm: { scopes: ["@a"] } } }))).rejects.toThrow("ownPackages was renamed trustedPackages");
-  });
-
   it("shows the note in the step summary with an empty held list", async () => {
     const outcome = await compare(undefined, json({ releaseAgeDays: 1 }));
     const summary = markdownSummary({

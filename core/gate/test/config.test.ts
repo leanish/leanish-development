@@ -44,14 +44,8 @@ describe("supply-chain.json", () => {
     }
   });
 
-  it.each([
-    [{ ownPackages: trustedPackages }, "rename the field"],
-    [{ ownPackages: {} }, "rename the field"],
-    [{ ownPackages: null }, "rename the field"],
-    [{ trustedPackages, ownPackages: trustedPackages }, "delete it"],
-    [{ trustedPackages: {}, ownPackages: {} }, "delete it"],
-  ])("rejects the removed ownPackages name, saying what to do (%j)", (raw, fix) => {
-    expect(() => parseConfig(raw)).toThrow(`ownPackages was renamed trustedPackages in 0.10.0, and 0.11.0 removed the old name; ${fix}`);
+  it("rejects an unknown top-level field", () => {
+    expect(() => parseConfig({ surprise: {} })).toThrow("supply-chain.json has unknown field(s): surprise");
   });
 
   it("validates trustedPackages without silently ignoring malformed policy", () => {
