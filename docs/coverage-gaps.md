@@ -102,6 +102,15 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   label. A PR's `Tracks` line is read from the PR's description the same way: review reads its last recognized
   `Tracks` line and keeps that issue number when it publishes an update, even when it names an unrelated issue (it
   posts no notice there); a regular run that redoes the PR replaces it with the current decision's issue.
+- **Issues are as visible as the repository (secure-it)**: on a public repository they join what was already public,
+  the lockfile and the advisory, and add where it stands: still installed, waiting until a date, or left alone. That
+  makes picking a target cheaper, even by searching titles across GitHub, but it reveals no exploit and doesn't show the
+  code is reachable, and an advisory only the package's own repository reports may simply be wrong. The ones waiting
+  for the release-age period say the most. Outsiders see nothing of a private repository's issues. A closed issue
+  doesn't by itself mean dismissed: the tool also closes resolved and superseded ones. Draft repository advisories would
+  hide this, but need a token user who's an administrator or security manager and have no labels, which `take-early`
+  depends on. If confidentiality ever becomes a requirement, a separate private repository for the issues fits best,
+  with cross-repository references and permissions checked against the source repository still to work out.
 - **A person using the token's account can look like secure-it closing an issue (secure-it)**: secure-it tells its
   own closing from a person's by the token's login and the event boundary it recorded with the closing (or, for a
   closing recorded before boundaries were kept, its notice's time). A person using that same account who closes and
@@ -138,6 +147,17 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   its `check` and `gate / supply-chain` checks green, watching main's `ci` runs still in progress on it for up to 20 minutes.
   A run that outlasts that, or one that doesn't exist yet when the publish lists them, fails it before packing (nothing
   publishes), and it isn't retried when they pass: re-run the publish run's failed jobs once they're green.
+- **A repository advisory tagged as malware can start a fix (secure-it)**: whoever controls a dependency's repository
+  can tag an advisory CWE-506 on the installed version, and secure-it plans a malware move with no reviewed source,
+  possibly to an older version; tagging the other versions too could steer it. The version it lands on must be past
+  the release-age wait and bring no advisory the installed version lacks, in OSV, GitHub's database or that
+  repository, and a person merges the PR, so it stays as it is.
+- **A second use of an Action only its repository tags as malware (gate)**: the gate tracks an Action by the workflow
+  file using it, so a PR adding another use of the same version in that file, or a subdirectory of it, reads as
+  unchanged and warns. A new workflow file fails. The new use can run with more than the existing one (a job with
+  secrets or a write token) or be different code (another subdirectory), but it needs someone able to get the workflow
+  change merged, and the diff shows it. Comes from the same rule as a repository-only finding on unchanged code, so
+  it stays as it is; counting each use would narrow it.
 - **A repository advisory range read too wide**: a lone upper bound followed by a closed interval
   (`< 3.0.0, >= 1.0.0 < 2.0.0`) reads as either of them, as maintainers' comma-as-OR lists mean, so an AND range
   written that way counts versions outside it as affected when no reviewed record names the same package and

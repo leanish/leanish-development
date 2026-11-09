@@ -17,14 +17,16 @@ code for major upgrades. The tool writes npm dependency files itself.
 
 A PR must not introduce a vulnerability the base branch did not have.
 Existing vulnerabilities are warnings on that PR. The default-branch scan fails
-on all vulnerabilities without a valid, reviewed exception.
+on all vulnerabilities without a valid, reviewed exception, except those only the
+package's own repository reports, which warn.
 
 A finding is a package and an advisory together. A CVE and GHSA for the same
 advisory count once. Another vulnerable copy of that package is not a new finding;
 a different affected package is.
 
-Malware listed by the advisory sources always fails, even if it was already
-present. Exceptions cannot allow malware. This is advisory-based detection,
+Malware listed by the advisory sources fails, even if it was already present,
+unless only the package's own repository reports it and the code didn't change.
+ Exceptions cannot allow malware. This is advisory-based detection,
 not a scan of package contents for unknown malicious code.
 
 New or changed versions normally wait seven days (configurable); see the

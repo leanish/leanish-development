@@ -187,6 +187,55 @@ describe("inheritance by review status", () => {
     expect(verdict([npm("lib", "1.0.0")], [npm("lib", "2.0.0")], overReviewed).failures).toEqual([`inherited: ${problem}`]);
   });
 
+  describe("a finding only the package's own repository reports", () => {
+    const note = "; only the package's own repository reports it, which doesn't fail code that didn't change";
+    const malware = "lib@1.0.0: GHSA-m is a known-malicious package (no exception can cover it)";
+
+    it("warns when tagged as malware on a version the PR leaves as it was", () => {
+      const snap = snapshot({ "lib@1.0.0": [sourced("GHSA-m", "repository", [], true)] });
+      expect(verdict([npm("lib", "1.0.0")], [npm("lib", "1.0.0")], snap)).toMatchObject({ failures: [], warnings: [`inherited: ${malware}${note}`] });
+    });
+
+    it("still fails malware the PR moves to, or adds", () => {
+      const snap = snapshot({ "lib@1.0.0": [sourced("GHSA-m", "repository", [], true)], "lib@2.0.0": [sourced("GHSA-m", "repository", [], true)] });
+      const problem = "lib@2.0.0: GHSA-m is a known-malicious package (no exception can cover it)";
+      expect(verdict([npm("lib", "1.0.0")], [npm("lib", "2.0.0")], snap).failures).toEqual([`inherited: ${problem}`]);
+      expect(verdict([], [npm("lib", "2.0.0")], snap).failures).toEqual([`new: ${problem}`]);
+    });
+
+    it("still fails malware the PR brings to a new location, at a version base already has", () => {
+      const snap = snapshot({ "lib@1.0.0": [sourced("GHSA-m", "repository", [], true)] });
+      const head = npm("lib", "1.0.0", ["node_modules/lib", "node_modules/other/node_modules/lib"]);
+      expect(verdict([npm("lib", "1.0.0")], [head], snap).failures).toEqual([`inherited: ${malware}`]);
+    });
+
+    it("still fails malware a reviewed source reports too, on a version the PR leaves as it was", () => {
+      const snap = snapshot({ "lib@1.0.0": [sourced("GHSA-m", "repository", [], true), sourced("MAL-2026-1", "osv", ["GHSA-m"], true)] });
+      const result = verdict([npm("lib", "1.0.0")], [npm("lib", "1.0.0")], snap);
+      expect(result.failures).toHaveLength(1);
+      expect(result.warnings).toEqual([]);
+    });
+
+    it("warns on a full scan, tagged as malware or not, while a reviewed one fails", () => {
+      const snap = snapshot({
+        "lib@1.0.0": [sourced("GHSA-m", "repository", [], true)],
+        "plain@1.0.0": [sourced("GHSA-p", "repository")],
+        "seen@1.0.0": [sourced("GHSA-s", "osv")],
+      });
+      const result = scanVerdict(findingsOf([npm("lib", "1.0.0"), npm("plain", "1.0.0"), npm("seen", "1.0.0")], snap), NO_EXCEPTIONS, snap, TODAY);
+      expect(result.failures).toEqual(["seen@1.0.0: GHSA-s has no exception"]);
+      expect(result.warnings).toEqual([`${malware}${note}`, `plain@1.0.0: GHSA-p has no exception${note}`]);
+    });
+
+    it("stays a note on a full scan when an exception covers it", () => {
+      const snap = snapshot({ "plain@1.0.0": [sourced("GHSA-p", "repository")] });
+      const exceptions = parseExceptions({
+        vulnerabilities: [{ id: "GHSA-p", package: "plain", version: "1.0.0", paths: ["node_modules/plain"], reason: "build only", expires: "2027-01-01" }],
+      });
+      expect(scanVerdict(findingsOf([npm("plain", "1.0.0")], snap), exceptions, snap, TODAY)).toMatchObject({ failures: [], warnings: [], notes: ["excepted: plain@1.0.0: GHSA-p"] });
+    });
+  });
+
   it("treats GitHub's advisory database as reviewed for GitHub Actions", () => {
     const actions = (base: Advisory["source"], head: Advisory["source"]) => new Snapshot(new Map([
       ["GitHub Actions|acme/tool|v1.0.0", [sourced("GHSA-act", base)]],

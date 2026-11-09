@@ -181,8 +181,11 @@ function reviewedOptions(
   };
 }
 
-const scanFailures = (pkg: PackageVersion, snapshot: Awaited<ReturnType<typeof takeSnapshot>>) =>
-  scanVerdict(findingsOf([{ ...pkg, locations: ["lockfile"] }], snapshot), NO_EXCEPTIONS, snapshot, "2026-10-29").failures;
+// What a full scan still reports: a repository-only finding warns rather than fails, so both count as present.
+const scanReports = (pkg: PackageVersion, snapshot: Awaited<ReturnType<typeof takeSnapshot>>) => {
+  const { failures, warnings } = scanVerdict(findingsOf([{ ...pkg, locations: ["lockfile"] }], snapshot), NO_EXCEPTIONS, snapshot, "2026-10-29");
+  return [...failures, ...warnings];
+};
 
 describe("reviewed records overriding wider repository ranges", () => {
   it("clears netty 4.1.138, keeps the reviewed finding on 4.1.132 and permits that fix", async () => {
@@ -191,8 +194,8 @@ describe("reviewed records overriding wider repository ranges", () => {
     }, { [`${NETTY.name}@${NETTY_OLD.version}`]: [{ id: NETTY_GHSA }] }));
     expect(snapshot.advisories(NETTY)).toEqual([]);
     expect(sources(snapshot.advisories(NETTY_OLD))).toEqual([[NETTY_GHSA, "osv"]]);
-    expect(scanFailures(NETTY, snapshot)).toEqual([]);
-    expect(scanFailures(NETTY_OLD, snapshot)).toHaveLength(1);
+    expect(scanReports(NETTY, snapshot)).toEqual([]);
+    expect(scanReports(NETTY_OLD, snapshot)).toHaveLength(1);
     expect(snapshot.gaps).toEqual([]);
     expect(snapshot.notes).toEqual([expect.stringContaining(`${NETTY_GHSA} (owner/project) for ${NETTY.name}@4.1.138.Final`)]);
     expect(snapshot.notes[0]).toContain("the reviewed ranges apply");
@@ -208,7 +211,7 @@ describe("reviewed records overriding wider repository ranges", () => {
     }, {}, requests));
     expect(sources(snapshot.advisories(NETTY_OLD))).toEqual([[NETTY_GHSA, "repository"]]);
     expect(snapshot.advisories(NETTY)).toEqual([]);
-    expect(scanFailures(NETTY_OLD, snapshot)).toHaveLength(1);
+    expect(scanReports(NETTY_OLD, snapshot)).toHaveLength(1);
     expect(snapshot.gaps).toEqual([]);
     expect(snapshot.notes).toContain(`${NETTY_GHSA} (owner/project) for ${NETTY.name}@${NETTY_OLD.version}: its reviewed record says affected but the scan didn't report it; repository record kept`);
     expect(requests.filter((request) => request.url === OSV_RECORD)).toHaveLength(1);
@@ -223,7 +226,7 @@ describe("reviewed records overriding wider repository ranges", () => {
       [OSV_RECORD]: { body: { id: NETTY_GHSA, affected: [{ package: { ecosystem: "Maven", name: NETTY.name }, ...ranges }] } },
     }));
     expect(sources(snapshot.advisories(NETTY))).toEqual([[NETTY_GHSA, "repository"]]);
-    expect(scanFailures(NETTY, snapshot)).toHaveLength(1);
+    expect(scanReports(NETTY, snapshot)).toHaveLength(1);
     expect(snapshot.gaps).toHaveLength(gap ? 1 : 0);
   });
 
@@ -253,7 +256,7 @@ describe("reviewed records overriding wider repository ranges", () => {
     expect(snapshot.notes).toEqual([expect.stringContaining("the reviewed ranges apply")]);
   });
 
-  it("keeps all three unimported zstd-jni advisories on 404 and still fails", async () => {
+  it("keeps all three unimported zstd-jni advisories on 404 and still reports them", async () => {
     const pkg: PackageVersion = { ecosystem: "Maven", name: "com.github.luben:zstd-jni", version: "1.5.7-6" };
     const ids = ["GHSA-h5m7-4hv9-cvp3", "GHSA-5p5w-hg9r-gx2p", "GHSA-8v5f-66rc-52f5"];
     // Only the ids/absence are the incident's facts; a synthetic matching range exercises repository retention.
@@ -262,7 +265,7 @@ describe("reviewed records overriding wider repository ranges", () => {
     ] }));
     const snapshot = await takeSnapshot([pkg], reviewedOptions(pkg, published, {}));
     expect(snapshot.advisories(pkg).map((advisory) => advisory.id)).toEqual(ids);
-    expect(scanFailures(pkg, snapshot)).toHaveLength(3);
+    expect(scanReports(pkg, snapshot)).toHaveLength(3);
     expect(snapshot.gaps).toEqual([]);
   });
 
@@ -276,7 +279,7 @@ describe("reviewed records overriding wider repository ranges", () => {
   ] as const)("keeps the record and a gap on %s", async (_name, response, reason) => {
     const snapshot = await takeSnapshot([NETTY], reviewedOptions(NETTY, [nettyAdvisory()], { [OSV_RECORD]: response }));
     expect(sources(snapshot.advisories(NETTY))).toEqual([[NETTY_GHSA, "repository"]]);
-    expect(scanFailures(NETTY, snapshot)).toHaveLength(1);
+    expect(scanReports(NETTY, snapshot)).toHaveLength(1);
     expect(snapshot.gaps).toEqual([expect.stringContaining("the reviewed database couldn't be asked")]);
     expect(snapshot.gaps[0]).toContain(reason);
     expect(snapshot.gaps[0]).toContain("repository record kept");
@@ -341,7 +344,7 @@ describe("reviewed records overriding wider repository ranges", () => {
       ] } },
     }));
     expect(snapshot.advisories(VITE)).toEqual([]);
-    expect(scanFailures(VITE, snapshot)).toEqual([]);
+    expect(scanReports(VITE, snapshot)).toEqual([]);
   });
 
   it("keeps a failed GHSA lookup even if its CVE would name the package", async () => {
@@ -379,7 +382,7 @@ describe("reviewed records overriding wider repository ranges", () => {
     }, {}, requests));
     expect(snapshot.advisories(NETTY)).toMatchObject([{ id: NETTY_GHSA, malicious: true, source: "repository" }]);
     expect(requests.some((request) => request.url.includes("/vulns/"))).toBe(false);
-    expect(scanFailures(NETTY, snapshot)).toHaveLength(1);
+    expect(scanReports(NETTY, snapshot)).toHaveLength(1);
   });
 
   it("bounds concurrent reviewed lookups across packages", async () => {
@@ -571,7 +574,7 @@ describe("doubtful reviewed records never authorize a drop", () => {
   ])("retains the finding and reports malformed decision fields (%j)", async (fields) => {
     const snapshot = await takeSnapshot([NETTY], reviewedOptions(NETTY, [nettyAdvisory()], { [OSV_RECORD]: { body: { id: NETTY_GHSA, ...fields } } }));
     expect(snapshot.advisories(NETTY)).toHaveLength(1);
-    expect(scanFailures(NETTY, snapshot)).toHaveLength(1);
+    expect(scanReports(NETTY, snapshot)).toHaveLength(1);
     expect(snapshot.gaps).toEqual([expect.stringContaining("unreadable")]);
     expect(snapshot.notes).toEqual([]);
   });
@@ -640,7 +643,7 @@ describe("OSV aliases describing only the source repository", () => {
       [`https://api.osv.dev/v1/vulns/${cve}`]: { body: sourceRecord },
     }, {}, requests));
     expect(snapshot.advisories(NETTY)).toHaveLength(known ? 0 : 1);
-    expect(scanFailures(NETTY, snapshot)).toHaveLength(known ? 0 : 1);
+    expect(scanReports(NETTY, snapshot)).toHaveLength(known ? 0 : 1);
     expect(snapshot.gaps).toEqual([]);
     expect(snapshot.notes).toHaveLength(known ? 1 : 0);
     if (known) expect(snapshot.notes[0]).toContain("the reviewed ranges apply");
