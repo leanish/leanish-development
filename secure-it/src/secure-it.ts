@@ -181,6 +181,7 @@ function publicationOf(context: ToolRunContext, deps: SecureItDeps): Publication
     workspace: context.workspace,
     logger: context.logger,
     repo: context.repo.repo,
+    signingKey: context.signingKey,
     base: context.base,
     workingCopy: context.workingCopy,
     localRoots: machineRoots(context.config.dirs),
@@ -789,7 +790,7 @@ async function withoutAgedEarly(execution: Execution, own: ReadonlyArray<GitHubP
     let closed: Awaited<ReturnType<typeof closeAndDelete>> | undefined;
     try {
       const retire = number !== undefined && attempt !== undefined && grant?.labelEventId === attempt.grantEventId
-        && (await Promise.all(grant.young.map(aged))).every(Boolean) && pr.isDraft && inspectOwnership(pr).kind === "ours";
+        && (await Promise.all(grant.young.map(aged))).every(Boolean) && pr.isDraft && inspectOwnership(execution.publication, pr).kind === "ours";
       if (retire) {
         closed = await closeAndDelete(execution.publication, pr.number, pr.headSha,
           "Every version this PR was taken early for is now past the release-age wait. secure-it retires this draft: this run plans that work again from the default branch, with fresh checks.",
@@ -1028,7 +1029,7 @@ async function recognisedPlans(execution: Execution, own: ReadonlyArray<GitHubPu
   const owned: Ours[] = [];
   for (const pr of own) {
     if (topicOf(RULES, pr.headRef) === undefined) continue;
-    const ownership = inspectOwnership(pr);
+    const ownership = inspectOwnership(execution.publication, pr);
     const plan = ownership.kind === "ours" ? planOf(pr.body) : undefined;
     if (ownership.kind !== "ours" || plan === undefined) continue;
     if (matchesPlan(target, { pr, plan, early: await execution.early.is(pr, plan) })) owned.push(ownership);
@@ -1360,8 +1361,8 @@ interface TrackingInputs {
 /**
  * The open PRs a unit's run could reuse: one someone else pushed to is left out, so no issue names it.
  */
-function reusable(own: ReadonlyArray<GitHubPullRequest>): GitHubPullRequest[] {
-  return own.filter((pr) => topicOf(RULES, pr.headRef) !== undefined && inspectOwnership(pr).kind === "ours");
+function reusable(execution: Execution, own: ReadonlyArray<GitHubPullRequest>): GitHubPullRequest[] {
+  return own.filter((pr) => topicOf(RULES, pr.headRef) !== undefined && inspectOwnership(execution.publication, pr).kind === "ours");
 }
 
 /** Observes, assesses and syncs the tool's issues for this run (`issue-tracking.ts`). */
@@ -1398,7 +1399,7 @@ async function trackIssues(execution: Execution, inputs: TrackingInputs): Promis
   }
   // Assessment names the same effective PR execution can reuse, with the same early-decision boundary.
   const recorded: Array<{ pr: GitHubPullRequest; plan: ChangePlan; early: boolean }> = [];
-  for (const pr of reusable(inputs.own)) {
+  for (const pr of reusable(execution, inputs.own)) {
     const plan = planOf(pr.body);
     if (plan !== undefined) recorded.push({ pr, plan, early: await execution.early.is(pr, plan) });
   }

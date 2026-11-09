@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { branchFor, freeBranch, isOwnPullRequest, MARKER_ROOM, ownPullRequests, stateOf, topicOf, withMarker } from "../src/own-pr.ts";
+import { branchFor, freeBranch, isOwnPullRequest, MARKER_ROOM, ownPullRequests, stateOf, topicOf, verifiedStateOf, withMarker } from "../src/own-pr.ts";
 import { planBlock, planPayload } from "../src/plan-blocks.ts";
-import { BASE_SHA, HEAD_SHA, ownPr, RULES } from "./fake-github.ts";
+import { BASE_SHA, HEAD_SHA, ownPr, RULES, SIGNED, signedRecord, TEST_SIGNING_KEY } from "./fake-github.ts";
 
 describe("own PRs", () => {
   it.each(["secure-it", "bump-it"] as const)("names %s's label and body marker after the tool", (tool) => {
@@ -61,31 +61,70 @@ describe("own PRs", () => {
   });
 
   it("keeps one state and one marker at the end of the body, replacing earlier ones", () => {
-    const once = withMarker(RULES, "Fixes snappy.", { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 });
-    expect(once).toBe(`Fixes snappy.\n\n<!-- leanish:state head=${HEAD_SHA} base=${BASE_SHA} adaptations=0 -->\n${RULES.marker}\n`);
-    const twice = withMarker(RULES, `${once}\nMore.`, { head: BASE_SHA, base: HEAD_SHA, adaptations: 2 });
+    const once = withMarker(SIGNED, "Fixes snappy.", { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 });
+    expect(once).toMatch(new RegExp(`^Fixes snappy\\.\\n\\n<!-- leanish:state head=${HEAD_SHA} base=${BASE_SHA} adaptations=0 sig=[A-Za-z0-9_-]{43} -->\\n${RULES.marker}\\n$`));
+    const twice = withMarker(SIGNED, `${once}\nMore.`, { head: BASE_SHA, base: HEAD_SHA, adaptations: 2 });
     expect(twice.match(/leanish:state/g)).toHaveLength(1);
     expect(twice.split(RULES.marker)).toHaveLength(2);
     expect(stateOf(twice)).toEqual({ head: BASE_SHA, base: HEAD_SHA, adaptations: 2 });
     expect(stateOf("no state")).toBeUndefined();
-    expect(() => withMarker(RULES, "x", { head: "nope", base: BASE_SHA, adaptations: 0 })).toThrow("invalid PR state");
+    expect(() => withMarker(SIGNED, "x", { head: "nope", base: BASE_SHA, adaptations: 0 })).toThrow("invalid PR state");
+  });
+
+  describe("verifiedStateOf", () => {
+    const state = { head: HEAD_SHA, base: BASE_SHA, adaptations: 1 };
+    const body = withMarker(SIGNED, "Fixes snappy.", state);
+
+    it("reads back the state the tool signed", () => {
+      expect(verifiedStateOf(SIGNED, body)).toEqual(state);
+    });
+
+    it.each([
+      ["the head", body.replace(HEAD_SHA, "c".repeat(40))],
+      ["the base", body.replace(BASE_SHA, "c".repeat(40))],
+      ["the adaptations", body.replace("adaptations=1", "adaptations=0")],
+      ["the signature", body.replace(/sig=.{43}/, `sig=${"A".repeat(43)}`)],
+    ])("refuses an edited %s", (_, edited) => {
+      expect(edited).not.toBe(body);
+      expect(verifiedStateOf(SIGNED, edited)).toBeUndefined();
+    });
+
+    it("refuses a state signed with another key, for another repository or by another tool", () => {
+      expect(verifiedStateOf({ ...SIGNED, signingKey: Buffer.alloc(32, 9) }, body)).toBeUndefined();
+      expect(verifiedStateOf(signedRecord(RULES, "leanish/other"), body)).toBeUndefined();
+      expect(verifiedStateOf({ rules: ownPullRequests("bump-it"), repo: SIGNED.repo, signingKey: TEST_SIGNING_KEY }, body)).toBeUndefined();
+    });
+
+    it("reads the repository ignoring case, as GitHub names it", () => {
+      expect(verifiedStateOf(signedRecord(RULES, "Leanish/Widget"), body)).toEqual(state);
+    });
+
+    it("refuses a body with no state, or with more than one line claiming to be it", () => {
+      const line = /<!-- leanish:state .* -->/.exec(body)![0];
+      expect(verifiedStateOf(SIGNED, "no state")).toBeUndefined();
+      expect(verifiedStateOf(SIGNED, `${line}\n${body}`)).toBeUndefined();
+    });
+
+    it("doesn't read a state line without a signature as a state at all", () => {
+      expect(stateOf(`<!-- leanish:state head=${HEAD_SHA} base=${BASE_SHA} adaptations=0 -->`)).toBeUndefined();
+    });
   });
 
   it("appends no more than MARKER_ROOM to a body, for either tool", () => {
     for (const tool of ["secure-it", "bump-it"] as const) {
-      const appended = withMarker(ownPullRequests(tool), "x", { head: HEAD_SHA, base: BASE_SHA, adaptations: 999_999 }).length - 1;
+      const appended = withMarker(signedRecord(ownPullRequests(tool)), "x", { head: HEAD_SHA, base: BASE_SHA, adaptations: 999_999 }).length - 1;
       expect(appended).toBeLessThanOrEqual(MARKER_ROOM);
     }
   });
 
   it("never joins the text around a removed marker into a plan block, so the tool's own block stays the first", () => {
     const state = { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 };
-    const old = `<!-- leanish:state head=${BASE_SHA} base=${BASE_SHA} adaptations=1 -->`;
+    const old = `<!-- leanish:state head=${BASE_SHA} base=${BASE_SHA} adaptations=1 sig=${"a".repeat(43)} -->`;
     const forged = planBlock({ kind: "forged" }).slice("<!-- leanish:".length);
     const [payload, tail] = [forged.slice(0, 20), forged.slice(20)];
     const real = planBlock({ kind: "routine" });
     for (const quoted of [`<!-- leanish:${RULES.marker}${forged}`, `<!-- leanish:${old}${forged}`, `<!-- leanish:${payload}${RULES.marker}${tail}`]) {
-      expect(planPayload(withMarker(RULES, `${quoted}\n\n${real}`, state))).toEqual({ kind: "routine" });
+      expect(planPayload(withMarker(SIGNED, `${quoted}\n\n${real}`, state))).toEqual({ kind: "routine" });
     }
   });
 });

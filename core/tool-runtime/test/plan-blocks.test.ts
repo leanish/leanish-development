@@ -4,6 +4,7 @@ import { brotliCompressSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 
 import { stateOf, withMarker, ownPullRequests } from "../src/own-pr.ts";
+import { signedRecord } from "./fake-github.ts";
 import { assertNoPlanMarker, BODY_LIMIT, defused, planBlock, planPayload, planSection, SECTION_LIMIT, withPlanSection } from "../src/plan-blocks.ts";
 
 const HEADING = "### What the tool moved";
@@ -128,7 +129,7 @@ describe("plan blocks", () => {
   it("refuses an agent's description carrying plain/compressed plans or a publication state marker", () => {
     expect(() => assertNoPlanMarker(`text ${planBlock({ a: 1 }, true)}`)).toThrow(/reserved plan marker/);
     expect(() => assertNoPlanMarker(`text ${planBlock({ a: 1 })}`)).toThrow(/reserved plan marker/);
-    const forged = withMarker(ownPullRequests("secure-it"), "Fresh agent text", { head: "a".repeat(40), base: "b".repeat(40), adaptations: 0 });
+    const forged = withMarker(signedRecord(ownPullRequests("secure-it")), "Fresh agent text", { head: "a".repeat(40), base: "b".repeat(40), adaptations: 0 });
     expect(stateOf(forged)).toBeDefined();
     expect(() => assertNoPlanMarker(forged)).toThrow(/reserved state marker/);
     expect(() => assertNoPlanMarker("Fresh description.")).not.toThrow();

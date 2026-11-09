@@ -17,7 +17,7 @@ const CONFIG = `
 repos:
   - repo: leanish/widget
 agent: { codingAgent: codex, model: sol, effort: medium }
-secrets: { write: tool-write, read: tool-read }
+secrets: { write: tool-write, read: tool-read, signing: tool-signing }
 commitIdentity: { name: leanish, email: 5417585+leanish@users.noreply.github.com }
 dirs: { state: /tmp/tool-state, cache: /tmp/tool-cache }
 `;
@@ -67,7 +67,7 @@ function machine(overrides: Partial<Machine> & { readonly secretValues?: Record<
     invocations.push(invocation);
     return { responseText: '```json\n{"summary": "fixed"}\n```' };
   });
-  const secretValues = overrides.secretValues ?? { "tool-write": "write-token", "tool-read": "read-token" };
+  const secretValues = overrides.secretValues ?? { "tool-write": "write-token", "tool-read": "read-token", "tool-signing": "ab".repeat(32) };
   const requested: string[] = [];
   const fake: Partial<Machine> = {
     assertAgentWorkspace: async () => {},
@@ -202,7 +202,7 @@ describe("runToolCommand", () => {
   });
 
   it.each(["secure-it", "bump-it"] as const)("uses %s's default Keychain services and gives only the read token to the agent", async (tool) => {
-    const defaults = { [`leanish-${tool}-write`]: "write-token", [`leanish-${tool}-read`]: "read-token" };
+    const defaults = { [`leanish-${tool}-write`]: "write-token", [`leanish-${tool}-read`]: "read-token", [`leanish-${tool}-signing`]: "ab".repeat(32) };
     const { fake, invocations, requested } = machine({
       readText: async () => CONFIG.replace(/^secrets:.*\n/m, ""),
       secretValues: defaults,
@@ -315,6 +315,11 @@ describe("runToolCommand", () => {
     expect(await runToolCommand(handlers(async () => ({})), ["run", "leanish/other", "--config", "/config/agent.yaml"], unlisted.fake)).toBe(1);
     expect(unlisted.finalLine()).toMatchObject({ status: "error", repo: "leanish/other", error: expect.stringContaining("opts in explicitly") });
 
+    for (const value of ["short", "AB".repeat(32), "not hexadecimal ".repeat(4)]) {
+      const refused = machine({ secretValues: { "tool-write": "write-token", "tool-read": "read-token", "tool-signing": value } });
+      expect(await runToolCommand(handlers(async () => ({})), ["run", "leanish/widget", "--config", "/config/agent.yaml"], refused.fake)).toBe(1);
+      expect(refused.finalLine()).toMatchObject({ status: "error", error: "the Keychain item 'tool-signing' must hold 64 lowercase hexadecimal characters (openssl rand -hex 32)" });
+    }
     const same = machine({ secretValues: { "tool-write": "token", "tool-read": "token" } });
     expect(await runToolCommand(handlers(async () => ({})), ["run", "leanish/widget", "--config", "/config/agent.yaml"], same.fake)).toBe(1);
     expect(same.finalLine()).toMatchObject({ error: expect.stringContaining("hold the same token") });

@@ -9,6 +9,7 @@ agent:
 secrets:
   write: leanish-secure-it-{{owner}}-write
   read: leanish-secure-it-{{owner}}-read
+  signing: leanish-secure-it-{{owner}}-signing
 commitIdentity: { name: dependency-bot, email: dependency-bot@users.noreply.github.com }
 dirs:
   state: ~/.local/share/leanish/installations/{{owner}}/secure-it

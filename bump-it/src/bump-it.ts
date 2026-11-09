@@ -51,6 +51,7 @@ async function createExecution(context: ToolRunContext, deps: BumpItDeps): Promi
       workspace: context.workspace,
       logger: context.logger,
       repo: context.repo.repo,
+      signingKey: context.signingKey,
       base: context.base,
       workingCopy: context.workingCopy,
       localRoots: machineRoots(context.config.dirs),
@@ -197,7 +198,7 @@ function undecidedPeerKeys(computed: Computed): Array<readonly [string, string]>
 function recognised(execution: Execution, unit: Unit, own: ReadonlyArray<GitHubPullRequest>): Ours[] {
   const matches: Ours[] = [];
   for (const candidate of own) {
-    const ownership = inspectOwnership(candidate);
+    const ownership = inspectOwnership(execution.publication, candidate);
     // Someone else's push or rewrite is skipped.
     if (ownership.kind !== "ours") {
       continue;

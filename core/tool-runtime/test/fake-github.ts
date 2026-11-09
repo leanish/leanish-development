@@ -3,9 +3,18 @@
 import { GitHubApiError, MAX_BODY_CHARS, MAX_TITLE_CHARS } from "@leanish/agent-runtime/github/github-client";
 import type { GitHubClient, GitHubHeadChecks, GitHubNewPullRequest, GitHubPullRequest, GitHubRequiredChecks } from "@leanish/agent-runtime/types/clients";
 
-import { ownPullRequests, withMarker } from "../src/own-pr.ts";
+import { type OwnPullRequests, ownPullRequests, type RecordContext, withMarker } from "../src/own-pr.ts";
 
 export const RULES = ownPullRequests("secure-it");
+
+export const TEST_SIGNING_KEY = Buffer.alloc(32, 7);
+
+/** What the tests sign a PR's state with, in the repository every fake PR is in. */
+export function signedRecord(rules: OwnPullRequests, repo = "leanish/widget"): RecordContext {
+  return { rules, repo, signingKey: TEST_SIGNING_KEY };
+}
+
+export const SIGNED = signedRecord(RULES);
 export const OWN_BRANCH = "secure-it/2026-10-05-snappy-java";
 export const HEAD_SHA = "a".repeat(40);
 /** What `InMemoryWorkspace` reports as the default branch's head (its working copies' head) when the PR was published. */
@@ -20,7 +29,7 @@ export function ownPr(overrides: Partial<GitHubPullRequest> = {}): GitHubPullReq
     nodeId: "PR_node7",
     url: "https://github.com/leanish/widget/pull/7",
     title: "fixing snappy-java",
-    body: withMarker(RULES, "Body.", { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }),
+    body: withMarker(SIGNED, "Body.", { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }),
     state: "open",
     merged: false,
     isDraft: true,

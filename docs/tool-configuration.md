@@ -26,6 +26,7 @@ permissions and schedules are in the [adoption guide](adopting-tools.md).
 | `secrets` | Optional mapping | Override either or both default services; `{}` uses both defaults. Every opted-in repository uses the same pair. |
 | `secrets.write` | `leanish-<tool>-write` | macOS Keychain service holding the tool's write PAT. |
 | `secrets.read` | `leanish-<tool>-read` | Different service holding a different, read-only PAT for the agent. Both equal names and equal token values are refused. |
+| `secrets.signing` | `leanish-<tool>-signing` | Service holding the key that signs the state in the tool's PRs: 64 lowercase hexadecimal characters (`openssl rand -hex 32`). Its own item, never given to the agent. The tool refuses to start without it. |
 | `commitIdentity.name`, `commitIdentity.email` | Required | Author and committer for the tool's commits; also the identity exposed to agent commands. No developer-global git identity is inherited. |
 | `dirs.state` | `~/.local/share/leanish/<tool>` | Workspaces, separate git metadata, protected OSV-Scanner and the repository-advisory cache (out of the sandbox's reach). bump-it also stores deferred-major ordering here. Keep this outside temp and cache roots; see the adoption guide. |
 | `dirs.cache` | `~/.cache/leanish/<tool>` | Sandbox-writable cache for Gradle and npm. Keep separate from state and between tools. |

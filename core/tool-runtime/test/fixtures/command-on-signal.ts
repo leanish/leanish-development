@@ -26,7 +26,7 @@ process.exitCode = await runToolCommand(
   ["run", "leanish/widget", "--config", "/config.yaml"],
   {
     fetch: async () => new Response("[]"),
-    secrets: { get: async (name) => `${name}-token` },
+    secrets: { get: async (name) => name.endsWith("signing") ? "ab".repeat(32) : `${name}-token` },
     readText: async () => CONFIG,
     ensureDir: async () => {},
     workspace: () => new InMemoryWorkspace(),

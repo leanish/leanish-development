@@ -1,4 +1,4 @@
-import { KeychainStore, type SecretStore } from "@leanish/tool-runtime/secrets";
+import { KeychainStore, type SecretStore, signingKeyFrom } from "@leanish/tool-runtime/secrets";
 
 import { readInstallation, type InstallationOptions } from "./configuration.ts";
 import { result, type SetupResult } from "./contracts.ts";
@@ -28,12 +28,15 @@ export async function enrollment(options: InstallationOptions & { readonly login
   const login = ownerName(options.login);
   const { config } = await readInstallation(options, home);
   const { descriptor: contribution } = await descriptor(options.tool);
-  const commands = Object.entries(config.secrets).map(([role, service]) => ({ role,
-    tokenUrl: tokenUrl(options.tool, ownerName(options.owner), role, service, contribution.permissions),
-    command: `security add-generic-password -U -s '${service}' -a '${login}' -w`,
+  const store = (service: string) => `security add-generic-password -U -s '${service}' -a '${login}' -w`;
+  const commands = (["write", "read"] as const).map((role) => ({ role,
+    tokenUrl: tokenUrl(options.tool, ownerName(options.owner), role, config.secrets[role], contribution.permissions),
+    command: store(config.secrets[role]),
   }));
-  return result("enroll", "keychain", "needs-confirmation", "For each role, open its tokenUrl, select only the opted-in repositories, generate the token, obtain organization approval/SSO as needed, then run its command in your own Terminal; never paste tokens into chat", {
-    repos: config.repos.map(({ repo }) => repo), permissions: contribution.permissions, commands,
+  // Reused, never regenerated: a new key leaves every open PR of the tool unrecognized.
+  const signingKey = { service: config.secrets.signing, generate: "openssl rand -hex 32 | pbcopy", command: store(config.secrets.signing) };
+  return result("enroll", "keychain", "needs-confirmation", "For each role, open its tokenUrl, select only the opted-in repositories, generate the token, obtain organization approval/SSO as needed, then run its command in your own Terminal; never paste tokens into chat. For the signing key, the first time run signingKey.generate and then its command, pasting at the prompt; on another machine, or if the item exists, reuse the same value rather than generating a new one", {
+    repos: config.repos.map(({ repo }) => repo), permissions: contribution.permissions, commands, signingKey,
   });
 }
 
@@ -74,6 +77,9 @@ export async function verifyTokens(
     read = await machine.secrets.get(config.secrets.read);
   } catch { return invalidTokens("keychain", "Keychain lookup failed; unlock or enroll the configured items in your own Terminal"); }
   if (write === "" || read === "" || write === read) return invalidTokens("separation", "Write and read tokens must be nonempty and different");
+  try {
+    signingKeyFrom(await machine.secrets.get(config.secrets.signing), config.secrets.signing);
+  } catch { return invalidTokens("signing-key", "The signing key is missing or malformed; enroll it in your own Terminal"); }
   const permissions: PermissionResult[] = [];
   for (const role of ["write", "read"] as const) {
     const token = role === "write" ? write : read;

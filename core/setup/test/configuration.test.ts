@@ -30,7 +30,7 @@ describe("owner installations", () => {
     const { path, config } = await readInstallation(selected, home);
     expect(path).toBe(join(home, ".config/leanish/installations/acme", tool, "agent.yaml"));
     expect((await lstat(path)).mode & 0o777).toBe(0o600);
-    expect(config.secrets).toEqual({ write: `leanish-${tool}-acme-write`, read: `leanish-${tool}-acme-read` });
+    expect(config.secrets).toEqual({ write: `leanish-${tool}-acme-write`, read: `leanish-${tool}-acme-read`, signing: `leanish-${tool}-acme-signing` });
     expect(config.dirs.state).toBe(join(home, ".local/share/leanish/installations/acme", tool));
     expect(config.dirs.cache).toBe(join(home, ".cache/leanish/installations/acme", tool));
     expect(config.agent).toEqual({ codingAgent: "codex", model: "sol", effort: "medium" });
@@ -49,7 +49,7 @@ describe("owner installations", () => {
     const path = configPath(options, home);
     const text = parse(await readFile(path, "utf8"));
     text.agent = { codingAgent: "claude-code", model: "custom-model", effort: "low" };
-    text.secrets = { write: "restored-write", read: "restored-read" };
+    text.secrets = { write: "restored-write", read: "restored-read", signing: "restored-signing" };
     text.repos[0].branch = "release";
     text.readDeny = ["~/private"];
     text.maxNewMajorsPerRun = 0;

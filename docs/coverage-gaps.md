@@ -102,6 +102,17 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   label. A PR's `Tracks` line is read from the PR's description the same way: review reads its last recognized
   `Tracks` line and keeps that issue number when it publishes an update, even when it names an unrelated issue (it
   posts no notice there); a regular run that redoes the PR replaces it with the current decision's issue.
+- **What the signature on a PR's state doesn't cover (secure-it, bump-it)**: it proves the tool published that head, with
+  that base and adaptation count, and nothing else. Someone with write access can still edit the plan or the `Tracks`
+  line of one of the tool's PRs, which changes what the agent is asked to do and which issue the PR answers to, with no
+  commit of theirs involved. They can open another PR from a branch the tool signed a head on, or restore an earlier
+  signed line at the same head, which repeats work already authorized, an adaptation attempt for example. `attemptClient().ours`
+  in secure-it still recognizes PRs by branch, marker and label, for its bookkeeping only. Whoever holds the key can forge
+  a record. Possible extensions, none built: signing a digest of the whole plan block, the next one worth doing, with
+  a rule that rewriting prose can't create signed data; requiring the PR's author to be the token's login; binding the
+  PR number, which needs the draft created first and signed afterwards; signing secure-it's issue records, which also
+  needs something outside the body against rollback, such as a comment by the token's login written before executing;
+  a GitHub App or a dedicated user; and a branch ruleset limiting who can push to the tools' prefixes.
 - **Issues are as visible as the repository (secure-it)**: on a public repository they join what was already public,
   the lockfile and the advisory, and add where it stands: still installed, waiting until a date, or left alone. That
   makes picking a target cheaper, even by searching titles across GitHub, but it reveals no exploit and doesn't show the

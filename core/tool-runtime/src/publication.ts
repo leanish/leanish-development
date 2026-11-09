@@ -9,7 +9,7 @@ import type { PreparedBranch, WorkingCopy } from "@leanish/agent-runtime/types/w
 import type { Workspace } from "@leanish/agent-runtime/working-copy/workspace";
 
 import { cleanBody, cleanContent, type LocalRoots, withCanonical } from "./publication-text.ts";
-import { carriesLabel, isOwnPullRequest, type OwnPullRequests, type PullRequestState, stateOf, withMarker } from "./own-pr.ts";
+import { carriesLabel, isOwnPullRequest, type OwnPullRequests, type PullRequestState, verifiedStateOf, withMarker } from "./own-pr.ts";
 
 /**
  * Everything a tool writes to GitHub, done by the tool's own process with its
@@ -27,6 +27,8 @@ export interface PublicationContext {
   readonly workspace: Workspace;
   readonly logger: Logger;
   readonly repo: string;
+  /** Signs the state in the tool's PRs (`RecordContext`); held only by the tool's process. */
+  readonly signingKey: Uint8Array;
   /** The default branch every PR of the tool targets. */
   readonly base: string;
   readonly workingCopy: WorkingCopy;
@@ -77,7 +79,7 @@ const PLACEHOLDER_STATE: PullRequestState = { head: "0".repeat(40), base: "0".re
  */
 export function assertPublishable(context: PublicationContext, content: PullRequestContent, adaptations = 0): void {
   const cleaned = cleanContent(content, rootsOf(context));
-  checkedText(cleaned.title, withMarker(context.rules, cleaned.body, { ...PLACEHOLDER_STATE, adaptations }));
+  checkedText(cleaned.title, withMarker(context, cleaned.body, { ...PLACEHOLDER_STATE, adaptations }));
 }
 
 /** A PR's title, description and the commit message of the agent's change. */
@@ -127,7 +129,7 @@ export async function publishNew(
   const parent = await context.publicationParent?.(prepared) ?? prepared;
   const pushed = await context.workspace.publishBranch(context.workingCopy, parent, {
     message: content.commitMessage, ...verified,
-    beforePush: async (head) => { checkedText(content.title, withMarker(context.rules, content.body, { head, base: prepared.baseSha, adaptations: 0 })); },
+    beforePush: async (head) => { checkedText(content.title, withMarker(context, content.body, { head, base: prepared.baseSha, adaptations: 0 })); },
   });
   if (pushed.kind === "unchanged") return undefined;
   const created = await createDraftPullRequest(context, prepared.branch, content, { head: pushed.sha, base: prepared.baseSha, adaptations: 0 });
@@ -151,9 +153,9 @@ export async function publishUpdate(
   const { github, repo } = context;
   const content = cleanContent(agentContent, rootsOf(context));
   const remoteHead = existingHead(context, prepared);
-  const current = await reReadOwn(context, number, remoteHead);
-  const attempts = adaptations ?? stateOf(current.body)?.adaptations ?? 0;
-  const bodyAt = (head: string) => checkedText(content.title, withMarker(context.rules, content.body, { head, base: prepared.baseSha, adaptations: attempts }));
+  const { pr: current, state: recorded } = await reReadRecorded(context, number, remoteHead);
+  const attempts = adaptations ?? recorded.adaptations;
+  const bodyAt = (head: string) => checkedText(content.title, withMarker(context, content.body, { head, base: prepared.baseSha, adaptations: attempts }));
   // Also before drafting a ready PR, or a no-push update (which has no beforePush callback).
   bodyAt(remoteHead);
   const verified = await expectedTree(context);
@@ -202,7 +204,8 @@ async function retire(context: PublicationContext, number: number, head: string)
   const { github, repo, base, rules } = context;
   const left = "it's no longer the tool's open draft at that head, so the tool leaves it: if it's still open and nobody took it over, close it, and a later run recomputes it";
   // A removed state or a PR marked ready: someone took it over, and it's theirs to decide.
-  const stillDraftWithState = (pr: GitHubPullRequest) => pr.isDraft && stateOf(pr.body) !== undefined;
+  // Of any head: the body still names the previous one when the update never applied.
+  const stillDraftWithState = (pr: GitHubPullRequest) => pr.isDraft && verifiedStateOf(context, pr.body) !== undefined;
   try {
     const current = await github.getPullRequest({ repo, number });
     if (!isOwnPullRequest(rules, current, repo, base) || current.headSha !== head || !stillDraftWithState(current)) return left;
@@ -222,8 +225,8 @@ function reasonOf(err: unknown): string {
  * tool's at `expectedHead`: to count an adaptation before the agent starts.
  */
 export async function recordState(context: PublicationContext, number: number, expectedHead: string, state: PullRequestState): Promise<GitHubPullRequest> {
-  const current = await reReadOwn(context, number, expectedHead);
-  const updated = await context.github.updatePullRequest({ repo: context.repo, number, title: current.title, body: checkedText(current.title, withMarker(context.rules, current.body, state)) });
+  const { pr: current } = await reReadRecorded(context, number, expectedHead);
+  const updated = await context.github.updatePullRequest({ repo: context.repo, number, title: current.title, body: checkedText(current.title, withMarker(context, current.body, state)) });
   await ensureLabel(context, updated);
   return updated;
 }
@@ -233,11 +236,9 @@ export async function recordState(context: PublicationContext, number: number, e
  * says without changing what it does (its notes), so an open PR never shows an outdated reason.
  */
 export async function rewriteText(context: PublicationContext, number: number, expectedHead: string, rewrite: (body: string) => string): Promise<GitHubPullRequest> {
-  const current = await reReadOwn(context, number, expectedHead);
-  const state = stateOf(current.body);
-  if (state === undefined) throw new Error(`${current.url}: no recorded state to keep while rewriting its text`);
+  const { pr: current, state } = await reReadRecorded(context, number, expectedHead);
   // From the body as it is now, so an edit made since the caller read it (an owner's note, say) is kept.
-  const updated = await context.github.updatePullRequest({ repo: context.repo, number, title: current.title, body: checkedText(current.title, withMarker(context.rules, cleanBody(rewrite(current.body), rootsOf(context)), state)) });
+  const updated = await context.github.updatePullRequest({ repo: context.repo, number, title: current.title, body: checkedText(current.title, withMarker(context, cleanBody(rewrite(current.body), rootsOf(context)), state)) });
   await ensureLabel(context, updated);
   return updated;
 }
@@ -292,7 +293,7 @@ async function createDraftPullRequest(
   state: PullRequestState,
 ): Promise<GitHubPullRequest> {
   const { github, repo, base, rules } = context;
-  const request = { repo, head: branch, base, title: content.title, body: checkedText(content.title, withMarker(rules, content.body, state)), draft: true };
+  const request = { repo, head: branch, base, title: content.title, body: checkedText(content.title, withMarker(context, content.body, state)), draft: true };
   try {
     return await github.createPullRequest(request);
   } catch (err) {
@@ -318,6 +319,14 @@ export async function ensureLabel(context: PublicationContext, pr: GitHubPullReq
 function existingHead(context: PublicationContext, prepared: PreparedBranch): string {
   if (prepared.remoteHeadSha === null) throw new Error(`${context.rules.tool}: ${prepared.branch} has a PR but was prepared as a new branch`);
   return prepared.remoteHeadSha;
+}
+
+/** `reReadOwn`, and the state the tool signed for that head: what gets carried forward and signed again is the tool's own. */
+async function reReadRecorded(context: PublicationContext, number: number, expectedHead: string): Promise<{ readonly pr: GitHubPullRequest; readonly state: PullRequestState }> {
+  const pr = await reReadOwn(context, number, expectedHead);
+  const state = verifiedStateOf(context, pr.body);
+  if (state?.head !== expectedHead) throw new Error(`${context.rules.tool}: ${context.repo}#${number}'s body has no state the tool signed for ${expectedHead}; not publishing over it`);
+  return { pr, state };
 }
 
 /** The PR again, refused unless it is still an open PR of the tool at one of `expectedHeads`. */
