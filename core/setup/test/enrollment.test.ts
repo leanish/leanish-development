@@ -40,7 +40,7 @@ describe("human-only secret enrollment", () => {
       { role: "write", tokenUrl: expect.any(String), command: "security add-generic-password -U -s 'leanish-bump-it-acme-write' -a 'dev' -w" },
       { role: "read", tokenUrl: expect.any(String), command: "security add-generic-password -U -s 'leanish-bump-it-acme-read' -a 'dev' -w" },
     ]);
-    expect(value.data?.signingKey).toEqual({ service: "leanish-bump-it-acme-signing", generate: "openssl rand -hex 32 | pbcopy", command: "security add-generic-password -U -s 'leanish-bump-it-acme-signing' -a 'dev' -w" });
+    expect(value.data?.signingKey).toEqual({ service: "leanish-bump-it-acme-signing", generate: "openssl rand -hex 32 | pbcopy", command: "security add-generic-password -s 'leanish-bump-it-acme-signing' -a 'dev' -w" });
     expect(value.message).toContain("reuse the same value");
     expect(value.data?.permissions).toHaveLength(7);
     expect(JSON.stringify(value)).not.toMatch(/secret-sentinel/);
