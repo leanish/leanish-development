@@ -4,7 +4,6 @@ import { ConsoleLogger } from "@leanish/agent-runtime/logger/console-logger";
 import type { GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
 import type { WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
 import { InMemoryWorkspace } from "@leanish/agent-runtime/working-copy/in-memory-workspace";
-import { MemoryJournal } from "./memory-journal.ts";
 import { stateOf, withMarker } from "../src/own-pr.ts";
 import { closeAndDelete, publishUpdate, type PublicationContext } from "../src/publication.ts";
 import { type BaseMerge, MAX_ADAPTATIONS, type ReviewContext, reviewOpenPullRequests, type ReviewSteps } from "../src/review.ts";
@@ -19,9 +18,9 @@ function workingCopy(baseSha = BASE_SHA): WorkingCopy {
   return { projectId: REPO, path: "/synthetic/leanish/widget", branch: "main", headSha: baseSha, gitDir: "/synthetic/leanish/widget/.git" };
 }
 
-function context(github: FakeGitHub, workspace = new InMemoryWorkspace(), wc = workingCopy(), journal = new MemoryJournal()): ReviewContext {
+function context(github: FakeGitHub, workspace = new InMemoryWorkspace(), wc = workingCopy()): ReviewContext {
   workspace.setRemoteHead("secure-it/2026-10-05-snappy-java", HEAD_SHA);
-  return { rules: RULES, github, workspace, workingCopy: wc, logger: new ConsoleLogger({ minLevel: "error" }), repo: REPO, base: "main", journal, localRoots: [] };
+  return { rules: RULES, github, workspace, workingCopy: wc, logger: new ConsoleLogger({ minLevel: "error" }), repo: REPO, base: "main", localRoots: [] };
 }
 
 /** Steps that record what they were asked, rebasing by updating the PR and adapting by pushing. */
@@ -240,79 +239,9 @@ describe("reviewOpenPullRequests", () => {
     expect(calls).toEqual([]);
   });
 
-  it("repairs the body after its own push whose update failed, from the journal's exact head, and nothing else", async () => {
-    const journal = new MemoryJournal();
-    const body = withMarker(RULES, "New plan.", { head: PUSHED_SHA, base: BASE_SHA, adaptations: 1 });
-    await journal.pushed(REPO, 7, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: "new plan title", body, adaptations: 1 } });
-    const github = new FakeGitHub(ownPr({ headSha: PUSHED_SHA }));
-    const workspace = new InMemoryWorkspace();
-    const ctx = { ...context(github, workspace, workingCopy(), journal) };
-    workspace.setRemoteHead("secure-it/2026-10-05-snappy-java", PUSHED_SHA);
-    const entries = await reviewOpenPullRequests(ctx, steps());
-    expect(entries[0]?.outcome).toBe("marked-ready");
-    expect(github.prs.get(7)).toMatchObject({ title: "new plan title", body });
-    expect(stateOf(github.prs.get(7)!.body)).toEqual({ head: PUSHED_SHA, base: BASE_SHA, adaptations: 1 });
-
-    const other = new FakeGitHub(ownPr({ headSha: "9".repeat(40) }));
-    expect((await reviewOpenPullRequests(context(other, new InMemoryWorkspace(), workingCopy(), journal), steps()))[0]?.outcome).toBe("left-alone");
-  });
-
-  it("recovers the changed plan and count before adapting a pushed head whose body update failed", async () => {
-    const workspace = new InMemoryWorkspace();
-    const original = ownPr({ body: withMarker(RULES, "Old plan.", { head: HEAD_SHA, base: BASE_SHA, adaptations: 2 }) });
-    const failed = new FakeGitHub(original);
-    failed.fail("updatePullRequest");
-    const journal = new MemoryJournal();
-    const ctx = context(failed, workspace, workingCopy(), journal);
-    const content = { title: "new target", body: "<!-- leanish:plan {\"target\":\"2.0.0\"} -->", commitMessage: "new target" };
-    await expect(publishUpdate(ctx, { branch: original.headRef, baseSha: BASE_SHA, remoteHeadSha: HEAD_SHA, preparedSha: HEAD_SHA }, 7, content, 0)).rejects.toThrow("unexpected response");
-    const github = new FakeGitHub({ ...original, headSha: PUSHED_SHA });
-    github.checks = RED;
-    const recovered = context(github, workspace, workingCopy(), journal);
-    workspace.setRemoteHead(original.headRef, PUSHED_SHA);
-    let observed: GitHubPullRequest | undefined;
-    const entries = await reviewOpenPullRequests(recovered, { ...steps(), adapt: async (pr, _prepared, _publication, attempt) => {
-      observed = pr;
-      expect(attempt).toBe(1);
-      return false;
-    } });
-    expect(entries[0]?.outcome).toBe("adaptation-unchanged");
-    expect(observed).toMatchObject({ title: content.title, body: expect.stringContaining(content.body) });
-    expect(stateOf(github.prs.get(7)!.body)?.adaptations).toBe(1);
-  });
-
-  it("leaves a legacy journal head alone for the next run, never marking it ready or adapting it", async () => {
-    const journal = new MemoryJournal();
-    await journal.pushed(REPO, 7, { head: PUSHED_SHA, base: BASE_SHA });
-    for (const checks of [RED, new FakeGitHub().checks]) {
-      const github = new FakeGitHub(ownPr({ headSha: PUSHED_SHA }));
-      github.checks = checks;
-      const calls: string[] = [];
-      const entries = await reviewOpenPullRequests(context(github, new InMemoryWorkspace(), workingCopy(), journal), steps(calls));
-      expect(entries[0]).toMatchObject({ outcome: "left-alone", detail: "the journal has only its head; the tool's next run recomputes and republishes it" });
-      expect(calls).toEqual([]);
-      expect(github.calls.filter((call) => !call.startsWith("listOpenPullRequests"))).toEqual([]);
-    }
-  });
-
-  it("reports a saved publication that doesn't match its head as that PR's error, touching nothing", async () => {
-    const journal = new MemoryJournal();
-    const body = withMarker(RULES, "New plan.", { head: PUSHED_SHA, base: NEW_BASE, adaptations: 0 });
-    await journal.pushed(REPO, 7, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: "new plan title", body, adaptations: 0 } });
-    const github = new FakeGitHub(ownPr({ headSha: PUSHED_SHA }));
-    const calls: string[] = [];
-    const entries = await reviewOpenPullRequests(context(github, new InMemoryWorkspace(), workingCopy(), journal), steps(calls));
-    expect(entries[0]).toMatchObject({ outcome: "error", detail: expect.stringContaining("no matching publication content") });
-    expect(calls).toEqual([]);
-    expect(github.calls.filter((call) => !call.startsWith("listOpenPullRequests"))).toEqual([]);
-  });
-
-  it("leaves a PR whose state someone removed alone even when the journal records its head", async () => {
-    const journal = new MemoryJournal();
-    const body = withMarker(RULES, "New plan.", { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 });
-    await journal.pushed(REPO, 7, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: "new plan title", body, adaptations: 0 } });
+  it("leaves a PR whose state someone removed alone", async () => {
     const github = new FakeGitHub(ownPr({ headSha: PUSHED_SHA, body: `Rewritten.\n\n${RULES.marker}\n` }));
-    const entries = await reviewOpenPullRequests(context(github, new InMemoryWorkspace(), workingCopy(), journal), steps());
+    const entries = await reviewOpenPullRequests(context(github, new InMemoryWorkspace(), workingCopy()), steps());
     expect(entries[0]).toMatchObject({ outcome: "left-alone", detail: "its body no longer has the tool's state; someone rewrote it" });
     expect(github.calls.filter((call) => !call.startsWith("listOpenPullRequests"))).toEqual([]);
   });

@@ -29,14 +29,13 @@ import { gradleSourceIndex } from "@leanish/gate/gradle-sources";
 import { candidateTree, changedBetween, fileState, type FileState, linkProblems, snapshotCandidate } from "@leanish/tool-runtime/git-copies";
 import { referenceTransform } from "@leanish/tool-runtime/gradle-reference";
 import { type GradleInventories, lockfilesOf, sandboxedGradleInventories } from "@leanish/tool-runtime/inventories";
-import { FileJournal, type PublicationJournal } from "@leanish/tool-runtime/journal";
 import { withPlannedDependencyFields } from "@leanish/tool-runtime/npm-file-checks";
 import { requireNpmExcludes } from "@leanish/tool-runtime/npm-version";
 import { runSandboxed, sandboxWritable } from "@leanish/tool-runtime/sandboxed";
 import { ensureOsvScanner, verifyingRun } from "@leanish/tool-runtime/osv-scanner";
 import { prepareUnitBranch } from "@leanish/tool-runtime/branches";
 import { branchFor, ownPullRequests, topicOf } from "@leanish/tool-runtime/own-pr";
-import { inspectOwnership, type Ours, type Ownership, repairOwnership, samePlan } from "@leanish/tool-runtime/ownership";
+import { inspectOwnership, type Ours, samePlan } from "@leanish/tool-runtime/ownership";
 import { publicationParent, revertToBase } from "@leanish/tool-runtime/reconcile";
 import { assertPublishable, closeAndDelete, ownOpenPullRequests, type PublicationContext, publishNew, publishUpdate, rewriteText } from "@leanish/tool-runtime/publication";
 import { machineRoots } from "@leanish/tool-runtime/publication-text";
@@ -128,7 +127,6 @@ export interface SecureItDeps {
   readonly changedBetween: (workingCopy: WorkingCopy, base: string, sha: string) => Promise<string[]>;
   /** What the edit from `base` to `sha` did with links and submodules, as verification problems (`linkProblems`). */
   readonly linkProblems: (workingCopy: WorkingCopy, base: string, sha: string) => Promise<string[]>;
-  readonly journal: (context: ToolRunContext) => PublicationJournal;
   /** Writes `content` at `path` (relative to the working copy): taking the base's side of a conflicted dependency file. */
   readonly writeFile: (workingCopy: WorkingCopy, path: string, content: string) => Promise<void>;
   /** npm under the same sandbox and PATH as the agent, used to check exclusion support. */
@@ -162,7 +160,6 @@ export function defaultDeps(): SecureItDeps {
     candidateTree: (workingCopy) => candidateTree(workingCopy),
     changedBetween: (workingCopy, base, sha) => changedBetween(workingCopy, base, sha),
     linkProblems: (workingCopy, base, sha) => linkProblems(workingCopy, base, sha),
-    journal: (context) => new FileJournal(context.config.dirs.state),
     writeFile: (workingCopy, path, content) => writeLocalFile(workingCopy.path, path, content),
     revert: (workingCopy, baseSha) => revertToBase(workingCopy, baseSha),
   };
@@ -186,7 +183,6 @@ function publicationOf(context: ToolRunContext, deps: SecureItDeps): Publication
     repo: context.repo.repo,
     base: context.base,
     workingCopy: context.workingCopy,
-    journal: deps.journal(context),
     localRoots: machineRoots(context.config.dirs),
     verifiedTree: () => deps.candidateTree(context.workingCopy),
     publicationParent: (prepared) => deps.publicationParent(context.workingCopy, prepared),
@@ -520,13 +516,13 @@ async function runRemoval(execution: Execution, removal: ComputedRemoval, base: 
   const already = owned.find((candidate) => samePlan(candidate.pr, planDigest(plan), digestOf));
   const report = { topic: plan.topic, packages: plan.packages, notes: removal.notes };
   if (already !== undefined) {
-    const pr = await repairOwnership(execution.publication, already);
+    const { pr } = already;
     await refreshText(execution, pr, plan);
     return { ...report, outcome: "already-open", pullRequest: pr.url };
   }
   const disposition = await execution.deps.disposition({ kind: "removal", plan });
   if (disposition.kind === "defer") return { ...report, outcome: "deferred", reason: disposition.reason };
-  const reusable = owned[0] === undefined ? undefined : await repairOwnership(execution.publication, owned[0]);
+  const reusable = owned[0]?.pr;
   const prepared = await preparePlan(execution, plan, reusable, own, base.tree.id);
   const content = await applyRemoval(execution, removal);
   const problems = await verifyEdit(execution.context, execution.deps, plan, execution.env, execution.inventories, base.tree, base.gradle);
@@ -610,18 +606,6 @@ async function withRequiredYoung(execution: Execution, units: ReadonlyArray<Secu
   return { units: [...units.filter((unit) => unit !== aged && !held.includes(unit)), ...rest, ...joined], failures: new Map() };
 }
 
-/**
- * A PR's content as ownership establishes it: the journal's saved publication when its state was removed, otherwise
- * its current content; undefined when it isn't ours.
- */
-function ownershipView(ownership: Ownership): GitHubPullRequest | undefined {
-  if (ownership.kind !== "ours") return undefined;
-  if (ownership.recovery === "state-removed" && ownership.saved !== undefined) {
-    return { ...ownership.pr, title: ownership.saved.title, body: ownership.saved.body };
-  }
-  return ownership.pr;
-}
-
 async function planUnit(execution: Execution, unit: SecurityUnit, base: PlanBase): Promise<ChangePlan> {
   const actions = new ActionsGitHub(execution.env.fetch, execution.env.githubToken);
   const sources = base.gradle === undefined ? undefined : await gradleSourceIndex(base.tree);
@@ -641,15 +625,14 @@ async function runUnit(
   const plan = await planUnit(execution, unit, base);
   const owned = await recognisedPlans(execution, own, { unit, plan });
   const already = owned.find((candidate) => samePlan(candidate.pr, planDigest(plan), digestOf));
-  // The reused PR is checked before anything repairs, refreshes or redoes it.
   const reused = already ?? owned[0];
   const details = { topic: plan.topic, packages: plan.packages, notes: plan.notes ?? [] };
-  if (reused !== undefined && !reused.pr.isDraft && await execution.early.is(reused.pr, plan)) {
+  if (await hasReadyEarlyPr(execution, own, plan)) {
     return { ...details, outcome: "deferred", reason: "a person marked the early PR ready" };
   }
   if (reused !== undefined) assertNoUndecidedMoves(planOf(reused.pr.body)?.moves, undecided);
   if (already !== undefined) {
-    const pr = await repairOwnership(publication, already);
+    const { pr } = already;
     await refreshText(execution, pr, plan);
     return { ...details, outcome: "already-open", pullRequest: pr.url };
   }
@@ -685,7 +668,7 @@ async function executeUnit(
   tracked: TrackedExecution,
 ): Promise<Readonly<Record<string, unknown>>> {
   const { context, publication } = execution;
-  const reusable = owned === undefined ? undefined : await repairOwnership(publication, owned);
+  const reusable = owned?.pr;
   const prepared = await preparePlan(execution, plan, reusable, own, base.tree.id, reusable === undefined ? tracked.attempt?.branch : undefined);
   const input = await agentInput(execution, plan, base.tree, "apply");
   const answer = await context.agent<ReturnType<typeof skillInput>, SkillAnswer>({ entrypoint: "secure-it", input });
@@ -806,7 +789,7 @@ async function withoutAgedEarly(execution: Execution, own: ReadonlyArray<GitHubP
     let closed: Awaited<ReturnType<typeof closeAndDelete>> | undefined;
     try {
       const retire = number !== undefined && attempt !== undefined && grant?.labelEventId === attempt.grantEventId
-        && (await Promise.all(grant.young.map(aged))).every(Boolean) && pr.isDraft && (await inspectOwnership(execution.publication, pr)).kind === "ours";
+        && (await Promise.all(grant.young.map(aged))).every(Boolean) && pr.isDraft && inspectOwnership(pr).kind === "ours";
       if (retire) {
         closed = await closeAndDelete(execution.publication, pr.number, pr.headSha,
           "Every version this PR was taken early for is now past the release-age wait. secure-it retires this draft: this run plans that work again from the default branch, with fresh checks.",
@@ -1039,21 +1022,31 @@ async function npmSignals(registry: NpmRegistry, entry: HeldVersion): Promise<st
 }
 
 /**
- * The plan's open PRs that are still the tool's, matched by their effective content (`inspectOwnership`): a PR whose
- * body lags behind its head is matched by the plan the journal saved for that head, not by its stale body. Read-only:
- * the caller repairs only the PR it uses. Every candidate is inspected, so an unreadable journal fails the unit.
+ * The plan's open PRs that are still the tool's (`inspectOwnership`), matched by the plan their body records.
  */
 async function recognisedPlans(execution: Execution, own: ReadonlyArray<GitHubPullRequest>, target: { readonly plan: ChangePlan; readonly unit?: SecurityUnit }): Promise<Ours[]> {
   const owned: Ours[] = [];
   for (const pr of own) {
     if (topicOf(RULES, pr.headRef) === undefined) continue;
-    const ownership = await inspectOwnership(execution.publication, pr);
-    const effective = ownershipView(ownership);
-    const plan = effective === undefined ? undefined : planOf(effective.body);
-    if (ownership.kind !== "ours" || effective === undefined || plan === undefined) continue;
-    if (matchesPlan(target, { pr: effective, plan, early: await execution.early.is(effective, plan) })) owned.push(ownership);
+    const ownership = inspectOwnership(pr);
+    const plan = ownership.kind === "ours" ? planOf(pr.body) : undefined;
+    if (ownership.kind !== "ours" || plan === undefined) continue;
+    if (matchesPlan(target, { pr, plan, early: await execution.early.is(pr, plan) })) owned.push(ownership);
   }
   return owned;
+}
+
+/**
+ * Whether a person marked ready a PR taken early for this decision. Not limited to the tool's own PRs: one whose state
+ * they also removed can't be changed any more, but the decision is still in their hands.
+ */
+async function hasReadyEarlyPr(execution: Execution, own: ReadonlyArray<GitHubPullRequest>, target: ChangePlan): Promise<boolean> {
+  for (const pr of own) {
+    if (pr.isDraft || topicOf(RULES, pr.headRef) === undefined) continue;
+    const plan = planOf(pr.body);
+    if (plan !== undefined && plan.kind === target.kind && decisionIdOf(plan) === decisionIdOf(target) && await execution.early.is(pr, plan)) return true;
+  }
+  return false;
 }
 
 /** Early PRs carry exact decisions; eligible ordinary PRs can reconcile their kind and full recorded topic. */
@@ -1365,17 +1358,10 @@ interface TrackingInputs {
 }
 
 /**
- * The open PRs a unit's run could reuse, as their ownership reads them (`ownershipView`): one someone else pushed to, or
- * whose ownership can't be read, is left out (the run itself fails on the latter, alone), so no issue names it.
+ * The open PRs a unit's run could reuse: one someone else pushed to is left out, so no issue names it.
  */
-async function reusable(publication: PublicationContext, own: ReadonlyArray<GitHubPullRequest>): Promise<GitHubPullRequest[]> {
-  const reusable: GitHubPullRequest[] = [];
-  for (const pr of own) {
-    if (topicOf(RULES, pr.headRef) === undefined) continue;
-    const effective = await inspectOwnership(publication, pr).then(ownershipView, () => undefined);
-    if (effective !== undefined) reusable.push(effective);
-  }
-  return reusable;
+function reusable(own: ReadonlyArray<GitHubPullRequest>): GitHubPullRequest[] {
+  return own.filter((pr) => topicOf(RULES, pr.headRef) !== undefined && inspectOwnership(pr).kind === "ours");
 }
 
 /** Observes, assesses and syncs the tool's issues for this run (`issue-tracking.ts`). */
@@ -1412,7 +1398,7 @@ async function trackIssues(execution: Execution, inputs: TrackingInputs): Promis
   }
   // Assessment names the same effective PR execution can reuse, with the same early-decision boundary.
   const recorded: Array<{ pr: GitHubPullRequest; plan: ChangePlan; early: boolean }> = [];
-  for (const pr of await reusable(execution.publication, inputs.own)) {
+  for (const pr of reusable(inputs.own)) {
     const plan = planOf(pr.body);
     if (plan !== undefined) recorded.push({ pr, plan, early: await execution.early.is(pr, plan) });
   }

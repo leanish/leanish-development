@@ -19,7 +19,6 @@ import type { Tree } from "@leanish/gate/tree";
 import { assertAgentWorkspace, type ToolRunContext } from "@leanish/tool-runtime/command";
 import { retargetRepository } from "@leanish/tool-runtime/test/retarget-repository";
 import { parseToolConfig } from "@leanish/tool-runtime/config";
-import { MemoryJournal } from "@leanish/tool-runtime/test/memory-journal";
 import { branchFor, stateOf, withMarker } from "@leanish/tool-runtime/own-pr";
 import { BASE_SHA, FakeGitHub, GREEN, HEAD_SHA, ownPr, PUSHED_SHA, RED } from "@leanish/tool-runtime/test/fake-github";
 import { FakeIssues } from "@leanish/tool-runtime/test/fake-issues";
@@ -75,7 +74,6 @@ function harness(options: { bumps?: BumpCandidate[]; prs?: GitHubPullRequest[]; 
   const computed: Array<{ topic: string; base: string }> = [];
   const verified: BumpPlan[] = [];
   const reverted: string[] = [];
-  const journal = new MemoryJournal();
   let deferred: ReadonlyArray<string> = options.deferred ?? [];
   const reset = (contents: Record<string, string>) => { for (const path of Object.keys(files)) delete files[path]; Object.assign(files, contents); };
   const originalPrepare = workspace.prepareBranch.bind(workspace);
@@ -111,13 +109,12 @@ function harness(options: { bumps?: BumpCandidate[]; prs?: GitHubPullRequest[]; 
     changedBetween: async () => ["package.json", "package-lock.json"],
     linkProblems: async () => (options.links ?? []).map((path) => `the edit made ${path} a symbolic link: verification can't check what's behind one`),
     wrapperAt: async () => ({ files: wrapperArtifacts(), jarSha256: undefined }),
-    journal: () => journal,
     priority: () => ({ read: async () => deferred, write: async (packages) => { deferred = [...packages]; } }),
     writeFile: async (_wc, path, content) => { files[path] = content; },
     removeFile: async (_wc, path) => { delete files[path]; },
     revert: async (_wc, sha) => { reverted.push(sha); reset(BASE_FILES); return ["package-lock.json"]; },
   };
-  return { context, deps, github, workspace, agentCalls, computed, verified, reverted, journal, files, deferred: () => deferred };
+  return { context, deps, github, workspace, agentCalls, computed, verified, reverted, files, deferred: () => deferred };
 }
 const major = (bump = candidate()) => majorUnits([bump])[0]!;
 const routine = (bump = candidate()) => routineUnit([bump]);
@@ -639,14 +636,6 @@ describe("bump-it run", () => {
     expect(h.verified[0]?.moves.map((move) => move.mechanism)).toEqual(["npm-range"]);
     expect(h.agentCalls).toEqual([]);
   });
-  it("forces reconciliation of a legacy journal head instead of trusting its stale same-plan body", async () => {
-    const pr = await prFor(routine(), { headSha: "9".repeat(40) });
-    const h = harness({ prs: [pr], bumps: [candidate({ major: undefined })] });
-    await h.journal.pushed(REPO, pr.number, { head: pr.headSha, base: BASE_SHA });
-    expect(await bumpIt(h.deps).run(h.context)).toMatchObject({ units: [{ outcome: "updated" }] });
-    expect(h.reverted).toEqual([BASE_SHA]);
-    expect((await h.journal.last(REPO, pr.number))?.publication?.body).toBe(h.github.prs.get(pr.number)?.body);
-  });
   it("reports cross-major Vitest/UI/coverage peer sets as blocked without coordinating their majors", async () => {
     const names = ["vitest", "@vitest/ui", "@vitest/coverage-v8"];
     const manifest = (name: string, version: string) => name === "vitest"
@@ -728,58 +717,6 @@ describe("bump-it run", () => {
     expect(await bumpIt(changed.deps).run(changed.context)).toMatchObject({ units: [{ outcome: "updated" }] });
     expect(changed.reverted).toEqual([BASE_SHA]);
     expect(changed.workspace.preparations[0]?.args.start).toBe("remote-merging");
-  });
-  it("accepts the journal's exact head for run reuse, and never a different head", async () => {
-    const pr = await prFor(routine(), { headSha: "9".repeat(40) });
-    const h = harness({ prs: [pr], bumps: [candidate({ major: undefined })] });
-    await h.journal.pushed(REPO, pr.number, { head: pr.headSha, base: BASE_SHA, publication: {
-      title: pr.title, body: withMarker(RULES, pr.body, { head: pr.headSha, base: BASE_SHA, adaptations: 0 }), adaptations: 0,
-    } });
-    expect(await bumpIt(h.deps).run(h.context)).toMatchObject({ units: [{ outcome: "already-open" }] });
-    const human = harness({ prs: [{ ...pr, headRef: "bump-it/2026-10-07-routine" }], bumps: [candidate({ major: undefined })] });
-    expect(await bumpIt(human.deps).run(human.context)).toMatchObject({ units: [{ outcome: "published" }] });
-    expect(human.github.prs.get(42)?.headRef).toBe("bump-it/2026-10-07-routine-2");
-    expect(human.github.prs.get(7)?.headSha).toBe(pr.headSha);
-  });
-  it("matches a PR by the plan the journal saved for its head, not its stale body, and repairs it as it uses it", async () => {
-    const current = await prFor(routine());
-    // #7's body still records a major's plan at an older head; the journal saved this unit's plan for its current head.
-    const pr = { ...await prFor(major()), headRef: current.headRef, headSha: PUSHED_SHA };
-    const h = harness({ prs: [pr], bumps: [candidate({ major: undefined })] });
-    const body = withMarker(RULES, current.body, { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 });
-    await h.journal.pushed(REPO, pr.number, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: "refreshing dependencies", body, adaptations: 0 } });
-    expect(await bumpIt(h.deps).run(h.context)).toMatchObject({ units: [{ outcome: "already-open", pullRequest: pr.url }] });
-    expect(h.github.prs.get(pr.number)).toMatchObject({ title: "refreshing dependencies", body });
-    expect([h.workspace.preparations, h.agentCalls]).toEqual([[], []]);
-  });
-  it("repairs only the PR a unit reuses, never another match", async () => {
-    const stale = routine(candidate({ minor: { version: "1.0.1", line: "1" } }));
-    const prs = [await prFor(stale, { headSha: PUSHED_SHA }), await prFor(stale, { number: 8, nodeId: "PR_node8", url: "u8", headRef: "bump-it/2026-10-05-routine-2", headSha: PUSHED_SHA })];
-    const h = harness({ prs, bumps: [candidate({ major: undefined })] });
-    for (const pr of prs) {
-      await h.journal.pushed(REPO, pr.number, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: pr.title, body: withMarker(RULES, pr.body, { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 }), adaptations: 0 } });
-    }
-    expect(await bumpIt(h.deps).run(h.context)).toMatchObject({ units: [{ outcome: "updated", pullRequest: prs[0]!.url }] });
-    expect(h.github.calls.filter((call) => call.startsWith("updatePullRequest"))).toEqual(["updatePullRequest 7", "updatePullRequest 7"]);
-    expect(h.github.prs.get(8)).toEqual(prs[1]);
-  });
-  it("repairs nothing for a unit that is empty or blocked", async () => {
-    const lagging = async (unit: Unit) => {
-      const pr = await prFor(unit, { headSha: PUSHED_SHA });
-      const h = harness({ prs: [pr], bumps: [] });
-      await h.journal.pushed(REPO, pr.number, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: pr.title, body: withMarker(RULES, pr.body, { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 }), adaptations: 0 } });
-      return h;
-    };
-    const empty = await lagging(routineUnit([]));
-    expect(await bumpIt(empty.deps).run(empty.context)).toMatchObject({ units: [{ outcome: "nothing-to-move" }] });
-    expect(empty.github.calls.filter((call) => call.startsWith("updatePullRequest"))).toEqual([]);
-
-    const blocked = await lagging(majorUnits([], wrapperCandidates())[0]!);
-    const result = await bumpIt({ ...blocked.deps, wrapper: () => ({ candidates: async () => wrapperCandidates(), verify: async () => [] }),
-      generateWrapper: async () => { throw new Error("generation changed build.gradle"); },
-    }).run(blocked.context);
-    expect(result).toMatchObject({ units: [{ topic: "routine" }, { topic: "gradle/gradle-major", outcome: "blocked" }] });
-    expect(blocked.github.calls.filter((call) => call.startsWith("updatePullRequest 7"))).toEqual([]);
   });
   it("reuses its suffixed PR, but leaves a human push to that branch alone", async () => {
     const old = routine(candidate({ minor: { version: "1.0.1", line: "1" } }));

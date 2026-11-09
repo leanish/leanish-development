@@ -13,7 +13,7 @@ export interface UnitBranch {
    * branch already taken can't be reserved again, so that fails rather than publishing somewhere else.
    */
   readonly reserved?: string;
-  /** The open PR the unit reuses (already repaired: `repairOwnership`); undefined for a fresh branch. */
+  /** The open PR the unit reuses; undefined for a fresh branch. */
   readonly reusable: GitHubPullRequest | undefined;
   /** The tool's open PRs: their branches are taken. */
   readonly own: ReadonlyArray<GitHubPullRequest>;

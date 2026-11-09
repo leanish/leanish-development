@@ -19,7 +19,7 @@ export async function revertToBase(workingCopy: WorkingCopy, baseSha: string, ru
 
 /**
  * Reattach a verified base redo to the original PR head without changing its worktree or index. The runtime still
- * stages and checks the verified tree, checks the remote head, journals and pushes normally. A moved base is a second
+ * stages and checks the verified tree, checks the remote head and pushes normally. A moved base is a second
  * merge parent, preserving its ancestry too. Attached workspaces (including conflict resolution) are left alone.
  */
 export async function publicationParent(workingCopy: WorkingCopy, prepared: PreparedBranch, run: RunProcess = runProcess): Promise<PreparedBranch> {

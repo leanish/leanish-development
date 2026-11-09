@@ -55,7 +55,7 @@ In Claude Code or Codex desktop, ask "install bump-it", "install secure-it", or 
 - [`@leanish/setup`](core/setup/README.md): [guided installation](core/setup/install.md), gate adoption and
   local app schedules; its README is the command reference
 - [`@leanish/tool-runtime`](core/tool-runtime): shared config, sandboxed inventories,
-  publication (PR text cleanup, race checks, journal recovery), review ticks and `run.sh`
+  publication (PR text cleanup, race checks), review ticks and `run.sh`
 - [`@leanish/agent-runtime`](core/agent-runtime): the Codex and Claude Code runners and their
   support; also consumed by the incubator's runtime, as recorded in
   [provenance](core/agent-runtime/PROVENANCE.md), and the one package that may be published to npm

@@ -9,7 +9,7 @@ import type { FileState } from "@leanish/tool-runtime/git-copies";
 import { isMechanical } from "@leanish/tool-runtime/edit-checks";
 import { prepareUnitBranch } from "@leanish/tool-runtime/branches";
 import { branchFor, topicOf } from "@leanish/tool-runtime/own-pr";
-import { inspectOwnership, type Ours, repairOwnership, samePlan } from "@leanish/tool-runtime/ownership";
+import { inspectOwnership, type Ours, samePlan } from "@leanish/tool-runtime/ownership";
 import { closeAndDelete, ownOpenPullRequests, publishNew, publishUpdate, type PullRequestContent } from "@leanish/tool-runtime/publication";
 import { machineRoots } from "@leanish/tool-runtime/publication-text";
 import { reviewOpenPullRequests, type ReviewSteps } from "@leanish/tool-runtime/review";
@@ -53,7 +53,6 @@ async function createExecution(context: ToolRunContext, deps: BumpItDeps): Promi
       repo: context.repo.repo,
       base: context.base,
       workingCopy: context.workingCopy,
-      journal: deps.journal(context),
       localRoots: machineRoots(context.config.dirs),
       verifiedTree: () => deps.candidateTree(context.workingCopy),
       publicationParent: (prepared) => deps.publicationParent(context.workingCopy, prepared),
@@ -174,7 +173,7 @@ async function prepareUnits(
   for (const unit of units) {
     let owned: ReadonlyArray<Ours> = [];
     try {
-      owned = await recognised(execution, unit, own);
+      owned = recognised(execution, unit, own);
       if (unit.kind === "major" && owned.length === 0 && newMajors++ >= maxNewMajors) {
         prepared.set(unit, { owned });
         continue;
@@ -193,15 +192,13 @@ function undecidedPeerKeys(computed: Computed): Array<readonly [string, string]>
 }
 
 /**
- * The unit's open PRs that are still the tool's, matched by their effective content (`inspectOwnership`): a PR whose
- * body lags behind its head is matched by the plan the journal saved for that head, not by its stale body. Read-only:
- * the unit repairs only the PR it uses. Every candidate is inspected, so an unreadable journal fails the unit.
+ * The unit's open PRs that are still the tool's (`inspectOwnership`), matched by the plan their body records.
  */
-async function recognised(execution: Execution, unit: Unit, own: ReadonlyArray<GitHubPullRequest>): Promise<Ours[]> {
+function recognised(execution: Execution, unit: Unit, own: ReadonlyArray<GitHubPullRequest>): Ours[] {
   const matches: Ours[] = [];
   for (const candidate of own) {
-    const ownership = await inspectOwnership(execution.publication, candidate);
-    // Someone else's push or rewrite is skipped. Legacy entries prove only the head: kept for reconciliation, never `samePlan`.
+    const ownership = inspectOwnership(candidate);
+    // Someone else's push or rewrite is skipped.
     if (ownership.kind !== "ours") {
       continue;
     }
@@ -239,7 +236,7 @@ async function runUnit(
   undecided: ReadonlyMap<string, ReadonlyArray<string>>,
 ): Promise<UnitReport> {
   const same = owned.find((candidate) => samePlan(candidate.pr, planDigest(computed.plan), digestOf));
-  // The PR this unit reuses, checked before anything repairs or redoes it, and before a unit left blocked or empty by
+  // The PR this unit reuses, checked before anything redoes it, and before a unit left blocked or empty by
   // what can't be decided reads as one with nothing to do.
   const reused = same ?? owned[0];
   if (reused !== undefined) {
@@ -252,10 +249,10 @@ async function runUnit(
     return { topic: unit.topic, outcome: "nothing-to-move", notes: computed.plan.notes };
   }
   if (same !== undefined) {
-    const pr = await repairOwnership(execution.publication, same);
+    const { pr } = same;
     return { topic: unit.topic, outcome: "already-open", pullRequest: pr.url, notes: computed.plan.notes };
   }
-  const reusable = owned[0] === undefined ? undefined : await repairOwnership(execution.publication, owned[0]);
+  const reusable = owned[0]?.pr;
   const prepared = await prepareUnitBranch(execution.publication, {
     topic: unit.topic, reusable, own, taken: execution.branches, baseSha: computed.base.id, now: execution.context.now, revert: execution.deps.revert,
   });

@@ -33,7 +33,6 @@ import { earlyDecisions, reviewDisposition, reviewExecution } from "../src/issue
 import { fakeFetch } from "@leanish/gate/test/fake-fetch";
 import { archive, manifest, serving } from "@leanish/gate/test/tarballs";
 import { parseToolConfig } from "@leanish/tool-runtime/config";
-import { MemoryJournal } from "@leanish/tool-runtime/test/memory-journal";
 import { branchFor, stateOf, withMarker } from "@leanish/tool-runtime/own-pr";
 import { BASE_SHA, FakeGitHub, GREEN, HEAD_SHA, ownPr, PUSHED_SHA, RED } from "@leanish/tool-runtime/test/fake-github";
 import { FakeIssues } from "@leanish/tool-runtime/test/fake-issues";
@@ -105,7 +104,6 @@ interface Harness {
   readonly agentCalls: Array<{ entrypoint: string; input: Record<string, unknown> }>;
   readonly written: string[];
   readonly reverted: string[];
-  readonly journal: MemoryJournal;
 }
 
 /** Scan observations are independent of the fixes a candidate planner happens to return. */
@@ -133,7 +131,6 @@ function harness(options: { prs?: GitHubPullRequest[]; fixes?: SecurityFix[]; ob
   const agentCalls: Harness["agentCalls"] = [];
   const written: string[] = [];
   const reverted: string[] = [];
-  const journal = new MemoryJournal();
   const context: ToolRunContext = {
     config: CONFIG,
     repo: { repo: REPO, branch: undefined },
@@ -173,7 +170,6 @@ function harness(options: { prs?: GitHubPullRequest[]; fixes?: SecurityFix[]; ob
     candidateTree: async () => SNAPSHOT_TREE,
     changedBetween: async () => ["package.json", "package-lock.json"],
     linkProblems: async () => (options.links ?? []).map((path) => `the edit made ${path} a symbolic link: verification can't check what's behind one`),
-    journal: () => journal,
     writeFile: async (_wc, path, content) => {
       written.push(`${path}=${content}`);
     },
@@ -182,7 +178,7 @@ function harness(options: { prs?: GitHubPullRequest[]; fixes?: SecurityFix[]; ob
       return ["package-lock.json"];
     },
   };
-  return { context, deps, github, workspace, agentCalls, written, reverted, journal };
+  return { context, deps, github, workspace, agentCalls, written, reverted };
 }
 
 /** Publishable young decisions must first be shown by a run and then authorized by the owner. */
@@ -497,43 +493,6 @@ describe("secure-it run", () => {
     expect(JSON.stringify(result)).toContain("unsupported npm peer placement");
     expect(h.agentCalls).toEqual([]);
     expect(h.github.prs.size).toBe(0);
-  });
-
-  it("recomputes and republishes a legacy journal head without same-plan suppression", async () => {
-    const pr = await vitePr({ headSha: "9".repeat(40) });
-    const h = harness({ prs: [pr] });
-    h.workspace.setRemoteHead(pr.headRef, pr.headSha);
-    await h.journal.pushed(REPO, pr.number, { head: pr.headSha, base: BASE_SHA });
-    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "updated", pullRequest: pr.url });
-    expect(h.reverted).toEqual([BASE_SHA]);
-    expect(h.agentCalls).toHaveLength(1);
-    expect((await h.journal.last(REPO, pr.number))?.publication?.body).toBe(h.github.prs.get(pr.number)?.body);
-  });
-  it("matches a PR by the plan the journal saved for its head, not its stale body, and repairs it as it uses it", async () => {
-    const current = await vitePr();
-    // #7's body still records a held plan at an older head; the journal saved this unit's plan for its current head.
-    const stale = await planFor([leftPad()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined },
-      { kind: "routine", topic: "security-young-npm|left-pad" });
-    const pr = { ...current, headSha: PUSHED_SHA, body: withMarker(RULES, withPlanSection("Fixes left-pad.", stale), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) };
-    const h = harness({ prs: [pr] });
-    const body = withMarker(RULES, current.body, { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 });
-    await h.journal.pushed(REPO, 7, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: "moving vite to 8.3.3", body, adaptations: 0 } });
-    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "already-open", pullRequest: pr.url });
-    expect(h.github.prs.get(7)).toMatchObject({ title: "moving vite to 8.3.3", body });
-    expect([h.agentCalls, h.workspace.preparations]).toEqual([[], []]);
-  });
-
-  it("repairs only the PR a unit reuses, never another match", async () => {
-    const stale = (overrides: Partial<GitHubPullRequest>) => vitePr({ headSha: PUSHED_SHA, ...overrides }, vite({ to: { version: "8.3.2", line: "8", aged: true, major: false, blockers: [] } }));
-    const prs = [await stale({}), await stale({ number: 8, nodeId: "PR_node8", url: "u8", headRef: "secure-it/2026-10-05-security-2" })];
-    const h = harness({ prs });
-    h.workspace.setRemoteHead(prs[0]!.headRef, PUSHED_SHA);
-    for (const pr of prs) {
-      await h.journal.pushed(REPO, pr.number, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: pr.title, body: withMarker(RULES, pr.body, { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 }), adaptations: 0 } });
-    }
-    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "updated", pullRequest: prs[0]!.url });
-    expect(h.github.calls.filter((call) => call.startsWith("updatePullRequest"))).toEqual(["updatePullRequest 7", "updatePullRequest 7"]);
-    expect(h.github.prs.get(8)).toEqual(prs[1]);
   });
 
   it("plans companions before invoking the agent and reports a blocked set while applying the rest", async () => {
@@ -3349,6 +3308,21 @@ describe("the cooldown hold", () => {
     }
   });
 
+  it.each([
+    { versions: "young", fix: YOUNG_VITE },
+    { versions: "aged", fix: () => vite({ to: { version: "8.3.3", line: "8", aged: true, major: false, blockers: [] } }) },
+  ])("leaves the decision to an early PR a person marked ready and removed the state from, its versions $versions", async ({ fix }) => {
+    const plan = await heldPlan(YOUNG_VITE());
+    const taken = ownPr({ headRef: "secure-it/2026-10-05-take-early-1001", headSha: PUSHED_SHA, isDraft: false, body: `${withPlanSection("Fixes vite.", plan)}\n\n${RULES.marker}\n` });
+    const h = harness({ prs: [taken], fixes: [fix()] });
+    h.workspace.setRemoteHead(taken.headRef, PUSHED_SHA);
+    const tracked = await early(h, taken, [{ ecosystem: "npm", name: "vite", version: "8.3.3", eligibleAt: HELD.eligibleAt }]);
+    expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({ outcome: "deferred", reason: "a person marked the early PR ready" });
+    expect(h.github.prs.get(7)).toEqual(tracked);
+    expect(h.github.prs.size).toBe(1);
+    expect([h.workspace.publications, h.agentCalls]).toEqual([[], []]);
+  });
+
   it("keeps an early PR a person marked ready without starting another attempt", async () => {
     const plan = await heldPlan(YOUNG_VITE());
     const taken = ownPr({ headRef: "secure-it/2026-10-05-take-early-1001", isDraft: false,
@@ -3366,103 +3340,6 @@ describe("the cooldown hold", () => {
     expect(h.workspace.publications).toEqual([]);
     expect(h.agentCalls).toEqual([]);
     expect(recordOf(issues.issues.get(1)!.body)!.attempts).toHaveLength(1);
-  });
-
-  it("reuses the tracked plan the journal published when the body lags behind the head", async () => {
-    // #7's body still records left-pad's plan at an older head; the journal holds vite's plan at its current head.
-    const stale = await heldPlan(YOUNG_PAD());
-    const current = withMarker(RULES, withPlanSection("Fixes vite.", await heldPlan(YOUNG_VITE())), { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 });
-    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite", headSha: PUSHED_SHA, body: withMarker(RULES, withPlanSection("Fixes left-pad.", stale), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
-    const h = harness({ prs: [pr], fixes: [YOUNG_VITE(), YOUNG_PAD()] });
-    const tracked = await early(h, { ...pr, body: current }, [{ ecosystem: "npm", name: "vite", version: "8.3.3", eligibleAt: HELD.eligibleAt }]);
-    h.github.prs.set(7, pr);
-    await h.journal.pushed(REPO, 7, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: "moving vite", body: tracked.body, adaptations: 0 } });
-    const tool = secureIt({ ...h.deps, verify: holdingVerify });
-    await grantWaiting(tool, h, ["left-pad"]);
-    expect(await tool.run(h.context)).toMatchObject({ units: [
-      { topic: "security-young-npm|left-pad", outcome: "published" },
-      { topic: "security-young-npm|vite", outcome: "already-open", pullRequest: "https://github.com/leanish/widget/pull/7" },
-    ] });
-    expect(h.github.prs.get(7)!.body).toContain("Tracks #1.");
-    trackedRecord(h, 7);
-  });
-
-  it("restores a tracked PR whose state was removed from the journal publication, not its stale body", async () => {
-    // #7's body lost its state and still lists left-pad; the journal saved vite's plan for its current head.
-    const saved = withMarker(RULES, withPlanSection("Fixes vite.", await heldPlan(YOUNG_VITE())), { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 });
-    const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite", headSha: PUSHED_SHA, body: `${withPlanSection("Fixes left-pad.", await heldPlan(YOUNG_PAD()))}\n\n${RULES.marker}\n` });
-    const h = harness({ prs: [pr], fixes: [YOUNG_VITE(), YOUNG_PAD()] });
-    h.workspace.setRemoteHead(pr.headRef, PUSHED_SHA);
-    const tracked = await early(h, { ...pr, body: saved }, [{ ecosystem: "npm", name: "vite", version: "8.3.3", eligibleAt: HELD.eligibleAt }]);
-    h.github.prs.set(7, pr);
-    await h.journal.pushed(REPO, 7, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: "moving vite", body: tracked.body, adaptations: 0 } });
-    const tool = secureIt({ ...h.deps, verify: holdingVerify });
-    await grantWaiting(tool, h, ["left-pad"]);
-    expect(await tool.run(h.context)).toMatchObject({ units: [
-      { topic: "security-young-npm|left-pad", outcome: "published" },
-      { topic: "security-young-npm|vite", outcome: "already-open", pullRequest: "https://github.com/leanish/widget/pull/7" },
-    ] });
-    expect(planOf(h.github.prs.get(7)!.body)).toMatchObject({ topic: "security-young-npm|vite", packages: ["npm|vite"] });
-    trackedRecord(h, 7);
-  });
-
-  it("doesn't reuse an early PR whose state was removed once a person marked it ready", async () => {
-    const plan = await heldPlan(YOUNG_VITE());
-    const saved = withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 });
-    // Its body, without the state, no longer shows the hold.
-    const taken = ownPr({ headRef: "secure-it/2026-10-05-take-early-1001", headSha: PUSHED_SHA, isDraft: false, body: `${withPlanSection("Fixes vite.", plan)}\n\n${RULES.marker}\n` });
-    const h = harness({ prs: [taken], fixes: [YOUNG_VITE()] });
-    h.workspace.setRemoteHead(taken.headRef, PUSHED_SHA);
-    const tracked = await early(h, { ...taken, body: saved }, [{ ecosystem: "npm", name: "vite", version: "8.3.3", eligibleAt: HELD.eligibleAt }]);
-    h.github.prs.set(7, taken);
-    await h.journal.pushed(REPO, 7, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: "moving vite", body: tracked.body, adaptations: 0 } });
-    await (h.context.issues as FakeIssues).removeLabel({ repo: REPO, number: 1, label: "take-early" });
-    const tool = secureIt({ ...h.deps, verify: holdingVerify });
-    expect(await tool.run(h.context)).toMatchObject({ outcome: "deferred" });
-    const issues = h.context.issues as FakeIssues;
-    issues.comment(1, "owner", "take-early: a fresh attempt without changing the person's PR");
-    issues.label(1, "owner", "take-early");
-    expect(await tool.run(h.context)).toMatchObject({ outcome: "deferred", reason: "a person marked the early PR ready" });
-    expect(h.github.prs.get(7)).toEqual(taken);
-    expect(h.workspace.publications).toEqual([]);
-    expect(h.agentCalls).toEqual([]);
-    expect(recordOf(issues.issues.get(1)!.body)!.attempts).toHaveLength(1);
-  });
-
-  it("refuses to reuse a PR whose state was removed when its saved publication doesn't match, never reading its raw body", async () => {
-    // As above, but the saved state's base isn't the journal's: the raw body (no hold shown) must not stand in for it.
-    const plan = await heldPlan(YOUNG_VITE());
-    const saved = withMarker(RULES, withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: PUSHED_SHA, base: "8".repeat(40), adaptations: 0 });
-    const taken = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite", headSha: PUSHED_SHA, isDraft: false, body: `${withPlanSection("Fixes vite.", plan)}\n\n${RULES.marker}\n` });
-    const h = harness({ prs: [taken], fixes: [YOUNG_VITE()] });
-    h.workspace.setRemoteHead(taken.headRef, PUSHED_SHA);
-    await h.journal.pushed(REPO, 7, { head: PUSHED_SHA, base: BASE_SHA, publication: { title: "moving vite", body: saved, adaptations: 0 } });
-    expect(await secureIt({ ...h.deps, verify: holdingVerify }).run(h.context)).toMatchObject({
-      topic: "security-young-npm|vite", outcome: "failed", detail: expect.stringContaining("the journal has no matching publication content"),
-    });
-    expect(h.github.prs.get(7)).toEqual(taken);
-    expect(h.workspace.preparations).toEqual([]);
-  });
-
-  it("fails each unit, never the run, when an own PR's journal can't be read, publishing nothing on a guess", async () => {
-    // #7's head moved past its recorded state, so its journal is read, and that read fails. Every unit inspects every
-    // own PR before matching its plan, so even units #7 has nothing to do with fail visibly instead of guessing from
-    // its stale body.
-    const pr = ownPr({ headRef: "secure-it/2026-10-05-security", headSha: PUSHED_SHA, body: withMarker(RULES, "Fixes left-pad.", { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
-    const broken = (h: ReturnType<typeof harness>) => {
-      h.journal.last = async () => { throw new Error("leanish__widget/7.json isn't a journal"); };
-    };
-    const both = harness({ prs: [pr], fixes: [leftPad({ name: "aged-pad" }), YOUNG_VITE()] });
-    broken(both);
-    expect(await secureIt({ ...both.deps, verify: holdingVerify }).run(both.context)).toMatchObject({ outcome: "completed", units: [
-      { topic: "security", outcome: "failed", detail: "leanish__widget/7.json isn't a journal" },
-      { topic: "security-young-npm|vite", outcome: "failed", detail: "leanish__widget/7.json isn't a journal" },
-    ] });
-    expect([both.agentCalls, both.workspace.preparations, both.github.prs.size]).toEqual([[], [], 1]);
-    const aged = harness({ prs: [pr], fixes: [leftPad({ name: "aged-pad" })] });
-    broken(aged);
-    expect(await secureIt(aged.deps).run(aged.context)).toMatchObject({ topic: "security", outcome: "failed", detail: "leanish__widget/7.json isn't a journal", units: [{ topic: "security" }] });
-    expect([aged.agentCalls, aged.workspace.preparations, aged.github.prs.size]).toEqual([[], [], 1]);
   });
 
   // The repository's label in its own casing (one a person made by hand) reads as the label everywhere.

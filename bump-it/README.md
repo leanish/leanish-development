@@ -106,8 +106,7 @@ core/tool-runtime/run.sh bump-it review leanish/widget   # every few hours
   secure-it, bump-it accepts an edit that fails to resolve there the same way as the plan's reference. Only after every
   local check passes does it run `compare`, which must also pass. A report of local problems means `compare` has not
   run. Floor declarations are checked as in [secure-it's verification](../secure-it/README.md#what-a-run-does) (step 6).
-- Open PRs count only when the head matches their body state or the exact tool journal entry, and are matched by the
-  plan the journal saved for that head when the body lags behind. Same plan: leave it to
+- Open PRs count only when the head matches their body state, and are matched by the plan their body records. Same plan: leave it to
   review. Changed plan: redo on a clean base checkout, apply the new plan, verify and append a normal commit to the
   existing PR history. Earlier major adaptations are redone for the new target.
   A human push is left alone; a separate PR is opened. Other tools' overlapping PRs never suppress work. A PR whose

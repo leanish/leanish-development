@@ -1,16 +1,13 @@
 // Adapted from leanish/leanish-development agents/bump-it/src/publication.ts at c6282df: parametrised by the tool's
 // own-PR rules; a repository can have several open PRs of a tool (one per topic); the workspace and logger are passed
 // in instead of bump-it's runtime; Dependabot closing is left out; the PR body records the published state;
-// the pre-push journal stores the matching title, body, plan and adaptation count for recovery;
-// adds the current label when publishing, restoring a body, recording state or marking a PR ready; published text keeps
-// local paths out.
+// adds the current label when publishing, recording state or marking a PR ready; published text keeps local paths out.
 import { GitHubApiError, MAX_BODY_CHARS, MAX_TITLE_CHARS } from "@leanish/agent-runtime/github/github-client";
 import type { GitHubClient, GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
 import type { Logger } from "@leanish/agent-runtime/types/logger";
 import type { PreparedBranch, WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
 import type { Workspace } from "@leanish/agent-runtime/working-copy/workspace";
 
-import type { PublicationJournal } from "./journal.ts";
 import { cleanBody, cleanContent, type LocalRoots, withCanonical } from "./publication-text.ts";
 import { carriesLabel, isOwnPullRequest, type OwnPullRequests, type PullRequestState, stateOf, withMarker } from "./own-pr.ts";
 
@@ -33,8 +30,6 @@ export interface PublicationContext {
   /** The default branch every PR of the tool targets. */
   readonly base: string;
   readonly workingCopy: WorkingCopy;
-  /** Where each push is recorded before the PR's body says so (see journal.ts). */
-  readonly journal: PublicationJournal;
   /** Directories outside the working copy whose paths never reach a PR (see publication-text.ts). */
   readonly localRoots: ReadonlyArray<string>;
   /**
@@ -63,7 +58,7 @@ function rootsOf(context: PublicationContext): LocalRoots {
  * Apply the client's title/body checks to the actual cleaned, marked output before any push/API write. Raw composition
  * budgets leave ordinary publications room; extreme path expansion can still exceed them. Refuse here rather than
  * letting the client reject the text after a push. This final guard only refuses: it does not recompose the plan or
- * drop informational evidence. Also for a publication the journal saved (`ownership.ts`).
+ * drop informational evidence.
  */
 export function checkedText(title: string, body: string): string {
   if (title.trim() === "") throw new Error("the PR title is empty");
@@ -78,7 +73,7 @@ const PLACEHOLDER_STATE: PullRequestState = { head: "0".repeat(40), base: "0".re
 /**
  * Throws unless `content` passes the checks publication applies to what it sends: the title and the body as cleaned
  * and marked. For a caller to refuse before the work a refusal would waste (a push, a rebase's publication);
- * publication checks the exact text again with the real head, and the journal records that text.
+ * publication checks the exact text again with the real head.
  */
 export function assertPublishable(context: PublicationContext, content: PullRequestContent, adaptations = 0): void {
   const cleaned = cleanContent(content, rootsOf(context));
@@ -154,7 +149,6 @@ export async function publishUpdate(
   adaptations?: number,
 ): Promise<{ readonly pr: GitHubPullRequest; readonly pushed: boolean }> {
   const { github, repo } = context;
-  // Cleaned before the journal records it, so a recovery restores the same text.
   const content = cleanContent(agentContent, rootsOf(context));
   const remoteHead = existingHead(context, prepared);
   const current = await reReadOwn(context, number, remoteHead);
@@ -168,18 +162,17 @@ export async function publishUpdate(
   const pushed = await context.workspace.publishBranch(context.workingCopy, parent, {
     message: content.commitMessage,
     ...verified,
-    // Recorded before the push: whatever fails after it lands, the next tick still knows this exact head as the tool's.
-    beforePush: (sha) => context.journal.pushed(repo, current.number, {
-      head: sha,
-      base: prepared.baseSha,
-      publication: { title: content.title, body: bodyAt(sha), adaptations: attempts },
-    }),
+    // The exact text fits before anything is pushed: a push whose body can't be written is what this refuses.
+    beforePush: async (sha) => { bodyAt(sha); },
   });
-  // GitHub may still report the old head for a moment after a push; anything else is someone else's push.
-  await reReadOwn(context, current.number, remoteHead, ...(pushed.kind === "pushed" ? [pushed.sha] : []));
   const head = pushed.kind === "pushed" ? pushed.sha : remoteHead;
   const body = bodyAt(head);
-  const updated = await github.updatePullRequest({ repo, number: current.number, title: content.title, body });
+  const update = async () => {
+    // GitHub may still report the old head for a moment after a push; anything else is someone else's push.
+    await reReadOwn(context, current.number, remoteHead, ...(pushed.kind === "pushed" ? [pushed.sha] : []));
+    return github.updatePullRequest({ repo, number: current.number, title: content.title, body });
+  };
+  const updated = pushed.kind === "pushed" ? await updateAfterPush(context, current.number, head, update) : await update();
   await ensureLabel(context, updated);
   // Nothing new reached the branch: the PR stays as ready as it was.
   if (pushed.kind === "unchanged" && !current.isDraft) await markReady(context, current.number, remoteHead);
@@ -187,9 +180,46 @@ export async function publishUpdate(
 }
 
 /**
+ * The body update that follows a push. Until it lands, the body names the previous commit, and the tool's next look
+ * takes its own push for someone else's. Tried twice: the same text, so the second try also covers a response lost after
+ * the first applied. Then the PR is retired, so a later run recomputes it, unless someone took it over. Always an error.
+ */
+async function updateAfterPush(context: PublicationContext, number: number, head: string, update: () => Promise<GitHubPullRequest>): Promise<GitHubPullRequest> {
+  try {
+    return await update();
+  } catch (err) {
+    context.logger.warn(`${context.rules.tool}: updating the PR's body after a push failed; trying once more`, { repo: context.repo, number, error: reasonOf(err) });
+  }
+  try {
+    return await update();
+  } catch (err) {
+    throw new Error(`${context.rules.tool}: pushed ${head} to ${context.repo}#${number} but couldn't confirm its body update (${reasonOf(err)}); ${await retire(context, number, head)}`, { cause: err });
+  }
+}
+
+/** Closes a PR whose body update couldn't be confirmed, while it's still the tool's draft at that head; says what happened. */
+async function retire(context: PublicationContext, number: number, head: string): Promise<string> {
+  const { github, repo, base, rules } = context;
+  const left = "it's no longer the tool's open draft at that head, so the tool leaves it: if it's still open and nobody took it over, close it, and a later run recomputes it";
+  // A removed state or a PR marked ready: someone took it over, and it's theirs to decide.
+  const stillDraftWithState = (pr: GitHubPullRequest) => pr.isDraft && stateOf(pr.body) !== undefined;
+  try {
+    const current = await github.getPullRequest({ repo, number });
+    if (!isOwnPullRequest(rules, current, repo, base) || current.headSha !== head || !stillDraftWithState(current)) return left;
+    const comment = `${rules.tool} couldn't confirm updating this PR's description after pushing to it, so the description may not match its head. Closing it: a later run recomputes the change from the default branch.`;
+    return await closeIf(context, number, head, comment, stillDraftWithState) ? "closed the PR, and a later run recomputes it" : left;
+  } catch (err) {
+    return `and couldn't finish closing it (${reasonOf(err)}): the commit is published but the body may not say so. If it's still open and nobody took it over, close it by hand, and a later run recomputes it`;
+  }
+}
+
+function reasonOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
  * Rewrite the state in the PR's body (its text kept), once it's still the
- * tool's at `expectedHead`: to count an adaptation before the agent starts, or
- * to repair the head a failed update left behind.
+ * tool's at `expectedHead`: to count an adaptation before the agent starts.
  */
 export async function recordState(context: PublicationContext, number: number, expectedHead: string, state: PullRequestState): Promise<GitHubPullRequest> {
   const current = await reReadOwn(context, number, expectedHead);
@@ -231,10 +261,16 @@ export async function closeAndDelete(
   comment: string,
   options: { readonly onlyDraft?: boolean } = {},
 ): Promise<"closed" | "not-draft"> {
+  // A person who marked it ready took the decision over; it stays open.
+  const closed = await closeIf(context, number, expectedHead, comment, (current) => options.onlyDraft !== true || current.isDraft);
+  return closed ? "closed" : "not-draft";
+}
+
+/** `closeAndDelete`, once `eligible` holds for the PR as re-read right before closing; whether it closed it. */
+async function closeIf(context: PublicationContext, number: number, expectedHead: string, comment: string, eligible: (current: GitHubPullRequest) => boolean): Promise<boolean> {
   const { github, repo, logger, rules } = context;
   const current = await reReadOwn(context, number, expectedHead);
-  // A person who marked it ready took the decision over; it stays open.
-  if (options.onlyDraft === true && !current.isDraft) return "not-draft";
+  if (!eligible(current)) return false;
   await github.closePullRequest({ repo, number });
   try {
     await github.createComment({ repo, number, body: comment });
@@ -246,7 +282,7 @@ export async function closeAndDelete(
   if (deleted.kind === "moved") {
     logger.warn(`${rules.tool}: kept the closed PR's branch — it moved after the check`, { repo, number, branch: current.headRef, found: deleted.found });
   }
-  return "closed";
+  return true;
 }
 
 async function createDraftPullRequest(

@@ -11,7 +11,6 @@ import { gitTree, type Tree, workingTree } from "@leanish/gate/tree";
 import type { ToolRunContext } from "@leanish/tool-runtime/command";
 import { candidateTree, changedBetween, fileState, exportCommit, git, linkProblems, snapshotCandidate } from "@leanish/tool-runtime/git-copies";
 import { type GradleInventories, sandboxedGradleInventories } from "@leanish/tool-runtime/inventories";
-import { FileJournal, type PublicationJournal } from "@leanish/tool-runtime/journal";
 import { ensureOsvScanner, verifyingRun } from "@leanish/tool-runtime/osv-scanner";
 import { sandboxWritable } from "@leanish/tool-runtime/sandboxed";
 import { publicationParent, revertToBase } from "@leanish/tool-runtime/reconcile";
@@ -50,7 +49,6 @@ export interface BumpItDeps {
   readonly linkProblems: (workingCopy: WorkingCopy, base: string, sha: string) => Promise<string[]>;
   /** The wrapper files and jar hash as committed in `sha`, the verification snapshot. */
   readonly wrapperAt: (workingCopy: WorkingCopy, sha: string) => Promise<{ readonly files: ReadonlyArray<WrapperArtifact>; readonly jarSha256: string | undefined }>;
-  readonly journal: (context: ToolRunContext) => PublicationJournal;
   readonly priority: (context: ToolRunContext) => MajorPriority;
   readonly writeFile: (workingCopy: WorkingCopy, path: string, content: string) => Promise<void>;
   readonly removeFile: (workingCopy: WorkingCopy, path: string) => Promise<void>;
@@ -95,7 +93,6 @@ export function defaultDeps(): BumpItDeps {
         await copy.remove();
       }
     },
-    journal: (context) => new FileJournal(context.config.dirs.state),
     priority: (context) => filePriority(context.config.dirs.state, context.repo.repo),
     writeFile: (workingCopy, path, content) => writeLocalFile(workingCopy.path, path, content),
     removeFile: (workingCopy, path) => removeLocalFile(workingCopy.path, path),
