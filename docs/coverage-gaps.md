@@ -145,8 +145,10 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   repository, and a person merges the PR, so it stays as it is.
 - **A second use of an Action only its repository tags as malware (gate)**: the gate tracks an Action by the workflow
   file using it, so a PR adding another use of the same version in that file, or a subdirectory of it, reads as
-  unchanged and warns. A new workflow file fails. Comes from the same rule as a repository-only finding on unchanged
-  code, and the workflow already ran that Action, so it stays as it is.
+  unchanged and warns. A new workflow file fails. The new use can run with more than the existing one (a job with
+  secrets or a write token) or be different code (another subdirectory), but it needs someone able to get the workflow
+  change merged, and the diff shows it. Comes from the same rule as a repository-only finding on unchanged code, so
+  it stays as it is; counting each use would narrow it.
 - **A repository advisory range read too wide**: a lone upper bound followed by a closed interval
   (`< 3.0.0, >= 1.0.0 < 2.0.0`) reads as either of them, as maintainers' comma-as-OR lists mean, so an AND range
   written that way counts versions outside it as affected when no reviewed record names the same package and

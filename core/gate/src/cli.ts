@@ -18,7 +18,7 @@
  * inventory comes from `gradle-inventory`, which does run the build (in CI, in
  * a job of its own), or inline for `--head worktree`. `candidates` prints, as
  * JSON, where to move versions: `--rule security`, the fix the rule picks for
- * every version a scan fails on (secure-it); `--rule bump`, the highest
+ * every version with malware or a reviewed finding (secure-it); `--rule bump`, the highest
  * acceptable version of every direct dependency, in its line and the highest
  * newer one (bump-it). `cooldown` reads a `compare` report and says what the
  * release-age cooldown holds (`cooldown.ts`): exit 0 once evaluated, held or
