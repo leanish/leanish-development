@@ -73,7 +73,8 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   reaching the default branch (rebased in or pushed directly) and a PR from another private repository of the same owner
   all name a closer, and the Actions token closes as a bot. Automation running on a person's token closes as that person
   with no closer, so it reads as a dismissal and findings still there get no new issue or fix until the issue is reopened.
-  A finding dismissed by an account since deleted isn't held back any more: it opens a new issue. The gate's findings
+  A closing GitHub reports with no actor, as it may for an account since deleted (not checked on one), isn't a dismissal
+  either. A bot that keeps closing the tool's issues gets a new one for each finding still there. The gate's findings
   aren't affected. secure-it also defuses the references it recognizes in what it publishes, as best effort: that doesn't
   prove GitHub reads no other form as one, and it can't cover what people write.
 - **A closing whose origin can't be read stops the issue sync (secure-it)**: any error reading what closed an issue fails

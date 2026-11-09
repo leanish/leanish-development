@@ -80,8 +80,8 @@ export interface GitHubIssues {
   listEvents(args: { readonly repo: string; readonly number: number }): Promise<ReadonlyArray<GitHubIssueEvent>>;
   /**
    * Which of the closed issues `numbers` a person last closed: GitHub records a user account as the actor and no closer.
-   * The actor alone proves nothing, since a merged PR's closing shows whoever merged it. A PR, a commit, a bot or a deleted
-   * account earns no place here. Every number must be a closed issue: one with no closing to read throws, since that can't
+   * The actor alone proves nothing, since a merged PR's closing shows whoever merged it. A PR, a commit, a bot or a closing with
+   * no actor earns no place here. Every number must be a closed issue: one with no closing to read throws, since that can't
    * establish how it was closed.
    */
   closedByPerson(args: { readonly repo: string; readonly numbers: ReadonlyArray<number> }): Promise<ReadonlySet<number>>;

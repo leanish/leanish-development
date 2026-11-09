@@ -65,7 +65,7 @@ export class FakeIssues implements GitHubIssues {
       ...(args.state === undefined ? {} : { state: args.state, stateReason: args.stateReason ?? null }),
     };
     this.issues.set(args.number, updated);
-    if (args.state !== undefined) this.#closedByNoPerson.delete(args.number);
+    if (args.state !== undefined && args.state !== issue.state) this.#closedByNoPerson.delete(args.number);
     if (args.state === "closed" && issue.state === "open") this.#event(args.number, { event: "closed", actor: this.me });
     this.calls.push(`updateIssue #${args.number}${args.state === undefined ? "" : ` ${args.state}`}`);
     return updated;
