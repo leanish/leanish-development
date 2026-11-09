@@ -82,25 +82,11 @@ decisions.
 
 ## trustedPackages migration
 
-The tools read `.github/supply-chain.json` at startup as well as during verification.
-v0.10.0 is the first release that accepts `trustedPackages`; the v0.9.1 parser rejects it.
-Migrate each repository in this order:
-
-1. Keep `ownPackages` while moving every gate pin and every installed bump-it and
-   secure-it that reads the repository to a v0.10 release (0.11.0 no longer accepts the alias).
-   Include runners, scheduled tasks and manual checkouts; installing a new release
-   alone does not repoint an existing schedule. For this repository, include
-   `released-supply-chain.yml`.
-2. Once every reader supports it, rename `ownPackages` to `trustedPackages` in this
-   repository, adopters and fixtures. Remove the old name; configuring both is an
-   error. Renaming preserves the same trust under head's policy.
-3. Complete the rename before moving any reader to 0.11.0, which removed the alias:
-   a config that still has `ownPackages` fails there, saying to rename the field (or
-   to delete it, when `trustedPackages` is there too). A gate already on 0.11.0
-   passes the PR making the rename, comparing against base's own lockfiles and
-   Gradle builds, with a note that base's policy couldn't be read; head's policy
-   judges it. That note can't say whether the rename also changed what is
-   trusted: review the policy diff.
+This migration is over: since 0.12.0 a config with the old `ownPackages` field fails as
+an unknown field. A repository still on it should follow
+[the guide in v0.11.1](https://github.com/leanish/leanish-development/blob/v0.11.1/docs/releasing.md#trustedpackages-migration),
+the last release whose gate explains the rename and keeps the base's lockfiles and
+Gradle builds during it, and move to a later release afterwards.
 
 ## Publishing @leanish/agent-runtime
 

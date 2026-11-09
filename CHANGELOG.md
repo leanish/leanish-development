@@ -19,6 +19,10 @@
 - An advisory only a dependency's own repository publishes no longer fails the gate on code that didn't change: a full
   scan, and a PR that leaves that version as it was, warn about it instead, tagged as malware or not, and its issue
   still opens. A PR that adds it still fails, and so does malware the PR moves to or brings to a new location.
+- The gate no longer helps with the rename of `ownPackages` to `trustedPackages`: a config with the old name now fails
+  as an unknown field, and a PR making the rename compares against the default Gradle builds, and the lockfiles head
+  selects plus the default ones. A repository still on it should
+  [rename it on 0.11.1](docs/releasing.md#trustedpackages-migration) first.
 
 ### Fixed
 
