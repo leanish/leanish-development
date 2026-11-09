@@ -514,7 +514,7 @@ async function applyRemoval(execution: Execution, removal: ComputedRemoval): Pro
 async function runRemoval(execution: Execution, removal: ComputedRemoval, base: PlanBase, own: ReadonlyArray<GitHubPullRequest>): Promise<Readonly<Record<string, unknown>>> {
   const plan = removal.plan!;
   const owned = await recognisedPlans(execution, own, { plan });
-  const already = owned.find((candidate) => samePlan(candidate.pr, planDigest(plan), digestOf));
+  const already = owned.find((candidate) => samePlan(candidate, planDigest(plan), digestOf));
   const report = { topic: plan.topic, packages: plan.packages, notes: removal.notes };
   if (already !== undefined) {
     const { pr } = already;
@@ -625,7 +625,7 @@ async function runUnit(
   const { publication } = execution;
   const plan = await planUnit(execution, unit, base);
   const owned = await recognisedPlans(execution, own, { unit, plan });
-  const already = owned.find((candidate) => samePlan(candidate.pr, planDigest(plan), digestOf));
+  const already = owned.find((candidate) => samePlan(candidate, planDigest(plan), digestOf));
   const reused = already ?? owned[0];
   const details = { topic: plan.topic, packages: plan.packages, notes: plan.notes ?? [] };
   if (await hasReadyEarlyPr(execution, own, plan)) {

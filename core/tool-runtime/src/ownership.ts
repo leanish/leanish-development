@@ -6,7 +6,7 @@
  */
 import type { GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
 
-import { type PullRequestState, type RecordContext, stateOf, verifiedStateOf } from "./own-pr.ts";
+import { type PullRequestState, type RecordContext, verifiedStateOf } from "./own-pr.ts";
 
 /** An open PR the tool may still act on: its body carries the tool's signed state for its current head. */
 export interface Ours {
@@ -35,11 +35,9 @@ export function inspectOwnership(record: RecordContext, pr: GitHubPullRequest): 
 }
 
 /**
- * Whether `pr` already carries the plan whose digest is `digest`, as the tool last published it: its body must record
- * its current head (checked before `read`), and `read` (the tool's digest of the body's plan, undefined when it has none
- * it can read) must give `digest`.
+ * Whether a PR of the tool's already carries the plan whose digest is `digest`: `read` is the tool's digest of the body's
+ * plan, undefined when it has none it can read.
  */
-export function samePlan(pr: GitHubPullRequest, digest: string, read: (body: string) => string | undefined): boolean {
-  if (stateOf(pr.body)?.head !== pr.headSha) return false;
-  return read(pr.body) === digest;
+export function samePlan(ours: Ours, digest: string, read: (body: string) => string | undefined): boolean {
+  return read(ours.pr.body) === digest;
 }
