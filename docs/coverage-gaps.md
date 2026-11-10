@@ -258,6 +258,11 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   and reach `errors`, and protect subsequent units' PRs, but PRs already handled aren't rechecked and may already have
   been rewritten. This accepted limit keeps execution order and the cap on actual new publications. New in 0.9.1.
 - **npm aliases without a version** (`"compat": "npm:lib"`): the inventory reads them, but neither tool can rewrite them, so an update fails visibly and a person makes it.
+- **An excepted version moved to another affected one (bump-it)**: a vulnerability exception names an exact version.
+  When a routine moves an excepted package to a newer version the same advisory still affects, the PR's gate takes the
+  finding for inherited (a warning) and passes, but the exception no longer covers it, so the default branch's next
+  full scan fails until the exception names the new version too (one only the package's own repository reports just
+  warns there). Seen with vite 8.3.4 → 8.3.5 (#477, #479): the person reviewing the PR has to notice it.
 - **Induced versions from npm mirrors (bump-it)**: a major's induced-version deprecation check skips copies whose lockfile `resolved` URL is outside `https://registry.npmjs.org/`, including mirrors; the gate's source rules still apply. Pre-existing.
 - **Scheduled runs are best effort**: GitHub may delay or skip them, and disables them after 60 days without activity in a public repository. Nothing else watches that the scheduled scan still runs.
 

@@ -1,35 +1,11 @@
 {
   "vulnerabilities": [
     {
-      "id": "GHSA-474x-hrwr-fgx4",
-      "package": "fast-xml-parser",
-      "version": "5.11.2",
-      "paths": ["node_modules/fast-xml-parser"],
-      "reason": "the gate reads Maven XML with it under a 5 MB cap and configures no stop nodes, the feature the quadratic scan needs; NaturalIntelligence/fast-xml-parser repository advisory published 2026-11-03 (no reviewed source lists it), every earlier version affected, fixed in 5.12.0, published 2026-11-03; bump once it's 7 days old (2026-11-10)",
-      "expires": "2026-11-10"
-    },
-    {
-      "id": "GHSA-cm2j-353h-9hw7",
-      "package": "is-unsafe",
-      "version": "2.0.2",
-      "paths": ["node_modules/is-unsafe"],
-      "reason": "only through fast-xml-parser; the gate reads Maven XML as data and never renders HTML or follows its URIs; NaturalIntelligence/is-unsafe repository advisory published 2026-11-03 (no reviewed source lists it), every earlier version affected, fixed in 2.0.3, published 2026-11-03; bump once it's 7 days old (2026-11-10)",
-      "expires": "2026-11-10"
-    },
-    {
-      "id": "GHSA-p4f5-76q4-ffq7",
-      "package": "vite",
-      "version": "8.3.4",
-      "paths": ["node_modules/vite"],
-      "reason": "only through vitest, a dev dependency; the tests run Vite inside Node and never start a dev server, let alone expose one to the network (--host or server.host), which the advisory requires; vitejs/vite repository advisory published 2026-11-10 (no reviewed source lists it), every version from 4.0.0 through 8.3.6 affected, fixed in 8.3.7 (with rolldown 1.2.18), both published 2026-11-09; bump once they're 7 days old (2026-11-16)",
-      "expires": "2026-11-16"
-    },
-    {
       "id": "GHSA-p4f5-76q4-ffq7",
       "package": "vite",
       "version": "8.3.5",
       "paths": ["node_modules/vite"],
-      "reason": "the version bump-it's routine moves vitest's vite to before 8.3.7 ages; same reason as 8.3.4: only through vitest, a dev dependency; the tests run Vite inside Node and never start a dev server, let alone expose one to the network (--host or server.host), which the advisory requires; vitejs/vite repository advisory published 2026-11-10 (no reviewed source lists it), every version from 4.0.0 through 8.3.6 affected, fixed in 8.3.7 (with rolldown 1.2.18), both published 2026-11-09; bump once they're 7 days old (2026-11-16)",
+      "reason": "only through vitest, a dev dependency; the tests run Vite inside Node and never start a dev server, let alone expose one to the network (--host or server.host), which the advisory requires; vitejs/vite repository advisory published 2026-11-10 (no reviewed source lists it), every version from 4.0.0 through 8.3.6 affected, fixed in 8.3.7 (with rolldown 1.2.18), both published 2026-11-09; bump once they're 7 days old (2026-11-16)",
       "expires": "2026-11-16"
     }
   ]
