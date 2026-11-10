@@ -16,7 +16,7 @@ const decision = (pr?: number): SubjectAssessment => ({
   findings: [{ ecosystem: "npm", name: "vite", ids: ["GHSA-1"], versions: ["8.3.1"], reviewed: true, malicious: false, severity: "HIGH" }],
   status: { kind: "eligible", trusted: [], ...(pr === undefined ? {} : { pr: { number: pr, url: `https://github.com/acme/widget/pull/${pr}` } }) },
 });
-const assessed = (subject: SubjectAssessment): Assessment => ({ sha: SHA, at: "2026-11-03T00:00:00.000Z", complete: true, subjects: [subject], excepted: [] });
+const assessed = (subject: SubjectAssessment): Assessment => ({ sha: SHA, at: "2026-11-03T00:00:00.000Z", complete: true, subjects: [subject] });
 
 function issueWith(attemptPr: number, shown: SubjectAssessment): { issues: FakeIssues; client: Parameters<typeof settleAttempt>[0] } {
   const issues = new FakeIssues();

@@ -51,7 +51,7 @@ describe("assessmentOf", () => {
   });
   // Through `selectWork`, as a run builds it: the blocked groups are the rule's own.
   const assess = (observations: ObservedFinding[], fixes: SecurityFix[], undecided = new Map<string, string>(), planningCauses = new Map<string, string>()) => assessmentOf({
-    sha: "a".repeat(40), complete: true, observations, excepted: [], units: [], blocked: selectWork(fixes).blocked, planningCauses, undecided, trusted: () => false,
+    sha: "a".repeat(40), complete: true, observations, units: [], blocked: selectWork(fixes).blocked, planningCauses, undecided, trusted: () => false,
     eligibleAt: async () => undefined, now: new Date("2026-11-04T00:00:00Z"), prOf: () => undefined,
   });
   const report = fix({ problem: "lib@1.0.0 is affected by GHSA-lib, only in the project's repository advisories: no fix is proposed until a reviewed source lists it", unreviewedOnly: true });
@@ -70,7 +70,7 @@ describe("assessmentOf", () => {
 
   describe("with several blocked groups naming a package", () => {
     const assessWith = (blocked: AssessmentInputs["blocked"], observations: ObservedFinding[], undecided = new Map<string, string>()) => assessmentOf({
-      sha: "a".repeat(40), complete: true, observations, excepted: [], units: [], blocked, planningCauses: new Map(), undecided, trusted: () => false,
+      sha: "a".repeat(40), complete: true, observations, units: [], blocked, planningCauses: new Map(), undecided, trusted: () => false,
       eligibleAt: async () => undefined, now: new Date("2026-11-04T00:00:00Z"), prOf: () => undefined,
     });
     const reportOnly = { packages: ["npm|lib"], reasons: ["only in the project's repository advisories"], reportsOnly: true as const };

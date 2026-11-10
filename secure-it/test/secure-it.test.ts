@@ -689,20 +689,21 @@ describe("secure-it run", () => {
     const flow = (h: Harness, published = "2026-10-05T00:00:00Z") => secureIt({ ...h.deps, gate: async () => scanned(published), scan: readScanState });
     const issuesOf = (h: Harness) => h.context.issues as FakeIssues;
 
-    it("closes an issue once a valid exception covers its finding, saying so, and never takes the finding for absent", async () => {
+    it("keeps tracking a finding a valid exception covers: the exception only lets the gate pass it", async () => {
       const files: Record<string, string> = { "package-lock.json": LOCK };
       const h = harness({ fixes: [], files });
       await flow(h).run(h.context);
       const issues = issuesOf(h);
-      expect([...issues.issues.values()].map((issue) => issue.state)).toEqual(["open"]);
+      const before = [...issues.issues.values()];
+      expect(before.map((issue) => issue.state)).toEqual(["open"]);
       files[".github/supply-chain-exceptions.json"] = JSON.stringify({
         vulnerabilities: [{ id: GHSA, package: "vite", version: "8.3.1", paths: ["node_modules/vite"], reason: "dev server only", expires: "2027-01-01" }],
       });
       await flow(h).run(h.context);
-      const [issue] = [...issues.issues.values()];
-      expect(issue!.state).toBe("closed");
-      expect(recordOf(issue!.body)).toMatchObject({ pendingClose: { reason: "resolved" }, absences: [] });
-      expect(issues.comments.get(issue!.number)!.at(-1)!.body).toContain("finds none of its advisories outside a valid exception");
+      const after = [...issues.issues.values()];
+      expect(after.map((issue) => [issue.number, issue.state])).toEqual(before.map((issue) => [issue.number, "open"]));
+      expect(recordOf(after[0]!.body)).toMatchObject({ findings: [{ name: "vite", ids: [GHSA] }], absences: [] });
+      expect(recordOf(after[0]!.body)?.pendingClose).toBeUndefined();
     });
 
     it("says so with nothing to fix too: a failed sync as an error, one that didn't settle as a note", async () => {
@@ -3402,7 +3403,7 @@ describe("the cooldown hold", () => {
     expect(aged.github.calls.some((call) => call.startsWith("headChecks"))).toBe(false);
     expect(recordOf(issues.issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 7, outcome: "pr-closed" }]);
     // Recovery retries the label cleanup after graduation recorded the attempt's end. No subject assessed: only records change.
-    const NO_SUBJECTS = { sha: "f".repeat(40), at: "2026-10-07T06:00:00.000Z", complete: true, subjects: [], excepted: [] };
+    const NO_SUBJECTS = { sha: "f".repeat(40), at: "2026-10-07T06:00:00.000Z", complete: true, subjects: [] };
     const client = { issues, github: aged.github, repo: REPO, clean: (body: string) => body, ours: () => true };
     // The label's removal fails the first time: the attempt's end is recorded anyway, and the next recovery returns it.
     await recoverAttempts(client, await syncedIssues(aged), NO_SUBJECTS);

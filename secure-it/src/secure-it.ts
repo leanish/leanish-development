@@ -1368,7 +1368,6 @@ function reusable(execution: Execution, own: ReadonlyArray<GitHubPullRequest>): 
 /** Observes, assesses and syncs the tool's issues for this run (`issue-tracking.ts`). */
 async function trackIssues(execution: Execution, inputs: TrackingInputs): Promise<Tracking> {
   const { context } = execution;
-  const today = context.now.toISOString().slice(0, 10);
   const { config } = inputs.scanned.settings;
   // A unit whose planning fails is left out, and the assessment is incomplete: its findings stay tracked (as
   // unassessed) and no issue is retired for it. The unit plans again when it runs: it fails there only if the error
@@ -1403,13 +1402,11 @@ async function trackIssues(execution: Execution, inputs: TrackingInputs): Promis
     const plan = planOf(pr.body);
     if (plan !== undefined) recorded.push({ pr, plan, early: await execution.early.is(pr, plan) });
   }
-  const { observed, excepted } = observationsOf(inputs.scanned.packages, inputs.scanned.snapshot, inputs.scanned.settings.exceptions, today);
   const assessment = await assessmentOf({
     sha: inputs.tree.id,
     now: context.now,
     complete,
-    observations: observed,
-    excepted,
+    observations: observationsOf(inputs.scanned.packages, inputs.scanned.snapshot),
     units: planned,
     blocked: inputs.blocked,
     planningCauses,

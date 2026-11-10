@@ -15,7 +15,7 @@ const waiting = (name: string, to: string): SubjectAssessment => ({
   findings: [finding(name, "GHSA-1")],
   status: { kind: "waiting", young: [{ ecosystem: "npm", name, version: to, eligibleAt: "2026-11-10T00:00:00.000Z" }] },
 });
-const assessed = (subjects: SubjectAssessment[], sha = SHA): Assessment => ({ sha, at: "2026-11-03T00:00:00.000Z", complete: true, subjects, excepted: [] });
+const assessed = (subjects: SubjectAssessment[], sha = SHA): Assessment => ({ sha, at: "2026-11-03T00:00:00.000Z", complete: true, subjects });
 const sync = (issues: FakeIssues) => ({ issues, repo: "acme/widget", clean: (body: string) => body.replaceAll("/Users/someone", "<local path>") });
 
 describe("syncIssues", () => {
@@ -358,7 +358,7 @@ describe("syncIssues", () => {
     const young = (name: string) => ({ ecosystem: "npm" as const, name, version: "1.0.1", eligibleAt: "2026-11-10T00:00:00.000Z" });
     const subject = (names: string[]): SubjectAssessment => ({ ...waiting("lib", "1.0.1"), status: { kind: "waiting", young: names.map(young) } });
     // The run assessed at 08:00 whatever the wall clock says when it writes: `since` follows the writes, plus the margin.
-    const at = (names: string[]): Assessment => ({ sha: SHA, at: "2026-11-03T08:00:00.000Z", complete: true, subjects: [subject(names)], excepted: [] });
+    const at = (names: string[]): Assessment => ({ sha: SHA, at: "2026-11-03T08:00:00.000Z", complete: true, subjects: [subject(names)] });
     const writingAt = (time: string) => ({ ...sync(issues), clock: () => new Date(time) });
     const shown = () => recordOf(issues.issues.get(1)!.body)!.shown;
     await syncIssues(writingAt("2026-11-03T08:00:00.000Z"), at(["lib"]));
@@ -372,7 +372,7 @@ describe("syncIssues", () => {
   it("counts a newly shown young version only from a read that saw it published, however long the writes took", async () => {
     const issues = new FakeIssues();
     const subject = (names: string[]): SubjectAssessment => ({ ...waiting("lib", "1.0.1"), status: { kind: "waiting", young: names.map((name) => ({ ecosystem: "npm" as const, name, version: "1.0.1", eligibleAt: "2026-11-10T00:00:00.000Z" })) } });
-    const at = (names: string[]): Assessment => ({ sha: SHA, at: "2026-11-03T10:00:00.000Z", complete: true, subjects: [subject(names)], excepted: [] });
+    const at = (names: string[]): Assessment => ({ sha: SHA, at: "2026-11-03T10:00:00.000Z", complete: true, subjects: [subject(names)] });
     await syncIssues({ ...sync(issues), clock: () => new Date("2026-11-03T09:00:00.000Z") }, at(["lib"]));
     // The round adding dep starts at 10:00; its write lands late, and the owner labels in between, seeing only lib.
     const times = ["2026-11-03T10:00:00.000Z", "2026-11-03T10:02:30.000Z", "2026-11-03T10:02:30.000Z"];
@@ -390,7 +390,7 @@ describe("syncIssues", () => {
   it("rewrites a pending record a crash left when the decision now takes other young versions, then confirms them", async () => {
     const issues = new FakeIssues();
     const subject = (names: string[]): SubjectAssessment => ({ ...waiting("lib", "1.0.1"), status: { kind: "waiting", young: names.map((name) => ({ ecosystem: "npm" as const, name, version: "1.0.1", eligibleAt: "2026-11-10T00:00:00.000Z" })) } });
-    const at = (names: string[]): Assessment => ({ sha: SHA, at: "2026-11-03T10:00:00.000Z", complete: true, subjects: [subject(names)], excepted: [] });
+    const at = (names: string[]): Assessment => ({ sha: SHA, at: "2026-11-03T10:00:00.000Z", complete: true, subjects: [subject(names)] });
     await syncIssues({ ...sync(issues), clock: () => new Date("2026-11-03T09:00:00.000Z") }, at(["a"]));
     // A crash right after a write: the record says pending, showing a.
     const crashed = issues.issues.get(1)!;
