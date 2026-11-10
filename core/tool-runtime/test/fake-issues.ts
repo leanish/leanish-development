@@ -1,6 +1,6 @@
 import { GitHubApiError } from "@leanish/agent-runtime/github/github-client";
 
-import type { GitHubIssue, GitHubIssueComment, GitHubIssueEvent, GitHubIssues, RepositoryPermission } from "../src/github-issues.ts";
+import type { GitHubIssue, GitHubIssueComment, GitHubIssueEvent, GitHubIssues, LatestClosing, RepositoryPermission } from "../src/github-issues.ts";
 
 /** In-memory issues for one repository, as GitHub keeps them: issues, comments, events and permissions. */
 export class FakeIssues implements GitHubIssues {
@@ -11,7 +11,7 @@ export class FakeIssues implements GitHubIssues {
   readonly calls: string[] = [];
   /** Operations GitHub refuses as forbidden (a PAT without Issues write). */
   readonly forbidden = new Set<string>();
-  /** The numbers each `closedByPerson` call asked about. */
+  /** The numbers each `latestClosings` call asked about. */
   readonly closingQueries: number[][] = [];
   /**
    * As GitHub's filtered listing does, list issues as they were at the previous listing: a write shows up one listing
@@ -84,10 +84,14 @@ export class FakeIssues implements GitHubIssues {
     return this.events.get(number) ?? [];
   }
 
-  async closedByPerson({ numbers }: { repo: string; numbers: ReadonlyArray<number> }): Promise<ReadonlySet<number>> {
-    this.#refuse("closedByPerson");
+  async latestClosings({ numbers }: { repo: string; numbers: ReadonlyArray<number> }): Promise<ReadonlyMap<number, LatestClosing>> {
+    this.#refuse("latestClosings");
     this.closingQueries.push([...numbers]);
-    return new Set(numbers.filter((number) => !this.#closedByNoPerson.has(number)));
+    return new Map(numbers.map((number) => {
+      const closed = (this.events.get(number) ?? []).filter((event) => event.event === "closed").at(-1);
+      if (closed === undefined) throw new GitHubApiError("latestClosings", "malformed closing history");
+      return [number, { id: `CE_${closed.id}`, byPerson: !this.#closedByNoPerson.has(number) }];
+    }));
   }
 
   async removeLabel({ number, label }: { repo: string; number: number; label: string }): Promise<void> {

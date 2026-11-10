@@ -171,6 +171,11 @@ export interface IssueRecord {
   readonly pendingClose?: PendingClose;
   /** For a waiting decision: the young versions its issue shows, and since when it has shown them all (`Shown`). */
   readonly shown?: Shown;
+  /**
+   * The id of the latest closing a run explained in a comment (`LatestClosing.id`): only a closing the tool didn't make,
+   * a dismissal or not. A later closing has another id, so it gets its own comment.
+   */
+  readonly acknowledged?: string;
 }
 
 /**
@@ -234,13 +239,15 @@ export function parseRecord(payload: unknown): IssueRecord | undefined {
   const grant = payload["grant"] === undefined ? undefined : parseGrant(payload["grant"]);
   const pendingClose = payload["pendingClose"] === undefined ? undefined : parsePendingClose(payload["pendingClose"]);
   const shown = payload["shown"] === undefined ? undefined : parseShown(payload["shown"]);
+  const acknowledged = payload["acknowledged"];
   if ((payload["grant"] !== undefined && grant === undefined) || (payload["pendingClose"] !== undefined && pendingClose === undefined)
-    || (payload["shown"] !== undefined && shown === undefined)) return undefined;
+    || (payload["shown"] !== undefined && shown === undefined) || (acknowledged !== undefined && !isText(acknowledged))) return undefined;
   return {
     version: RECORD_VERSION, subject, openedAt: payload["openedAt"], findings, absences, attempts,
     ...(grant === undefined ? {} : { grant }),
     ...(pendingClose === undefined ? {} : { pendingClose }),
     ...(shown === undefined ? {} : { shown }),
+    ...(acknowledged === undefined ? {} : { acknowledged }),
   };
 }
 

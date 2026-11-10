@@ -54,6 +54,17 @@ export interface GitHubIssueEvent {
   readonly label?: string;
 }
 
+/** An issue's latest closing, as GitHub's timeline records it. */
+export interface LatestClosing {
+  /** GitHub's node id of that closing: a later closing, even within the same second, has another. */
+  readonly id: string;
+  /**
+   * A person made it: GitHub records a user account as the actor and no closer. The actor alone proves nothing, since a
+   * merged PR's closing shows whoever merged it. A PR, a commit, a bot or a closing with no actor is no person's.
+   */
+  readonly byPerson: boolean;
+}
+
 /** A person's effective permission on a repository; `none` when they have no access at all. */
 export type RepositoryPermission = "admin" | "maintain" | "write" | "triage" | "read" | "none";
 
@@ -79,12 +90,10 @@ export interface GitHubIssues {
   createComment(args: { readonly repo: string; readonly number: number; readonly body: string }): Promise<GitHubIssueComment>;
   listEvents(args: { readonly repo: string; readonly number: number }): Promise<ReadonlyArray<GitHubIssueEvent>>;
   /**
-   * Which of the closed issues `numbers` a person last closed: GitHub records a user account as the actor and no closer.
-   * The actor alone proves nothing, since a merged PR's closing shows whoever merged it. A PR, a commit, a bot or a closing with
-   * no actor earns no place here. Every number must be a closed issue: one with no closing to read throws, since that can't
-   * establish how it was closed.
+   * The latest closing of each of the closed issues `numbers`. Every number must be a closed issue: one with no closing to
+   * read throws, since that can't establish how it was closed.
    */
-  closedByPerson(args: { readonly repo: string; readonly numbers: ReadonlyArray<number> }): Promise<ReadonlySet<number>>;
+  latestClosings(args: { readonly repo: string; readonly numbers: ReadonlyArray<number> }): Promise<ReadonlyMap<number, LatestClosing>>;
   /** Resolves when the label is gone, including when it already was. */
   removeLabel(args: { readonly repo: string; readonly number: number; readonly label: string }): Promise<void>;
   /**
@@ -219,13 +228,13 @@ export function createGitHubIssues(options: CreateGitHubIssuesOptions): GitHubIs
       checkNumber(operation, number);
       return paged(operation, `/repos/${repo}/issues/${number}/events`, (value) => toEvent(operation, value));
     },
-    async closedByPerson({ repo, numbers }) {
-      const operation = "closedByPerson";
+    async latestClosings({ repo, numbers }) {
+      const operation = "latestClosings";
       checkRepo(operation, repo);
       for (const number of numbers) checkNumber(operation, number);
       const [owner, name] = repo.split("/");
       const wanted = [...new Set(numbers)];
-      const closed = new Set<number>();
+      const closings = new Map<number, LatestClosing>();
       for (let start = 0; start < wanted.length; start += PAGE_SIZE) {
         const batch = wanted.slice(start, start + PAGE_SIZE);
         const answer = record(operation, await ok(operation, "/graphql", { method: "POST", body: JSON.stringify({ query: closingsQuery(batch), variables: { owner, name } }) }));
@@ -237,10 +246,11 @@ export function createGitHubIssues(options: CreateGitHubIssuesOptions): GitHubIs
         for (const number of batch) {
           const alias = `issue${number}`;
           // Read whole either way; a refused closer comes back null, exactly as a person's closing would.
-          if (lastClosedByPerson(operation, repository[alias]) && !refused.has(alias)) closed.add(number);
+          const closing = latestClosing(operation, repository[alias]);
+          closings.set(number, refused.has(alias) ? { ...closing, byPerson: false } : closing);
         }
       }
-      return closed;
+      return closings;
     },
     async removeLabel({ repo, number, label }) {
       const operation = "removeLabel";
@@ -384,7 +394,7 @@ function toEvent(operation: string, value: unknown): GitHubIssueEvent {
 function closingsQuery(numbers: ReadonlyArray<number>): string {
   const issues = numbers.map((number) => `issue${number}: issue(number: ${number}) { ...latestClosing }`).join(" ");
   return `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { ${issues} } }
-fragment latestClosing on Issue { timelineItems(itemTypes: [CLOSED_EVENT], last: 1) { nodes { ... on ClosedEvent { actor { __typename } closer { __typename } } } } }`;
+fragment latestClosing on Issue { timelineItems(itemTypes: [CLOSED_EVENT], last: 1) { nodes { ... on ClosedEvent { id actor { __typename } closer { __typename } } } } }`;
 }
 
 /**
@@ -401,17 +411,21 @@ function graphQLReason(errors: unknown): string {
 }
 
 /**
- * Whether an issue's latest closing was a person's: no closer, of any type (GitHub's union has more than PRs and commits),
- * and a user account as its actor. Both fields are checked whatever either says: a missing issue, closing, field or type
- * says nothing, so it throws rather than read as an answer.
+ * An issue's latest closing: its id, and whether a person made it (no closer, of any type: GitHub's union has more than
+ * PRs and commits, and a user account as its actor). Every field is checked whatever the others say: a missing issue,
+ * closing, field or type says nothing, so it throws rather than read as an answer. The id ends up in a hidden comment
+ * marker, so it must be the plain token GitHub's node ids are.
  */
-function lastClosedByPerson(operation: string, issue: unknown): boolean {
+function latestClosing(operation: string, issue: unknown): LatestClosing {
   const nodes = record(operation, record(operation, issue)["timelineItems"])["nodes"];
   if (!Array.isArray(nodes) || nodes.length !== 1) throw new GitHubApiError(operation, "malformed closing history");
   const closing = record(operation, nodes[0]);
+  const id = closing["id"];
+  // Today's ids are base64url (`CE_lADO...`); `+` and `/` keep an id in GitHub's legacy base64 form readable too.
+  if (typeof id !== "string" || !/^[A-Za-z0-9_=+/-]{1,200}$/.test(id)) throw new GitHubApiError(operation, "malformed closing id");
   const closer = typeOf(operation, closing["closer"], "malformed closer");
   const actor = typeOf(operation, closing["actor"], "malformed actor");
-  return closer === null && actor === "User";
+  return { id, byPerson: closer === null && actor === "User" };
 }
 
 /**

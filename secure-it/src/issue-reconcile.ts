@@ -39,6 +39,8 @@ export interface TrackedIssue {
    * only for an issue the tool has no closing of its own to account for; false for every other.
    */
   readonly closedByPerson: boolean;
+  /** The id of that closing, read along with `closedByPerson` (`LatestClosing.id`): what a run's comment on it answers. */
+  readonly closing?: string;
   /** Its labels, where known: a duplicate a person labelled `take-early` is theirs to settle. */
   readonly labels?: ReadonlyArray<string>;
 }
