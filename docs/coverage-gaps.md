@@ -83,8 +83,8 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   token limited to the repository and to Issues read-only: GitHub answers every closing that has a closer with that
   closer null and a `FORBIDDEN` error on that very field, and none for a closing by hand. secure-it takes such a closing
   for no person's, which rests on GitHub refusing only a closer that exists; if that ever failed, a person's dismissal
-  would get a new issue and maybe a fix, never the other way round. Any other error lasts until it clears or a
-  person reopens the issue and closes it by hand.
+  would get a new issue and maybe a fix, never the other way round. Any other error lasts until it clears; when it comes from one
+  issue's closing, a person can also reopen that issue and close it by hand (no help for a failing token or connection).
 - **A closing reference can leave two PRs (secure-it)**: when a reference closes an issue, a finding still there opens a new
   one, and a later eligible fix can publish a PR beside one a person pushed to, which the tool never reuses. Close whichever isn't wanted.
 - **Version-fix PRs from before issues (secure-it)**: review leaves a version-fix PR without a `Tracks` line to its
