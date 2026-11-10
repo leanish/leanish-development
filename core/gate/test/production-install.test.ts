@@ -46,6 +46,7 @@ describe("CI production install", () => {
     const gateManifest = JSON.parse(await readFile(join(repository, "core", "gate", "package.json"), "utf8")) as {
       dependencies: Record<string, string>;
     };
+    expect(gateManifest.dependencies.semver).toEqual(expect.any(String));
     const ciLockEntry = lockfile.packages["core/gate"] as { dependencies?: Record<string, string> } | undefined;
     expect(ciLockEntry?.dependencies?.semver).toBe(gateManifest.dependencies.semver);
     lockfile.packages[""]!.workspaces = ["core/gate"];
