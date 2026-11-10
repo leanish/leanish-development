@@ -308,6 +308,8 @@ Reviewed exceptions in three lists. Each entry names the exact package and versi
 
 Malware ids can't be excepted. A vulnerability exception only lets the gate pass the version: secure-it still tracks the finding in an issue and fixes it like any other, and bump-it moves the package as usual.
 
+**Cleaned up by the tools' upgrades:** a secure-it or bump-it PR that moves versions also removes the entries it leaves unused: ones that cover a version in the base (its package and version; a vulnerability entry at one of its `paths`, the others anywhere; an absent `ecosystem` matches any, and `identity` is npm; whatever advisory it names) and none in the PR's head. Nothing else changes in the file: an entry already unused before, one still covering a copy, and an expired one still covering a version stay, and the other bytes stay as they are. When the inventory of either side is incomplete (a bundle its lockfile doesn't record, a Gradle configuration that didn't resolve, ignored ones included, an action whose version can't be told), no entry is removed. The tools' verification admits a change to the file only when it's exactly that removal.
+
 ## Report
 
 `--report <file>` writes JSON: `schemaVersion`, `mode`, the gate's commit and OSV-Scanner version, a digest of the config, `baseSha`, `headSha`, `startedAt` (the snapshot's time), `completedAt`, `completed`, `verdict`, the failures, warnings, notes and gaps, the `error` that stopped an incomplete run, and, for a comparison, the `cooldown`.

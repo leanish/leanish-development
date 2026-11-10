@@ -39,6 +39,7 @@ import { readSettings } from "@leanish/gate/gate";
 import { workingTree } from "@leanish/gate/tree";
 
 import { type CodingAgent, defaultConfigPath, parseToolConfig, repoOf, type ToolConfig, type ToolRepo } from "./config.ts";
+import { keepingExceptions } from "./exception-cleanup.ts";
 import { DEFAULT_MODEL_PRICES } from "./model-prices.ts";
 import type { ToolName } from "./own-pr.ts";
 import { GitHubRequests } from "./github-requests.ts";
@@ -206,7 +207,7 @@ export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray
       isolation,
       agent: async (call) => {
         await m.assertAgentWorkspace(workingCopy, call.input, call.restoredFiles);
-        return runSkill(skillContext, {
+        return keepingExceptions(workingTree(workingCopy.path), () => runSkill(skillContext, {
           entrypoint: call.entrypoint,
           input: call.input,
           workingCopies: [workingCopy],
@@ -215,7 +216,7 @@ export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray
           effort: config.agent.effort,
           access: "write",
           credentials: { env: { GH_TOKEN: read }, secrets: [{ name: "GH_TOKEN", value: read }] },
-        });
+        }));
       },
     };
     const result = command === "run" ? await handlers.run(context) : await handlers.review(context);

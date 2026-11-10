@@ -13,7 +13,7 @@ import { candidate } from "./fixtures.ts";
 vi.mock("@leanish/gate/gate", async (original) => ({ ...await original<object>(), runCompare: vi.fn(async () => ({ failures: [], warnings: [], notes: [], gaps: [], osvScannerVersion: "2.6.0", configText: undefined, group: (id: string) => id, cooldown: { evaluated: true, releaseAgeDays: 7, held: [] } })) }));
 const tree = (id: string, files: Record<string, string>): Tree => ({ id, read: async (path) => files[path], list: async (dir) => Object.keys(files).filter((path) => dir === "." || path.startsWith(`${dir}/`)) });
 const manifest = (lib = "^1.0.0", scripts: object = {}) => JSON.stringify({ dependencies: { lib }, scripts });
-const lock = (lib = "1.0.0", other = "1.0.0") => JSON.stringify({ packages: { "": { dependencies: { lib: `^${lib}`, other: "^1" } }, "node_modules/lib": { version: lib }, "node_modules/other": { version: other } } });
+const lock = (lib = "1.0.0", other = "1.0.0") => JSON.stringify({ lockfileVersion: 3, packages: { "": { dependencies: { lib: `^${lib}`, other: "^1" } }, "node_modules/lib": { version: lib }, "node_modules/other": { version: other } } });
 const env: GateEnvironment = { run: async () => { throw new Error("must not execute"); }, fetch: async () => { throw new Error("must not fetch"); }, now: () => new Date(), osvScanner: "osv-scanner", githubToken: undefined };
 async function fixture(major = false) {
   const unit = major ? majorUnits([candidate()])[0]! : routineUnit([candidate()]);
@@ -167,6 +167,17 @@ describe("bump verification", () => {
     // Even a dependency file the tool didn't write: a stray script change in another manifest.
     const other = { ...headFiles, "ws/package.json": manifest("^2.0.0", { test: "true" }) };
     expect(await verifyPlan({ ...input, head: tree("head", other), toolWritten: [...input.changedFiles], changedFiles: [...input.changedFiles, "ws/package.json"] })).toContain("no agent ran, yet ws/package.json changed besides what the tool wrote");
+  });
+  it("lets a routine remove the exceptions it leaves unused, and only those", async () => {
+    const { input, baseFiles, headFiles } = await fixture();
+    const EXCEPTIONS = ".github/supply-chain-exceptions.json";
+    const exceptions = (...packages: string[]) => `${JSON.stringify({ vulnerabilities: packages.map((name) => ({ id: "GHSA-a", package: name, version: "1.0.0", paths: [`node_modules/${name}`], reason: "reviewed", expires: "2026-12-31" })) }, null, 2)}\n`;
+    const base = tree("base", { ...baseFiles, [EXCEPTIONS]: exceptions("lib", "other") });
+    const changedFiles = [...input.changedFiles, EXCEPTIONS];
+    const toolWritten = [...changedFiles];
+    expect(await verifyPlan({ ...input, base, head: tree("head", { ...headFiles, [EXCEPTIONS]: exceptions("other") }), changedFiles, toolWritten })).toEqual([]);
+    // `other` stays at 1.0.0: its entry is still in use.
+    expect(await verifyPlan({ ...input, base, head: tree("head", { ...headFiles, [EXCEPTIONS]: exceptions() }), changedFiles, toolWritten })).toEqual([expect.stringContaining("the gate's own policy")]);
   });
   it("rejects code in a routine PR", async () => {
     const { input } = await fixture();

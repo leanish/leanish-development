@@ -99,7 +99,9 @@ core/tool-runtime/run.sh bump-it review leanish/widget   # every few hours
     it crosses, read and linked;
   - PR text that gives `from → to`, each major's adaptation verdict and the checks run. The published text keeps local
     paths out (see [tool-runtime](../core/tool-runtime)).
-- Verification fences off policy changes first, then requires exact planned lockfiles and dependency fields, exact
+- Before verifying, bump-it removes the exceptions the PR leaves unused
+  ([which ones](../core/gate/README.md#exceptions-githubsupply-chain-exceptionsjson)), even in a routine with no agent.
+- Verification fences off policy changes first (that removal is the only change to the exceptions file it admits), then requires exact planned lockfiles and dependency fields, exact
   planned Gradle declarations, unchanged unplanned declarations and floors, interpreted strict declarations and strict
   constraints matching the Gradle reference, correct action pins, and all generated wrapper bytes/modes plus official
   checksums. The gate skips resolution failures in the configurations its `gradle.ignoreConfigurations` lists; like

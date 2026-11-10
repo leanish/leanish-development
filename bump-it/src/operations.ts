@@ -1,11 +1,12 @@
 /** Planning and editing one independent unit; no publication until verification passes. */
 import { ActionsGitHub } from "@leanish/gate/actions-github";
 import { readActionsInventory } from "@leanish/gate/actions-inventory";
-import type { GateEnvironment, GradleInputs } from "@leanish/gate/gate";
+import { EXCEPTIONS_PATH, type GateEnvironment, type GradleInputs } from "@leanish/gate/gate";
 import type { NpmPeerPlanner } from "@leanish/gate/npm-peers";
 import type { Tree } from "@leanish/gate/tree";
 import type { ToolRunContext } from "@leanish/tool-runtime/command";
 import { GATE_WORKFLOW, isPolicyFile, writtenPins } from "@leanish/tool-runtime/edit-checks";
+import { writeExceptionsCleanup } from "@leanish/tool-runtime/exception-cleanup";
 import type { FileState } from "@leanish/tool-runtime/git-copies";
 import { withPlannedDependencyFields } from "@leanish/tool-runtime/npm-file-checks";
 import { referenceTransform } from "@leanish/tool-runtime/gradle-reference";
@@ -177,13 +178,24 @@ async function onlyGateWorkflow(computed: Computed): Promise<boolean> {
   return uses.length > 0 && uses.every((use) => use.path === GATE_WORKFLOW.path);
 }
 
-/** `toolWritten`: what `edit` wrote when it wrote this pass without the agent, else `undefined` (see `Edited`). */
+/**
+ * Removes the exceptions the edit leaves unused (`exception-cleanup.ts`), then verifies. `toolWritten`: what `edit`
+ * wrote when it wrote this pass without the agent, else `undefined` (see `Edited`); the cleanup joins it.
+ */
 export async function verify(execution: Execution, computed: Computed, toolWritten: ReadonlyArray<string> | undefined): Promise<void> {
   const { context, deps, env, inventories } = execution;
   // Everything below reads this snapshot, never the live working tree, and publication commits exactly its tree.
-  const candidate = await deps.snapshot(context.workingCopy);
-  const head = await deps.trees.commit(context.workingCopy, candidate);
-  const gradle = { base: computed.gradle, head: await inventories.ofCommit(head) };
+  let candidate = await deps.snapshot(context.workingCopy);
+  let head = await deps.trees.commit(context.workingCopy, candidate);
+  let gradle = { base: computed.gradle, head: await inventories.ofCommit(head) };
+  const cleaned = await writeExceptionsCleanup(computed.base, head, gradle, env, (text) => deps.writeFile(context.workingCopy, EXCEPTIONS_PATH, text));
+  if (cleaned.wrote) {
+    // The verified snapshot is the one with the file written, its own inventory included: a build may read any file.
+    candidate = await deps.snapshot(context.workingCopy);
+    head = await deps.trees.commit(context.workingCopy, candidate);
+    gradle = { base: computed.gradle, head: await inventories.ofCommit(head) };
+  }
+  const written = toolWritten === undefined || cleaned.removed.length === 0 ? toolWritten : [...toolWritten, EXCEPTIONS_PATH];
   const changedFiles = await deps.changedBetween(context.workingCopy, computed.base.id, candidate);
   const wrapperAt = computed.plan.moves.some((move) => move.mechanism === "gradle-wrapper") ? await deps.wrapperAt(context.workingCopy, candidate) : undefined;
   // The base with the plan applied by Gradle (and its generated wrapper): the base itself when the plan moves nothing there.
@@ -203,7 +215,7 @@ export async function verify(execution: Execution, computed: Computed, toolWritt
     gradle,
     reference,
     changedFiles,
-    toolWritten,
+    toolWritten: written,
   });
   const links = await deps.linkProblems(context.workingCopy, computed.base.id, candidate);
   if (problems.length > 0 || links.length > 0) throw new VerificationRejected([...links, ...problems]);

@@ -279,7 +279,26 @@ describe("verifyPlan", () => {
       gradle: {},
       changedFiles: ["package-lock.json", ".github/supply-chain-exceptions.json", ".github/workflows/ci.yml"],
     });
-    expect(problems).toEqual(["the edit changed .github/supply-chain-exceptions.json, .github/workflows/ci.yml: the gate's own policy, which no plan may change"]);
+    expect(problems).toEqual([
+      "the edit changed .github/supply-chain-exceptions.json, .github/workflows/ci.yml: the gate's own policy, which no plan may change " +
+        "(the exceptions file only to remove the entries this change leaves unused)",
+    ]);
+  });
+
+  it("admits the exceptions the edit leaves unused, removed, even outside a major", async () => {
+    const entry = (version: string) => ({ id: "GHSA-a", package: "lib", version, paths: ["node_modules/lib"], reason: "reviewed", expires: "2026-12-31" });
+    const exceptions = (...versions: string[]) => `${JSON.stringify({ vulnerabilities: versions.map(entry) }, null, 2)}\n`;
+    const base = tree("b".repeat(40), {
+      "package-lock.json": lock({ lib: "^1.0.0", other: "^1.0.0" }, { lib: "1.0.0", other: "1.0.0" }),
+      ".github/supply-chain-exceptions.json": exceptions("1.0.0", "0.9.0"),
+    });
+    const fixed = lock({ lib: "^1.0.1", other: "^1.0.0" }, { lib: "1.0.1", other: "1.0.0" });
+    const run = (text: string) => verifyPlan({ reference: undefined, plan: PLAN, base,
+      head: tree("worktree", { "package-lock.json": fixed, ".github/supply-chain-exceptions.json": text }),
+      env: environment(AFFECTED), gradle: {}, changedFiles: ["package-lock.json", ".github/supply-chain-exceptions.json"] });
+    // lib@0.9.0's entry was already unused: it stays.
+    expect(await run(exceptions("0.9.0"))).toEqual([]);
+    expect(await run(exceptions())).toEqual([expect.stringContaining("the gate's own policy")]);
   });
 
   it.each(STRICT_PIN_SOURCES)("protects Gradle's interpreted $kind pins from $path in routine and major plans", async ({ kind, path }) => {

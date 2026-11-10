@@ -102,7 +102,10 @@ the policy fence, so those policies remain the same in head. The files are docum
 | `.github/supply-chain-exceptions.json` | [Exceptions](../core/gate/README.md#exceptions-githubsupply-chain-exceptionsjson): narrowly scoped vulnerability, release-age and reviewed identity exceptions. Malware cannot be excepted. |
 | `.github/dependency-floors.json` | [Floors](../core/gate/README.md#floors-githubdependency-floorsjson): recorded security/compatibility constraints and npm overrides. |
 
-The tools preserve this policy and its exceptions. bump-it never raises floors;
+The tools preserve this policy and its exceptions, except that a PR moving
+versions removes the exceptions it leaves unused
+([which ones](../core/gate/README.md#exceptions-githubsupply-chain-exceptionsjson)).
+bump-it never raises floors;
 secure-it removes only the exact security floors in a jointly verified
 [floor-removal plan](../secure-it/README.md#removing-redundant-security-floors).
 Compatibility floors stay.
