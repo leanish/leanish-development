@@ -1,6 +1,6 @@
 // Copied from leanish/leanish-development core/runtime/test/unit/claude-code-runner.test.ts at c6282df; see PROVENANCE.md.
 // Local changes: imports this package's modules from `../src/` instead of `../../src/`; stub binaries speak stream-json;
-// write access, usage and failure reasons are covered.
+// write access, usage and failure reasons are covered; the timeout cleanup test waits 1000 ms, not 200, so its stub can start.
 import { execFileSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
