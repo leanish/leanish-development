@@ -9,7 +9,7 @@ import { detailLimits, ISSUE_WRITER, issueWriter, recordOf, trackingContent, wit
 describe("issueWriter", () => {
   it.each(["", "<!-- leanish:plan "])("cleans a local path straddling the detail cut, including inside %s", (opening) => {
     const subject = { kind: "package" as const, ecosystem: "npm" as const, name: "lib" };
-    // The padding and the path's length put the path across the 1,000-character cut: change them together.
+    // The padding and the path's length put the path across the cut (1,000 characters minus the cut marker): change them together.
     const before = "registry 502 ".padEnd(966 - opening.length, "x") + " " + opening;
     const assessment: SubjectAssessment = { subject, findings: [], status: { kind: "blocked", reason: "unassessed",
       detail: `${before}/Users/example.person/private.txt${opening === "" ? "" : " -->"} ${"y".repeat(100)}` } };
@@ -24,7 +24,7 @@ describe("issueWriter", () => {
 
   it("cleans a local path straddling a refusal's longer cut too", () => {
     const subject = { kind: "package" as const, ecosystem: "npm" as const, name: "lib" };
-    // The padding and the path's length put the path across the 10,000-character cut: change them together.
+    // The padding and the path's length put the path across the cut (10,000 characters minus the cut marker): change them together.
     const assessment: SubjectAssessment = { subject, findings: [], status: { kind: "blocked", reason: "not-taken",
       detail: `${"x".repeat(9_970)} /Users/example.person/private.txt ${"y".repeat(100)}` } };
     const record: IssueRecord = { version: 1, subject, openedAt: "a".repeat(40), findings: [], absences: [], attempts: [] };
