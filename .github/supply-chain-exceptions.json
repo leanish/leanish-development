@@ -23,6 +23,14 @@
       "paths": ["node_modules/vite"],
       "reason": "only through vitest, a dev dependency; the tests run Vite inside Node and never start a dev server, let alone expose one to the network (--host or server.host), which the advisory requires; vitejs/vite repository advisory published 2026-11-10 (no reviewed source lists it), every version from 4.0.0 through 8.3.6 affected, fixed in 8.3.7 (with rolldown 1.2.18), both published 2026-11-09; bump once they're 7 days old (2026-11-16)",
       "expires": "2026-11-16"
+    },
+    {
+      "id": "GHSA-p4f5-76q4-ffq7",
+      "package": "vite",
+      "version": "8.3.5",
+      "paths": ["node_modules/vite"],
+      "reason": "the version bump-it's routine moves vitest's vite to before 8.3.7 ages; same reason as 8.3.4: only through vitest, a dev dependency; the tests run Vite inside Node and never start a dev server, let alone expose one to the network (--host or server.host), which the advisory requires; vitejs/vite repository advisory published 2026-11-10 (no reviewed source lists it), every version from 4.0.0 through 8.3.6 affected, fixed in 8.3.7 (with rolldown 1.2.18), both published 2026-11-09; bump once they're 7 days old (2026-11-16)",
+      "expires": "2026-11-16"
     }
   ]
 }
