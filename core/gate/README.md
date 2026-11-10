@@ -306,7 +306,7 @@ Reviewed exceptions in three lists. Each entry names the exact package and versi
 - `releaseAge`: `package`, `version` and the `advisory` the young version fixes; an optional `ecosystem` narrows it.
 - `identity`: a reviewed npm publisher identity break.
 
-Malware ids can't be excepted.
+Malware ids can't be excepted. A vulnerability exception only lets the gate pass the version: secure-it still tracks the finding in an issue and fixes it like any other, and bump-it moves the package as usual.
 
 ## Report
 
@@ -366,10 +366,10 @@ What runs where:
 
 `supply-chain candidates --rule security|bump [--head <rev> | --head worktree] [--head-gradle <file>] [--repo <dir>] [--out <file>]` prints, as JSON, where secure-it and bump-it move versions.
 
-**`--rule security`** picks, for every version a full scan fails on, the version the rule above picks: what secure-it moves to. It reuses the rule's code, so what it picks is what the gate then accepts.
+**`--rule security`** picks, for every version with a reviewed finding or malware (one a vulnerability exception covers included: an exception only lets the gate pass a version; what only the package's own repository reports is listed as reported, never a target), the version the rule above picks: what secure-it moves to. It reuses the rule's code, so what it picks is what the gate then accepts.
 
 - **Candidates:** every version above it the registry lists, in any line, scanned in a second snapshot together with the version itself.
-- **Targets:** the version's failing advisory groups (an excepted one stays as it is), as that second snapshot groups them (a candidate can link aliases). A target no listed version fixes is reported as `unfixable` and left: fixing A and leaving B is allowed.
+- **Targets:** the version's advisory groups, excepted ones included, as that second snapshot groups them (a candidate can link aliases). A target no listed version fixes is reported as `unfixable` and left: fixing A and leaving B is allowed.
 - **The choice:** the rule's first line, lowest aged fix, else lowest fix; a choice outside the version's own line is flagged `major`, for the agent to adapt the code. Trusted packages skip the wait (not when leaving malware, below).
 - **Malware:** the nearest clean version at least `releaseAgeDays` old, trusted packages included (a package that shipped malware can't vouch for its next release): newer in its line first, then older in its line (a downgrade), then a newer line.
 - **Bundled copies:** a failing copy a carrier's tarball ships isn't moved itself: its advisories become targets of a move of its carrier, chosen by the carrier rule above (one entry per carrier version, with `carries` listing each bundled package, its versions before and after, and its advisories; the carrier's own failing advisories join the same move). The carrier's locked archive must match what each lockfile records, or the entry says why there's no choice.

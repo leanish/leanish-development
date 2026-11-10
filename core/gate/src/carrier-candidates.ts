@@ -32,7 +32,7 @@ export interface CarriedPackage {
   readonly to: ReadonlyArray<string>;
 }
 
-/** One carrier version with failing bundled copies, gathered from unexcused findings. */
+/** One carrier version with failing bundled copies, gathered from its bundled copies' findings. */
 export interface CarrierGroup {
   readonly name: string;
   readonly version: string;

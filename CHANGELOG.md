@@ -4,6 +4,12 @@
 
 ### Changed
 
+- A vulnerability exception now only lets the gate pass a version: secure-it tracks the finding in an issue and fixes
+  it like any other, and `supply-chain candidates --rule security` plans for it. A fix covers every advisory of its
+  package some version fixes, excepted ones included, so it can take a larger move (a major) or none when no version
+  fixes them all; closing its issue keeps secure-it off it while every finding there is dismissed. An excepted
+  advisory only the package's own repository publishes is reported in an issue, as any such one, and doesn't trigger a
+  fix on its own. Upgrade: live exceptions can produce issues and PRs on the first run.
 - The requirements no longer promise the cooldown warning on every PR taken early: it shows only when the gate's
   comparison holds a version.
 - 0.11.0's note that a Maven version already on the base elsewhere isn't held or refused has an exception: a Gradle

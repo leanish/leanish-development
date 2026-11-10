@@ -7,11 +7,9 @@
  *     missing one is created, unless a person dismissed every finding it has (closed an issue for them while they
  *     stayed present).
  *   - An open issue whose subject is gone is closed once its successors exist (the subjects now carrying any of its
- *     findings: a decision may split or merge), or as resolved when a complete assessment finds none of them outside a
- *     valid exception.
+ *     findings: a decision may split or merge), or as resolved when a complete assessment finds none of them.
  *   - A complete assessment records, on every issue still tracking a finding, the commit where it's absent: that
  *     finding's episode ended, so its return is new and opens a new issue, past any dismissal and without any grant.
- *     A finding a valid exception covers is still there: it's in no subject, but never taken for absent.
  *   - An incomplete assessment never takes a finding for gone: it makes no new resolution decision and closes no issue
  *     whose subject it no longer finds. It closes only a duplicate whose findings its survivor already tracks, and finishes a closing
  *     an earlier run recorded.
@@ -118,8 +116,8 @@ function standingOf(issue: TrackedIssue): Standing {
 export function reconcile(assessment: Assessment, issues: ReadonlyArray<TrackedIssue>, writer: IssueWriter, unreadable: ReadonlyArray<number> = []): Reconciliation {
   const operations: IssueOperation[] = [];
   const notes: string[] = unreadable.map((number) => `#${number}: its record can't be read; secure-it creates no issue until it can (restore its hidden block, or close it)`);
-  // What's still there: the subjects' findings, and those a valid exception covers (no issue, no work, but not gone).
-  const present = [...assessment.subjects.flatMap((subject) => subject.findings.map(keyOf)), ...assessment.excepted.map(keyOf)];
+  // What's still there: the subjects' findings.
+  const present = assessment.subjects.flatMap((subject) => subject.findings.map(keyOf));
   // Every issue, open or closed, learns the aliases its findings have now, so one that later drops an id it had still
   // matches them. A complete assessment then ends the episode of every tracked finding it no longer has.
   const records = new Map(issues.map((issue) => [issue.number, withAbsences(withAliases(issue.record, present), present, assessment)]));
@@ -208,8 +206,7 @@ export function reconcile(assessment: Assessment, issues: ReadonlyArray<TrackedI
         const seen = [...new Map(assessment.subjects.flatMap((subject) => subject.findings)
           .filter((finding) => record.findings.some((tracked) => sameFinding(tracked, finding)))
           .map((finding) => [JSON.stringify(keyOf(finding)), finding])).values()];
-        const excepted = record.findings.some((tracked) => assessment.excepted.some((finding) => sameFinding(tracked, finding)));
-        const { body } = writer.render({ subject: record.subject, findings: seen, status: { kind: "blocked", reason: "unassessed", detail: notConfirmed(record, seen.length > 0, excepted) } }, record, assessment.sha);
+        const { body } = writer.render({ subject: record.subject, findings: seen, status: { kind: "blocked", reason: "unassessed", detail: notConfirmed(record, seen.length > 0) } }, record, assessment.sha);
         if (body !== issue.body) operations.push({ kind: "update", number: issue.number, body });
         return;
       }
@@ -250,13 +247,11 @@ export function reconcile(assessment: Assessment, issues: ReadonlyArray<TrackedI
 /**
  * What an open issue says while an incomplete assessment no longer finds its subject: no promise the run didn't confirm,
  * and, when the run saw none of its findings (so no table shows them), the advisories it tracks, from its own record.
- * One a valid exception now covers isn't said to be gone: `excepted` qualifies it.
  */
-function notConfirmed(record: IssueRecord, seenAny: boolean, excepted: boolean): string {
+function notConfirmed(record: IssueRecord, seenAny: boolean): string {
   const what = record.subject.kind === "decision"
     ? "didn't confirm this decision; the moves below aren't queued for execution"
-    : seenAny ? "couldn't confirm this issue's current status"
-      : excepted ? "didn't find these advisories again outside a valid exception" : "didn't find these advisories again";
+    : seenAny ? "couldn't confirm this issue's current status" : "didn't find these advisories again";
   const tracked = seenAny ? "" : `; it tracks ${record.findings.map((finding) => `${finding.name} ${finding.ids.join(", ")}`).join("; ")}`;
   return `this run's assessment is incomplete and ${what}${tracked}. This issue stays open until an assessment settles it`;
 }
@@ -325,8 +320,8 @@ function withAliases(record: IssueRecord, observed: ReadonlyArray<FindingKey>): 
 }
 
 /**
- * `record` with an absence for each of its findings a complete assessment no longer has (`present`, an excepted one
- * included); the same object when none. An absence recorded earlier stays: that episode ended.
+ * `record` with an absence for each of its findings a complete assessment no longer has (`present`); the same object
+ * when none. An absence recorded earlier stays: that episode ended.
  */
 function withAbsences(record: IssueRecord, present: ReadonlyArray<FindingKey>, assessment: Assessment): IssueRecord {
   if (!assessment.complete) return record;
@@ -346,7 +341,7 @@ function closing(
 ): IssueOperation {
   const pending = record.pendingClose ?? { id: `close:${issue.number}:${reason}:${at}`, reason, successors: [...successors], at };
   const said = pending.reason === "resolved"
-    ? `secure-it closes this issue: a complete assessment of \`${pending.at.slice(0, 12)}\` finds none of its advisories outside a valid exception.`
+    ? `secure-it closes this issue: a complete assessment of \`${pending.at.slice(0, 12)}\` finds none of its advisories.`
     : pending.successors.length === 0
       ? "secure-it closes this issue: its findings now belong to work a person dismissed earlier."
       : `secure-it closes this issue: superseded by ${pending.successors.map((number) => `#${number}`).join(", ")}, which tracks its findings now. Nothing here carries over, a \`take-early\` label included.`;

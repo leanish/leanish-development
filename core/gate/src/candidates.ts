@@ -3,10 +3,12 @@
  *
  * Security (`securityCandidates`): the rule the gate checks a young fix
  * against (young-fixes.ts), so picking and checking can't disagree. For each
- * version a full scan fails on, its candidates are every newer version the
+ * version with a finding (one a vulnerability exception covers included: an
+ * exception lets the gate pass a version, it doesn't take the finding out of
+ * what a fix should repair), its candidates are every newer version the
  * registry lists, in any line (no prereleases unless it is one; Maven keeps
  * its flavor), scanned in a second snapshot together with the version itself;
- * its targets are its unexcepted advisory groups as that snapshot groups them,
+ * its targets are its advisory groups as that snapshot groups them,
  * so targets and fixes come from the same data. A target no listed version
  * fixes is reported as unfixable and left (fixing A and leaving B is allowed).
  * The choice: the first compatible line, from the version's own upward, with a
@@ -25,7 +27,7 @@ import { actionGaps } from "./actions-changes.ts";
 import { hasAged } from "./age.ts";
 import { type CarriedPackage, type CarrierContext, type CarrierDecision, type CarrierGroup, decideCarrier, splitBundled } from "./carrier-candidates.ts";
 import { type Config, isTrustedPackage } from "./config.ts";
-import { type Exceptions, unexcusedProblem } from "./exceptions.ts";
+import type { Exceptions } from "./exceptions.ts";
 import { type Finding, findingKey, findingsOf, type Located } from "./findings.ts";
 import type { Floor } from "./floors.ts";
 import {
@@ -150,7 +152,7 @@ export async function securityCandidates(head: Tree, env: GateEnvironment, gradl
   const today = now.toISOString().slice(0, 10);
   const failing = new Map<string, FailingVersion>();
   // Only a reviewed advisory (or malware) triggers a fix; one only the project's repository publishes is reported.
-  const findings = unexcused(state.packages, state.snapshot, exceptions, today);
+  const findings = findingsOf(state.packages, state.snapshot);
   const triggers = findings.filter((finding) => finding.malicious || reviewedGroups(state.snapshot, finding).has(finding.advisory));
   const unreviewed = unreviewedReports(findings.filter((finding) => !triggers.includes(finding)), triggers);
   // Bundled copies can only move with their carrier: their findings become the carrier's targets. Every finding names
@@ -213,7 +215,7 @@ export async function securityCandidates(head: Tree, env: GateEnvironment, gradl
   const chosen: SecurityFix[] = [];
   for (const { pkg } of failing.values()) {
     // Regrouped on the second snapshot: a candidate can link aliases into another canonical id.
-    const current = unexcused([pkg], snapshot, exceptions, today);
+    const current = findingsOf([pkg], snapshot);
     const malicious = current.some((finding) => finding.malicious);
     const reviewed = reviewedGroups(snapshot, pkg);
     const targets = targetsOf(snapshot, pkg, new Set(current.filter((finding) => reviewed.has(finding.advisory)).map((finding) => finding.advisory)));
@@ -341,11 +343,6 @@ export function severityRank(severity: string | undefined): number {
 
 function highestSeverity(severities: ReadonlyArray<string | undefined>): string | undefined {
   return severities.reduce<string | undefined>((best, next) => (severityRank(next) > severityRank(best) ? next : best), undefined);
-}
-
-/** Findings on `packages` that fail: no valid exception covers them (malware never has one). */
-function unexcused(packages: ReadonlyArray<Located>, snapshot: Snapshot, exceptions: Exceptions, today: string) {
-  return findingsOf(packages, snapshot).filter((finding) => unexcusedProblem(finding, exceptions, snapshot, today) !== undefined);
 }
 
 interface ChoiceContext {

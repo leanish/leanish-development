@@ -12,7 +12,7 @@ const subject = {
   findings: [{ ecosystem: "npm" as const, name: "lib", ids: ["GHSA-1"], versions: ["1.0.0"], reviewed: true, malicious: false, severity: "HIGH" }],
   status: { kind: "eligible" as const, trusted: [] },
 };
-const assessment = { sha: "a".repeat(40), at: "2026-11-03T00:00:00.000Z", complete: true, subjects: [subject], excepted: [] };
+const assessment = { sha: "a".repeat(40), at: "2026-11-03T00:00:00.000Z", complete: true, subjects: [subject] };
 const clientOf = (issues: FakeIssues) => ({ issues, repo: "acme/widget", clean: (body: string) => body, now: new Date("2026-11-03T00:00:00Z") });
 
 describe("issueDisposition", () => {

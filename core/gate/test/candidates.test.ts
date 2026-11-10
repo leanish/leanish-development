@@ -224,7 +224,7 @@ describe("securityCandidates", () => {
     expect(moves(none.fixes)).toEqual([["evil@1.0.1", undefined, "no clean version of evil at least 7 days old to leave the malicious 1.0.1 for"]]);
   });
 
-  it("lets trusted packages skip the wait, and leaves excepted findings alone", async () => {
+  it("lets trusted packages skip the wait, and plans for excepted findings too", async () => {
     const affected = { "@acme/lib@1.0.0": ["GHSA-a"], "other@1.0.0": ["GHSA-x"] };
     const registry = { "@acme/lib": { "1.0.0": OLD, "1.0.1": YESTERDAY, "1.0.2": OLD }, other: { "1.0.0": OLD, "1.0.1": OLD } };
     const exceptions = {
@@ -238,9 +238,22 @@ describe("securityCandidates", () => {
       },
     );
     const found = await securityCandidates(head, environment(affected, registry));
-    expect(moves(found.fixes)).toEqual([["@acme/lib@1.0.0", "1.0.1", undefined]]);
+    // An exception only lets the gate pass `other@1.0.0`: its fix is still planned.
+    expect(moves(found.fixes)).toEqual([["@acme/lib@1.0.0", "1.0.1", undefined], ["other@1.0.0", "1.0.1", undefined]]);
     // 1.0.1 is a day old, but a trusted package never waits: nothing holds it.
     expect(found.fixes.find((fix) => fix.name === "@acme/lib")?.to?.aged).toBe(true);
+  });
+
+  it("fixes an excepted advisory with the package's others, even when that takes a major", async () => {
+    // GHSA-a has an in-line fix (1.0.1); the excepted GHSA-b only a major (2.0.0): one move fixes both.
+    const affected = { "lib@1.0.0": ["GHSA-a", "GHSA-b"], "lib@1.0.1": ["GHSA-b"] };
+    const registry = { lib: { "1.0.0": OLD, "1.0.1": OLD, "2.0.0": OLD } };
+    const exceptions = {
+      vulnerabilities: [{ id: "GHSA-b", package: "lib", version: "1.0.0", paths: ["node_modules/lib"], reason: "dev only", expires: "2026-12-31" }],
+    };
+    const head = await tree({ lib: "1.0.0" }, { ".github/supply-chain-exceptions.json": JSON.stringify(exceptions) });
+    const found = await securityCandidates(head, environment(affected, registry));
+    expect(found.fixes[0]?.to).toEqual({ version: "2.0.0", line: "2", aged: true, major: true, blockers: [] });
   });
 
   it("says why when nothing fixes, or an older fix's publish time is unknown", async () => {

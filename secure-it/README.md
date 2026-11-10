@@ -1,9 +1,9 @@
 # secure-it
 
-Fixes what the [supply-chain gate](../core/gate)'s full scan fails on, at any depth, with the smallest change the version
-rule picks, batching non-major fixes and opening each major separately. The code decides versions and verifies the
-result; the tool writes npm files, and a coding agent (Codex or Claude Code, set by `agent.codingAgent`) applies
-non-npm edits and major adaptations.
+Fixes what the [supply-chain gate](../core/gate)'s full scan finds (what an exception lets it pass included), at any
+depth, with the smallest change the version rule picks, batching non-major fixes and opening each major separately.
+The code decides versions and verifies the result; the tool writes npm files, and a coding agent (Codex or Claude
+Code, set by `agent.codingAgent`) applies non-npm edits and major adaptations.
 
 ```bash
 core/tool-runtime/run.sh secure-it run leanish/sqs-codec      # daily: batch fixes, majors apart
@@ -12,7 +12,7 @@ core/tool-runtime/run.sh secure-it review leanish/sqs-codec   # every few hours:
 
 ## Issues decide what runs
 
-Every finding a run sees on the default branch, minus those a valid exception covers, is tracked by an issue the tool
+Every finding a run sees on the default branch, one a valid exception covers included, is tracked by an issue the tool
 opens with the write PAT (it needs **Issues: read and write**, see [adopting the tools](../docs/adopting-tools.md)),
 except where a person [dismissed](#dismissing-findings) it: a dismissed finding shows again only in an issue whose
 subject also has a finding not dismissed, or once it came back after it was gone. An issue tracks one subject:
@@ -47,18 +47,20 @@ opens another for what it tracked, and a closed one's dismissal stops counting. 
 (`Tracks #N.`) by its number, label or not, so a PR taken early goes on under its recorded attempt and grant.
 
 Issues don't change subject: when a decision changes (another version, another grouping), the run opens the new issue
-first, then closes the old one as superseded by it. Once a complete scan sees none of an issue's findings outside a
-valid exception, it closes as resolved; while its subject still has some, the issue stays open and records as absent
-those the scan no longer sees at all. A finding a valid exception covers gets no issue and no work, but it's still
-there: it's never recorded as absent, so a dismissal of it still holds when the exception expires. A scan with coverage
-gaps never takes a finding for gone: it makes no new resolution decision and leaves open an issue whose subject it no
-longer finds. It only closes a duplicate issue whose findings the surviving one already tracks, and finishes a closing
-an earlier run recorded. Issue text never selects versions: the code decides. A person's input changes two things:
-closing an issue [dismisses its findings](#dismissing-findings), and a `take-early` label lets a waiting decision run
-early. Issue labels match ignoring case, as on GitHub: a `Take-Early` label made by hand counts, and so does the
-tool's own issue label in whatever casing the repository has it. Editing the issue's description isn't an input, but
-secure-it can't tell it happened: it reads its record back from there, whoever edited it last
-([known limitation](../docs/coverage-gaps.md#limits)).
+first, then closes the old one as superseded by it. Once a complete scan sees none of an issue's findings, it closes
+as resolved; while its subject still has some, the issue stays open and records as absent those the scan no longer
+sees. A vulnerability exception only lets the gate pass a version: secure-it tracks and fixes the finding like any
+other. So a fix covers every advisory of its package some version fixes, excepted ones included, and can take a larger
+move (a major) than the others alone would need, or none, when no version fixes them all. To keep secure-it off an
+excepted finding, close its issue (a dismissal keeps a subject out only when every finding in it is dismissed). A scan
+with coverage gaps never takes a finding for gone: it makes no new resolution decision and leaves open an issue whose
+subject it no longer finds. It only closes a duplicate issue whose findings the surviving one already tracks, and
+finishes a closing an earlier run recorded. Issue text never selects versions: the code decides. A person's input
+changes two things: closing an issue [dismisses its findings](#dismissing-findings), and a `take-early` label lets a
+waiting decision run early. Issue labels match ignoring case, as on GitHub: a `Take-Early` label made by hand counts,
+and so does the tool's own issue label in whatever casing the repository has it. Editing the issue's description isn't
+an input, but secure-it can't tell it happened: it reads its record back from there, whoever edited it last ([known
+limitation](../docs/coverage-gaps.md#limits)).
 
 ### Dismissing findings
 
