@@ -176,6 +176,11 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   its `check` and `gate / supply-chain` checks green, watching main's `ci` runs still in progress on it for up to 20 minutes.
   A run that outlasts that, or one that doesn't exist yet when the publish lists them, fails it before packing (nothing
   publishes), and it isn't retried when they pass: re-run the publish run's failed jobs once they're green.
+- **No downgrade for a vulnerability without a newer fix (secure-it)**: when no newer version fixes an advisory, it's
+  reported as unfixable even if an older version in the same line isn't affected (a bug a later minor or patch
+  introduced). Moving down only to leave malware is deliberate: doing it for vulnerabilities too would touch planning,
+  what counts as unfixable, floors and the npm and Gradle writers for a case we expect to be rare. A person can move down by hand or
+  add an exception.
 - **A repository advisory tagged as malware can start a fix (secure-it)**: whoever controls a dependency's repository
   can tag an advisory CWE-506 on the installed version, and secure-it plans a malware move with no reviewed source,
   possibly to an older version; tagging the other versions too could steer it. The version it lands on must be past
