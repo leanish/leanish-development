@@ -77,12 +77,13 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   either. A bot that keeps closing the tool's issues gets a new one for each finding still there. The gate's findings
   aren't affected. secure-it also defuses the references it recognizes in what it publishes, as best effort: that doesn't
   prove GitHub reads no other form as one, and it can't cover what people write.
-- **A closing whose origin can't be read stops the issue sync (secure-it)**: any error reading what closed an issue fails
-  the sync, and the run then defers every fix for that repository, rather than guess. Checked with a fine-grained token
-  limited to the repository and to Issues read-only: GitHub answers every closing that has a closer with that closer null
-  and a `FORBIDDEN` error, and the error alone tells it from a person's closing. The write token also has Contents and Pull
-  requests, so what's left is likely a closer in a private repository it can't reach. That lasts until the token can read
-  it or a person reopens the issue and closes it by hand.
+- **A closing whose origin can't be read stops the issue sync (secure-it)**: an error reading what closed an issue fails
+  the sync, and the run then defers every fix for that repository, rather than guess. One error doesn't: a closer GitHub
+  refuses to show the token (a PR or commit in a private repository the token doesn't cover). Checked with a fine-grained
+  token limited to the repository and to Issues read-only: GitHub answers every closing that has a closer with that
+  closer null and a `FORBIDDEN` error on that very field, and none for a closing by hand. secure-it takes such a closing
+  for no person's, which rests on GitHub refusing only a closer that exists. Any other error lasts until it clears or a
+  person reopens the issue and closes it by hand.
 - **A closing reference can leave two PRs (secure-it)**: when a reference closes an issue, a finding still there opens a new
   one, and a later eligible fix can publish a PR beside one a person pushed to, which the tool never reuses. Close whichever isn't wanted.
 - **Version-fix PRs from before issues (secure-it)**: review leaves a version-fix PR without a `Tracks` line to its

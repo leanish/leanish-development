@@ -95,12 +95,32 @@ describe("closedByPerson", () => {
     await expect(issues(scripted(json(partial)).fetch).closedByPerson({ repo: REPO, numbers: [1, 2] })).rejects.toThrow(GitHubApiError);
   });
 
-  it("doesn't take a closer the token can't read for a person's closing, identical as its data looks", async () => {
-    // As measured with a token limited to Issues: the closer comes back null, and only the error says it isn't.
-    const data = { data: { repository: { issue1: closingOf(null) } } };
-    const refused = { ...data, errors: [{ type: "FORBIDDEN", path: ["repository", "issue1", "timelineItems", "nodes", 0, "closer"], message: "Resource not accessible by personal access token" }] };
-    expect(await issues(scripted(json(data)).fetch).closedByPerson({ repo: REPO, numbers: [1] })).toEqual(new Set([1]));
-    await expect(issues(scripted(json(refused)).fetch).closedByPerson({ repo: REPO, numbers: [1] })).rejects.toMatchObject({ reason: "GraphQL errors: FORBIDDEN" });
+  const refusal = (alias: string, field = "closer", type = "FORBIDDEN") =>
+    ({ type, path: ["repository", alias, "timelineItems", "nodes", 0, field], message: "Resource not accessible by personal access token" });
+
+  it("doesn't take a closer the token can't read for a person's closing, identical as its data looks, and reads on", async () => {
+    // As measured with a token limited to Issues: the closer comes back null, and only the error says there is one.
+    const data = { data: { repository: { issue1: closingOf(null), issue2: closingOf(null) } } };
+    expect(await issues(scripted(json(data)).fetch).closedByPerson({ repo: REPO, numbers: [1, 2] })).toEqual(new Set([1, 2]));
+    const refused = { ...data, errors: [refusal("issue1")] };
+    expect(await issues(scripted(json(refused)).fetch).closedByPerson({ repo: REPO, numbers: [1, 2] })).toEqual(new Set([2]));
+  });
+
+  it.each<[string, unknown[]]>([
+    ["a refusal beside another error", [refusal("issue1"), { type: "NOT_FOUND", path: ["repository", "issue2"] }]],
+    ["a refusal of another field", [refusal("issue1", "actor")]],
+    ["another error on the closer", [refusal("issue1", "closer", "INTERNAL")]],
+    ["a refusal for an issue it didn't ask about", [refusal("issue9")]],
+    ["a refusal without a path", [{ type: "FORBIDDEN" }]],
+    ["an empty error list", []],
+  ])("still fails on %s", async (_, errors) => {
+    const answer = { data: { repository: { issue1: closingOf(null), issue2: closingOf(null) } }, errors };
+    await expect(issues(scripted(json(answer)).fetch).closedByPerson({ repo: REPO, numbers: [1, 2] })).rejects.toThrow(GitHubApiError);
+  });
+
+  it("still reads a refused closing whole: a malformed actor beside it fails", async () => {
+    const answer = { data: { repository: { issue1: { timelineItems: { nodes: [{ actor: {}, closer: null }] } } } }, errors: [refusal("issue1")] };
+    await expect(issues(scripted(json(answer)).fetch).closedByPerson({ repo: REPO, numbers: [1] })).rejects.toThrow("malformed actor");
   });
 
   it.each<[string, unknown, string]>([

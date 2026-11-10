@@ -230,10 +230,15 @@ export function createGitHubIssues(options: CreateGitHubIssuesOptions): GitHubIs
         const batch = wanted.slice(start, start + PAGE_SIZE);
         const answer = record(operation, await ok(operation, "/graphql", { method: "POST", body: JSON.stringify({ query: closingsQuery(batch), variables: { owner, name } }) }));
         // GraphQL answers a partial failure with HTTP 200, the failed part null and the reason here: read before any data.
-        // A closer the token can't read comes back null, exactly as a person's closing would, with only this to tell them apart.
-        if (answer["errors"] !== undefined) throw new GitHubApiError(operation, graphQLReason(answer["errors"]));
+        const aliases = new Set(batch.map((number) => `issue${number}`));
+        const refused = answer["errors"] === undefined ? new Set<string>() : refusedClosers(answer["errors"], aliases);
+        if (refused === undefined) throw new GitHubApiError(operation, graphQLReason(answer["errors"]));
         const repository = record(operation, record(operation, answer["data"])["repository"]);
-        for (const number of batch) if (lastClosedByPerson(operation, repository[`issue${number}`])) closed.add(number);
+        for (const number of batch) {
+          const alias = `issue${number}`;
+          // Read whole either way; a refused closer comes back null, exactly as a person's closing would.
+          if (lastClosedByPerson(operation, repository[alias]) && !refused.has(alias)) closed.add(number);
+        }
       }
       return closed;
     },
@@ -407,6 +412,25 @@ function lastClosedByPerson(operation: string, issue: unknown): boolean {
   const closer = typeOf(operation, closing["closer"], "malformed closer");
   const actor = typeOf(operation, closing["actor"], "malformed actor");
   return closer === null && actor === "User";
+}
+
+/**
+ * The issues, by alias, whose closer GitHub refused to show the token (a PR or commit in a private repository it doesn't
+ * cover), when every error is exactly that; undefined when any isn't, so the read fails. GitHub refuses only a closer
+ * that exists, so such a closing was no person's: it had a PR or commit behind it.
+ */
+function refusedClosers(errors: unknown, aliases: ReadonlySet<string>): ReadonlySet<string> | undefined {
+  if (!Array.isArray(errors) || errors.length === 0) return undefined;
+  const refused = new Set<string>();
+  for (const error of errors) {
+    const entry = typeof error === "object" && error !== null ? (error as Record<string, unknown>) : {};
+    const path = entry["path"];
+    const closerPath = Array.isArray(path) && path.length === 6 && path[0] === "repository" && path[2] === "timelineItems"
+      && path[3] === "nodes" && path[4] === 0 && path[5] === "closer";
+    if (entry["type"] !== "FORBIDDEN" || !closerPath || typeof path[1] !== "string" || !aliases.has(path[1])) return undefined;
+    refused.add(path[1]);
+  }
+  return refused;
 }
 
 /** A GraphQL object's type, or null where GitHub sent an explicit null. */
