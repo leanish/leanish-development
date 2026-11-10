@@ -83,6 +83,15 @@ decision carries on as above, except one a person pushed to: the run leaves it a
 dismiss findings after such a closing, reopen the issue and close it by hand. Automation using a person's token closes
 as that person, so its closing does dismiss ([known limitation](../docs/coverage-gaps.md#limits)).
 
+A stale bot closes as a bot, so after each of its closings a finding still there opens a new issue, which it will close
+again. Exempt secure-it's issues from it: for `actions/stale`, add the issue label to `exempt-issue-labels`:
+
+```yaml
+- uses: actions/stale@v10
+  with:
+    exempt-issue-labels: 'leanish:secure-it-issue'
+```
+
 ### Taking a fix early: `take-early`
 
 Someone with write, maintain or admin access comments `take-early: <reason>`, with that prefix in lower case, on a
