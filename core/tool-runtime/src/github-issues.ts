@@ -416,8 +416,9 @@ function lastClosedByPerson(operation: string, issue: unknown): boolean {
 
 /**
  * The issues, by alias, whose closer GitHub refused to show the token (a PR or commit in a private repository it doesn't
- * cover), when every error is exactly that; undefined when any isn't, so the read fails. GitHub refuses only a closer
- * that exists, so such a closing was no person's: it had a PR or commit behind it.
+ * cover), when every error is exactly that; undefined when any isn't, so the read fails. As measured with a token limited
+ * to Issues, GitHub refused only a closer that exists, so such a closing is taken for no person's: a PR or commit was
+ * behind it. Even if that ever stops holding, a refusal only keeps a closing from dismissing.
  */
 function refusedClosers(errors: unknown, aliases: ReadonlySet<string>): ReadonlySet<string> | undefined {
   if (!Array.isArray(errors) || errors.length === 0) return undefined;

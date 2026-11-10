@@ -118,6 +118,15 @@ describe("closedByPerson", () => {
     await expect(issues(scripted(json(answer)).fetch).closedByPerson({ repo: REPO, numbers: [1, 2] })).rejects.toThrow(GitHubApiError);
   });
 
+  it("matches a refusal to the batch that got it", async () => {
+    const numbers = Array.from({ length: 101 }, (_, i) => i + 1);
+    const firstHundred = Object.fromEntries(numbers.slice(0, 100).map((number) => [number, null]));
+    const second = (alias: string) => json({ data: { repository: { issue101: closingOf(null) } }, errors: [refusal(alias)] });
+    const expected = new Set(numbers.slice(0, 100));
+    expect(await issues(scripted(closings(firstHundred), second("issue101")).fetch).closedByPerson({ repo: REPO, numbers })).toEqual(expected);
+    await expect(issues(scripted(closings(firstHundred), second("issue1")).fetch).closedByPerson({ repo: REPO, numbers })).rejects.toThrow(GitHubApiError);
+  });
+
   it("still reads a refused closing whole: a malformed actor beside it fails", async () => {
     const answer = { data: { repository: { issue1: { timelineItems: { nodes: [{ actor: {}, closer: null }] } } } }, errors: [refusal("issue1")] };
     await expect(issues(scripted(json(answer)).fetch).closedByPerson({ repo: REPO, numbers: [1] })).rejects.toThrow("malformed actor");
