@@ -43,8 +43,12 @@ describe("CI production install", () => {
     const lockfile = JSON.parse(await readFile(join(repository, "package-lock.json"), "utf8")) as {
       packages: Record<string, { workspaces?: string[] } | undefined>;
     };
+    const gateManifest = JSON.parse(await readFile(join(repository, "core", "gate", "package.json"), "utf8")) as {
+      dependencies: Record<string, string>;
+    };
+    expect(gateManifest.dependencies.semver).toEqual(expect.any(String));
     const ciLockEntry = lockfile.packages["core/gate"] as { dependencies?: Record<string, string> } | undefined;
-    expect(ciLockEntry?.dependencies?.semver).toBe("^7.8.5");
+    expect(ciLockEntry?.dependencies?.semver).toBe(gateManifest.dependencies.semver);
     lockfile.packages[""]!.workspaces = ["core/gate"];
     for (const path of Object.keys(lockfile.packages)) {
       // Drop the other workspaces and what npm nests under them, but keep what it nests under core/gate: a dependency
