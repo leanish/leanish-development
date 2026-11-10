@@ -68,11 +68,25 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   opens an issue showing them all, and a decision's PR fixes the dismissed ones too. Closing an issue leaves an open
   ordinary PR for it to review, which may adapt it or mark it ready; close that PR by hand
   ([dismissing findings](../secure-it/README.md#dismissing-findings)).
-- **A closing reference can look like a dismissal (secure-it)**: a PR or commit that names a tracked issue after a
-  closing keyword (`Fixes #12`) can make GitHub close it once it reaches the default branch, and secure-it takes a
-  closing it didn't record for a dismissal, so findings still there can get no new issue or fix. Reopen the issue if
-  they should stay tracked. The gate's findings aren't affected. secure-it defuses the references it recognizes in what
-  it publishes, as best effort: that doesn't prove GitHub reads no other form as one, and it can't cover what people write.
+- **A person's token reads as a person (secure-it)**: only a closing GitHub records with a user account as its actor and
+  no closer is a dismissal. Checked on private repositories: a PR merged by squash, merge commit or rebase, a commit
+  reaching the default branch (rebased in or pushed directly) and a PR from another private repository of the same owner
+  all name a closer, and the Actions token closes as a bot. Automation running on a person's token closes as that person
+  with no closer, so it reads as a dismissal and findings still there get no new issue or fix until the issue is reopened.
+  A closing GitHub reports with no actor, as it may for an account since deleted (not checked on one), isn't a dismissal
+  either. A bot that keeps closing the tool's issues gets a new one for each finding still there. The gate's findings
+  aren't affected. secure-it also defuses the references it recognizes in what it publishes, as best effort: that doesn't
+  prove GitHub reads no other form as one, and it can't cover what people write.
+- **A closing whose origin can't be read stops the issue sync (secure-it)**: an error reading what closed an issue fails
+  the sync, and the run then defers every fix for that repository, rather than guess. One error doesn't: a closer GitHub
+  refuses to show the token (a PR or commit in a private repository the token doesn't cover). Checked with a fine-grained
+  token limited to the repository and to Issues read-only: GitHub answers every closing that has a closer with that
+  closer null and a `FORBIDDEN` error on that very field, and none for a closing by hand. secure-it takes such a closing
+  for no person's, which rests on GitHub refusing only a closer that exists; if that ever failed, a person's dismissal
+  would get a new issue and maybe a fix, never the other way round. Any other error lasts until it clears; when it comes from one
+  issue's closing, a person can also reopen that issue and close it by hand (no help for a failing token or connection).
+- **A closing reference can leave two PRs (secure-it)**: when a reference closes an issue, a finding still there opens a new
+  one, and a later eligible fix can publish a PR beside one a person pushed to, which the tool never reuses. Close whichever isn't wanted.
 - **Version-fix PRs from before issues (secure-it)**: review leaves a version-fix PR without a `Tracks` line to its
   owner for good, and nothing closes it. A run still matches one to a fix it plans by its kind and topic alone: it
   keeps it, refreshing only its plan notes, when the plan is unchanged, or redoes it, then with a `Tracks` line, when the plan changed. The

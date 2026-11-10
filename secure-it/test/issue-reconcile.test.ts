@@ -38,7 +38,7 @@ function converge(assessment: Assessment, issues: TrackedIssue[] = [], rounds = 
     operations.push([...result.operations]);
     for (const operation of result.operations) {
       if (operation.kind === "create") {
-        state.push({ number: next++, state: "open", body: operation.body, record: recordOf(operation.body)!, reopened: false });
+        state.push({ number: next++, state: "open", body: operation.body, record: recordOf(operation.body)!, reopened: false, closedByPerson: false });
         continue;
       }
       const issue = state.find((tracked) => tracked.number === operation.number)!;
@@ -93,7 +93,7 @@ describe("reconcile", () => {
   it("respects a person's closing as a dismissal until the finding goes away, and opens a new issue for a new one", () => {
     const one = informational("lib", [finding("lib", ["GHSA-1"], { reviewed: false })]);
     const [issue] = converge(assessed([one])).issues;
-    const dismissed: TrackedIssue = { ...issue!, state: "closed" };
+    const dismissed: TrackedIssue = { ...issue!, state: "closed", closedByPerson: true };
     // Still there: nothing reopens or recreates it, even under a new alias, which its record learns.
     const aliased = converge(assessed([informational("lib", [finding("lib", ["GHSA-1", "CVE-1"], { reviewed: false })])]), [dismissed]);
     expect(aliased.operations.flat().map((operation) => operation.kind)).toEqual(["update"]);
@@ -122,10 +122,51 @@ describe("reconcile", () => {
     expect(first.record.absences).toEqual([]);
   });
 
+  describe("an issue no person closed", () => {
+    const subject = () => decision([move("lib")], [finding("lib", ["GHSA-1"])]);
+    const closedBy = (issue: TrackedIssue): TrackedIssue => ({ ...issue, state: "closed", closedByPerson: false });
+
+    it("isn't a dismissal: a finding still there opens a new issue, and the closed one stays closed", () => {
+      const [issue] = converge(assessed([subject()])).issues;
+      const result = converge(assessed([subject()]), [closedBy(issue!)]);
+      expect(result.issues.map((tracked) => [tracked.number, tracked.state])).toEqual([[1, "closed"], [2, "open"]]);
+    });
+
+    it("carries no grant or attempt over to the new issue", () => {
+      const [issue] = converge(assessed([subject()])).issues;
+      const grant = { labelEventId: 1, reasonCommentId: 2, actor: "owner", at: "2026-11-03T00:00:00.000Z", young: [{ ecosystem: "npm" as const, name: "lib", version: "1.0.1" }] };
+      const attempt = { id: "attempt", grantEventId: 1, branch: "secure-it/early", startedAt: "2026-11-03T00:00:00.000Z" };
+      const granted: TrackedIssue = closedBy({ ...issue!, record: { ...issue!.record, grant, attempts: [attempt] } });
+      const fresh = converge(assessed([subject()]), [granted]).issues.find((tracked) => tracked.number === 2)!;
+      expect(fresh.record.grant).toBeUndefined();
+      expect(fresh.record.attempts).toEqual([]);
+    });
+
+    it("still learns its findings' aliases and absences, like any closed issue", () => {
+      const [issue] = converge(assessed([subject()])).issues;
+      const gone = converge(assessed([], true, LATER), [closedBy(issue!)]);
+      expect(gone.operations.flat().map((operation) => operation.kind)).toEqual(["update"]);
+      expect(gone.issues[0]!.record.absences).toEqual([{ finding: { ecosystem: "npm", name: "lib", ids: ["GHSA-1"] }, at: LATER }]);
+    });
+
+    it("isn't a dismissal either when a person reopened it after the tool's closing and a reference closed it again", () => {
+      const start = converge(assessed([subject()])).issues;
+      const superseded = converge(assessed([decision([move("lib", "1.0.2")], [finding("lib", ["GHSA-1"])])]), start).issues;
+      const closedAgain = superseded.map((issue) => (issue.number === 1 ? { ...issue, reopened: true, closedByPerson: false } : issue));
+      const back = converge(assessed([subject()]), closedAgain);
+      expect(open(back.issues).map((issue) => issue.number)).toEqual([3]);
+    });
+
+    it("leaves a person's closing a dismissal", () => {
+      const [issue] = converge(assessed([subject()])).issues;
+      expect(reconcile(assessed([subject()]), [{ ...issue!, state: "closed", closedByPerson: true }], ISSUE_WRITER).operations).toEqual([]);
+    });
+  });
+
   it("keeps a dismissed finding's ended episode ended once it's reported only by an alias it gained after it returned", () => {
     const one = informational("lib", [finding("lib", ["GHSA-1"], { reviewed: false })]);
     const [issue] = converge(assessed([one])).issues;
-    const dismissed: TrackedIssue = { ...issue!, state: "closed" };
+    const dismissed: TrackedIssue = { ...issue!, state: "closed", closedByPerson: true };
     const gone = converge(assessed([], true, LATER), [dismissed]).issues;
     // It returns with a new alias: a new issue, as for any return after an ended episode.
     const back = converge(assessed([informational("lib", [finding("lib", ["CVE-1", "GHSA-1"], { reviewed: false })])], true, LATER), gone).issues;
@@ -138,7 +179,7 @@ describe("reconcile", () => {
 
   it("doesn't take a dismissed finding's move out of a decision that also fixes one not dismissed", () => {
     const [issue] = converge(assessed([decision([move("lib")], [finding("lib", ["GHSA-1"])])])).issues;
-    const dismissed: TrackedIssue = { ...issue!, state: "closed" };
+    const dismissed: TrackedIssue = { ...issue!, state: "closed", closedByPerson: true };
     // The routine batch now also fixes other: its decision isn't covered by the dismissal, and its issue shows both.
     const batch = decision([move("lib"), move("other")], [finding("lib", ["GHSA-1"]), finding("other", ["GHSA-2"])]);
     const created = converge(assessed([batch]), [dismissed]).issues.find((tracked) => tracked.number !== dismissed.number)!;
@@ -150,7 +191,7 @@ describe("reconcile", () => {
   it("keeps a dismissal when the dismissed finding gets a different fix", () => {
     const fixA = decision([move("lib", "1.0.1")], [finding("lib", ["GHSA-1"])]);
     const [issue] = converge(assessed([fixA])).issues;
-    const dismissed: TrackedIssue = { ...issue!, state: "closed" };
+    const dismissed: TrackedIssue = { ...issue!, state: "closed", closedByPerson: true };
     expect(reconcile(assessed([decision([move("lib", "1.0.2")], [finding("lib", ["GHSA-1"])])]), [dismissed], ISSUE_WRITER).operations).toEqual([]);
   });
 
@@ -327,7 +368,7 @@ describe("reconcile", () => {
     const back = converge(assessed([informational("lib", [a, b])]), missed).issues;
     expect(back[0]!.record.absences).toEqual([]);
     // A person closes it: nothing came back after that, so no new issue opens.
-    const after = converge(assessed([informational("lib", [a, b])]), [{ ...back[0]!, state: "closed" }]).issues;
+    const after = converge(assessed([informational("lib", [a, b])]), [{ ...back[0]!, state: "closed", closedByPerson: true }]).issues;
     expect(open(after)).toEqual([]);
   });
 
@@ -362,7 +403,7 @@ describe("reconcile", () => {
   it("doesn't wait for a successor a dismissal covers", () => {
     const old = informational("lib", [finding("lib", ["GHSA-1"], { reviewed: false })]);
     const [dismissedIssue] = converge(assessed([old])).issues;
-    const dismissed: TrackedIssue = { ...dismissedIssue!, state: "closed" };
+    const dismissed: TrackedIssue = { ...dismissedIssue!, state: "closed", closedByPerson: true };
     const other = decision([move("lib")], [finding("lib", ["GHSA-1"]), finding("lib", ["GHSA-2"])]);
     const tracking = converge(assessed([other]), [dismissed]).issues;
     // GHSA-2 goes away; GHSA-1 is dismissed: the new package subject needs no issue, so the decision's issue closes.
@@ -470,7 +511,7 @@ describe("reconcile with findings a valid exception covers", () => {
   it("keeps a dismissal once the exception expires, its aliases learned while it was excepted included", () => {
     const one = informational("lib", [finding("lib", ["GHSA-1"], { reviewed: false })]);
     const [issue] = converge(assessed([one])).issues;
-    const dismissed: TrackedIssue = { ...issue!, state: "closed" };
+    const dismissed: TrackedIssue = { ...issue!, state: "closed", closedByPerson: true };
     // Excepted, and reported with a new alias meanwhile: the record learns it, and takes no absence.
     const during = converge(assessed([], true, LATER, [key("lib", ["CVE-1", "GHSA-1"])]), [dismissed]).issues;
     expect(during[0]!.record.findings).toEqual([key("lib", ["CVE-1", "GHSA-1"])]);
@@ -482,7 +523,7 @@ describe("reconcile with findings a valid exception covers", () => {
   it("keeps an absence a complete assessment recorded before, when the finding returns under an exception", () => {
     const one = informational("lib", [finding("lib", ["GHSA-1"], { reviewed: false })]);
     const [issue] = converge(assessed([one])).issues;
-    const dismissed: TrackedIssue = { ...issue!, state: "closed" };
+    const dismissed: TrackedIssue = { ...issue!, state: "closed", closedByPerson: true };
     const gone = converge(assessed([], true, LATER), [dismissed]).issues;
     const absent = [{ finding: key("lib", ["GHSA-1"]), at: LATER }];
     expect(gone[0]!.record.absences).toEqual(absent);

@@ -78,6 +78,13 @@ export interface GitHubIssues {
   listComments(args: { readonly repo: string; readonly number: number }): Promise<ReadonlyArray<GitHubIssueComment>>;
   createComment(args: { readonly repo: string; readonly number: number; readonly body: string }): Promise<GitHubIssueComment>;
   listEvents(args: { readonly repo: string; readonly number: number }): Promise<ReadonlyArray<GitHubIssueEvent>>;
+  /**
+   * Which of the closed issues `numbers` a person last closed: GitHub records a user account as the actor and no closer.
+   * The actor alone proves nothing, since a merged PR's closing shows whoever merged it. A PR, a commit, a bot or a closing with
+   * no actor earns no place here. Every number must be a closed issue: one with no closing to read throws, since that can't
+   * establish how it was closed.
+   */
+  closedByPerson(args: { readonly repo: string; readonly numbers: ReadonlyArray<number> }): Promise<ReadonlySet<number>>;
   /** Resolves when the label is gone, including when it already was. */
   removeLabel(args: { readonly repo: string; readonly number: number; readonly label: string }): Promise<void>;
   /**
@@ -211,6 +218,29 @@ export function createGitHubIssues(options: CreateGitHubIssuesOptions): GitHubIs
       checkRepo(operation, repo);
       checkNumber(operation, number);
       return paged(operation, `/repos/${repo}/issues/${number}/events`, (value) => toEvent(operation, value));
+    },
+    async closedByPerson({ repo, numbers }) {
+      const operation = "closedByPerson";
+      checkRepo(operation, repo);
+      for (const number of numbers) checkNumber(operation, number);
+      const [owner, name] = repo.split("/");
+      const wanted = [...new Set(numbers)];
+      const closed = new Set<number>();
+      for (let start = 0; start < wanted.length; start += PAGE_SIZE) {
+        const batch = wanted.slice(start, start + PAGE_SIZE);
+        const answer = record(operation, await ok(operation, "/graphql", { method: "POST", body: JSON.stringify({ query: closingsQuery(batch), variables: { owner, name } }) }));
+        // GraphQL answers a partial failure with HTTP 200, the failed part null and the reason here: read before any data.
+        const aliases = new Set(batch.map((number) => `issue${number}`));
+        const refused = answer["errors"] === undefined ? new Set<string>() : refusedClosers(answer["errors"], aliases);
+        if (refused === undefined) throw new GitHubApiError(operation, graphQLReason(answer["errors"]));
+        const repository = record(operation, record(operation, answer["data"])["repository"]);
+        for (const number of batch) {
+          const alias = `issue${number}`;
+          // Read whole either way; a refused closer comes back null, exactly as a person's closing would.
+          if (lastClosedByPerson(operation, repository[alias]) && !refused.has(alias)) closed.add(number);
+        }
+      }
+      return closed;
     },
     async removeLabel({ repo, number, label }) {
       const operation = "removeLabel";
@@ -348,6 +378,68 @@ function toEvent(operation: string, value: unknown): GitHubIssueEvent {
   const name = record(operation, event["label"])["name"];
   if (typeof name !== "string") throw new GitHubApiError(operation, "malformed event label");
   return { ...base, label: name };
+}
+
+/** One aliased selection per issue. The numbers went through `checkNumber`, and the repository travels as variables. */
+function closingsQuery(numbers: ReadonlyArray<number>): string {
+  const issues = numbers.map((number) => `issue${number}: issue(number: ${number}) { ...latestClosing }`).join(" ");
+  return `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { ${issues} } }
+fragment latestClosing on Issue { timelineItems(itemTypes: [CLOSED_EVENT], last: 1) { nodes { ... on ClosedEvent { actor { __typename } closer { __typename } } } } }`;
+}
+
+/**
+ * What failed, by GitHub's error types alone (a lasting failure stops the sync, so a person needs to know which), and a
+ * rate limit as every other method says it. GraphQL reports one with HTTP 200, so `refusal` can't see it.
+ */
+function graphQLReason(errors: unknown): string {
+  const types = Array.isArray(errors) ? errors.flatMap((error: unknown) => {
+    const type = typeof error === "object" && error !== null ? (error as Record<string, unknown>)["type"] : undefined;
+    return typeof type === "string" && /^[A-Z_]+$/.test(type) ? [type] : [];
+  }) : [];
+  if (types.includes("RATE_LIMITED")) return "rate limited";
+  return types.length === 0 ? "GraphQL errors" : `GraphQL errors: ${[...new Set(types)].join(", ")}`;
+}
+
+/**
+ * Whether an issue's latest closing was a person's: no closer, of any type (GitHub's union has more than PRs and commits),
+ * and a user account as its actor. Both fields are checked whatever either says: a missing issue, closing, field or type
+ * says nothing, so it throws rather than read as an answer.
+ */
+function lastClosedByPerson(operation: string, issue: unknown): boolean {
+  const nodes = record(operation, record(operation, issue)["timelineItems"])["nodes"];
+  if (!Array.isArray(nodes) || nodes.length !== 1) throw new GitHubApiError(operation, "malformed closing history");
+  const closing = record(operation, nodes[0]);
+  const closer = typeOf(operation, closing["closer"], "malformed closer");
+  const actor = typeOf(operation, closing["actor"], "malformed actor");
+  return closer === null && actor === "User";
+}
+
+/**
+ * The issues, by alias, whose closer GitHub refused to show the token (a PR or commit in a private repository it doesn't
+ * cover), when every error is exactly that; undefined when any isn't, so the read fails. As measured with a token limited
+ * to Issues, GitHub refused only a closer that exists, so such a closing is taken for no person's: a PR or commit was
+ * behind it. Even if that ever stops holding, a refusal only keeps a closing from dismissing.
+ */
+function refusedClosers(errors: unknown, aliases: ReadonlySet<string>): ReadonlySet<string> | undefined {
+  if (!Array.isArray(errors) || errors.length === 0) return undefined;
+  const refused = new Set<string>();
+  for (const error of errors) {
+    const entry = typeof error === "object" && error !== null ? (error as Record<string, unknown>) : {};
+    const path = entry["path"];
+    const closerPath = Array.isArray(path) && path.length === 6 && path[0] === "repository" && path[2] === "timelineItems"
+      && path[3] === "nodes" && path[4] === 0 && path[5] === "closer";
+    if (entry["type"] !== "FORBIDDEN" || !closerPath || typeof path[1] !== "string" || !aliases.has(path[1])) return undefined;
+    refused.add(path[1]);
+  }
+  return refused;
+}
+
+/** A GraphQL object's type, or null where GitHub sent an explicit null. */
+function typeOf(operation: string, value: unknown, malformed: string): string | null {
+  if (value === null) return null;
+  const type = record(operation, value)["__typename"];
+  if (typeof type !== "string") throw new GitHubApiError(operation, malformed);
+  return type;
 }
 
 const PERMISSIONS: ReadonlySet<string> = new Set<RepositoryPermission>(["admin", "maintain", "write", "triage", "read", "none"]);

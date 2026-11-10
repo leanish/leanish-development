@@ -76,6 +76,22 @@ ready), so close that PR too. A PR taken early is left to its owner once its iss
 granted is still young: its grant no longer stands. Once they've all aged, review retires that draft as it would any
 other.
 
+Only a person's closing dismisses. An issue GitHub closed because a PR or commit referenced it (`Fixes #12`), or that a
+bot closed, isn't dismissed: nobody decided anything about its findings. It stays closed, and
+a finding still there opens a new issue, with no `take-early` grant or attempt of the old one. An open PR for that
+decision carries on as above, except one a person pushed to: the run leaves it alone and may open another beside it. To
+dismiss findings after such a closing, reopen the issue and close it by hand. Automation using a person's token closes
+as that person, so its closing does dismiss ([known limitation](../docs/coverage-gaps.md#limits)).
+
+A stale bot closes as a bot, so after each of its closings a finding still there opens a new issue, which it will close
+again. Exempt secure-it's issues from it: for `actions/stale`, add the issue label to `exempt-issue-labels`:
+
+```yaml
+- uses: actions/stale@v10
+  with:
+    exempt-issue-labels: 'leanish:secure-it-issue'
+```
+
 ### Taking a fix early: `take-early`
 
 Someone with write, maintain or admin access comments `take-early: <reason>`, with that prefix in lower case, on a

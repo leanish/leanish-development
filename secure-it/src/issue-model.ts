@@ -130,10 +130,11 @@ export interface Attempt {
 }
 
 /**
- * A closing the tool intends, written before it closes the issue: a closed issue without one is a person's
- * dismissal. A person may close as the PAT's login too, so the record tells them apart first; within a recorded
- * closing, only a closing by the token's login after `afterEvent` is taken for the tool's (a person using that same
- * account can still be mistaken for it: a documented limit).
+ * A closing the tool intends, written before it closes the issue: a closed issue without one is a dismissal when
+ * GitHub shows a person made that closing (`TrackedIssue.closedByPerson`). A person may close as the PAT's login too,
+ * so the record tells them apart first; within a recorded closing, only a closing by the token's login after
+ * `afterEvent` is taken for the tool's (a person using that same account can still be mistaken for it: a documented
+ * limit).
  */
 export interface PendingClose {
   readonly id: string;

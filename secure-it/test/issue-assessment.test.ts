@@ -109,7 +109,7 @@ describe("assessmentOf", () => {
       const short = await assessWith([{ packages: ["npm|lib"], reasons: ["no candidate passes"] }], [finding("lib", true)]);
       const { operations: [first] } = reconcile(short, [], ISSUE_WRITER);
       if (first?.kind !== "create") throw new Error("expected a create");
-      const open = { number: 1, state: "open" as const, body: first.body, record: recordOf(first.body)!, reopened: false };
+      const open = { number: 1, state: "open" as const, body: first.body, record: recordOf(first.body)!, reopened: false, closedByPerson: false };
       const updated = reconcile(assessed, [open], ISSUE_WRITER);
       expect(updated.notes).toEqual([]);
       expect(updated.operations).toEqual([expect.objectContaining({ kind: "update", number: 1, body: expect.stringContaining("[truncated]") })]);
