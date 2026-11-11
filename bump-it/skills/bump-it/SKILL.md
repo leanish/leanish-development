@@ -90,6 +90,9 @@ or touch git metadata. Leave no temporary files: everything in the working tree 
   peerDependenciesMeta, overrides, workspaces). Only a major may adapt a manifest's other fields (scripts, config).
 - `gradle-declared`: edit the declarations in every configuration location, to exactly `to`, keeping the repository's
   version catalog and build conventions. Never add or change transitive constraints or raise a floor.
+  Locations are the Gradle configurations that resolve the dependency (`:buildscript.classpath` included), not files:
+  find where those builds declare it at `from`, in whatever form and file, and move only those declarations. A name
+  `<id>:<id>.gradle.plugin` is a plugin, declared by its id.
 - Never change a Gradle `strictly(...)` version (a catalog's `strictly = ...` included), even when it pins a moved
   dependency at `from`: a strict version is the repository owner's deliberate pin. If the plan can't be applied
   without changing one, answer cannot-apply naming the file and the declaration. Never write one either: your
