@@ -41,12 +41,13 @@
 - A PR is the tools' only when the write token's login opened it, read once per command (one more request per run).
 - The tools sign what they act on in their PRs: the state line (head, base, adaptations), the PR's branch and base
   branch, the plan the body carries and secure-it's `Tracks` line, with a per-tool key kept in the Keychain
-  (`secrets.signing`, default `leanish-<tool>-signing`; 64 hexadecimal characters, `openssl rand -hex 32`). Someone with
-  write access can't get a commit taken as the tool's, nor change a PR's plan or the issue it tracks; prose stays free
-  to edit. A new setting, `records`, chooses it: `signed` (the default; a missing or malformed key stops the tool) or
-  `trusted-editors`, which signs nothing, reads no key and trusts whoever can edit the tools' PRs. Reuse the same key
-  on every machine that runs a tool. Upgrade: a PR made before this, including one signed by an earlier 0.12.0 build,
-  stays alone until a person closes it, so close the tools' open PRs when upgrading (not secure-it's issues).
+  (`secrets.signing`, default `leanish-<tool>-signing`; 64 hexadecimal characters, `openssl rand -hex 32`). With signed
+  records, someone with write access can't get a commit taken as the tool's, nor change a PR's plan or the issue it
+  tracks; prose stays free to edit. A new setting, `records`, chooses it: `signed` (the default; a missing or malformed
+  key stops the tool) or `trusted-editors`, which signs nothing, reads no key and trusts whoever can edit the tools'
+  PRs. Reuse the same key on every machine that runs a tool. Upgrade: with signed records, a PR made before this,
+  including one signed by an earlier 0.12.0 build, stays alone until a person closes it, so close the tools' open PRs
+  when upgrading (not secure-it's issues); with `trusted-editors`, the tools keep reading those PRs' state lines.
 - The gate no longer helps with the rename of `ownPackages` to `trustedPackages`: a config with the old name now fails
   as an unknown field, and a PR making the rename compares against the default Gradle builds, and the lockfiles head
   selects plus the default ones. A repository still on it should
