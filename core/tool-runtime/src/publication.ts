@@ -8,8 +8,14 @@ import type { Logger } from "@leanish/agent-runtime/types/logger";
 import type { PreparedBranch, WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
 import type { Workspace } from "@leanish/agent-runtime/working-copy/workspace";
 
+import { EXCEPTIONS_PATH } from "@leanish/gate/gate";
+import { runProcess } from "@leanish/gate/process";
+import { workingTree } from "@leanish/gate/tree";
+
+import { exceptionsNote, withExceptionsNote } from "./exceptions-note.ts";
+import { git } from "./git-copies.ts";
 import { cleanBody, cleanContent, type LocalRoots, withCanonical } from "./publication-text.ts";
-import { carriesLabel, isOwnPullRequest, type OwnPullRequests, type PullRequestState, verifiedStateOf, withMarker } from "./own-pr.ts";
+import { carriesLabel, isOwnPullRequest, MARKER_ROOM, type OwnPullRequests, type PullRequestState, verifiedStateOf, withMarker } from "./own-pr.ts";
 
 /**
  * Everything a tool writes to GitHub, done by the tool's own process with its
@@ -49,6 +55,37 @@ async function expectedTree(context: PublicationContext): Promise<{ readonly exp
   const tree = await context.verifiedTree();
   if (tree === undefined) throw new Error(`${context.rules.tool}: nothing was verified, so nothing is published`);
   return { expectedTree: tree };
+}
+
+/**
+ * `content` with the note about the exceptions the verified tree removed from the base's file (`exceptions-note.ts`) in
+ * place of any earlier one, or with none. Left out, logged, when only the note would push the marked body over the
+ * client's limit: the PR's diff still shows the removal.
+ */
+async function withRemovedExceptions(
+  context: PublicationContext,
+  prepared: PreparedBranch,
+  verified: { readonly expectedTree?: string },
+  content: PullRequestContent,
+): Promise<PullRequestContent> {
+  const bare = withExceptionsNote(content.body, undefined);
+  const read = async (revision: string) => {
+    const shown = await git(context.workingCopy, ["show", `${revision}:${EXCEPTIONS_PATH}`], runProcess);
+    return shown.code === 0 ? shown.stdout : undefined;
+  };
+  let note: string | undefined;
+  try {
+    const head = verified.expectedTree === undefined ? await workingTree(context.workingCopy.path).read(EXCEPTIONS_PATH) : await read(verified.expectedTree);
+    note = exceptionsNote(await read(prepared.baseSha), head);
+  } catch (err) {
+    // The note is for people: a failed read costs it, never the publication.
+    context.logger.warn(`${context.rules.tool}: the removed exceptions couldn't be read for the PR body`, { repo: context.repo, error: reasonOf(err) });
+  }
+  if (note === undefined) return { ...content, body: bare };
+  const body = withExceptionsNote(bare, cleanBody(note, rootsOf(context)));
+  if (body.length + MARKER_ROOM <= MAX_BODY_CHARS) return { ...content, body };
+  context.logger.warn(`${context.rules.tool}: the PR body leaves out its note about removed exceptions, which wouldn't fit`, { repo: context.repo });
+  return { ...content, body: bare };
 }
 
 /** Published text keeps the machine out: see publication-text.ts. */
@@ -123,9 +160,9 @@ export async function publishNew(
   prepared: PreparedBranch,
   agentContent: PullRequestContent,
 ): Promise<GitHubPullRequest | undefined> {
-  const content = cleanContent(agentContent, rootsOf(context));
   if (prepared.remoteHeadSha !== null) throw new Error(`${context.rules.tool}: ${prepared.branch} exists already; update its PR instead`);
   const verified = await expectedTree(context);
+  const content = await withRemovedExceptions(context, prepared, verified, cleanContent(agentContent, rootsOf(context)));
   const parent = await context.publicationParent?.(prepared) ?? prepared;
   const pushed = await context.workspace.publishBranch(context.workingCopy, parent, {
     message: content.commitMessage, ...verified,
@@ -151,14 +188,14 @@ export async function publishUpdate(
   adaptations?: number,
 ): Promise<{ readonly pr: GitHubPullRequest; readonly pushed: boolean }> {
   const { github, repo } = context;
-  const content = cleanContent(agentContent, rootsOf(context));
+  const verified = await expectedTree(context);
+  const content = await withRemovedExceptions(context, prepared, verified, cleanContent(agentContent, rootsOf(context)));
   const remoteHead = existingHead(context, prepared);
   const { pr: current, state: recorded } = await reReadRecorded(context, number, remoteHead);
   const attempts = adaptations ?? recorded.adaptations;
   const bodyAt = (head: string) => checkedText(content.title, withMarker(context, content.body, { head, base: prepared.baseSha, adaptations: attempts }));
   // Also before drafting a ready PR, or a no-push update (which has no beforePush callback).
   bodyAt(remoteHead);
-  const verified = await expectedTree(context);
   const parent = await context.publicationParent?.(prepared) ?? prepared;
   if (!current.isDraft) await github.convertToDraft({ nodeId: current.nodeId });
   const pushed = await context.workspace.publishBranch(context.workingCopy, parent, {

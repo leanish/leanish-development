@@ -207,6 +207,17 @@ describe("the advisory notice on a held PR", () => {
     expect(planOf(withPlanSection("Description.", { ...plan, granted: [{ ...granted[0]!, ecosystem: "pip" as never }] }))).toBeUndefined();
   });
 
+  it("composes the body without the note about removed exceptions, keeping it only while it still fits", () => {
+    const plan: ChangePlan = { topic: `security-young-Maven|${PKG}`, malware: false, severity: "CRITICAL", kind: "routine", moves: [], packages: [], cooldown: [hold({ evidence: reviewed })] };
+    const note = "<!-- leanish:removed-exceptions -->\n### Exceptions this PR leaves unused\n<!-- /leanish:removed-exceptions -->";
+    const bare = withPlanSection("Description.", plan);
+    expect(withPlanSection(`Description.\n\n${note}`, plan)).toBe(`${bare}\n\n${note}`);
+    // A body the evidence fills to its budget keeps the evidence, not the note.
+    const filler = "y".repeat(FRESH_HELD_BODY_TARGET - bare.length);
+    const filled = withPlanSection(`Description.${filler}`, plan);
+    expect(withPlanSection(`Description.${filler}\n\n${note}`, plan)).toBe(filled);
+  });
+
   it("keeps the evidence in the plan, and refuses an edited one", () => {
     const plan: ChangePlan = { topic: `security-young-Maven|${PKG}`, malware: false, severity: "CRITICAL", kind: "routine", moves: [], packages: [], cooldown: [hold({ evidence: reviewed })] };
     const body = withPlanSection("Description.", plan);

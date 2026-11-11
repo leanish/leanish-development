@@ -92,6 +92,18 @@ describe("units and persisted plan", () => {
     expect(updated.match(/leanish:plan/g)).toHaveLength(1);
     expect(planOf(updated)?.notes).toEqual(["new note"]);
   });
+  it("keeps the note about removed exceptions after the replaced section, and drops it when it wouldn't fit", async () => {
+    const plan = await planFor(routineUnit([candidate()]), npm, async () => undefined);
+    const note = "<!-- leanish:removed-exceptions -->\n### Exceptions this PR leaves unused\n<!-- /leanish:removed-exceptions -->";
+    const updated = withPlanSection(`Description.\n\n${planSection(plan)}\n\n${note}`, { ...plan, notes: ["new note"] });
+    expect(updated.endsWith(note)).toBe(true);
+    expect(updated.match(/<!-- leanish:removed-exceptions -->/g)).toHaveLength(1);
+    expect(planOf(updated)?.notes).toEqual(["new note"]);
+    // A body already at GitHub's limit without the note keeps its section, not the note.
+    const full = withPlanSection(`${"x".repeat(65_536 - 256 - planSection(plan).length - 2)}\n\n${note}`, plan);
+    expect(full).not.toContain("removed-exceptions");
+    expect(planOf(full)).toEqual(plan);
+  });
   it("rejects malformed blocks and unsafe file paths", async () => {
     const plan = await planFor(routineUnit([candidate()]), npm, async () => undefined);
     expect(planOf(planBlock({ ...plan, npmFiles: [{ path: "../secret", sha256: "a".repeat(64) }] }))).toBeUndefined();

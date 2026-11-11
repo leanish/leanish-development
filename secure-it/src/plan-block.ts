@@ -12,6 +12,7 @@ import { isAdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import { heldEntry, heldUntil } from "@leanish/gate/cooldown";
 import { packageKey } from "@leanish/gate/package-version";
 import { type Ecosystem, ECOSYSTEMS } from "@leanish/gate/versions";
+import { composedAroundNote } from "@leanish/tool-runtime/exceptions-note";
 import { MARKER_ROOM, stateOf } from "@leanish/tool-runtime/own-pr";
 import { defused, planPayload, planSection as sectionOf, TooLargeError, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
 import { literal } from "@leanish/tool-runtime/pr-text";
@@ -123,21 +124,24 @@ function omittedSection(plan: ChangePlan): string[] {
  * top while it holds. The advisory evidence is for people and never changes a verdict, so when the body can't be written
  * with it (its plan, section or body over a limit), it gives way, never the fix: written again without any, each fix that
  * had some says why it's missing. Fresh text has a smaller raw budget than text carrying a published state marker.
- * What still can't be written, and any other failure, fails as before.
+ * What still can't be written, and any other failure, fails as before. The note about removed exceptions never takes
+ * room from either: composed without it, it's kept only while the result still fits.
  */
 export function withPlanSection(body: string, plan: ChangePlan): string {
   const heldBodyTarget = stateOf(body) === undefined ? FRESH_HELD_BODY_TARGET : PUBLISHED_HELD_BODY_TARGET;
-  try {
-    return composed(body, plan, heldBodyTarget);
-  } catch (error) {
-    const lighter = error instanceof TooLargeError ? withoutEvidence(plan) : undefined;
-    if (lighter === undefined) throw error;
+  return composedAroundNote(body, heldBodyTarget, (bare) => {
     try {
-      return composed(body, lighter, heldBodyTarget);
-    } catch (retried) {
-      throw retried instanceof TooLargeError ? error : retried;
+      return composed(bare, plan, heldBodyTarget);
+    } catch (error) {
+      const lighter = error instanceof TooLargeError ? withoutEvidence(plan) : undefined;
+      if (lighter === undefined) throw error;
+      try {
+        return composed(bare, lighter, heldBodyTarget);
+      } catch (retried) {
+        throw retried instanceof TooLargeError ? error : retried;
+      }
     }
-  }
+  });
 }
 
 /** `plan` without its holds' evidence, each hold that had some saying why; undefined when none has any. */

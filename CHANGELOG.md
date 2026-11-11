@@ -7,7 +7,8 @@
 - A secure-it or bump-it PR that moves versions removes the exceptions it leaves unused: entries that covered a version
   in the base and cover none in the PR's head. Only removals, written by the tool and the only change to the exceptions
   file verification admits; entries already unused, still covering a copy, or expired but still covering a version
-  stay, and nothing is removed when either side's inventory is incomplete.
+  stay, and nothing is removed when either side's inventory is incomplete. The PR's description lists the entries it
+  removed, unless the body wouldn't fit with that list (its diff still shows them).
 
 ### Changed
 

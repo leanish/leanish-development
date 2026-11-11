@@ -2,9 +2,11 @@
 import { createHash } from "node:crypto";
 
 import { isObject } from "@leanish/gate/json";
+import { composedAroundNote } from "@leanish/tool-runtime/exceptions-note";
 import { safePath } from "@leanish/tool-runtime/local-files";
 import { NPM_DEPENDENCY_FIELDS } from "@leanish/tool-runtime/npm-file-checks";
-import { defused, planBlock, planPayload, planSection as sectionOf, SECTION_LIMIT, withPlanSection as replaceSection } from "@leanish/tool-runtime/plan-blocks";
+import { MARKER_ROOM } from "@leanish/tool-runtime/own-pr";
+import { BODY_LIMIT, defused, planBlock, planPayload, planSection as sectionOf, SECTION_LIMIT, withPlanSection as replaceSection } from "@leanish/tool-runtime/plan-blocks";
 import { literal } from "@leanish/tool-runtime/pr-text";
 
 import type { WrapperFile } from "./wrapper-generation.ts";
@@ -256,6 +258,7 @@ function sectionParts(plan: BumpPlan, copyRows: ReadonlyArray<string>) {
   return { heading: HEADING, people, payload: recorded, name: "bump-it's plan" };
 }
 
+/** `body` with its plan section replaced by `plan`'s; its note about removed exceptions kept while it fits. */
 export function withPlanSection(body: string, plan: BumpPlan): string {
-  return replaceSection(body, HEADING, planSection(plan));
+  return composedAroundNote(body, BODY_LIMIT - MARKER_ROOM, (bare) => replaceSection(bare, HEADING, planSection(plan)));
 }
