@@ -197,7 +197,8 @@ that rewrites a lockfile. Never lower/unset the window or add exclusions of your
   reject or revert them merely because another open PR chose a different version. `compare` judges all changes.
 - Never change `.github/supply-chain.json`, `.github/supply-chain-exceptions.json`, or a workflow or action file,
   except the `uses:` lines an `action-pin` move names in its `locations`. The tool rejects any other change to them,
-  whatever the move.
+  whatever the move. The tool itself removes the exceptions your edit leaves unused, after you finish: don't do it,
+  a pass that changed that file is refused.
 - Never commit, push, create branches or touch git: the tool does that. Leave nothing else in the working tree (temporary
   files included): everything left there is committed.
 

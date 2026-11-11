@@ -11,6 +11,9 @@ describe("isMechanical", () => {
       expect(isMechanical(path), path).toBe(false);
     }
     expect(isDependencyFile(".github/workflows/ci.yml", true)).toBe(true);
+    // The exceptions file too, its cleanup recomputed over the new base; never the gate's config.
+    expect(isMechanical(".github/supply-chain-exceptions.json")).toBe(true);
+    expect(isMechanical(".github/supply-chain.json")).toBe(false);
   });
 });
 

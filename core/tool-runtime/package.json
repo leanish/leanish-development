@@ -30,6 +30,7 @@
     "./command": "./src/command.ts",
     "./config": "./src/config.ts",
     "./edit-checks": "./src/edit-checks.ts",
+    "./exception-cleanup": "./src/exception-cleanup.ts",
     "./git-copies": "./src/git-copies.ts",
     "./github-issues": "./src/github-issues.ts",
     "./gradle-reference": "./src/gradle-reference.ts",

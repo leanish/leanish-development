@@ -285,7 +285,9 @@ finding can open one again after a complete assessment records it absent and it 
      Every added declaration must also appear in the independent Gradle reference built from base plus the plan;
      a planned plugin move alone does not authorize extra declarations;
    - the gate's own policy (its config, its exceptions, workflows and actions outside planned pins) is untouched,
-     major or not;
+     major or not, except the exceptions the PR leaves unused, which secure-it removes itself before verifying
+     ([which ones](../core/gate/README.md#exceptions-githubsupply-chain-exceptionsjson); a floor removal moves no
+     version and removes none);
    - interpreted declarations and constraints match the plan's Gradle reference, including strict pins and floor
      removals; the [security model](../docs/security-model.md#secure-it-and-bump-it) explains the comparison and its
      limit for pins Gradle does not interpret;

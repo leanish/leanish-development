@@ -120,7 +120,9 @@ or touch git metadata. Leave no temporary files: everything in the working tree 
   refreshed or induced transitive versions absent from `moves`; preserve them exactly as written, even if another
   open PR picked different versions. Do not revert them for being outside the move list or resolve them yourself.
 - Never change .github/dependency-floors.json, supply-chain.json, supply-chain-exceptions.json, or workflows/actions
-  beyond the supplied pins, not even a comment there: verification refuses any other change to those files.
+  beyond the supplied pins, not even a comment there: verification refuses any other change to those files. The tool
+  itself removes the exceptions your edit leaves unused, after you finish: don't do it, a pass that changed that
+  file is refused.
 - Code, tests, docs and manifest scripts/config may change only for `kind: major`, to adapt to that major.
 
 ## Code and comments

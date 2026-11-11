@@ -12,7 +12,7 @@ import { type SecurityCandidates, type SecurityFix, securityCandidates, withProb
 import type { CooldownEvaluation } from "@leanish/gate/cooldown";
 import type { NpmPeerPlanner } from "@leanish/gate/npm-peers";
 import { type EvidenceOptions, heldEvidence } from "@leanish/gate/advisory-evidence";
-import { type GateEnvironment, type GradleInputs, readScanState, readSettings, type ScanState } from "@leanish/gate/gate";
+import { EXCEPTIONS_PATH, type GateEnvironment, type GradleInputs, readScanState, readSettings, type ScanState } from "@leanish/gate/gate";
 import { type GradleInventory, gradleLocation, pinnedAmong, strictPinNote, strictPins } from "@leanish/gate/gradle";
 import { namingFailures } from "@leanish/gate/http";
 import { FileRepositoryAdvisoryCache } from "@leanish/tool-runtime/repository-advisory-cache";
@@ -24,6 +24,7 @@ import { runProcess } from "@leanish/gate/process";
 import { gitTree, type Tree, workingTree } from "@leanish/gate/tree";
 import type { ToolHandlers, ToolRunContext } from "@leanish/tool-runtime/command";
 import { FLOORS_FILE, isMechanical } from "@leanish/tool-runtime/edit-checks";
+import { writeExceptionsCleanup } from "@leanish/tool-runtime/exception-cleanup";
 import { writeLocalFile } from "@leanish/tool-runtime/local-files";
 import { gradleSourceIndex } from "@leanish/gate/gradle-sources";
 import { candidateTree, changedBetween, fileState, type FileState, linkProblems, snapshotCandidate } from "@leanish/tool-runtime/git-copies";
@@ -1060,7 +1061,8 @@ function matchesPlan(target: { readonly plan: ChangePlan; readonly unit?: Securi
 
 /**
  * Item 23 on the working copy as the agent left it, against `base`: on a snapshot of it, never the live working tree,
- * whose tree is then the only one publication commits.
+ * whose tree is then the only one publication commits. A plan that moves versions first loses the exceptions it leaves
+ * unused (`exception-cleanup.ts`); a floor removal moves none.
  */
 async function verifyEdit(
   context: ToolRunContext,
@@ -1073,9 +1075,18 @@ async function verifyEdit(
   npmFiles?: ReadonlyMap<string, string>,
   cooldown?: (evaluation: CooldownEvaluation) => void,
 ): Promise<string[]> {
-  const candidate = await deps.snapshot(context.workingCopy);
-  const head = await deps.trees.commit(context.workingCopy, candidate);
-  const headGradle = await inventories.ofCommit(head);
+  let candidate = await deps.snapshot(context.workingCopy);
+  let head = await deps.trees.commit(context.workingCopy, candidate);
+  let headGradle = await inventories.ofCommit(head);
+  if (plan.kind !== "floor-removal") {
+    const write = (text: string) => deps.writeFile(context.workingCopy, EXCEPTIONS_PATH, text);
+    if ((await writeExceptionsCleanup(base, head, { base: baseGradle, head: headGradle }, env, write)).wrote) {
+      // The verified snapshot is the one with the file written, its own inventory included: a build may read any file.
+      candidate = await deps.snapshot(context.workingCopy);
+      head = await deps.trees.commit(context.workingCopy, candidate);
+      headGradle = await inventories.ofCommit(head);
+    }
+  }
   let reference: GradleInventory | undefined;
   try {
     reference = await referenceOf(plan, base, baseGradle, inventories);

@@ -3,8 +3,9 @@
  *
  *   - the policy fence: the gate's own config, exceptions and every workflow
  *     and action file stay as they are, except, in a file a planned action
- *     pin names, that pin's ref and comment (checked first, since `compare`
- *     reads its policy from head);
+ *     pin names, that pin's ref and comment, and the exceptions file losing
+ *     only the entries the change leaves unused (`exception-cleanup.ts`)
+ *     (checked first, since `compare` reads its policy from head);
  *   - planned action pins landed (the tag's commit with `# <tag>`), and no
  *     other action use changed;
  *   - the declared npm versions, per declaration, to compare base with head;
@@ -17,12 +18,14 @@ import { basename } from "node:path";
 import { isAlias, isMap, isScalar, isSeq, parseDocument, Scalar } from "yaml";
 
 import { commentTag, parseUses, readActionsInventory } from "@leanish/gate/actions-inventory";
+import { EXCEPTIONS_PATH } from "@leanish/gate/gate";
 import type { Floor } from "@leanish/gate/floors";
 import { gradleLocation, type GradleConfiguration, type GradleInventory } from "@leanish/gate/gradle";
 import { directDependencies } from "@leanish/gate/npm-lock";
 import type { Tree } from "@leanish/gate/tree";
 import { versionScheme } from "@leanish/gate/versions";
 
+import type { ExceptionsCleanup } from "./exception-cleanup.ts";
 import { lockfilesOf } from "./inventories.ts";
 
 export const FLOORS_FILE = ".github/dependency-floors.json";
@@ -35,11 +38,21 @@ export interface PlannedPin {
   readonly locations: ReadonlyArray<string>;
 }
 
-/** The policy files the edit changed beyond its planned pins; empty when it kept to them. */
-export async function policyFence(changedFiles: ReadonlyArray<string>, pins: ReadonlyArray<PlannedPin>, base: Tree, head: Tree): Promise<string[]> {
+/**
+ * The policy files the edit changed beyond its planned pins and the exceptions cleanup; empty when it kept to them.
+ * `cleanup` is what the cleanup of the exceptions file would write (`admittedCleanup`): the file may change only to
+ * exactly that.
+ */
+export async function policyFence(changedFiles: ReadonlyArray<string>, pins: ReadonlyArray<PlannedPin>, base: Tree, head: Tree, cleanup?: ExceptionsCleanup): Promise<string[]> {
   const pinned = new Set(pins.flatMap((pin) => pin.locations));
-  const policy = changedFiles.filter((path) => isPolicyFile(path) && !pinned.has(path));
-  if (policy.length > 0) return [`the edit changed ${policy.join(", ")}: the gate's own policy, which no plan may change`];
+  const cleaned = cleanup?.kind === "removal" && (await head.read(EXCEPTIONS_PATH)) === cleanup.text;
+  const policy = changedFiles.filter((path) => isPolicyFile(path) && !pinned.has(path) && !(cleaned && path === EXCEPTIONS_PATH));
+  if (policy.length > 0) {
+    const why = policy.includes(EXCEPTIONS_PATH)
+      ? ` (the exceptions file only to remove the entries this change leaves unused${cleanup?.kind === "skipped" ? `, which can't be judged here: ${cleanup.why}` : ""})`
+      : "";
+    return [`the edit changed ${policy.join(", ")}: the gate's own policy, which no plan may change${why}`];
+  }
   const actions = new Set(pins.map((pin) => pin.name.toLowerCase()));
   for (const path of changedFiles.filter((changed) => pinned.has(changed))) {
     const before = pinsMasked(await base.read(path), actions);
@@ -315,7 +328,11 @@ export function isDependencyFile(path: string, actions: boolean): boolean {
   return actions && (path.startsWith(".github/workflows/") || path.startsWith(".github/actions/") || name === "action.yml" || name === "action.yaml");
 }
 
-/** Dependency files (lockfiles, manifests, Gradle build, settings and catalog files, floors) whose conflicts take the base's side, the plan then re-applied on top. */
+/**
+ * Files whose conflicts take the base's side, the plan then re-applied on top: dependency files (lockfiles, manifests,
+ * Gradle build, settings and catalog files, floors), and the exceptions file, whose only change a tool makes, the
+ * cleanup, is recomputed over the new base before verifying.
+ */
 export function isMechanical(path: string): boolean {
-  return isDependencyFile(path, false);
+  return isDependencyFile(path, false) || path === EXCEPTIONS_PATH;
 }

@@ -4,8 +4,9 @@
  *
  *   0. the gate's own policy is untouched, major or not: its config, its
  *      exceptions, and every workflow and action file — in a file a planned
- *      action pin names, everything but that pin's ref and comment (checked
- *      first, since `compare` reads policy from head);
+ *      action pin names, everything but that pin's ref and comment, and in the
+ *      exceptions file, everything but the entries the change leaves unused,
+ *      removed (checked first, since `compare` reads policy from head);
  *      recorded floors and their declarations are preserved, except exact
  *      planned security changes, additions, or removals in a floor-removal plan;
  *      compatibility floors never change;
@@ -39,7 +40,7 @@ import { type BundleReader, bundleMismatches } from "@leanish/gate/npm-bundles";
 import { lockedPackages } from "@leanish/gate/npm-lock";
 import { NpmRegistry } from "@leanish/gate/npm-registry";
 import type { CooldownEvaluation } from "@leanish/gate/cooldown";
-import { bundleReader, type GateEnvironment, type GradleInputs, readSettings, runCompare } from "@leanish/gate/gate";
+import { bundleReader, EXCEPTIONS_PATH, type GateEnvironment, type GradleInputs, readSettings, runCompare } from "@leanish/gate/gate";
 import type { GradleInventory } from "@leanish/gate/gradle";
 import type { Tree } from "@leanish/gate/tree";
 import { versionScheme } from "@leanish/gate/versions";
@@ -55,6 +56,7 @@ import {
   resolvedAt,
   UNVERSIONED,
 } from "@leanish/tool-runtime/edit-checks";
+import { admittedCleanup } from "@leanish/tool-runtime/exception-cleanup";
 import { referenceDifferences, type ReferenceFloor, type ReferenceMove, referenceProblems } from "@leanish/tool-runtime/gradle-reference";
 import { lockfilesOf } from "@leanish/tool-runtime/inventories";
 
@@ -88,7 +90,9 @@ export async function verifyPlan(inputs: VerifyInputs): Promise<string[]> {
   const problems: string[] = [];
 
   const pins = pinsOf(plan);
-  const fenced = await policyFence(inputs.changedFiles, pins, base, head);
+  // A floor removal moves no version, so it leaves no exception unused: its file stays as the base has it.
+  const cleanup = plan.kind === "floor-removal" ? undefined : await admittedCleanup(inputs.changedFiles, base, head, gradle, env);
+  const fenced = await policyFence(inputs.changedFiles, pins, base, head, cleanup);
   if (fenced.length > 0) return fenced;
   const npm = await computedNpmProblems(inputs.npmFiles, head, plan.moves.some((move) => move.major), base, inputs.changedFiles);
   if (npm.length > 0) return npm;
@@ -128,7 +132,8 @@ export async function verifyPlan(inputs: VerifyInputs): Promise<string[]> {
 
   if (!plan.moves.some((move) => move.major)) {
     const actions = plan.moves.some((move) => move.mechanism === "action-pin");
-    const outside = inputs.changedFiles.filter((path) => !isDependencyFile(path, actions));
+    // The exceptions file passed the policy fence only as the cleanup of what the change left unused.
+    const outside = inputs.changedFiles.filter((path) => !isDependencyFile(path, actions) && path !== EXCEPTIONS_PATH);
     if (outside.length > 0) problems.push(`the edit changed ${outside.join(", ")}, which only a major move may touch`);
   }
   return problems;
