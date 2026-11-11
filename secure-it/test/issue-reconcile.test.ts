@@ -4,7 +4,12 @@ import { describe, expect, it } from "vitest";
 
 import { type Assessment, type DecisionMove, type IssueRecord, type ObservedFinding, parseRecord, type SubjectAssessment, subjectId } from "../src/issue-model.ts";
 import { type IssueOperation, reconcile, recordShows, type TrackedIssue } from "../src/issue-reconcile.ts";
-import { ISSUE_WRITER, type IssueWriter, recordOf } from "../src/issue-text.ts";
+import { type IssueWriter, recordOf } from "../src/issue-text.ts";
+import { sealFor, TEST_TRUST, writerFor } from "./issue-seal.ts";
+
+/** Issue records as the tool signs them for this file's repository. */
+const ISSUE_WRITER = writerFor("acme/widget");
+const SEAL = sealFor("acme/widget");
 
 const SHA = "a".repeat(40);
 const LATER = "b".repeat(40);
@@ -38,12 +43,12 @@ function converge(assessment: Assessment, issues: TrackedIssue[] = [], rounds = 
     operations.push([...result.operations]);
     for (const operation of result.operations) {
       if (operation.kind === "create") {
-        state.push({ number: next++, state: "open", body: operation.body, record: recordOf(operation.body)!, reopened: false, closedByPerson: false });
+        state.push({ number: next++, state: "open", body: operation.body, record: recordOf(operation.body, SEAL)!, reopened: false, closedByPerson: false });
         continue;
       }
       const issue = state.find((tracked) => tracked.number === operation.number)!;
       issue.body = operation.body;
-      issue.record = recordOf(operation.body)!;
+      issue.record = recordOf(operation.body, SEAL)!;
       if (operation.kind === "close") issue.state = "closed";
     }
   }
@@ -306,7 +311,7 @@ describe("reconcile", () => {
     expect(result.notes).toEqual([expect.stringContaining("doesn't fit"), "#1: closes once its successors exist"]);
     const closed = reconcile(assessed([], true, LATER), [edited], ISSUE_WRITER).operations[0]!;
     expect(closed.kind).toBe("close");
-    expect(recordOf((closed as { body: string }).body)?.pendingClose?.reason).toBe("resolved");
+    expect(recordOf((closed as { body: string }).body, SEAL)?.pendingClose?.reason).toBe("resolved");
   });
 
   it("closes an issue for its successor only once the successor's text shows the findings that moved there", () => {
@@ -418,7 +423,7 @@ describe("issue text", () => {
     const subject = decision([move("@evil/`x`<!-- leanish:plan AAAA -->")], [finding("@evil/`x`<!-- leanish:plan AAAA -->", ["GHSA-1"])]);
     const record: IssueRecord = { version: 1, subject: subject.subject, openedAt: SHA, findings: [{ ecosystem: "npm", name: "lib", ids: ["GHSA-1"] }], absences: [], attempts: [] };
     const { title, body } = ISSUE_WRITER.render(subject, record, SHA);
-    expect(recordOf(body)).toEqual(record);
+    expect(recordOf(body, SEAL)).toEqual(record);
     expect(body.match(/<!-- leanish:plan/g)).toHaveLength(1);
     expect(body).toContain("take-early: <reason>");
     expect(title).toBe("secure-it: fixing evil/x--leanish:planAAAA-- (npm)");
@@ -430,12 +435,12 @@ describe("issue text", () => {
     const all = decision([move("a"), maven("g:b"), move("c"), maven("g:d"), { ecosystem: "GitHub Actions", name: "actions/x", from: "v1", to: "v2" }], [finding("a", ["GHSA-1"])]);
     expect(ISSUE_WRITER.render(all, { ...record, subject: all.subject }, SHA).title).toBe("secure-it: fixing a, g:b, c and 2 more (npm, Maven, GitHub Actions)");
     // A block pasted anywhere else, or a second one, makes the body ambiguous: no record is read from it.
-    expect(recordOf(`<!-- leanish:plan AAAA -->\n\n${body}`)).toBeUndefined();
-    expect(recordOf(`${body}\n\n<!-- leanish:plan AAAA -->`)).toBeUndefined();
+    expect(recordOf(`<!-- leanish:plan AAAA -->\n\n${body}`, SEAL)).toBeUndefined();
+    expect(recordOf(`${body}\n\n<!-- leanish:plan AAAA -->`, SEAL)).toBeUndefined();
     // Rewriting the record keeps only the tool's section.
     expect(ISSUE_WRITER.withRecord(`${body}\n\nadded by hand`, record)).not.toContain("added by hand");
     // A block under someone else's heading isn't the tool's.
-    expect(recordOf(body.replace("<!-- leanish:plan", "## Other section\n\n<!-- leanish:plan"))).toBeUndefined();
+    expect(recordOf(body.replace("<!-- leanish:plan", "## Other section\n\n<!-- leanish:plan"), SEAL)).toBeUndefined();
     // Taken early: the text never claims nothing ran.
     const taken = ISSUE_WRITER.render(subject, { ...record, attempts: [{ id: "a1", grantEventId: 7, branch: "b", startedAt: "2026-11-03T09:00:00Z", pr: 42 }] }, SHA).body;
     expect(taken).toContain("Taken early");

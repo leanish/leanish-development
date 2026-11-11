@@ -13,7 +13,7 @@ import type { Assessment, Attempt, IssueRecord, PackageVersion } from "./issue-m
 import { subjectId } from "./issue-model.ts";
 import { postNotice } from "./issue-notices.ts";
 import type { SyncResult } from "./issue-sync.ts";
-import { hasLabel, isLabel, ISSUE_LABEL, issueWriter, recordOf, TAKE_EARLY_LABEL } from "./issue-text.ts";
+import { hasLabel, isLabel, ISSUE_LABEL, type IssueSeal, issueWriter, recordOf, TAKE_EARLY_LABEL } from "./issue-text.ts";
 import type { ChangePlan } from "./plan.ts";
 
 /** Whether a target may execute now; `defer` says why not, and stops it before anything runs. */
@@ -48,7 +48,7 @@ export const UNSETTLED = "the issues didn't settle this run";
 export async function issueDisposition(
   tracking: Tracking,
   plan: ChangePlan,
-  client: { readonly issues: GitHubIssues; readonly repo: string; readonly clean: (body: string) => string; readonly now: Date },
+  client: IssueSeal & { readonly issues: GitHubIssues; readonly clean: (body: string) => string; readonly now: Date },
   branch: (labelEventId: number) => string,
 ): Promise<Disposition> {
   // Issues still changing when the rounds ran out may not say what this run assessed: nothing executes on them.
@@ -66,7 +66,7 @@ export async function issueDisposition(
   // more than once (the unit and its retries), so an attempt recorded by an earlier ask must be seen by the next,
   // never started twice.
   const fresh = await client.issues.getIssue({ repo: client.repo, number: issue.number });
-  const current = recordOf(fresh.body);
+  const current = recordOf(fresh.body, client);
   if (current === undefined || subjectId(current.subject) !== id) return { kind: "defer", reason: `its issue #${issue.number} can't be read any more` };
   if (fresh.state !== "open" || current.pendingClose !== undefined || !hasLabel(fresh.labels, ISSUE_LABEL)) {
     return { kind: "defer", reason: `its issue #${issue.number} is no longer open as secure-it's` };
@@ -96,7 +96,7 @@ export async function issueDisposition(
     id: `${decision.grant.labelEventId}-${client.now.getTime()}`, grantEventId: decision.grant.labelEventId, branch: branch(decision.grant.labelEventId), startedAt: client.now.toISOString(),
   };
   const record: IssueRecord = { ...current, grant: decision.grant, attempts: [...current.attempts, attempt] };
-  await issueWrite(() => client.issues.updateIssue({ repo: client.repo, number: issue.number, body: issueWriter(client.clean).render(subject, record, tracking.assessment.sha).body }));
+  await issueWrite(() => client.issues.updateIssue({ repo: client.repo, number: issue.number, body: issueWriter(client.clean, client).render(subject, record, tracking.assessment.sha).body }));
   return early(attempt);
 }
 

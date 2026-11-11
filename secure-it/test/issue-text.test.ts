@@ -1,10 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { MAX_ISSUE_BODY_CHARS, MAX_ISSUE_TITLE_CHARS } from "@leanish/tool-runtime/github-issues";
+import { recordSignature } from "@leanish/tool-runtime/record-signature";
 import { cleanBody } from "@leanish/tool-runtime/publication-text";
 
 import type { IssueRecord, SubjectAssessment } from "../src/issue-model.ts";
-import { CLOSING_LINE, detailLimits, ISSUE_WRITER, issueWriter, recordOf, trackingContent, withoutClosingKeywords } from "../src/issue-text.ts";
+import { CLOSING_LINE, detailLimits, issueWriter, recordOf, trackingContent, withoutClosingKeywords } from "../src/issue-text.ts";
+import { sealFor, TEST_TRUST, writerFor } from "./issue-seal.ts";
+
+/** Issue records as the tool signs them for this file's repository. */
+const ISSUE_WRITER = writerFor("acme/widget");
+const SEAL = sealFor("acme/widget");
 
 describe("issueWriter", () => {
   it.each(["", "<!-- leanish:plan "])("cleans a local path straddling the detail cut, including inside %s", (opening) => {
@@ -14,12 +20,12 @@ describe("issueWriter", () => {
     const assessment: SubjectAssessment = { subject, findings: [], status: { kind: "blocked", reason: "unassessed",
       detail: `${before}/Users/example.person/private.txt${opening === "" ? "" : " -->"} ${"y".repeat(100)}` } };
     const record: IssueRecord = { version: 1, subject, openedAt: "a".repeat(40), findings: [], absences: [], attempts: [] };
-    const writer = issueWriter((body) => cleanBody(body, { workingCopy: [], other: ["/Users/example.person"] }));
+    const writer = issueWriter((body) => cleanBody(body, { workingCopy: [], other: ["/Users/example.person"] }), SEAL);
     const rendered = writer.render(assessment, record, record.openedAt);
     expect(rendered.body).toContain("<local path>");
     expect(rendered.body).not.toContain("/Users");
     expect(rendered.body).toContain("[truncated]");
-    expect(recordOf(rendered.body)).toEqual(record);
+    expect(recordOf(rendered.body, SEAL)).toEqual(record);
   });
 
   it("cleans a local path straddling a refusal's longer cut too", () => {
@@ -28,12 +34,12 @@ describe("issueWriter", () => {
     const assessment: SubjectAssessment = { subject, findings: [], status: { kind: "blocked", reason: "not-taken",
       detail: `${"x".repeat(9_970)} /Users/example.person/private.txt ${"y".repeat(100)}` } };
     const record: IssueRecord = { version: 1, subject, openedAt: "a".repeat(40), findings: [], absences: [], attempts: [] };
-    const writer = issueWriter((body) => cleanBody(body, { workingCopy: [], other: ["/Users/example.person"] }));
+    const writer = issueWriter((body) => cleanBody(body, { workingCopy: [], other: ["/Users/example.person"] }), SEAL);
     const rendered = writer.render(assessment, record, record.openedAt);
     expect(rendered.body).toContain("<local path>");
     expect(rendered.body).not.toContain("/Users");
     expect(rendered.body).toContain("[truncated]");
-    expect(recordOf(rendered.body)).toEqual(record);
+    expect(recordOf(rendered.body, SEAL)).toEqual(record);
   });
 
   it("cuts a refusal shorter when its record leaves too little room, keeping the record whole", () => {
@@ -43,7 +49,7 @@ describe("issueWriter", () => {
     expect(rendered.body).toContain("[truncated]");
     expect(blockedLine(rendered.body).length).toBeLessThan(10_000);
     expect(rendered.body.length).toBeLessThanOrEqual(MAX_ISSUE_BODY_CHARS);
-    expect(recordOf(rendered.body)).toEqual(record);
+    expect(recordOf(rendered.body, SEAL)).toEqual(record);
   });
 
   it("says what closing the issue does, even when the rest of its body is cut", () => {
@@ -60,7 +66,7 @@ describe("issueWriter", () => {
     const rendered = renderRefusal(record, `reason ${"`".repeat(9_000)} end`);
     expect(rendered.body).toContain("[truncated]");
     expect(rendered.body.length).toBeLessThanOrEqual(MAX_ISSUE_BODY_CHARS);
-    expect(recordOf(rendered.body)).toEqual(record);
+    expect(recordOf(rendered.body, SEAL)).toEqual(record);
   });
 
   it("cuts a shorter refusal without leaving half a surrogate pair", () => {
@@ -68,7 +74,7 @@ describe("issueWriter", () => {
     const rendered = renderRefusal(record, "😀".repeat(6_000));
     expect(blockedLine(rendered.body).length).toBeLessThan(10_000);
     expect(rendered.body).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u);
-    expect(recordOf(rendered.body)).toEqual(record);
+    expect(recordOf(rendered.body, SEAL)).toEqual(record);
   });
 
   it("refuses the decision itself, not the record, once even the shortest refusal doesn't fit beside it", () => {
@@ -101,7 +107,7 @@ describe("issueWriter", () => {
     const assessment: SubjectAssessment = { subject, findings: [], status: { kind: "blocked", reason: "unassessed",
       detail: `${"x".repeat(end - 1)}🚀${"y".repeat(100)}` } };
     const record: IssueRecord = { version: 1, subject, openedAt: "a".repeat(40), findings: [], absences: [], attempts: [] };
-    const rendered = issueWriter((body) => body).render(assessment, record, record.openedAt);
+    const rendered = issueWriter((body) => body, SEAL).render(assessment, record, record.openedAt);
     expect(rendered.body).toContain("[truncated]");
     expect(rendered.body.isWellFormed()).toBe(true);
   });
@@ -115,7 +121,7 @@ describe("issueWriter", () => {
       versions: ["1.0.0"], reviewed: true, malicious: false, severity: "HIGH" })),
       status: { kind: "blocked", reason: "unassessed", detail: `registry 502 reading /work/repo/package-lock.json and /a/log ${tail} end of error` } };
     const record: IssueRecord = { version: 1, subject, openedAt: "a".repeat(40), findings: [], absences: [], attempts: [] };
-    const writer = issueWriter((body) => cleanBody(body, { workingCopy: ["/work/repo"], other: ["/a"] }));
+    const writer = issueWriter((body) => cleanBody(body, { workingCopy: ["/work/repo"], other: ["/a"] }), SEAL);
     const rendered = writer.render(assessment, record, record.openedAt);
     expect(rendered.body).toContain("registry 502 reading package-lock.json and <local path>");
     expect(rendered.body).not.toContain("/work/repo");
@@ -123,7 +129,7 @@ describe("issueWriter", () => {
     expect(rendered.body).toContain("[truncated]");
     expect(rendered.body).not.toContain("end of error");
     expect(rendered.body.length).toBeLessThanOrEqual(MAX_ISSUE_BODY_CHARS);
-    expect(recordOf(rendered.body)).toEqual(record);
+    expect(recordOf(rendered.body, SEAL)).toEqual(record);
   });
 
   it("cleans details before cutting and whole bodies after writing their records, leaving the title and record intact", () => {
@@ -132,19 +138,32 @@ describe("issueWriter", () => {
     const assessment: SubjectAssessment = { subject, findings: [], status: { kind: "blocked", reason: "unassessed", detail } };
     const record: IssueRecord = { version: 1, subject, openedAt: "a".repeat(40), findings: [], absences: [], attempts: [] };
     const clean = vi.fn((body: string) => body.replaceAll("/work/repo", "<working copy>"));
-    const writer = issueWriter(clean);
+    const writer = issueWriter(clean, SEAL);
     const raw = ISSUE_WRITER.render(assessment, record, record.openedAt);
     const rendered = writer.render(assessment, record, record.openedAt);
     expect(rendered.title).toBe(raw.title);
     expect(rendered.body).toContain("<working copy>/package-lock.json");
     expect(rendered.body).not.toContain("/work/repo");
-    expect(recordOf(rendered.body)).toEqual(record);
+    expect(recordOf(rendered.body, SEAL)).toEqual(record);
     const updated: IssueRecord = { ...record, attempts: [{ id: "a1", grantEventId: 7, branch: "secure-it/2026-11-04-take-early-7", startedAt: "2026-11-04T00:00:00Z" }] };
     const rewritten = writer.withRecord(raw.body, updated);
     expect(rewritten).toContain("<working copy>/package-lock.json");
     expect(rewritten).not.toContain("/work/repo");
-    expect(recordOf(rewritten)).toEqual(updated);
-    expect(clean.mock.calls).toEqual([[detail], [raw.body.replaceAll("/work/repo", "<working copy>")], [ISSUE_WRITER.withRecord(raw.body, updated)]]);
+    expect(recordOf(rewritten, SEAL)).toEqual(updated);
+    // Cleaning sees the text before its signature: what it's given is what an unsigned writer produces.
+    const unsigned = issueWriter((body) => body, { ...SEAL, trust: { mode: "trusted-editors" } });
+    const rawUnsigned = unsigned.render(assessment, record, record.openedAt).body;
+    expect(clean.mock.calls).toEqual([[detail], [rawUnsigned.replaceAll("/work/repo", "<working copy>")], [unsigned.withRecord(raw.body, updated)]]);
+  });
+
+  it("refuses to write a record that cleaning would change, before signing anything", () => {
+    const subject = { kind: "package" as const, ecosystem: "npm" as const, name: "lib" };
+    const assessment: SubjectAssessment = { subject, findings: [], status: { kind: "eligible", trusted: [] } };
+    const record: IssueRecord = { version: 1, subject, openedAt: "a".repeat(40), findings: [], absences: [], attempts: [] };
+    // A cleaner that reaches into the hidden block (as a path inside base64 could), changing the record it carries.
+    const rewriting = issueWriter((body) => body.replace(/(<!-- leanish:plan )(\S)/, (_m, start: string, first: string) => `${start}${first === "A" ? "B" : "A"}`), SEAL);
+    expect(() => rewriting.render(assessment, record, record.openedAt)).toThrow("changed its record");
+    expect(() => rewriting.withRecord(ISSUE_WRITER.render(assessment, record, record.openedAt).body, record)).toThrow("changed its record");
   });
 });
 
@@ -205,7 +224,7 @@ function largeRecord(count: number): IssueRecord {
 
 function renderRefusal(record: IssueRecord, detail: string): { readonly title: string; readonly body: string } {
   const assessment: SubjectAssessment = { subject: record.subject, findings: [], status: { kind: "blocked", reason: "not-taken", detail } };
-  return issueWriter((body) => body).render(assessment, record, record.openedAt);
+  return issueWriter((body) => body, SEAL).render(assessment, record, record.openedAt);
 }
 
 function blockedLine(body: string): string {
@@ -248,5 +267,57 @@ describe("trackingContent", () => {
   it("ends the body with the one issue line it tracks, dropping any other", () => {
     const content = trackingContent({ title: "t", body: "Tracks #9.\nDone.\nTracks #8.\n", commitMessage: "m" }, 3);
     expect(content.body).toBe("Done.\n\nTracks #3.");
+  });
+});
+
+describe("signed issue records", () => {
+  const subject = { kind: "package" as const, ecosystem: "npm" as const, name: "lib" };
+  const assessment: SubjectAssessment = { subject, findings: [], status: { kind: "eligible", trusted: [] } };
+  const record: IssueRecord = { version: 1, subject, openedAt: "a".repeat(40), findings: [], absences: [], attempts: [] };
+  const signed = ISSUE_WRITER.render(assessment, record, record.openedAt).body;
+  const sig = /<!-- leanish:record-sig (\S{43}) -->/.exec(signed)![1]!;
+  const unsignedWriter = issueWriter((body) => body, { ...SEAL, trust: { mode: "trusted-editors" } });
+
+  it("reads back the record the tool signed, and nothing once its record changes", () => {
+    expect(recordOf(signed, SEAL)).toEqual(record);
+    // Another record under the same signature: what an edit of the hidden block amounts to.
+    const other = unsignedWriter.render(assessment, { ...record, openedAt: "b".repeat(40) }, record.openedAt).body;
+    expect(recordOf(`${other}\n\n<!-- leanish:record-sig ${sig} -->`, SEAL)).toBeUndefined();
+  });
+
+  it("refuses a record signed with another key, for another repository, or as a PR's state", () => {
+    expect(recordOf(signed, { ...SEAL, trust: { mode: "signed", key: Buffer.alloc(32, 9) } })).toBeUndefined();
+    expect(recordOf(signed, sealFor("acme/other"))).toBeUndefined();
+    const key = TEST_TRUST.mode === "signed" ? TEST_TRUST.key : new Uint8Array();
+    const payload = { format: 1, tool: "secure-it", repo: "acme/widget", record: JSON.parse(JSON.stringify(record)) as unknown };
+    expect(recordOf(signed.replace(sig, recordSignature(key, "pr-state", payload)), SEAL)).toBeUndefined();
+    expect(recordOf(signed.replace(sig, recordSignature(key, "issue-record", payload)), SEAL)).toEqual(record);
+  });
+
+  it("refuses a missing, malformed or repeated signature", () => {
+    const line = `<!-- leanish:record-sig ${sig} -->`;
+    expect(recordOf(signed.replace(line, ""), SEAL)).toBeUndefined();
+    expect(recordOf(signed.replace(sig, "short"), SEAL)).toBeUndefined();
+    expect(recordOf(`${signed}\n${line}`, SEAL)).toBeUndefined();
+  });
+
+  it("writes one current signature when it rewrites a record it read", () => {
+    const updated = { ...record, attempts: [{ id: "a1", grantEventId: 7, branch: "secure-it/2026-11-04-take-early-7", startedAt: "2026-11-04T00:00:00Z" }] };
+    const rewritten = ISSUE_WRITER.withRecord(signed, updated);
+    expect(rewritten.match(/record-sig/g)).toHaveLength(1);
+    expect(recordOf(rewritten, SEAL)).toEqual(updated);
+  });
+
+  it("with trusted-editors, writes no signature and reads a record whoever wrote it", () => {
+    const plain = unsignedWriter.render(assessment, record, record.openedAt).body;
+    expect(plain).not.toContain("record-sig");
+    const trusting = { ...SEAL, trust: { mode: "trusted-editors" } as const };
+    expect(recordOf(plain, trusting)).toEqual(record);
+    expect(recordOf(signed.replace(sig, "A".repeat(43)), trusting)).toEqual(record);
+    expect(recordOf(plain, SEAL)).toBeUndefined();
+  });
+
+  it("reads a signed record copied into another issue of the same repository: the issue number isn't signed (a known limit)", () => {
+    expect(recordOf(`Copied by hand.\n\n${signed}`, SEAL)).toEqual(record);
   });
 });

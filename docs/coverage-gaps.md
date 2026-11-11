@@ -99,8 +99,17 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   person closes one. A notice is posted once
   per run even if the comment listing lags; whether label events and comments can lag the same way, which grants read,
   isn't established.
-- **An issue's record is only as trusted as whoever can edit issues (secure-it)**: secure-it reads its decisions back
-  from a hidden record in its own issue's description and trusts it, whoever edited it last. GitHub lets anyone with
+- **What an issue record's signature doesn't stop (secure-it)**: with signed records, an issue's hidden record reads
+  only with the tool's signature over it, its tool and its repository, so an edited or written record reads as none.
+  The signature proves the tool wrote that record at some point, not when or for which issue: restoring a record it
+  signed earlier repeats what it allowed then (a `take-early` attempt already used, or a dismissal's older scope), and
+  a signed record copied into another issue of the same repository reads there too. Removing or breaking a record
+  makes an open issue unreadable, which stops secure-it from opening any new issue in that repository until a person
+  restores it or closes the issue; a closed issue without a valid record no longer counts as a dismissal. Not built:
+  anything against restoring an older record, or binding a record to its issue number.
+- **With `records: trusted-editors`, an issue's record is only as trusted as whoever can edit issues (secure-it)**:
+  secure-it reads its decisions back from a hidden record in its own issue's description and trusts it, whoever
+  edited it last. GitHub lets anyone with
   the Triage role edit issues (the description included), though not other people's comments, and a `take-early`
   label they add doesn't authorize (secure-it takes it only from write access). So in an organization's repository a
   Triage member can edit a record into authorizing more than a writer did, while that writer's current label and

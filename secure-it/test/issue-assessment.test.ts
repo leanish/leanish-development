@@ -4,8 +4,13 @@ import { describe, expect, it } from "vitest";
 import { assessmentOf, type AssessmentInputs, youngOf } from "../src/issue-assessment.ts";
 import type { ObservedFinding } from "../src/issue-model.ts";
 import { reconcile } from "../src/issue-reconcile.ts";
-import { ISSUE_WRITER, recordOf } from "../src/issue-text.ts";
+import { recordOf } from "../src/issue-text.ts";
+import { sealFor, TEST_TRUST, writerFor } from "./issue-seal.ts";
 import { type ChangePlan, type SecurityUnit, selectWork } from "../src/plan.ts";
+
+/** Issue records as the tool signs them for this file's repository. */
+const ISSUE_WRITER = writerFor("acme/widget");
+const SEAL = sealFor("acme/widget");
 
 describe("youngOf", () => {
   const unit = (induced: Array<{ name: string; version: string }>): SecurityUnit => ({ kind: "routine", topic: "security", work: [{
@@ -109,7 +114,7 @@ describe("assessmentOf", () => {
       const short = await assessWith([{ packages: ["npm|lib"], reasons: ["no candidate passes"] }], [finding("lib", true)]);
       const { operations: [first] } = reconcile(short, [], ISSUE_WRITER);
       if (first?.kind !== "create") throw new Error("expected a create");
-      const open = { number: 1, state: "open" as const, body: first.body, record: recordOf(first.body)!, reopened: false, closedByPerson: false };
+      const open = { number: 1, state: "open" as const, body: first.body, record: recordOf(first.body, SEAL)!, reopened: false, closedByPerson: false };
       const updated = reconcile(assessed, [open], ISSUE_WRITER);
       expect(updated.notes).toEqual([]);
       expect(updated.operations).toEqual([expect.objectContaining({ kind: "update", number: 1, body: expect.stringContaining("[truncated]") })]);

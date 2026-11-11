@@ -7,7 +7,12 @@ import { FakeIssues } from "@leanish/tool-runtime/test/fake-issues";
 import { settleAttempt, showPullRequest } from "../src/issue-attempts.ts";
 import type { Assessment, IssueRecord, SubjectAssessment } from "../src/issue-model.ts";
 import { postNotice } from "../src/issue-notices.ts";
-import { ISSUE_LABEL, ISSUE_WRITER, recordOf } from "../src/issue-text.ts";
+import { ISSUE_LABEL, recordOf } from "../src/issue-text.ts";
+import { sealFor, TEST_TRUST, writerFor } from "./issue-seal.ts";
+
+/** Issue records as the tool signs them for this file's repository. */
+const ISSUE_WRITER = writerFor("acme/widget");
+const SEAL = sealFor("acme/widget");
 
 const SHA = "a".repeat(40);
 const moves = [{ ecosystem: "npm" as const, name: "vite", from: "8.3.1", to: "8.3.3" }];
@@ -26,8 +31,28 @@ function issueWith(attemptPr: number, shown: SubjectAssessment): { issues: FakeI
   };
   const body = ISSUE_WRITER.render(shown, record, SHA).body;
   issues.issues.set(1, { number: 1, url: "https://github.com/acme/widget/issues/1", title: "secure-it: vite", body, state: "open", stateReason: null, author: "leanish", labels: [ISSUE_LABEL] });
-  return { issues, client: { issues, github: new FakeGitHub(), repo: "acme/widget", clean: (text: string) => text, ours: () => true } };
+  return { issues, client: { issues, github: new FakeGitHub(), repo: "acme/widget", trust: TEST_TRUST, clean: (text: string) => text, ours: () => true } };
 }
+
+describe("records someone else wrote", () => {
+  const forged = (issues: FakeIssues) => issues.issues.set(1, { ...issues.issues.get(1)!, body: issues.issues.get(1)!.body.replace(/record-sig \S{43}/, `record-sig ${"A".repeat(43)}`) });
+
+  it("settles no attempt on a record that no longer verifies, writing nothing", async () => {
+    const { issues, client } = issueWith(42, decision(42));
+    forged(issues);
+    issues.calls.length = 0;
+    await expect(settleAttempt(client, 1, "a1", { outcome: "pr-closed" }, assessed(decision(42)))).rejects.toThrow("record can't be read");
+    expect(issues.calls.filter((call) => call.startsWith("updateIssue"))).toEqual([]);
+  });
+
+  it("shows no PR on an issue whose record no longer verifies", async () => {
+    const { issues, client } = issueWith(42, decision());
+    forged(issues);
+    const before = issues.issues.get(1)!.body;
+    await showPullRequest(client, 1, { number: 9, url: "https://github.com/acme/widget/pull/9" }, assessed(decision()));
+    expect(issues.issues.get(1)!.body).toBe(before);
+  });
+});
 
 describe("settleAttempt", () => {
   it("renders an issue without its attempt's PR once that PR closed, from an assessment read while it was open", async () => {
@@ -37,7 +62,7 @@ describe("settleAttempt", () => {
     const body = issues.issues.get(1)!.body;
     expect(body).not.toContain("**In progress:** #42.");
     expect(body).toContain("**Ready.**");
-    expect(recordOf(body)!.attempts).toMatchObject([{ pr: 42, outcome: "pr-closed" }]);
+    expect(recordOf(body, SEAL)!.attempts).toMatchObject([{ pr: 42, outcome: "pr-closed" }]);
   });
 
   it("keeps another PR the assessment names, and an attempt that didn't close its PR", async () => {
@@ -59,7 +84,7 @@ describe("settleAttempt", () => {
     } };
     await settleAttempt(failingOnce, 1, "a1", { outcome: "failed" }, assessed(decision()));
     const after = issues.issues.get(1)!.body;
-    expect(recordOf(after)!.attempts).toMatchObject([{ id: "a1", outcome: "failed" }]);
+    expect(recordOf(after, SEAL)!.attempts).toMatchObject([{ id: "a1", outcome: "failed" }]);
     expect(after.startsWith(before.split("<!--")[0]!)).toBe(true);
   });
 });

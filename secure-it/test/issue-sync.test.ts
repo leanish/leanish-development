@@ -5,7 +5,12 @@ import { FakeIssues } from "@leanish/tool-runtime/test/fake-issues";
 
 import type { Assessment, ObservedFinding, SubjectAssessment } from "../src/issue-model.ts";
 import { syncIssues } from "../src/issue-sync.ts";
-import { ISSUE_WRITER, noticeMarker, recordOf } from "../src/issue-text.ts";
+import { noticeMarker, recordOf } from "../src/issue-text.ts";
+import { sealFor, TEST_TRUST, writerFor } from "./issue-seal.ts";
+
+/** Issue records as the tool signs them for this file's repository. */
+const ISSUE_WRITER = writerFor("acme/widget");
+const SEAL = sealFor("acme/widget");
 
 const SHA = "a".repeat(40);
 const LATER = "b".repeat(40);
@@ -16,7 +21,7 @@ const waiting = (name: string, to: string): SubjectAssessment => ({
   status: { kind: "waiting", young: [{ ecosystem: "npm", name, version: to, eligibleAt: "2026-11-10T00:00:00.000Z" }] },
 });
 const assessed = (subjects: SubjectAssessment[], sha = SHA): Assessment => ({ sha, at: "2026-11-03T00:00:00.000Z", complete: true, subjects });
-const sync = (issues: FakeIssues) => ({ issues, repo: "acme/widget", clean: (body: string) => body.replaceAll("/Users/someone", "<local path>") });
+const sync = (issues: FakeIssues) => ({ issues, repo: "acme/widget", trust: TEST_TRUST, clean: (body: string) => body.replaceAll("/Users/someone", "<local path>") });
 
 describe("syncIssues", () => {
   it("opens an issue, then leaves it alone while nothing changes", async () => {
@@ -132,7 +137,7 @@ describe("syncIssues", () => {
     const result = await syncIssues(sync(issues), assessed([waiting("lib", "1.0.2")], LATER));
     expect(result.settled).toBe(true);
     expect(issues.issues.get(1)).toMatchObject({ state: "closed", stateReason: "not_planned" });
-    expect(recordOf(issues.issues.get(1)!.body)?.pendingClose).toMatchObject({ reason: "superseded", successors: [2] });
+    expect(recordOf(issues.issues.get(1)!.body, SEAL)?.pendingClose).toMatchObject({ reason: "superseded", successors: [2] });
     expect(issues.comments.get(1)).toHaveLength(1);
     expect(issues.comments.get(1)![0]!.body).toContain("superseded by #2");
   });
@@ -148,14 +153,14 @@ describe("syncIssues", () => {
     issues.setState(1, "open", "owner", reopenedAt);
     await syncIssues(sync(issues), assessed([waiting("lib", "1.0.2")], LATER));
     expect(issues.issues.get(1)!.state).toBe("closed");
-    expect(recordOf(issues.issues.get(1)!.body)!.pendingClose?.afterEvent).toBeGreaterThan(0);
+    expect(recordOf(issues.issues.get(1)!.body, SEAL)!.pendingClose?.afterEvent).toBeGreaterThan(0);
     // Back to the first decision: closed by the tool, not dismissed, so it gets a fresh issue.
     const back = await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
-    expect(back.tracked.filter((issue) => issue.state === "open" && recordOf(issue.body)!.pendingClose === undefined).map((issue) => issue.number)).toEqual([3]);
+    expect(back.tracked.filter((issue) => issue.state === "open" && recordOf(issue.body, SEAL)!.pendingClose === undefined).map((issue) => issue.number)).toEqual([3]);
   });
 
   /** The issues open for the subject with no closing pending: a fresh one when the tool's closing wasn't a dismissal. */
-  const freshOpen = (result: Awaited<ReturnType<typeof syncIssues>>) => result.tracked.filter((issue) => issue.state === "open" && recordOf(issue.body)!.pendingClose === undefined).map((issue) => issue.number);
+  const freshOpen = (result: Awaited<ReturnType<typeof syncIssues>>) => result.tracked.filter((issue) => issue.state === "open" && recordOf(issue.body, SEAL)!.pendingClose === undefined).map((issue) => issue.number);
 
   /** Supersedes #1 while `actor` closes and reopens it between the recorded closing (and its notice) and the tool's close. */
   async function raceDuringClose(actor: string): Promise<FakeIssues> {
@@ -502,8 +507,8 @@ describe("syncIssues", () => {
     // A closing recorded before `afterEvent` existed, whose notice the listing doesn't show; then a person reopens it,
     // and someone posts the same notice marker afterwards.
     const closed = issues.issues.get(1)!;
-    const { afterEvent: _, ...legacy } = recordOf(closed.body)!.pendingClose!;
-    issues.issues.set(1, { ...closed, body: ISSUE_WRITER.withRecord(closed.body, { ...recordOf(closed.body)!, pendingClose: legacy }) });
+    const { afterEvent: _, ...legacy } = recordOf(closed.body, SEAL)!.pendingClose!;
+    issues.issues.set(1, { ...closed, body: ISSUE_WRITER.withRecord(closed.body, { ...recordOf(closed.body, SEAL)!, pendingClose: legacy }) });
     issues.comments.set(1, []);
     issues.setState(1, "open", "owner", "2026-11-03T09:10:00Z");
     issues.comment(1, "outsider", `copied\n\n${noticeMarker(legacy.id)}`, "2026-11-03T09:20:00Z");
@@ -519,7 +524,7 @@ describe("syncIssues", () => {
     // The run assessed at 08:00 whatever the wall clock says when it writes: `since` follows the writes, plus the margin.
     const at = (names: string[]): Assessment => ({ sha: SHA, at: "2026-11-03T08:00:00.000Z", complete: true, subjects: [subject(names)] });
     const writingAt = (time: string) => ({ ...sync(issues), clock: () => new Date(time) });
-    const shown = () => recordOf(issues.issues.get(1)!.body)!.shown;
+    const shown = () => recordOf(issues.issues.get(1)!.body, SEAL)!.shown;
     await syncIssues(writingAt("2026-11-03T08:00:00.000Z"), at(["lib"]));
     expect(shown()).toEqual({ young: [{ ecosystem: "npm", name: "lib", version: "1.0.1" }], since: "2026-11-03T08:02:00.000Z" });
     await syncIssues(writingAt("2026-11-03T09:10:00.000Z"), at(["lib", "dep"]));
@@ -537,11 +542,11 @@ describe("syncIssues", () => {
     const times = ["2026-11-03T10:00:00.000Z", "2026-11-03T10:02:30.000Z", "2026-11-03T10:02:30.000Z"];
     const write = issues.updateIssue.bind(issues);
     issues.updateIssue = async (args) => {
-      if (args.body?.includes("dep") === true && recordOf(issues.issues.get(1)!.body)!.shown!.young.length === 1) issues.label(1, "owner", "take-early", "2026-11-03T10:02:10Z");
+      if (args.body?.includes("dep") === true && recordOf(issues.issues.get(1)!.body, SEAL)!.shown!.young.length === 1) issues.label(1, "owner", "take-early", "2026-11-03T10:02:10Z");
       return write(args);
     };
     await syncIssues({ ...sync(issues), clock: () => new Date(times.shift() ?? "2026-11-03T10:02:30.000Z") }, at(["lib", "dep"]));
-    const record = recordOf(issues.issues.get(1)!.body)!;
+    const record = recordOf(issues.issues.get(1)!.body, SEAL)!;
     expect(record.shown?.since).toBe("2026-11-03T10:04:30.000Z");
     expect(Date.parse("2026-11-03T10:02:10Z")).toBeLessThan(Date.parse(record.shown!.since));
   });
@@ -553,10 +558,10 @@ describe("syncIssues", () => {
     await syncIssues({ ...sync(issues), clock: () => new Date("2026-11-03T09:00:00.000Z") }, at(["a"]));
     // A crash right after a write: the record says pending, showing a.
     const crashed = issues.issues.get(1)!;
-    issues.issues.set(1, { ...crashed, body: ISSUE_WRITER.withRecord(crashed.body, { ...recordOf(crashed.body)!, shown: { young: [{ ecosystem: "npm", name: "a", version: "1.0.1" }], since: "pending" } }) });
+    issues.issues.set(1, { ...crashed, body: ISSUE_WRITER.withRecord(crashed.body, { ...recordOf(crashed.body, SEAL)!, shown: { young: [{ ecosystem: "npm", name: "a", version: "1.0.1" }], since: "pending" } }) });
     const result = await syncIssues({ ...sync(issues), clock: () => new Date("2026-11-03T11:00:00.000Z") }, at(["b"]));
     expect(result.settled).toBe(true);
-    expect(recordOf(issues.issues.get(1)!.body)!.shown).toEqual({ young: [{ ecosystem: "npm", name: "b", version: "1.0.1" }], since: "2026-11-03T11:02:00.000Z" });
+    expect(recordOf(issues.issues.get(1)!.body, SEAL)!.shown).toEqual({ young: [{ ecosystem: "npm", name: "b", version: "1.0.1" }], since: "2026-11-03T11:02:00.000Z" });
   });
 
   it("says what to fix when the write PAT can't write issues, and never falls back", async () => {
@@ -599,7 +604,7 @@ describe("syncIssues", () => {
     expect(edited).toBe(true);
     expect(result.unreadable).toEqual([2]);
     expect(issues.issues.get(1)!.state).toBe("open");
-    expect(recordOf(issues.issues.get(1)!.body)!.pendingClose).toBeUndefined();
+    expect(recordOf(issues.issues.get(1)!.body, SEAL)!.pendingClose).toBeUndefined();
   });
 
   it("blocks creates while one of its open issues can't be read", async () => {
@@ -610,5 +615,56 @@ describe("syncIssues", () => {
     const result = await syncIssues(sync(issues), assessed([waiting("other", "2.0.1")]));
     expect(result.unreadable).toEqual([1]);
     expect(issues.issues.size).toBe(1);
+  });
+
+  describe("signed records", () => {
+    const forge = (body: string) => body.replace(/record-sig \S{43}/, `record-sig ${"A".repeat(43)}`);
+
+    it("signs every record it writes, so its own next sync reads them back", async () => {
+      const issues = new FakeIssues();
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      const body = issues.issues.get(1)!.body;
+      expect(body.match(/<!-- leanish:record-sig \S{43} -->/g)).toHaveLength(1);
+      expect(recordOf(body, SEAL)).toBeDefined();
+      // A rewrite after reading it verified carries one, current signature.
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.2")], LATER));
+      for (const issue of issues.issues.values()) expect(issue.body.match(/record-sig/g)).toHaveLength(1);
+    });
+
+    it("takes an open issue whose record no longer verifies as unreadable: no issue opens, readable ones are kept up", async () => {
+      const issues = new FakeIssues();
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1"), waiting("other", "2.0.1")]));
+      issues.issues.set(1, { ...issues.issues.get(1)!, body: forge(issues.issues.get(1)!.body) });
+      issues.calls.length = 0;
+      const grown = { ...waiting("other", "2.0.1"), findings: [finding("other", "GHSA-1"), finding("other", "GHSA-2")] };
+      const result = await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1"), grown, waiting("third", "3.0.1")]));
+      expect(result.unreadable).toEqual([1]);
+      expect(issues.calls.filter((call) => call.startsWith("createIssue"))).toEqual([]);
+      // The readable one is still maintained, and its forged neighbour left as it was.
+      expect(issues.calls).toContain("updateIssue #2");
+      expect(issues.calls).not.toContain("updateIssue #1");
+    });
+
+    it("ignores a closed issue whose record no longer verifies: a person's closing there dismisses nothing", async () => {
+      const issues = new FakeIssues();
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      issues.setState(1, "closed", "owner");
+      issues.issues.set(1, { ...issues.issues.get(1)!, body: forge(issues.issues.get(1)!.body) });
+      const result = await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      expect(result.tracked.map((issue) => issue.number)).toEqual([2]);
+      expect(issues.issues.get(2)!.state).toBe("open");
+    });
+
+    it("reads and writes unsigned records with trusted-editors, ignoring a signature", async () => {
+      const issues = new FakeIssues();
+      const trusting = { ...sync(issues), trust: { mode: "trusted-editors" } as const };
+      await syncIssues(trusting, assessed([waiting("lib", "1.0.1")]));
+      expect(issues.issues.get(1)!.body).not.toContain("record-sig");
+      issues.issues.set(1, { ...issues.issues.get(1)!, body: `${issues.issues.get(1)!.body}\n\n<!-- leanish:record-sig ${"A".repeat(43)} -->` });
+      issues.calls.length = 0;
+      expect((await syncIssues(trusting, assessed([waiting("lib", "1.0.1")]))).unreadable).toEqual([]);
+      // A signed tool reads none of them.
+      expect((await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]))).unreadable).toEqual([1]);
+    });
   });
 });

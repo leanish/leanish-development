@@ -4,12 +4,18 @@
  * appears as `literal()` code spans; `issueWriter` cleans local paths from the body before publishing it, and the
  * record holds only structured data, never free text, so nothing local can hide in it.
  *
+ * With signed records (`records: signed`), the record carries a signature on a line of its own after its block, over
+ * the record as written, its tool and its repository, with the tool's key (`record-signature.ts`, kind
+ * `issue-record`): a record anyone else wrote or edited reads as none. The issue number isn't covered, so a signed
+ * record copied into another issue of the same repository still reads, and so does an older one restored.
+ *
  * The part that authorizes `take-early` (the decision's exact moves and the young versions they take) comes first and
  * always shows whole: planSection shortens a section from its end, and a body that would lose any of it is refused
  * rather than published with a shorter scope than the one a label would authorize.
  */
 import { defused, planPayload, planSection, TooLargeError } from "@leanish/tool-runtime/plan-blocks";
 import { literal } from "@leanish/tool-runtime/pr-text";
+import { canonicalJson, type RecordTrust, recordSignature, signatureMatches } from "@leanish/tool-runtime/record-signature";
 
 import { type IssueRecord, type ObservedFinding, parseRecord, type SubjectAssessment, subjectPackages } from "./issue-model.ts";
 
@@ -43,6 +49,15 @@ export function hasLabel(labels: ReadonlyArray<string>, name: string): boolean {
   return labels.some((label) => isLabel(label, name));
 }
 
+/**
+ * What reads and writes an issue's record for one repository: how records are trusted there. Every client that reads
+ * or writes records is one, so the repository a record is checked against is always the one the client works on.
+ */
+export interface IssueSeal {
+  readonly repo: string;
+  readonly trust: RecordTrust;
+}
+
 /** How issue text is written; reconciliation tests can replace a writer that fails one subject. */
 export interface IssueWriter {
   /** The whole text for a subject this run assessed, with `record` in its hidden block. */
@@ -51,20 +66,42 @@ export interface IssueWriter {
   withRecord(body: string, record: IssueRecord): string;
 }
 
-export const ISSUE_WRITER: IssueWriter = { render, withRecord };
-
-/** Diagnostics cleaned before cutting, so no partial local path escapes; whole bodies cleaned after their records. */
-export function issueWriter(clean: (body: string) => string): IssueWriter {
+/**
+ * Diagnostics cleaned before cutting, so no partial local path escapes; whole bodies cleaned after their records, then
+ * sealed (`sealed`), so cleaning can never change a record after it's signed. Write only records read through
+ * `recordOf` or built by the run: signing one read any other way would vouch for what someone else wrote.
+ */
+export function issueWriter(clean: (body: string) => string, seal: IssueSeal): IssueWriter {
   return {
     render: (assessment, record, sha) => {
       const status = assessment.status;
       const prepared = status.kind === "blocked"
         ? { ...assessment, status: { ...status, detail: clean(defused(status.detail)) } } : assessment;
       const text = render(prepared, record, sha);
-      return { title: text.title, body: clean(text.body) };
+      return { title: text.title, body: sealed(seal, clean(text.body), record) };
     },
-    withRecord: (body, record) => clean(withRecord(body, record)),
+    withRecord: (body, record) => sealed(seal, clean(withRecord(body, record)), record),
   };
+}
+
+const SIGNATURE = /<!-- leanish:record-sig ([A-Za-z0-9_-]{43}) -->/g;
+/** What the signed payload's layout is; a change to it makes every earlier signature fail, as it should. */
+const RECORD_FORMAT = 1;
+
+/** What an issue record's signature covers: the record as written, its tool and its repository. */
+function signedPayload(seal: IssueSeal, record: unknown): unknown {
+  return { format: RECORD_FORMAT, tool: "secure-it", repo: seal.repo.toLowerCase(), record };
+}
+
+/**
+ * `body`, cleaned and ready to publish, refused unless the record it carries is exactly `record`: cleaning must never
+ * change it. With signed records, the signature follows on its own line.
+ */
+function sealed(seal: IssueSeal, body: string, record: IssueRecord): string {
+  const written = planPayload(body);
+  if (written === undefined || canonicalJson(written) !== canonicalJson(record)) throw new Error("preparing the issue's text changed its record; refusing to write it");
+  if (seal.trust.mode === "trusted-editors") return body;
+  return `${body}\n\n<!-- leanish:record-sig ${recordSignature(seal.trust.key, "issue-record", signedPayload(seal, written))} -->`;
 }
 
 /**
@@ -96,15 +133,24 @@ export const noticeMarker = (id: string): string => `<!-- leanish:notice ${id} -
 
 /**
  * The record an issue body carries, or undefined when it has none this release reads. A body with a block anywhere but
- * at the end of its secure-it section, or with more than one, is ambiguous: a person pasted one, so none is read.
+ * at the end of its secure-it section, or with more than one, is ambiguous: a person pasted one, so none is read. With
+ * signed records, it also needs exactly one signature that verifies over the record as written, for `seal`'s
+ * repository; with `trusted-editors`, a signature is ignored.
  */
-export function recordOf(body: string): IssueRecord | undefined {
+export function recordOf(body: string, seal: IssueSeal): IssueRecord | undefined {
   const heading = body.indexOf(HEADING);
   const first = body.indexOf(BLOCK_OPENING);
   if (heading === -1 || first < heading || body.indexOf(BLOCK_OPENING, first + 1) !== -1) return undefined;
   // The block ends the secure-it section: another heading before it means it sits in someone else's.
   if (/\n#{1,6} /.test(body.slice(heading + HEADING.length, first))) return undefined;
-  return parseRecord(planPayload(body));
+  const written = planPayload(body);
+  if (seal.trust.mode === "signed") {
+    // Over the payload as written, not as parsed: parsing keeps only the fields it knows.
+    const signatures = [...body.matchAll(SIGNATURE)];
+    if (written === undefined || signatures.length !== 1) return undefined;
+    if (!signatureMatches(seal.trust.key, "issue-record", signedPayload(seal, written), signatures[0]![1]!)) return undefined;
+  }
+  return parseRecord(written);
 }
 
 const BLOCK_OPENING = "<!-- leanish:plan";

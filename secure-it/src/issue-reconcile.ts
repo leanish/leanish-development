@@ -117,7 +117,7 @@ function standingOf(issue: TrackedIssue): Standing {
  */
 export function reconcile(assessment: Assessment, issues: ReadonlyArray<TrackedIssue>, writer: IssueWriter, unreadable: ReadonlyArray<number> = []): Reconciliation {
   const operations: IssueOperation[] = [];
-  const notes: string[] = unreadable.map((number) => `#${number}: its record can't be read; secure-it creates no issue until it can (restore its hidden block, or close it)`);
+  const notes: string[] = unreadable.map((number) => `#${number}: its record can't be read; secure-it creates no issue until it can (restore the record secure-it last wrote, signature included, or close it)`);
   // What's still there: the subjects' findings.
   const present = assessment.subjects.flatMap((subject) => subject.findings.map(keyOf));
   // Every issue, open or closed, learns the aliases its findings have now, so one that later drops an id it had still

@@ -99,7 +99,7 @@ Both tools are in this tree: [`secure-it`](../secure-it) and [`bump-it`](../bump
   change its `Tracks` lines, and never sign again what they haven't verified. A tool whose key is missing or
   malformed doesn't start. With `records: trusted-editors` nothing is signed and the key is never read: whoever can
   edit the tools' PRs (collaborators and integrations with that access, on public and private repositories alike)
-  is trusted to, as before 0.12.0. secure-it's issue records aren't signed yet. [Limits](coverage-gaps.md#limits).
+  is trusted to, as before 0.12.0. secure-it's issue records follow the same mode (below). [Limits](coverage-gaps.md#limits).
 - **Repository code never runs in the tool's process.** The Gradle inventory runs the build under `codex sandbox` with the agent's write profile. Under that profile, checked on macOS, the Keychain isn't reachable, the sensitive home paths (`~/.ssh`, `~/.aws`, the Codex and Claude logins, shell startup files…) can't be read, and writes land only in the working copy, the temp dirs and the build cache. Both tools compute npm changes in exported scratch copies under the same sandbox, with `--package-lock-only --ignore-scripts`, explicit release-age flags and trusted-scope exclusions. The tool protects exact lockfile bytes and manifest dependency fields; only major migrations may adapt other manifest fields.
 - **The Codex login source stays unreadable.** When a tool reuses a file-backed login, the sandbox denies the resolved `auth.json` and its canonical target when it is a symlink, including with a custom `CODEX_HOME`.
 - **npm's age exclusions do not waive verification.** secure-it excludes planned young or unreadable targets, plus young or unreadable versions already locked in the affected base lockfiles, retaining configured trusted-scope exclusions. This lets npm keep unrelated locked security fixes. It checks sandboxed npm >= 11.17.0 before tool-run npm uses these flags; agent check commands receive the same exclusions in every mode. Every exclusion is reported; exact target verification and `compare` still judge all induced changes, including their age and identity.
@@ -114,11 +114,15 @@ Both tools are in this tree: [`secure-it`](../secure-it) and [`bump-it`](../bump
   `take-early` label, which counts only when someone with write, maintain or admin access added it after their own
   `take-early: <reason>` comment, unedited since; it covers the exact young versions the decision took then, and one
   label runs one attempt ([details](../secure-it/README.md#taking-a-fix-early-take-early)). The issues client runs
-  only in the tool's process, with the write PAT, never in the agent's. One more way in is not an intended input: the
-  record is read back from the issue's description, which anyone who can edit issues can change, GitHub's Triage role
-  included, and secure-it trusts it whoever edited it. The versions stay the code's, but an edited record can stretch
-  a writer's label to more early work than it granted, retire one of secure-it's draft PRs too early, or change what the issue's findings,
-  closing and dismissal are taken to be ([known limitation](coverage-gaps.md#limits)).
+  only in the tool's process, with the write PAT, never in the agent's. The record is read back from the issue's
+  description, which anyone who can edit issues can change, GitHub's Triage role included. With signed records (the
+  default) it carries the tool's signature, which the tool writes after cleaning the text and checks on every read: an
+  edited or written record reads as none, so an open issue with one blocks new issues until a person restores or
+  closes it, and a closed one dismisses nothing. Restoring a record the tool signed earlier, or copying one into
+  another issue, still reads. With `records: trusted-editors` secure-it trusts the record whoever edited it: the
+  versions stay the code's, but an edited record can stretch a writer's label to more early work than it granted,
+  retire one of secure-it's draft PRs too early, or change what the issue's findings, closing and dismissal are taken
+  to be ([known limitations](coverage-gaps.md#limits)).
 - **Opening an issue starts nothing.** secure-it tracks only issues the token's login opened, so someone who can only
   open issues can't start, force or steer a dependency change.
 - **Opening a PR gets nothing merged.** The tools never merge, and adopting a PR doesn't bypass the repository's rules.

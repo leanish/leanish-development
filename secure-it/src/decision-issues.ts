@@ -15,13 +15,12 @@ import type { GitHubIssue, GitHubIssues } from "@leanish/tool-runtime/github-iss
 import { decisionMoves } from "./issue-assessment.ts";
 import { type GrantDecision, grantOf } from "./issue-grant.ts";
 import { type Attempt, type Grant, type IssueRecord, subjectId, type SubjectStatus } from "./issue-model.ts";
-import { recordOf } from "./issue-text.ts";
+import { type IssueSeal, recordOf } from "./issue-text.ts";
 import type { ChangePlan } from "./plan.ts";
 
-/** What the lookups read through. */
-export interface IssueReader {
+/** What the lookups read through: the repository's issues, and how its records are trusted. */
+export interface IssueReader extends IssueSeal {
   readonly issues: GitHubIssues;
-  readonly repo: string;
 }
 
 const TRACKS = /^Tracks #(\d+)(, taken early)?\.$/gm;
@@ -47,7 +46,7 @@ export async function decisionIssue(client: IssueReader, number: number, plan: C
   });
   if (read === undefined) return undefined;
   const [issue, login] = [read, await client.issues.login()];
-  const record = recordOf(issue.body);
+  const record = recordOf(issue.body, client);
   if (issue.author !== login || record === undefined) return undefined;
   return subjectId(record.subject) === subjectId({ kind: "decision", moves: decisionMoves(plan) }) ? { issue, record } : undefined;
 }

@@ -126,8 +126,10 @@ fixes that work afresh, in the batch it now belongs to.
   base that changes the decision or takes a young version the label didn't cover. Whether a PR was taken early is
   read from its issue's attempt, not from the gate's cooldown.
 - **The attempts and the grant live in the issue's hidden record**, which anyone who can edit issues can change,
-  GitHub's Triage role included: in an organization's repository, give Triage only to people you'd trust with this
-  label ([known limitation](../docs/coverage-gaps.md#limits)).
+  GitHub's Triage role included. With signed records (the default) the tool signs it, and an edited record reads as
+  none: the issue then blocks new issues until a person restores the record the tool wrote or closes the issue. With
+  `records: trusted-editors` an edited record is trusted, so in an organization's repository give Triage only to
+  people you'd trust with this label ([known limitations](../docs/coverage-gaps.md#limits)).
 
 Verification can find a young version planning didn't choose (a transitive move, say). Whether the decision was past
 the wait or taken early, the run then publishes nothing, names the versions on the issue and tries again next run.
