@@ -147,6 +147,15 @@ describe("own PRs", () => {
       expect(verifiedStateOf(SIGNED, { ...pr, body: `${line}\n${body}` })).toBeUndefined();
     });
 
+    it("refuses, without failing, a plan someone nested past the stack", () => {
+      for (const depth of [3_000, 20_000]) {
+        const nested = `<!-- leanish:plan ${Buffer.from(`${"[".repeat(depth)}${"]".repeat(depth)}`).toString("base64")} -->`;
+        const edited = body.replace(planBlock({ kind: "routine", moves: ["a"] }), nested);
+        expect(edited).not.toBe(body);
+        expect(verifiedStateOf(SIGNED, { ...pr, body: edited })).toBeUndefined();
+      }
+    });
+
     it("verifies CRLF, Unicode and compressed plans as written", () => {
       const compressed = planSection({ heading: "## Plan", people: "x\n".repeat(30_000), payload: { notes: ["ünïcødé ✓"], fill: "y".repeat(40_000) }, name: "the plan" });
       expect(compressed).toContain("<!-- leanish:plan:br ");

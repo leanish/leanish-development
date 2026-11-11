@@ -36,9 +36,19 @@ export function recordSignature(key: Uint8Array, kind: SignedRecord, payload: un
   return createHmac("sha256", key).update(canonicalJson([kind, payload])).digest("base64url");
 }
 
-/** Whether `signature` is `payload`'s as a `kind` record, compared in constant time. */
+/**
+ * Whether `signature` is `payload`'s as a `kind` record, compared in constant time. A payload that can't be made
+ * canonical (nested past the stack, say: it comes from text anyone could have edited) matches nothing, so a read
+ * treats it as a record the tool didn't write instead of failing.
+ */
 export function signatureMatches(key: Uint8Array, kind: SignedRecord, payload: unknown, signature: string): boolean {
-  const expected = Buffer.from(recordSignature(key, kind, payload));
+  let computed: string;
+  try {
+    computed = recordSignature(key, kind, payload);
+  } catch {
+    return false;
+  }
+  const expected = Buffer.from(computed);
   const given = Buffer.from(signature);
   return given.length === expected.length && timingSafeEqual(expected, given);
 }
