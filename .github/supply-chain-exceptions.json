@@ -7,6 +7,30 @@
       "paths": ["node_modules/vite"],
       "reason": "only through vitest, a dev dependency; the tests run Vite inside Node and never start a dev server, let alone expose one to the network (--host or server.host), which the advisory requires; vitejs/vite repository advisory published 2026-11-10 (no reviewed source lists it), every version from 4.0.0 through 8.3.6 affected, fixed in 8.3.7 (with rolldown 1.2.18), both published 2026-11-09; bump once they're 7 days old (2026-11-16)",
       "expires": "2026-11-16"
+    },
+    {
+      "id": "GHSA-cf2h-pxjq-68xw",
+      "package": "minimatch",
+      "version": "11.0.1",
+      "paths": ["node_modules/minimatch"],
+      "reason": "only through eslint, a dev dependency that lints this repository's own files; the patterns it compiles come from this repository's eslint config and ESLint's defaults, never from outside input; isaacs/minimatch repository advisory published 2026-11-10 (no reviewed source lists it), 11.0.0 through 11.0.6 affected, fixed in 11.0.7, published 2026-11-10; move the root override to 11.0.8, which fixes GHSA-c859-jr93-m5j4 too, once it's 7 days old (2026-11-18)",
+      "expires": "2026-11-18"
+    },
+    {
+      "id": "GHSA-c859-jr93-m5j4",
+      "package": "minimatch",
+      "version": "11.0.1",
+      "paths": ["node_modules/minimatch"],
+      "reason": "only through eslint, a dev dependency that lints this repository's own files; neither ESLint nor its config array calls minimatch.escape(), the function the advisory is about; isaacs/minimatch repository advisory published 2026-11-11 (no reviewed source lists it), 7.4.0 through 11.0.7 affected, fixed in 11.0.8, published 2026-11-11; move the root override once it's 7 days old (2026-11-18)",
+      "expires": "2026-11-18"
+    },
+    {
+      "id": "GHSA-6jwq-xf8q-xcwh",
+      "package": "brace-expansion",
+      "version": "5.0.12",
+      "paths": ["node_modules/brace-expansion"],
+      "reason": "only through minimatch under eslint, a dev dependency that lints this repository's own files; it expands only the patterns in this repository's eslint config and ESLint's defaults, never outside input; juliangruber/brace-expansion repository advisory published 2026-11-11 (no reviewed source lists it), every 5.x before 5.0.13 affected (and the older lines), fixed in 5.0.13, published 2026-11-11; minimatch 11.0.8 still accepts 5.0.12, so bump it on its own once it's 7 days old (2026-11-18)",
+      "expires": "2026-11-18"
     }
   ]
 }
