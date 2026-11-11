@@ -132,7 +132,7 @@ function sortedMoves(fixes: ReadonlyArray<SecurityFix>): Array<[string, string |
 }
 
 describe("securityCandidates", () => {
-  it("judges dtv-shaped coupled directs on the security batch's snapshot, reading each registry document once", async () => {
+  it("judges coupled directs (vitest with its UI and coverage) on the security batch's snapshot, reading each registry document once", async () => {
     const names = ["vitest", "@vitest/ui", "@vitest/coverage-v8"];
     const versions = ["4.1.7", "4.1.11", "4.1.12"];
     const manifests = Object.fromEntries(names.flatMap((name) => versions.map((version) => [
