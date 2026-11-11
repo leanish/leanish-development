@@ -655,6 +655,20 @@ describe("syncIssues", () => {
       expect(issues.issues.get(2)!.state).toBe("open");
     });
 
+    it.each(["open", "closed"] as const)("takes a %s issue whose record someone nested past the stack for unreadable, and goes on", async (state) => {
+      const issues = new FakeIssues();
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1"), waiting("other", "2.0.1")]));
+      const one = issues.issues.get(1)!;
+      // A valid record with an extra deeply nested field, under a made-up signature.
+      const record = { ...recordOf(one.body, SEAL)!, extra: JSON.parse(`${"[".repeat(3_000)}${"]".repeat(3_000)}`) as unknown };
+      const nested = one.body.replace(/<!-- leanish:plan(:br)? \S+ -->/, `<!-- leanish:plan ${Buffer.from(JSON.stringify(record)).toString("base64")} -->`).replace(/record-sig \S{43}/, `record-sig ${"A".repeat(43)}`);
+      issues.issues.set(1, { ...one, state, body: nested });
+      const result = await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1"), waiting("other", "2.0.1")]));
+      // Open, it blocks creates; closed, it counts for nothing, so its finding gets a new issue.
+      expect(result.tracked.map((issue) => issue.number)).toEqual(state === "open" ? [2] : [2, 3]);
+      expect(result.unreadable).toEqual(state === "open" ? [1] : []);
+    });
+
     it("reads and writes unsigned records with trusted-editors, ignoring a signature", async () => {
       const issues = new FakeIssues();
       const trusting = { ...sync(issues), trust: { mode: "trusted-editors" } as const };

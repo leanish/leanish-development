@@ -59,8 +59,10 @@ finishes a closing an earlier run recorded. Issue text never selects versions: t
 changes two things: closing an issue [dismisses its findings](#dismissing-findings), and a `take-early` label lets a
 waiting decision run early. Issue labels match ignoring case, as on GitHub: a `Take-Early` label made by hand counts,
 and so does the tool's own issue label in whatever casing the repository has it. Editing the issue's description isn't
-an input, but secure-it can't tell it happened: it reads its record back from there, whoever edited it last ([known
-limitation](../docs/coverage-gaps.md#limits)).
+an input. With signed records (the default) secure-it reads its record back from there only with its own signature, so
+an edited record reads as none; the text people read above it isn't signed. With `records: trusted-editors` it can't
+tell an edit happened, and reads the record whoever edited it last ([known
+limitations](../docs/coverage-gaps.md#limits)).
 
 ### Dismissing findings
 
