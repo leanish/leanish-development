@@ -59,7 +59,8 @@ describe("unusedRemoval", () => {
       identity: [identity],
     });
     const before = [maven("g:a", "1.0", "runtimeClasspath"), maven("g:b", "1.0", "runtimeClasspath")];
-    // g:b's entry names npm and g:a's identity entry is npm: neither covered the Maven copies, so both stay.
+    // g:a's vulnerability and release-age entries (no ecosystem) covered its Maven copy and go; g:b's entry names npm
+    // and identity entries are npm: neither covered a Maven copy, so both stay.
     expect(unusedRemoval(text, before, [])).toEqual({ kind: "removal", text: file({ vulnerabilities: [npmOnly], releaseAge: [], identity: [identity] }) });
   });
 
