@@ -213,7 +213,12 @@ that rewrites a lockfile. Never lower/unset the window or add exclusions of your
   and its advisories. npm: nothing extra to edit, the tool applied it. Gradle: edit the declaration as for
   `gradle-declared`.
 - `gradle-declared`: a dependency the build declares. Change its version where it's declared (the version catalog if
-  it comes from there, else the build file).
+  it comes from there, else the build file). A location names the Gradle configuration that resolves it, not a file
+  (an included build's starts with its directory): for a plugin, `:buildscript.classpath` or `settings.classpath`. For
+  a plugin move named `<id>:<id>.gradle.plugin` (its marker), its version is the one given with that id, in
+  a `plugins { id("<id>") version "..." }` block (a build file's, or the settings' `pluginManagement`) or a version
+  catalog's `[plugins]` entry. One put on a `buildscript` classpath is named by its own `group:name`. Change only
+  declarations at `from`, in the builds the locations name.
 - `gradle-floor`: a transitive dependency, or one a plugin declares (no file of the repository declares it, so leave
   the plugin's own declaration alone: yours goes next to it). In each configuration of `locations`
   (`:runtimeClasspath`, `buildSrc/:compileClasspath`, …), declare it explicitly at exactly `<to>` as a plain version
