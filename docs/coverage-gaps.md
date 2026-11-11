@@ -103,10 +103,13 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   only with the tool's signature over it, its tool and its repository, so an edited or written record reads as none.
   The signature proves the tool wrote that record at some point, not when or for which issue: restoring a record it
   signed earlier repeats what it allowed then (a `take-early` attempt already used, or a dismissal's older scope), and
-  a signed record copied into another issue of the same repository reads there too. Removing or breaking a record
-  makes an open issue unreadable, which stops secure-it from opening any new issue in that repository until a person
-  restores it or closes the issue; a closed issue without a valid record no longer counts as a dismissal. Not built:
-  anything against restoring an older record, or binding a record to its issue number.
+  a signed record copied into another issue of the same repository reads there too, with the versions it says were
+  shown and the attempts it lists, which a `take-early` label on that issue then goes by. Only the record is signed,
+  not the text people read above it: someone who can edit issues can make that text show other young versions than
+  the record, and a label grants what the record shows, until the next run writes the text again. Removing or breaking
+  a record makes an open issue unreadable, which stops secure-it from opening any new issue in that repository until a
+  person restores it or closes the issue; a closed issue without a valid record no longer counts as a dismissal. Not
+  built: anything against restoring an older record, or binding a record to its issue number.
 - **With `records: trusted-editors`, an issue's record is only as trusted as whoever can edit issues (secure-it)**:
   secure-it reads its decisions back from a hidden record in its own issue's description and trusts it, whoever
   edited it last. GitHub lets anyone with
