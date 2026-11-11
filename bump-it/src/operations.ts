@@ -195,7 +195,7 @@ export async function verify(execution: Execution, computed: Computed, toolWritt
     head = await deps.trees.commit(context.workingCopy, candidate);
     gradle = { base: computed.gradle, head: await inventories.ofCommit(head) };
   }
-  const written = toolWritten === undefined || cleaned.removed.length === 0 ? toolWritten : [...toolWritten, EXCEPTIONS_PATH];
+  const written = toolWritten === undefined || !cleaned.cleaned ? toolWritten : [...toolWritten, EXCEPTIONS_PATH];
   const changedFiles = await deps.changedBetween(context.workingCopy, computed.base.id, candidate);
   const wrapperAt = computed.plan.moves.some((move) => move.mechanism === "gradle-wrapper") ? await deps.wrapperAt(context.workingCopy, candidate) : undefined;
   // The base with the plan applied by Gradle (and its generated wrapper): the base itself when the plan moves nothing there.

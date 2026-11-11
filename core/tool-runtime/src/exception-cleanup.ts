@@ -34,19 +34,13 @@ import type { Tree } from "@leanish/gate/tree";
 const LISTS = ["vulnerabilities", "releaseAge", "identity"] as const;
 type List = (typeof LISTS)[number];
 
-/** One entry the cleanup removes, as the PR's reader would name it. */
-export interface RemovedException {
-  readonly list: List;
-  readonly label: string;
-}
-
 export type ExceptionsCleanup =
   /** Nothing to remove: no file, or every entry is still used (or was already unused). */
   | { readonly kind: "none" }
   /** The cleanup can't be judged (incomplete evidence, a file it can't edit in place): nothing is removed. */
   | { readonly kind: "skipped"; readonly why: string }
   /** The file without the entries the change left unused. */
-  | { readonly kind: "removal"; readonly text: string; readonly removed: ReadonlyArray<RemovedException> };
+  | { readonly kind: "removal"; readonly text: string };
 
 /** The exceptions file `base` has, without the entries that cover something in `base` and nothing in `head`. */
 export async function exceptionsCleanup(base: Tree, head: Tree, gradle: GradleInputs, env: GateEnvironment): Promise<ExceptionsCleanup> {
@@ -73,7 +67,6 @@ export function unusedRemoval(text: string, before: ReadonlyArray<Located>, afte
   }
   if (doc.errors.length > 0 || !isMap(doc.contents)) return { kind: "skipped", why: `${EXCEPTIONS_PATH} can't be edited in place` };
   const edits: Array<{ readonly start: number; readonly end: number; readonly text: string }> = [];
-  const removed: RemovedException[] = [];
   const expected: Record<string, unknown> = { ...parsed };
   for (const list of LISTS) {
     const node = doc.contents.get(list, true);
@@ -85,10 +78,9 @@ export function unusedRemoval(text: string, before: ReadonlyArray<Located>, afte
     const ranges = itemRanges(node);
     if (ranges === undefined || ranges.length !== entries.length) return { kind: "skipped", why: `${EXCEPTIONS_PATH}'s \`${list}\` can't be edited in place` };
     edits.push(...listEdits(node, ranges, unused));
-    entries.forEach((entry, i) => { if (unused[i]) removed.push({ list, label: labelOf(list, entry) }); });
     expected[list] = entries.filter((_, i) => !unused[i]);
   }
-  if (removed.length === 0) return { kind: "none" };
+  if (edits.length === 0) return { kind: "none" };
   let written = text;
   for (const edit of [...edits].sort((a, b) => b.start - a.start)) written = written.slice(0, edit.start) + edit.text + written.slice(edit.end);
   // The same file, less exactly those entries: a range read wrong would show here.
@@ -99,7 +91,7 @@ export function unusedRemoval(text: string, before: ReadonlyArray<Located>, afte
     return { kind: "skipped", why: `removing the unused entries from ${EXCEPTIONS_PATH} in place didn't leave valid JSON` };
   }
   if (!isDeepStrictEqual(result, expected)) return { kind: "skipped", why: `removing the unused entries from ${EXCEPTIONS_PATH} in place changed more than them` };
-  return { kind: "removal", text: written, removed };
+  return { kind: "removal", text: written };
 }
 
 /** Every located version of `tree`, or why its inventory isn't complete enough to tell an entry unused. */
@@ -142,13 +134,6 @@ function covers(list: List, entry: Record<string, unknown>, packages: ReadonlyAr
     (paths === undefined || pkg.locations.some((location) => paths.includes(location))));
 }
 
-function labelOf(list: List, entry: Record<string, unknown>): string {
-  const pkg = `${String(entry["package"])}@${String(entry["version"])}`;
-  if (list === "vulnerabilities") return `${String(entry["id"])} on ${pkg}`;
-  if (list === "releaseAge") return `${pkg}'s release age (${String(entry["advisory"])})`;
-  return `${pkg}'s publisher identity`;
-}
-
 /** Each item's text span, start to end, or undefined when one has no range. */
 function itemRanges(node: YAMLSeq): Array<readonly [number, number]> | undefined {
   const ranges: Array<readonly [number, number]> = [];
@@ -187,10 +172,10 @@ export async function admittedCleanup(changedFiles: ReadonlyArray<string>, base:
   return changedFiles.includes(EXCEPTIONS_PATH) ? exceptionsCleanup(base, head, gradle, env) : undefined;
 }
 
-/** What `writeExceptionsCleanup` did: whether it rewrote the file, and the entries the file now lacks. */
+/** What `writeExceptionsCleanup` did: whether it rewrote the file, and whether the file now differs from the base's. */
 export interface WrittenCleanup {
   readonly wrote: boolean;
-  readonly removed: ReadonlyArray<RemovedException>;
+  readonly cleaned: boolean;
 }
 
 /**
@@ -208,13 +193,13 @@ export async function writeExceptionsCleanup(
   write: (text: string) => Promise<void>,
 ): Promise<WrittenCleanup> {
   const original = await base.read(EXCEPTIONS_PATH);
-  if (original === undefined) return { wrote: false, removed: [] };
+  if (original === undefined) return { wrote: false, cleaned: false };
   const cleanup = await exceptionsCleanup(base, head, gradle, env);
   const target = cleanup.kind === "removal" ? cleanup.text : original;
-  const removed = cleanup.kind === "removal" ? cleanup.removed : [];
-  if (await head.read(EXCEPTIONS_PATH) === target) return { wrote: false, removed };
+  const cleaned = cleanup.kind === "removal";
+  if (await head.read(EXCEPTIONS_PATH) === target) return { wrote: false, cleaned };
   await write(target);
-  return { wrote: true, removed };
+  return { wrote: true, cleaned };
 }
 
 /**

@@ -25,11 +25,7 @@ describe("unusedRemoval", () => {
   it("removes an entry that covered a copy in the base and covers none in the head, keeping every other byte", () => {
     const text = file({ vulnerabilities: [vulnerability("a", "1.0.0", ["node_modules/a"]), vulnerability("b", "2.0.0", ["node_modules/b"])] });
     const cleanup = unusedRemoval(text, [npm("a", "1.0.0", "node_modules/a"), npm("b", "2.0.0", "node_modules/b")], [npm("a", "1.0.1", "node_modules/a"), npm("b", "2.0.0", "node_modules/b")]);
-    expect(cleanup).toEqual({
-      kind: "removal",
-      text: file({ vulnerabilities: [vulnerability("b", "2.0.0", ["node_modules/b"])] }),
-      removed: [{ list: "vulnerabilities", label: "GHSA-a on a@1.0.0" }],
-    });
+    expect(cleanup).toEqual({ kind: "removal", text: file({ vulnerabilities: [vulnerability("b", "2.0.0", ["node_modules/b"])] }) });
   });
 
   it("keeps an entry already unused in the base, one still covering a copy, and one partly used", () => {
@@ -55,20 +51,16 @@ describe("unusedRemoval", () => {
   });
 
   it("reads an omitted ecosystem as any, a named one as that one, and identity as npm", () => {
+    const npmOnly = vulnerability("g:b", "1.0", ["runtimeClasspath"], { ecosystem: "npm" });
+    const identity = { package: "g:a", version: "1.0", reason: "r", expires: "2026-12-31" };
     const text = file({
-      vulnerabilities: [vulnerability("g:a", "1.0", ["runtimeClasspath"]), vulnerability("g:b", "1.0", ["runtimeClasspath"], { ecosystem: "npm" })],
+      vulnerabilities: [vulnerability("g:a", "1.0", ["runtimeClasspath"]), npmOnly],
       releaseAge: [{ package: "g:a", version: "1.0", advisory: "GHSA-x", reason: "r", expires: "2026-12-31" }],
-      identity: [{ package: "g:a", version: "1.0", reason: "r", expires: "2026-12-31" }],
+      identity: [identity],
     });
     const before = [maven("g:a", "1.0", "runtimeClasspath"), maven("g:b", "1.0", "runtimeClasspath")];
-    const cleanup = unusedRemoval(text, before, []);
-    expect(cleanup.kind).toBe("removal");
-    if (cleanup.kind !== "removal") return;
-    // g:b's entry names npm and g:a's identity entry is npm: neither covered the Maven copies.
-    expect(cleanup.removed).toEqual([
-      { list: "vulnerabilities", label: "GHSA-g:a on g:a@1.0" },
-      { list: "releaseAge", label: "g:a@1.0's release age (GHSA-x)" },
-    ]);
+    // g:b's entry names npm and g:a's identity entry is npm: neither covered the Maven copies, so both stay.
+    expect(unusedRemoval(text, before, [])).toEqual({ kind: "removal", text: file({ vulnerabilities: [npmOnly], releaseAge: [], identity: [identity] }) });
   });
 
   it("removes release-age and identity entries whose version left", () => {
@@ -77,10 +69,7 @@ describe("unusedRemoval", () => {
       identity: [{ package: "a", version: "1.0.1", reason: "r", expires: "2026-12-31" }],
     });
     const cleanup = unusedRemoval(text, [npm("a", "1.0.1", "node_modules/x/node_modules/a")], [npm("a", "1.0.2", "node_modules/x/node_modules/a")]);
-    expect(cleanup).toEqual({ kind: "removal", text: file({ releaseAge: [], identity: [] }).replace(/\[\]/g, "[]"), removed: [
-      { list: "releaseAge", label: "a@1.0.1's release age (GHSA-a)" },
-      { list: "identity", label: "a@1.0.1's publisher identity" },
-    ] });
+    expect(cleanup).toEqual({ kind: "removal", text: file({ releaseAge: [], identity: [] }) });
   });
 
   it("ignores expiry: an expired entry that still covers a version stays", () => {
@@ -135,7 +124,7 @@ const CLEANED = file({ vulnerabilities: [vulnerability("b", "1.0.0", ["node_modu
 describe("exceptionsCleanup", () => {
   it("compares the base's and the head's inventories", async () => {
     const cleanup = await exceptionsCleanup(BASE, tree("head", { [EXCEPTIONS]: TEXT, "package-lock.json": HEAD_LOCK }), {}, ENV);
-    expect(cleanup).toEqual({ kind: "removal", text: CLEANED, removed: [{ list: "vulnerabilities", label: "GHSA-a on a@1.0.0" }] });
+    expect(cleanup).toEqual({ kind: "removal", text: CLEANED });
   });
 
   it("has nothing to do without an exceptions file", async () => {
@@ -180,13 +169,12 @@ describe("writing and admitting the cleanup", () => {
   it("writes the file the head should have, whatever it holds, and nothing when it already has it", async () => {
     const writes: string[] = [];
     const write = async (text: string) => { writes.push(text); };
-    const removed = [{ list: "vulnerabilities", label: "GHSA-a on a@1.0.0" }];
-    expect(await writeExceptionsCleanup(BASE, tree("head", { [EXCEPTIONS]: TEXT, "package-lock.json": HEAD_LOCK }), {}, ENV, write)).toEqual({ wrote: true, removed });
+    expect(await writeExceptionsCleanup(BASE, tree("head", { [EXCEPTIONS]: TEXT, "package-lock.json": HEAD_LOCK }), {}, ENV, write)).toEqual({ wrote: true, cleaned: true });
     // A merge that left other text (an earlier cleanup, a base change) is recomputed over the base.
-    expect(await writeExceptionsCleanup(BASE, tree("head", { [EXCEPTIONS]: `${TEXT} `, "package-lock.json": HEAD_LOCK }), {}, ENV, write)).toEqual({ wrote: true, removed });
-    expect(await writeExceptionsCleanup(BASE, tree("head", { [EXCEPTIONS]: CLEANED, "package-lock.json": HEAD_LOCK }), {}, ENV, write)).toEqual({ wrote: false, removed });
+    expect(await writeExceptionsCleanup(BASE, tree("head", { [EXCEPTIONS]: `${TEXT} `, "package-lock.json": HEAD_LOCK }), {}, ENV, write)).toEqual({ wrote: true, cleaned: true });
+    expect(await writeExceptionsCleanup(BASE, tree("head", { [EXCEPTIONS]: CLEANED, "package-lock.json": HEAD_LOCK }), {}, ENV, write)).toEqual({ wrote: false, cleaned: true });
     // An earlier cleanup the head no longer justifies goes back to the base's file.
-    expect(await writeExceptionsCleanup(BASE, tree("head", { [EXCEPTIONS]: CLEANED, "package-lock.json": lock({ a: "1.0.0", b: "1.0.0" }) }), {}, ENV, write)).toEqual({ wrote: true, removed: [] });
+    expect(await writeExceptionsCleanup(BASE, tree("head", { [EXCEPTIONS]: CLEANED, "package-lock.json": lock({ a: "1.0.0", b: "1.0.0" }) }), {}, ENV, write)).toEqual({ wrote: true, cleaned: false });
     expect(writes).toEqual([CLEANED, CLEANED, TEXT]);
   });
 
