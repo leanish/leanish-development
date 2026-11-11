@@ -50,10 +50,8 @@
 
 ### Fixed
 
-- The tools' agents are told that a Gradle move's location names a configuration, not a file, and where a plugin
-  applied by id has its version (a `plugins` block, the settings' `pluginManagement`, a catalog's `[plugins]`). A
-  plugin major whose only location is `:buildscript.classpath` was refused by an agent that looked for that location
-  in the files (seen with Claude Code on the java-conventions plugin, in v0.11.1 rc.1 and again on 0.12.0's main).
+- The tools' agents are told that a Gradle move's locations are configurations, not files: an agent looking for
+  `:buildscript.classpath` in the files refused a plugin major whose version is in the settings.
 - A repository advisory range written upper bound first (`< 2.0.0, >= 1.0.0`) now reads as the interval it names,
   not as every version, so versions outside it are no longer counted as affected. Its coverage-gaps entry now covers
   only a lone upper bound followed by a closed interval (`< 3.0.0, >= 1.0.0 < 2.0.0`), still read as either of them.
