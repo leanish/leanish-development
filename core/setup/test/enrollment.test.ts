@@ -1,10 +1,10 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { configure } from "../src/configuration.ts";
+import { configPath, configure } from "../src/configuration.ts";
 import { enrollment, verifyTokens } from "../src/enrollment.ts";
 
 let home: string;
@@ -81,6 +81,18 @@ describe("human-only secret enrollment", () => {
     expect(value).toMatchObject({ step: "signing-key", status: "blocked" });
     expect(fake.fetch).not.toHaveBeenCalled();
     if (key !== "") expect(JSON.stringify(value)).not.toContain(key);
+  });
+
+  it("neither asks for nor reads a signing key when the installation trusts editors", async () => {
+    const path = configPath(options, home);
+    await writeFile(path, `${await readFile(path, "utf8")}records: trusted-editors\n`);
+    const enrolled = await enrollment({ ...options, login: "Dev" }, home);
+    expect(enrolled.data?.signingKey).toBeUndefined();
+    expect(enrolled.message).not.toContain("signing key");
+    const fake = machine();
+    const value = await verifyTokens(options, home, fake);
+    expect(value.status).toBe("already-done");
+    expect(fake.secrets.get.mock.calls.map(([name]) => name)).toEqual(["leanish-bump-it-acme-write", "leanish-bump-it-acme-read"]);
   });
 
   it("refuses identical tokens before any GitHub request", async () => {

@@ -1,9 +1,10 @@
 // Adapted from leanish/leanish-development agents/bump-it/src/own-pr.ts at c6282df: one set of rules per tool
 // (secure-it, bump-it) instead of bump-it's constants, and the PR's state (what the tool last published) in its body;
 // labels and body markers are named leanish:<tool>.
-import { createHmac, timingSafeEqual } from "node:crypto";
-
 import type { GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
+
+import { planPayload } from "./plan-blocks.ts";
+import { canonicalJson, type RecordTrust, recordSignature, signatureMatches } from "./record-signature.ts";
 
 export type ToolName = "secure-it" | "bump-it";
 
@@ -14,10 +15,22 @@ export interface OwnPullRequests {
   readonly label: string;
   /** The footer every PR body of the tool ends with. */
   readonly marker: string;
+  /**
+   * The lines of a body the tool acts on besides its plan (global and multiline), signed with the state: secure-it's
+   * `Tracks #N.` line, as its reader (`trackedIssueOf`) matches it. Undefined: none.
+   */
+  readonly machineLines: RegExp | undefined;
 }
 
 const MARKER = (tool: ToolName) => `<!-- leanish:${tool} -->`;
-const STATE = /<!-- leanish:state head=([0-9a-f]{40}) base=([0-9a-f]{40}) adaptations=(\d+) sig=([A-Za-z0-9_-]{43}) -->/;
+/** The state line; its signature is absent in `trusted-editors` and ignored there when present. */
+const STATE = /<!-- leanish:state head=([0-9a-f]{40}) base=([0-9a-f]{40}) adaptations=(\d+)(?: sig=([A-Za-z0-9_-]{43}))? -->/;
+const MACHINE_LINES: Readonly<Record<ToolName, RegExp | undefined>> = {
+  "secure-it": /^Tracks #(\d+)(, taken early)?\.$/gm,
+  "bump-it": undefined,
+};
+/** What the signed payload's layout is; a change to it makes every earlier signature fail, as it should. */
+const STATE_FORMAT = 2;
 
 /**
  * What the tool last published on a PR, kept in its body: the head it pushed,
@@ -32,7 +45,7 @@ export interface PullRequestState {
 }
 
 export function ownPullRequests(tool: ToolName): OwnPullRequests {
-  return { tool, label: `leanish:${tool}`, marker: MARKER(tool) };
+  return { tool, label: `leanish:${tool}`, marker: MARKER(tool), machineLines: MACHINE_LINES[tool] };
 }
 
 /** The branch a run opens a PR from: `<tool>/<UTC date>-<topic>`, the topic made branch-safe. */
@@ -80,19 +93,27 @@ function isOwnBranch(rules: OwnPullRequests, branch: string): boolean {
 }
 
 /**
- * A candidate for the tool's own PR: an open PR from one of its dated branches
- * of `repo` itself (not a fork) into `base`, carrying the marker or the label,
- * so a PR whose labelling failed is still recognised. Being a candidate doesn't
- * make it safe to adopt: that takes a state the tool signed for its head.
+ * Whether `pr` comes from the tool, whatever its state: authored by the login the tool's write token acts as (in any
+ * casing; a deleted author is nobody's), from one of the tool's dated branches of `repo` itself (not a fork), carrying
+ * the marker or the label, so a PR whose labelling failed is still recognised. For bookkeeping that must also recognise
+ * the tool's closed and merged PRs; nothing it says makes a PR safe to act on.
  */
-export function isOwnPullRequest(rules: OwnPullRequests, pr: GitHubPullRequest, repo: string, base: string): boolean {
+export function comesFromTool(rules: OwnPullRequests, pr: GitHubPullRequest, repo: string, login: string): boolean {
   return (
-    pr.state === "open" &&
+    pr.author !== null &&
+    pr.author.toLowerCase() === login.toLowerCase() &&
     isOwnBranch(rules, pr.headRef) &&
     pr.headRepo?.toLowerCase() === repo.toLowerCase() &&
-    pr.baseRef === base &&
     (pr.body.includes(rules.marker) || carriesLabel(rules, pr))
   );
+}
+
+/**
+ * A candidate for the tool's own PR: one of its open PRs (`comesFromTool`) into `base`. Being a candidate doesn't make
+ * it safe to adopt: that takes a state the tool recorded for its head (`verifiedStateOf`).
+ */
+export function isOwnPullRequest(rules: OwnPullRequests, pr: GitHubPullRequest, repo: string, base: string, login: string): boolean {
+  return pr.state === "open" && pr.baseRef === base && comesFromTool(rules, pr, repo, login);
 }
 
 /** Whether `pr` has the tool's label, in any casing: GitHub treats label names that differ only by case as one label. */
@@ -100,21 +121,44 @@ export function carriesLabel(rules: OwnPullRequests, pr: GitHubPullRequest): boo
   return pr.labels.some((label) => label.toLowerCase() === rules.label.toLowerCase());
 }
 
-/** What signs a PR's state and checks it: the key only the tool's process holds, for this tool and repository. */
+/** What writes a PR's state and checks it, for this tool and repository: how records are trusted, and the tool's login. */
 export interface RecordContext {
   readonly rules: OwnPullRequests;
   readonly repo: string;
-  readonly signingKey: Uint8Array;
+  /** The default branch every PR of the tool targets. */
+  readonly base: string;
+  /** The login the tool's write token acts as: the author of every PR of the tool's. */
+  readonly login: string;
+  readonly trust: RecordTrust;
 }
 
-/** A JSON array, so no field can run into the next. */
-function signatureOf(record: RecordContext, state: PullRequestState): string {
-  const signed = JSON.stringify([record.rules.tool, record.repo.toLowerCase(), state.head, state.base, state.adaptations]);
-  return createHmac("sha256", record.signingKey).update(signed).digest("base64url");
+/**
+ * What the tool acts on in a body besides its state: the first plan block's payload, as the tools' plan readers parse
+ * it (`planPayload`), and the tool's machine lines.
+ */
+function machineData(rules: OwnPullRequests, body: string): { readonly plan: unknown; readonly lines: ReadonlyArray<string> } {
+  const plan = planPayload(body);
+  return { plan: plan ?? null, lines: rules.machineLines === undefined ? [] : [...body.matchAll(rules.machineLines)].map((line) => line[0]) };
 }
 
-/** `body` ending with the PR's signed state and the marker, replacing earlier ones. */
-export function withMarker(record: RecordContext, body: string, state: PullRequestState): string {
+/**
+ * What a PR's signature covers: the state, where it is (tool, repository, head and base branch) and what the body tells
+ * the tool to do (`machineData`). Not the PR number, so a PR is born signed, nor the prose, which people may edit.
+ */
+function signedState(record: RecordContext, branch: string, baseBranch: string, state: PullRequestState, body: string): unknown {
+  return {
+    format: STATE_FORMAT, tool: record.rules.tool, repo: record.repo.toLowerCase(), branch, baseBranch,
+    head: state.head, base: state.base, adaptations: state.adaptations, ...machineData(record.rules, body),
+  };
+}
+
+/**
+ * `body` ending with the PR's state and the marker, replacing earlier ones; signed (`signed` trust) for a PR from
+ * `branch` into the record's base. Throws when what the tool acts on in the result (`machineData`) isn't what `before`
+ * says: rewriting text, cleaning it or removing markers must never create machine data. `before` is the text as the
+ * tool composed it, before cleaning; by default `body` itself.
+ */
+export function withMarker(record: RecordContext, body: string, state: PullRequestState, branch: string, before = body): string {
   const { rules } = record;
   if (!/^[0-9a-f]{40}$/.test(state.head) || !/^[0-9a-f]{40}$/.test(state.base) || !Number.isInteger(state.adaptations) || state.adaptations < 0) {
     throw new Error(`invalid PR state ${JSON.stringify(state)}`);
@@ -122,7 +166,14 @@ export function withMarker(record: RecordContext, body: string, state: PullReque
   // Each removed marker leaves a line break: removed outright, the text around one could join into a plan block
   // (`<!-- leanish:` + marker + `plan …`), and no block spans a line break.
   const bare = body.replaceAll(rules.marker, "\n").replace(new RegExp(STATE.source, "g"), "\n").trimEnd();
-  return `${bare}\n\n<!-- leanish:state head=${state.head} base=${state.base} adaptations=${state.adaptations} sig=${signatureOf(record, state)} -->\n${rules.marker}\n`;
+  const marked = (signature: string | undefined) =>
+    `${bare}\n\n<!-- leanish:state head=${state.head} base=${state.base} adaptations=${state.adaptations}${signature === undefined ? "" : ` sig=${signature}`} -->\n${rules.marker}\n`;
+  const unsigned = marked(undefined);
+  if (canonicalJson(machineData(rules, before)) !== canonicalJson(machineData(rules, unsigned))) {
+    throw new Error(`${rules.tool}: preparing the PR's text changed its plan or its machine lines; refusing to publish it`);
+  }
+  if (record.trust.mode === "trusted-editors") return unsigned;
+  return marked(recordSignature(record.trust.key, "pr-state", signedState(record, branch, record.base, state, unsigned)));
 }
 
 /**
@@ -140,12 +191,19 @@ export function stateOf(body: string): PullRequestState | undefined {
   return found === null ? undefined : stateFrom(found);
 }
 
-/** The state the tool itself signed in a PR body; undefined when there's none, or more than one line claims to be it. */
-export function verifiedStateOf(record: RecordContext, body: string): PullRequestState | undefined {
-  const found = [...body.matchAll(new RegExp(STATE.source, "g"))];
+/**
+ * The state the tool recorded in `pr`'s body; undefined when there's none, or more than one line claims to be it. With
+ * `signed` trust it must carry a valid signature for this PR's branches and body; with `trusted-editors` any signature
+ * is ignored.
+ */
+export function verifiedStateOf(record: RecordContext, pr: GitHubPullRequest): PullRequestState | undefined {
+  const found = [...pr.body.matchAll(new RegExp(STATE.source, "g"))];
   if (found.length !== 1) return undefined;
   const state = stateFrom(found[0]!);
-  return timingSafeEqual(Buffer.from(signatureOf(record, state)), Buffer.from(found[0]![4]!)) ? state : undefined;
+  if (record.trust.mode === "trusted-editors") return state;
+  const signature = found[0]![4];
+  if (signature === undefined) return undefined;
+  return signatureMatches(record.trust.key, "pr-state", signedState(record, pr.headRef, pr.baseRef, state, pr.body), signature) ? state : undefined;
 }
 
 function stateFrom(found: RegExpExecArray | RegExpMatchArray): PullRequestState {

@@ -14,7 +14,8 @@
  *   secrets:                     # optional macOS Keychain service overrides
  *     write: leanish-secure-it-write       # default: leanish-<tool>-write
  *     read: leanish-secure-it-read         # default: leanish-<tool>-read
- *     signing: leanish-secure-it-signing   # default: leanish-<tool>-signing
+ *     signing: leanish-secure-it-signing   # default: leanish-<tool>-signing; read only when records are signed
+ *   records: signed              # default; or trusted-editors: nothing signed, whoever can edit the tool's PRs is trusted
  *   commitIdentity: { name: leanish, email: 5417585+leanish@users.noreply.github.com }
  *   dirs: { state: ~/.local/share/leanish/secure-it, cache: ~/.cache/leanish/secure-it }  # optional
  *   readDeny: [~/dev/private]    # optional: paths the agent's commands can't read
@@ -32,6 +33,7 @@ import type { GitIdentity } from "@leanish/agent-runtime/isolation";
 import { assertRepoSourceId } from "@leanish/agent-runtime/types/repo-source";
 
 import type { ToolName } from "./own-pr.ts";
+import { RECORD_MODES, type RecordMode } from "./record-signature.ts";
 
 export interface ToolRepo {
   /** `owner/repo`. */
@@ -50,6 +52,11 @@ export interface ToolConfig {
   readonly agent: { readonly codingAgent: CodingAgent; readonly model: string; readonly effort: string };
   /** Resolved Keychain service names: per-tool defaults with optional per-field overrides. */
   readonly secrets: { readonly write: string; readonly read: string; readonly signing: string };
+  /**
+   * How the records the tool keeps in GitHub are trusted (record-signature.ts): `signed` with the key in
+   * `secrets.signing`, or `trusted-editors`, where the key is never read.
+   */
+  readonly records: RecordMode;
   readonly commitIdentity: GitIdentity;
   readonly dirs: { readonly state: string; readonly cache: string };
   readonly readDeny: ReadonlyArray<string>;
@@ -73,7 +80,7 @@ export function parseToolConfig(tool: ToolName, text: string, where: string, hom
   } catch (err) {
     throw new Error(`${where} isn't YAML: ${(err as Error).message}`);
   }
-  const root = object(raw, where, ["repos", "agent", "secrets", "commitIdentity", "dirs", "readDeny", "modelPrices", "maxNewMajorsPerRun"]);
+  const root = object(raw, where, ["repos", "agent", "secrets", "records", "commitIdentity", "dirs", "readDeny", "modelPrices", "maxNewMajorsPerRun"]);
   const path = (value: unknown, field: string): string => {
     const text = string(value, `${where}: ${field}`);
     const expanded = text === "~" ? home : text.startsWith("~/") ? join(home, text.slice(2)) : text;
@@ -102,6 +109,9 @@ export function parseToolConfig(tool: ToolName, text: string, where: string, hom
   if (write === read) throw new Error(`${where}: secrets.write and secrets.read must be different items: the agent only gets the read-only one`);
   const signing = secrets["signing"] === undefined ? `leanish-${tool}-signing` : string(secrets["signing"], `${where}: secrets.signing`);
   if (signing === write || signing === read) throw new Error(`${where}: secrets.signing must be its own item, not a token's`);
+  // Never inferred from a missing key: a key that can't be read stops a signed tool, it doesn't turn signing off.
+  const records = root["records"] === undefined ? "signed" : string(root["records"], `${where}: records`);
+  if (!(RECORD_MODES as ReadonlyArray<string>).includes(records)) throw new Error(`${where}: records must be one of ${RECORD_MODES.join(", ")}; got '${records}'`);
   const identity = object(root["commitIdentity"], `${where}: commitIdentity`, ["name", "email"]);
   const dirs = root["dirs"] === undefined ? {} : object(root["dirs"], `${where}: dirs`, ["state", "cache"]);
 
@@ -118,6 +128,7 @@ export function parseToolConfig(tool: ToolName, text: string, where: string, hom
       effort: string(agent["effort"], `${where}: agent.effort`),
     },
     secrets: { write, read, signing },
+    records: records as RecordMode,
     commitIdentity: {
       name: string(identity["name"], `${where}: commitIdentity.name`),
       email: string(identity["email"], `${where}: commitIdentity.email`),

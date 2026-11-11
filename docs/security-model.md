@@ -84,9 +84,21 @@ Both tools are in this tree: [`secure-it`](../secure-it) and [`bump-it`](../bump
   - one that writes (branches, PRs, comments), only for the tool's own process;
   - one read-only, which the coding agent gets as `GH_TOKEN`.
 
-  The tool refuses two Keychain items holding the same token. A third item, the signing key below, holds no token. The default services and the `secrets` overrides are in the [config reference](tool-configuration.md).
+  The tool refuses two Keychain items holding the same token. A third item, the signing key below, holds no token, and
+  is read only when records are signed. The default services and the `secrets` overrides are in the [config reference](tool-configuration.md).
 - **Secrets live in the macOS Keychain.** Only the tool's own process reads them. The write token never goes into an environment variable.
-- **A PR's state line is signed.** The tools record in a PR's body the head they published, its base and how many times the agent adapted it, with an HMAC keyed by a per-tool secret in the Keychain, which the agent and anything sandboxed can't read. A body without a valid signature isn't the tool's, so editing that line, or copying the format into a PR of your own, gets nothing. A valid signature for another head means someone else pushed, and the PR is left alone. So nobody without the key can make a tool accept a commit it never published. The signature covers only that line: [what it leaves out](coverage-gaps.md#limits).
+- **A PR is the tool's only if the write token's login opened it.** Copying a tool's branch name, marker, label and
+  body into a PR of your own gets nothing, in either records mode.
+- **What a PR tells the tool to do is signed, by default.** The tools record in a PR's body the head they published,
+  its base and how many times the agent adapted it. With `records: signed` (the default) that state line carries an
+  HMAC keyed by a per-tool secret in the Keychain, which the agent and anything sandboxed can't read. It covers the
+  state, the PR's branch and base branch, the plan the body carries and secure-it's `Tracks` line: everything the
+  tools act on in a body. Editing any of it, or pushing and editing the recorded head, makes the PR someone else's,
+  and it's left alone; prose stays free to edit. The tools check that cleaning text and removing markers never
+  creates plan or `Tracks` data, and never sign again what they haven't verified. A tool whose key is missing or
+  malformed doesn't start. With `records: trusted-editors` nothing is signed and the key is never read: whoever can
+  edit the tools' PRs (collaborators and integrations with that access, on public and private repositories alike)
+  is trusted to, as before 0.12.0. secure-it's issue records aren't signed yet. [Limits](coverage-gaps.md#limits).
 - **Repository code never runs in the tool's process.** The Gradle inventory runs the build under `codex sandbox` with the agent's write profile. Under that profile, checked on macOS, the Keychain isn't reachable, the sensitive home paths (`~/.ssh`, `~/.aws`, the Codex and Claude logins, shell startup files…) can't be read, and writes land only in the working copy, the temp dirs and the build cache. Both tools compute npm changes in exported scratch copies under the same sandbox, with `--package-lock-only --ignore-scripts`, explicit release-age flags and trusted-scope exclusions. The tool protects exact lockfile bytes and manifest dependency fields; only major migrations may adapt other manifest fields.
 - **The Codex login source stays unreadable.** When a tool reuses a file-backed login, the sandbox denies the resolved `auth.json` and its canonical target when it is a symlink, including with a custom `CODEX_HOME`.
 - **npm's age exclusions do not waive verification.** secure-it excludes planned young or unreadable targets, plus young or unreadable versions already locked in the affected base lockfiles, retaining configured trusted-scope exclusions. This lets npm keep unrelated locked security fixes. It checks sandboxed npm >= 11.17.0 before tool-run npm uses these flags; agent check commands receive the same exclusions in every mode. Every exclusion is reported; exact target verification and `compare` still judge all induced changes, including their age and identity.
@@ -110,10 +122,10 @@ Both tools are in this tree: [`secure-it`](../secure-it) and [`bump-it`](../bump
   open issues can't start, force or steer a dependency change.
 - **Opening a PR gets nothing merged.** The tools never merge, and adopting a PR doesn't bypass the repository's rules.
   They take a PR as theirs only when its branch is in the repository itself, so a fork's PR never is, whatever its
-  branch name or text says. Someone with write access can't get a commit of theirs taken as the tool's either, since
-  the state line is signed. They can still edit the plan in the body of one of the tool's PRs, which changes what the
-  agent is asked to do there and on the owner's allowance, and reuse a state the tool already signed
-  ([limits](coverage-gaps.md#limits)). A PR stays under the name of whoever opened it.
+  branch name or text says, nor one the write token's login didn't open. With signed records, someone with write
+  access can't get a commit of theirs taken as the tool's, nor change the plan or `Tracks` line of one of its PRs;
+  they can still restore a body the tool signed earlier at the same head ([limits](coverage-gaps.md#limits)). A PR
+  stays under the name of whoever opened it.
 - **PR CI reads use Actions and commit statuses**, so no Checks API permission is required
   ([what review reads](../core/tool-runtime/README.md)).
 - **Tool-run Gradle builds never reuse a daemon.** Every inventory and tool-run wrapper task passes `--no-daemon` (in CI, exported base and working tree), so any daemon it needs is single-use and starts inside the current build's sandbox: a reused daemon keeps the permissions of the sandbox that started it. Agent commands may still start or reuse daemons in the shared `GRADLE_USER_HOME`; tool-run commands never connect to them. The flag is explicit; `GRADLE_OPTS`, `org.gradle.jvmargs` and repository properties are left alone.

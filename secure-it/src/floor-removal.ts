@@ -7,6 +7,7 @@ import { type Floor, FLOORS_PATH, parseFloors } from "@leanish/gate/floors";
 import { isObject } from "@leanish/gate/json";
 import type { Tree } from "@leanish/gate/tree";
 import { safePath } from "@leanish/tool-runtime/local-files";
+import { canonicalJson } from "@leanish/tool-runtime/record-signature";
 
 import type { ChangePlan } from "./plan.ts";
 
@@ -28,8 +29,9 @@ export interface ComputedRemoval {
   readonly notes: ReadonlyArray<string>;
 }
 
-export const floorIdentity = (floor: Floor): string => JSON.stringify({ ...floor,
-  locations: [...floor.locations].sort(), overridePaths: [...floor.overridePaths].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+/** A floor's identity as canonical JSON, whatever order its keys were written in (a plan in a PR body, the floors file). */
+export const floorIdentity = (floor: Floor): string => canonicalJson({ ...floor,
+  locations: [...floor.locations].sort(), overridePaths: [...floor.overridePaths].sort((a, b) => canonicalJson(a).localeCompare(canonicalJson(b))),
   advisories: [...floor.advisories].sort(),
 });
 

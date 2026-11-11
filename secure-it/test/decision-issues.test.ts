@@ -4,10 +4,11 @@ import { GitHubApiError } from "@leanish/agent-runtime/github/github-client";
 import type { GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
 import { FakeIssues } from "@leanish/tool-runtime/test/fake-issues";
 
-import { decisionIssue, EarlyPrs, grantStanding, scopeOf } from "../src/decision-issues.ts";
+import { decisionIssue, EarlyPrs, grantStanding, scopeOf, takenEarlyOf, trackedIssueOf } from "../src/decision-issues.ts";
 import type { IssueRecord } from "../src/issue-model.ts";
 import { ISSUE_LABEL, ISSUE_WRITER, TAKE_EARLY_LABEL } from "../src/issue-text.ts";
 import type { ChangePlan } from "../src/plan.ts";
+import { RULES } from "../src/secure-it.ts";
 
 const REPO = "acme/widget";
 const moves = [{ ecosystem: "npm" as const, name: "lib", from: "1.0.0", to: "1.0.1" }];
@@ -146,5 +147,21 @@ describe("EarlyPrs", () => {
     expect(await early.is(pr(8, "Fixes lib."), plan)).toBe(false);
     expect(await early.is(pr(9, `Tracks #${number}.`), plan)).toBe(false);
     expect(await early.is(pr(10, `Tracks #${number}.`), other)).toBe(false);
+  });
+});
+
+describe("the Tracks line and the PR signature", () => {
+  it("signs every line its reader acts on: bodies read differently never carry the same signed lines", () => {
+    const signedLines = (body: string) => [...body.matchAll(RULES.machineLines!)].map((line) => line[0]);
+    const bodies = [
+      "No line.", "Tracks #1.", "Tracks #2.", "Tracks #1, taken early.", "Text.\nTracks #1.\nMore.", "Tracks #1.\n\nTracks #2.",
+      "Tracks #2.\n\nTracks #1, taken early.", "  Tracks #1.", "Tracks #1.\r\n", "Tracks #01.", "tracks #1.",
+    ];
+    for (const a of bodies) {
+      for (const b of bodies) {
+        const read = (body: string) => JSON.stringify([trackedIssueOf(body), takenEarlyOf(body)]);
+        if (read(a) !== read(b)) expect(signedLines(a), `${JSON.stringify(a)} vs ${JSON.stringify(b)}`).not.toEqual(signedLines(b));
+      }
+    }
   });
 });

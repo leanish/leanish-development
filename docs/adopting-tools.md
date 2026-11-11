@@ -157,7 +157,9 @@ tokens stay out of shell history and command arguments.
 Each tool also needs a signing key, in the service `leanish-<tool>-signing`: 64
 hexadecimal characters from `openssl rand -hex 32`, added the same way. Generate it
 once and use the same value on every machine that runs that tool: a new key leaves
-the tool's open PRs unrecognized.
+the tool's open PRs unrecognized. An installation that sets `records:
+trusted-editors` needs no key: it signs nothing and trusts whoever can edit the
+tools' PRs ([config reference](tool-configuration.md)).
 
 Omit `secrets` in `agent.yaml` to use these names; the
 [config reference](tool-configuration.md) covers overrides. No Keychain item is

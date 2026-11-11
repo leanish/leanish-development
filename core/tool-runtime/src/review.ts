@@ -30,6 +30,7 @@ import { classifyCi, failingCheckNames, onlyCooldownHolds, unreportedRequired } 
 import type { OwnPullRequests, PullRequestState } from "./own-pr.ts";
 import { inspectOwnership } from "./ownership.ts";
 import { closeAndDelete, markReady, ownOpenPullRequests, type PublicationContext, recordState } from "./publication.ts";
+import type { RecordTrust } from "./record-signature.ts";
 
 /** How many times the agent may adapt one PR after a failed CI before the tool gives it up. */
 export const MAX_ADAPTATIONS = 2;
@@ -103,7 +104,9 @@ export interface ReviewContext {
   readonly workingCopy: WorkingCopy;
   readonly logger: Logger;
   readonly repo: string;
-  readonly signingKey: Uint8Array;
+  readonly trust: RecordTrust;
+  /** The login the write token acts as: every PR of the tool's is its. */
+  readonly login: string;
   readonly base: string;
   /** Directories outside the working copy whose paths never reach a PR (see publication-text.ts). */
   readonly localRoots: ReadonlyArray<string>;
@@ -112,7 +115,7 @@ export interface ReviewContext {
 /** Runs one tick over the tool's open PRs in `repo`; one entry per PR. */
 export async function reviewOpenPullRequests(context: ReviewContext, steps: ReviewSteps): Promise<ReviewEntry[]> {
   const entries: ReviewEntry[] = [];
-  for (const pr of await ownOpenPullRequests(context.github, context.rules, context.repo, context.base)) {
+  for (const pr of await ownOpenPullRequests(context.github, context.rules, context.repo, context.base, context.login)) {
     let entry: ReviewEntry;
     try {
       entry = await reviewOne(context, steps, pr);
@@ -131,7 +134,11 @@ async function reviewOne(context: ReviewContext, steps: ReviewSteps, pr: GitHubP
   const result = (outcome: ReviewOutcome, detail?: string): ReviewEntry => ({ number: pr.number, url: pr.url, outcome, detail });
   const publication: PublicationContext = { ...context };
   const ownership = inspectOwnership(publication, pr);
-  if (ownership.kind === "untracked") return result("left-alone", "its body has no valid state for the configured signing key: someone made or rewrote it, or the key changed");
+  if (ownership.kind === "untracked") {
+    return result("left-alone", context.trust.mode === "signed"
+      ? "its body has no state the tool signed for this PR: someone made or edited it, or the key changed"
+      : "its body has no state line: someone made or rewrote it");
+  }
   if (ownership.kind === "pushed-by-someone-else") {
     return result("left-alone", `someone else pushed (${pr.headSha.slice(0, 12)}, the tool published ${ownership.recordedHead.slice(0, 12)}), or the tool stopped right after pushing; in that case close it, and a later run recomputes it`);
   }

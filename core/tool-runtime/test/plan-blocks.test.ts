@@ -129,7 +129,7 @@ describe("plan blocks", () => {
   it("refuses an agent's description carrying plain/compressed plans or a publication state marker", () => {
     expect(() => assertNoPlanMarker(`text ${planBlock({ a: 1 }, true)}`)).toThrow(/reserved plan marker/);
     expect(() => assertNoPlanMarker(`text ${planBlock({ a: 1 })}`)).toThrow(/reserved plan marker/);
-    const forged = withMarker(signedRecord(ownPullRequests("secure-it")), "Fresh agent text", { head: "a".repeat(40), base: "b".repeat(40), adaptations: 0 });
+    const forged = withMarker(signedRecord(ownPullRequests("secure-it")), "Fresh agent text", { head: "a".repeat(40), base: "b".repeat(40), adaptations: 0 }, "secure-it/2026-10-05-x");
     expect(stateOf(forged)).toBeDefined();
     expect(() => assertNoPlanMarker(forged)).toThrow(/reserved state marker/);
     expect(() => assertNoPlanMarker("Fresh description.")).not.toThrow();

@@ -3,15 +3,17 @@
 import { GitHubApiError, MAX_BODY_CHARS, MAX_TITLE_CHARS } from "@leanish/agent-runtime/github/github-client";
 import type { GitHubClient, GitHubHeadChecks, GitHubNewPullRequest, GitHubPullRequest, GitHubRequiredChecks } from "@leanish/agent-runtime/types/clients";
 
-import { type OwnPullRequests, ownPullRequests, type RecordContext, withMarker } from "../src/own-pr.ts";
+import { type OwnPullRequests, ownPullRequests, type PullRequestState, type RecordContext, verifiedStateOf, withMarker } from "../src/own-pr.ts";
 
 export const RULES = ownPullRequests("secure-it");
 
 export const TEST_SIGNING_KEY = Buffer.alloc(32, 7);
+/** The login the tests' write token acts as: the author of every fake PR of the tool's. */
+export const TOOL_LOGIN = "leanish";
 
 /** What the tests sign a PR's state with, in the repository every fake PR is in. */
 export function signedRecord(rules: OwnPullRequests, repo = "leanish/widget"): RecordContext {
-  return { rules, repo, signingKey: TEST_SIGNING_KEY };
+  return { rules, repo, base: "main", login: TOOL_LOGIN, trust: { mode: "signed", key: TEST_SIGNING_KEY } };
 }
 
 export const SIGNED = signedRecord(RULES);
@@ -22,18 +24,28 @@ export const BASE_SHA = "e".repeat(40);
 /** What `InMemoryWorkspace.publishBranch` reports it pushed. */
 export const PUSHED_SHA = "c".repeat(40);
 
-/** An open draft secure-it PR for `OWN_BRANCH` in `leanish/widget`, published at HEAD_SHA on BASE_SHA; override any field. */
+/** `withMarker` with the tests' signed record, for a PR from `branch` (`OWN_BRANCH` by default) into `main`. */
+export function marked(body: string, state: PullRequestState, branch = OWN_BRANCH, record: RecordContext = SIGNED): string {
+  return withMarker(record, body, state, branch);
+}
+
+/**
+ * An open draft secure-it PR for `OWN_BRANCH` in `leanish/widget`, published at HEAD_SHA on BASE_SHA; override any field.
+ * A body signed for `OWN_BRANCH` into `main` (`marked`'s default) is signed again for the PR's own branches, so a test
+ * can name another branch without signing for it; any other body is kept as given. A test about a signature for the
+ * wrong branch builds its PR without this (`{ ...ownPr(), headRef }`).
+ */
 export function ownPr(overrides: Partial<GitHubPullRequest> = {}): GitHubPullRequest {
-  return {
+  const pr: GitHubPullRequest = {
     number: 7,
     nodeId: "PR_node7",
     url: "https://github.com/leanish/widget/pull/7",
     title: "fixing snappy-java",
-    body: withMarker(SIGNED, "Body.", { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }),
+    body: marked("Body.", { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }),
     state: "open",
     merged: false,
     isDraft: true,
-    author: "leanish",
+    author: TOOL_LOGIN,
     labels: [RULES.label],
     baseRef: "main",
     headSha: HEAD_SHA,
@@ -41,6 +53,12 @@ export function ownPr(overrides: Partial<GitHubPullRequest> = {}): GitHubPullReq
     headRepo: "leanish/widget",
     ...overrides,
   };
+  if (pr.headRef === OWN_BRANCH && pr.baseRef === "main") return pr;
+  for (const record of [SIGNED, signedRecord(ownPullRequests("bump-it"))]) {
+    const state = verifiedStateOf(record, { ...pr, headRef: OWN_BRANCH, baseRef: "main" });
+    if (state !== undefined) return { ...pr, body: withMarker({ ...record, base: pr.baseRef }, pr.body, state, pr.headRef) };
+  }
+  return pr;
 }
 
 export const GREEN: GitHubHeadChecks = {

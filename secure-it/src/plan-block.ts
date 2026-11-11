@@ -15,6 +15,7 @@ import { type Ecosystem, ECOSYSTEMS } from "@leanish/gate/versions";
 import { MARKER_ROOM, stateOf } from "@leanish/tool-runtime/own-pr";
 import { defused, planPayload, planSection as sectionOf, TooLargeError, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
 import { literal } from "@leanish/tool-runtime/pr-text";
+import { canonicalJson } from "@leanish/tool-runtime/record-signature";
 
 import { advisoryNotice, EVIDENCE_LEFT_OUT, tableRowCount } from "./advisory-notice.ts";
 import { floorIdentity, validRemoval } from "./floor-removal.ts";
@@ -29,17 +30,21 @@ export const PUBLISHED_HELD_BODY_TARGET = MAX_BODY_CHARS - MARKER_ROOM;
 const WARNING_START = "<!-- secure-it cooldown warning -->";
 const WARNING_END = "<!-- /secure-it cooldown warning -->";
 
-/** Identity includes version targets, or exact removed floor records and the jointly resolved npm bytes. */
+/**
+ * Identity includes version targets, or exact removed floor records and the jointly resolved npm bytes. As canonical
+ * JSON, whatever order a body's keys come in: the signature on a PR's state reads its plan the same way, so a plan it
+ * vouches for is never a different plan here.
+ */
 export function planDigest(plan: ChangePlan): string {
   const moves = [...plan.moves]
     .map((move) => ({ ...move, locations: [...move.locations].sort(), advisories: [...move.advisories].sort() }))
-    .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+    .sort((a, b) => canonicalJson(a).localeCompare(canonicalJson(b)));
   const removal = plan.floorRemoval;
-  const identity = removal === undefined ? { moves, requiredNpm: [...plan.requiredNpm ?? []].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))) } : {
+  const identity = removal === undefined ? { moves, requiredNpm: [...plan.requiredNpm ?? []].sort((a, b) => canonicalJson(a).localeCompare(canonicalJson(b))) } : {
     floors: removal.floors.map(floorIdentity).sort(),
     files: [...removal.files].sort((a, b) => a.path.localeCompare(b.path)),
   };
-  return createHash("sha256").update(JSON.stringify(identity)).digest("hex");
+  return createHash("sha256").update(canonicalJson(identity)).digest("hex");
 }
 
 /** The section secure-it adds to the agent's description: the moves, and the plan for later runs. */

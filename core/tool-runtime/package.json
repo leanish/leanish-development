@@ -49,6 +49,7 @@
     "./ownership": "./src/ownership.ts",
     "./plan-blocks": "./src/plan-blocks.ts",
     "./pr-text": "./src/pr-text.ts",
+    "./record-signature": "./src/record-signature.ts",
     "./publication": "./src/publication.ts",
     "./publication-text": "./src/publication-text.ts",
     "./reconcile": "./src/reconcile.ts",

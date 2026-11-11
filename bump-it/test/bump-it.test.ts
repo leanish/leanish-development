@@ -20,11 +20,13 @@ import { assertAgentWorkspace, type ToolRunContext } from "@leanish/tool-runtime
 import { retargetRepository } from "@leanish/tool-runtime/test/retarget-repository";
 import { parseToolConfig } from "@leanish/tool-runtime/config";
 import { branchFor, stateOf, withMarker } from "@leanish/tool-runtime/own-pr";
-import { BASE_SHA, FakeGitHub, GREEN, HEAD_SHA, ownPr, PUSHED_SHA, RED, signedRecord, TEST_SIGNING_KEY } from "@leanish/tool-runtime/test/fake-github";
+import { BASE_SHA, FakeGitHub, GREEN, HEAD_SHA, OWN_BRANCH, ownPr, PUSHED_SHA, RED, signedRecord, TOOL_LOGIN } from "@leanish/tool-runtime/test/fake-github";
 import { FakeIssues } from "@leanish/tool-runtime/test/fake-issues";
 import { bumpIt, type BumpItDeps, RULES } from "../src/bump-it.ts";
 
 const SIGNED = signedRecord(RULES);
+/** A bump-it body, signed for the fake PR branch; `ownPr` signs it again for the branch the PR names. */
+const marked = (body: string, state: Parameters<typeof withMarker>[2]) => withMarker(SIGNED, body, state, OWN_BRANCH);
 import { changesBetween, type NpmResult } from "../src/npm-compute.ts";
 import { NpmGraph } from "../src/npm-graph.ts";
 import { type BumpPlan, planFor, planOf, planSection } from "../src/plan.ts";
@@ -65,7 +67,7 @@ async function prFor(unit: Unit, overrides: Partial<GitHubPullRequest> = {}): Pr
   const planned = await planFor(unit, npmOf(unit), async () => "1".repeat(40));
   const plan = unit.moves.some((move) => move.mechanism === "gradle-wrapper")
     ? { ...planned, wrapperFiles: wrapperArtifacts().map(({ bytes: _bytes, ...file }) => file) } : planned;
-  return ownPr({ headRef: branchFor(RULES, new Date("2026-10-05T00:00:00Z"), unit.topic), labels: [RULES.label], body: withMarker(SIGNED, `Body.\n\n${planSection(plan)}`, { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }), ...overrides });
+  return ownPr({ headRef: branchFor(RULES, new Date("2026-10-05T00:00:00Z"), unit.topic), labels: [RULES.label], body: marked(`Body.\n\n${planSection(plan)}`, { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }), ...overrides });
 }
 function harness(options: { bumps?: BumpCandidate[]; prs?: GitHubPullRequest[]; baseSha?: string; problems?: string[]; incomplete?: string[]; candidateNotes?: string[]; deferred?: string[]; refuse?: boolean; npm?: (unit: Unit) => Promise<NpmResult>; links?: string[] } = {}) {
   const github = new FakeGitHub(...options.prs ?? []);
@@ -91,7 +93,7 @@ function harness(options: { bumps?: BumpCandidate[]; prs?: GitHubPullRequest[]; 
     return originalPrepare(workingCopy, args);
   };
   for (const pr of options.prs ?? []) workspace.setRemoteHead(pr.headRef, pr.headSha);
-  const context: ToolRunContext = { config: CONFIG, repo: { repo: REPO, branch: undefined }, base: "main", github, issues: new FakeIssues(), workspace, workingCopy: wc, now: NOW, releaseAgeDays: 7, releaseAgeExclude: [], readToken: "read-token", signingKey: TEST_SIGNING_KEY, fetch: globalThis.fetch, isolation: { readDenied: [], env: {}, buildCacheRoot: "/tmp/bump-it-cache" }, logger: new ConsoleLogger({ minLevel: "error" }), agent: (async (call: { input: Record<string, unknown> }) => { agentCalls.push(call); return options.refuse ? { outcome: "cannot-apply", summary: "can't migrate" } : { outcome: "applied", summary: "updated", publication: { title: "upgrading lib", body: "Adapts to the upgrade.", commitMessage: "upgrading lib" } }; }) as ToolRunContext["agent"] };
+  const context: ToolRunContext = { config: CONFIG, repo: { repo: REPO, branch: undefined }, base: "main", github, issues: new FakeIssues(), workspace, workingCopy: wc, now: NOW, releaseAgeDays: 7, releaseAgeExclude: [], readToken: "read-token", trust: SIGNED.trust, login: TOOL_LOGIN, fetch: globalThis.fetch, isolation: { readDenied: [], env: {}, buildCacheRoot: "/tmp/bump-it-cache" }, logger: new ConsoleLogger({ minLevel: "error" }), agent: (async (call: { input: Record<string, unknown> }) => { agentCalls.push(call); return options.refuse ? { outcome: "cannot-apply", summary: "can't migrate" } : { outcome: "applied", summary: "updated", publication: { title: "upgrading lib", body: "Adapts to the upgrade.", commitMessage: "upgrading lib" } }; }) as ToolRunContext["agent"] };
   const deps: BumpItDeps = {
     publicationParent: async (_wc, prepared) => prepared,
     fileState: async (_wc, path) => ({ path, sha256: null, executable: false, index: "" }),
@@ -178,7 +180,7 @@ describe("bump-it run", () => {
       });
       const { workingCopy: wc, git, oldHead, oldBase, baseSha } = fixture;
       const previous = await planFor(unit, { files: new Map(), changes: [], notes: [] }, async () => "1".repeat(40));
-      const pr = ownPr({ headRef: branch, labels: [RULES.label], headSha: oldHead, body: withMarker(SIGNED, planSection(previous), { head: oldHead, base: oldBase, adaptations: 0 }) });
+      const pr = ownPr({ headRef: branch, labels: [RULES.label], headSha: oldHead, body: marked(planSection(previous), { head: oldHead, base: oldBase, adaptations: 0 }) });
       const h = harness({ prs: [pr], bumps: [bump] });
       h.workspace.prepareBranch = fixture.workspace.prepareBranch.bind(fixture.workspace);
       h.workspace.publishBranch = fixture.publishBranch;
@@ -243,7 +245,7 @@ describe("bump-it run", () => {
         { [path]: workflow("setup", "1".repeat(40), "v1.1.0") }, { [path]: workflow("set up the toolchain", "a".repeat(40), "v1.0.0") });
       const { workingCopy: wc, oldHead, oldBase } = fixture;
       const previous = await planFor(unit, { files: new Map(), changes: [], notes: [] }, async () => "1".repeat(40));
-      const pr = ownPr({ headRef: branch, labels: [RULES.label], headSha: oldHead, body: withMarker(SIGNED, planSection(previous), { head: oldHead, base: oldBase, adaptations: 0 }) });
+      const pr = ownPr({ headRef: branch, labels: [RULES.label], headSha: oldHead, body: marked(planSection(previous), { head: oldHead, base: oldBase, adaptations: 0 }) });
       const h = harness({ prs: [pr], bumps: [bump] });
       h.workspace.prepareBranch = fixture.workspace.prepareBranch.bind(fixture.workspace);
       h.workspace.publishBranch = fixture.publishBranch;
@@ -291,7 +293,7 @@ describe("bump-it run", () => {
       }, command === "review");
       const { workingCopy: wc, baseSha, oldBase, oldHead, git } = fixture;
       const pr = await prFor(major({ ...bump, major: { version: "v0.5.2", line: "0.5" } }), {
-        headRef: branch, headSha: oldHead, body: withMarker(SIGNED, planSection(await planFor(major({ ...bump, major: { version: "v0.5.2", line: "0.5" } }), { files: new Map(), changes: [], notes: [] }, async () => "b".repeat(40))), { head: oldHead, base: oldBase, adaptations: 0 }),
+        headRef: branch, headSha: oldHead, body: marked(planSection(await planFor(major({ ...bump, major: { version: "v0.5.2", line: "0.5" } }), { files: new Map(), changes: [], notes: [] }, async () => "b".repeat(40))), { head: oldHead, base: oldBase, adaptations: 0 }),
       });
       const h = harness({ prs: [pr], bumps: [bump] });
       h.workspace.prepareBranch = fixture.workspace.prepareBranch.bind(fixture.workspace);
@@ -377,7 +379,7 @@ describe("bump-it run", () => {
       const fixture = await retargetRepository(root, REPO, branch, baseFiles, { [path]: workflow("b".repeat(40), "v0.5.2"), "README.md": "base docs\n" }, false);
       const { workingCopy: wc, oldBase, oldHead } = fixture;
       const pr = await prFor(major({ ...bump, major: { version: "v0.5.2", line: "0.5" } }), {
-        headRef: branch, headSha: oldHead, body: withMarker(SIGNED, planSection(await planFor(major({ ...bump, major: { version: "v0.5.2", line: "0.5" } }), { files: new Map(), changes: [], notes: [] }, async () => "b".repeat(40))), { head: oldHead, base: oldBase, adaptations: 0 }),
+        headRef: branch, headSha: oldHead, body: marked(planSection(await planFor(major({ ...bump, major: { version: "v0.5.2", line: "0.5" } }), { files: new Map(), changes: [], notes: [] }, async () => "b".repeat(40))), { head: oldHead, base: oldBase, adaptations: 0 }),
       });
       const h = harness({ prs: [pr], bumps: [bump] });
       h.workspace.prepareBranch = fixture.workspace.prepareBranch.bind(fixture.workspace);
@@ -409,7 +411,7 @@ describe("bump-it run", () => {
       const fixture = await retargetRepository(root, REPO, branch, baseFiles, { [path]: workflow("b".repeat(40), "v0.5.2"), "README.md": "base docs\n" }, false);
       const { workingCopy: wc, oldBase, oldHead } = fixture;
       const pr = await prFor(major({ ...bump, major: { version: "v0.5.2", line: "0.5" } }), {
-        headRef: branch, headSha: oldHead, body: withMarker(SIGNED, planSection(await planFor(major({ ...bump, major: { version: "v0.5.2", line: "0.5" } }), { files: new Map(), changes: [], notes: [] }, async () => "b".repeat(40))), { head: oldHead, base: oldBase, adaptations: 0 }),
+        headRef: branch, headSha: oldHead, body: marked(planSection(await planFor(major({ ...bump, major: { version: "v0.5.2", line: "0.5" } }), { files: new Map(), changes: [], notes: [] }, async () => "b".repeat(40))), { head: oldHead, base: oldBase, adaptations: 0 }),
       });
       const h = harness({ prs: [pr], bumps: [bump] });
       h.workspace.prepareBranch = fixture.workspace.prepareBranch.bind(fixture.workspace);
@@ -1100,7 +1102,7 @@ describe("bump-it review", () => {
     const changes = changesBetween("package-lock.json", new NpmGraph(lockfiles.before), new NpmGraph(lockfiles.after));
     const unit = major();
     const plan = await planFor(unit, { files: new Map([["package-lock.json", after], ["package.json", manifest]]), changes, notes: [] }, async () => "1".repeat(40));
-    const body = withMarker(SIGNED, `Body.\n\n${planSection(plan)}`, { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 });
+    const body = marked(`Body.\n\n${planSection(plan)}`, { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 });
     expect(body).not.toContain("| moved |");
     const adaptOn = async (baseLockfile: string) => {
       const h = harness({ prs: [ownPr({ headRef: branchFor(RULES, new Date("2026-10-05T00:00:00Z"), unit.topic), labels: [RULES.label], body })] });
