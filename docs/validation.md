@@ -3,6 +3,7 @@
 Each section is dated with when its results were observed. The evidence supplements the automated
 tests; it doesn't replace verification of a new plan or its current-head CI. It uses PAT mode (GitHub
 App mode is deferred). Where an agent ran, it was Codex, except in the section on Claude Code.
+Two of the fixture repositories are private; they appear as private-npm and private-gradle.
 
 ## Gradle wrapper generation (E2) — 2026-10-07
 
@@ -583,7 +584,7 @@ every call, which doubled real-git test suites in the sandbox, and it refused `-
   - Every PR was green except fast-uri 3.1.9, held by the cooldown until 2026-10-26 as planned.
   - The longest agent run was 173 s. On 0.7.3's candidate, one took 384 s; the rest were comparable.
 - **Passes on v0.7.4**: two regular passes of both tools, 28 commands each.
-  - Failures: secure-it on kryptovero in both, pre-existing since 2026-10-21 (a fix that brings jackson 3.2.4,
+  - Failures: secure-it on private-gradle in both, pre-existing since 2026-10-21 (a fix that brings jackson 3.2.4,
     younger than the wait). The second pass also had one Maven Central 502 on sqs-codec; a rerun found nothing to fix.
   - The agent had no work on leanish-development in either pass: fast-uri's PR was already open, and bump-it's unit
     needed no agent. #215 was then closed by hand so secure-it would plan it again (#225). The agent ran this
@@ -623,9 +624,9 @@ anything is published.
   2026-10-26 as planned; one TEST_gradle check was rerun after a plugins.gradle.org timeout. Haiku ×2 and Sol,
   unprimed: documentation only. #230 took Sol's wording for the rollback and body-size notes.
 - **rc.4 (`d807fe5`)**: the CHANGELOG only. Astra, on Sol's thread: no findings.
-- **Passes on v0.7.5**: two regular passes of both tools, 28 commands each, one failure each: secure-it on kryptovero.
+- **Passes on v0.7.5**: two regular passes of both tools, 28 commands each, one failure each: secure-it on private-gradle.
   FasterXML's own repository advisories (2026-10-20, not yet in GitHub's database or OSV) affect jackson-core and
-  jackson-databind 3.2.3, GHSA-m8xf-2cr7-77ph critical among them, fixed in 3.2.4 (published 2026-10-18). kryptovero
+  jackson-databind 3.2.3, GHSA-m8xf-2cr7-77ph critical among them, fixed in 3.2.4 (published 2026-10-18). private-gradle
   gets both through `jackson-dataformat-yaml:3.2.3`, whose 3.2.4 is still under the wait, so secure-it planned a floor
   on 3.2.4, the young fix the version rule allows. The agent moved `jackson-dataformat-yaml` and added `jackson-bom`
   3.2.4 instead, and the gate refused both: young, and no fix themselves. The first pass also published the repin PRs;
@@ -637,7 +638,7 @@ Known limitations, for 0.7.6:
 - A hand-typed malformed `:br` block before the plan hides the plan.
 - The early body check doesn't count the state markers (about 210 characters) added at publication, as before.
 - secure-it's agent can replace a planned Gradle floor with a parent move. The gate refuses it, so the fix waits for
-  the parent to age (kryptovero, above).
+  the parent to age (private-gradle, above).
 - The `git` guard doesn't recognise a push under an alias or one whose `receivePack` runs another command.
 
 What each step added, with rough API-equivalent cost:
@@ -719,9 +720,9 @@ Wrong or missing data in the notice's edge cases became a known limit.
   nothing. Astra confirmed the thirteen blockers from rc.4 to rc.18 were closed, with no other route to them.
 - **Passes on v0.8.0**: the six fixture repins (`fixture-repin`) merged green.
   - Pass 1 (2026-10-25 21:44): 28 commands, no errors. bump-it opened the repins leanish-skills#40,
-    java-conventions#100, dtv#55, leanish-development#259, leanish-development-incubator#36, kryptovero#19 and
-    sqs-codec#176. It also opened updates dtv#54, leanish-development#258, leanish-development-incubator#35 and
-    sqs-codec#175 (zstd-jni). On kryptovero, secure-it reported the jackson advisories behind 0.7.5's failures as
+    java-conventions#100, private-npm#55, leanish-development#259, leanish-development-incubator#36, private-gradle#19 and
+    sqs-codec#176. It also opened updates private-npm#54, leanish-development#258, leanish-development-incubator#35 and
+    sqs-codec#175 (zstd-jni). On private-gradle, secure-it reported the jackson advisories behind 0.7.5's failures as
     repository-only and proposed no fix.
   - Pass 2 (23:39): 28 commands, no errors. It reviewed the four open update PRs, kept them current and published
     nothing new.
@@ -788,11 +789,11 @@ plain `rm -rf` commands, and Sol's final review accepted that `clean` can follow
   #264's leak was closed.
 - **Passes on v0.8.1**: the six fixture repins (`fixture-repin`) merged green.
   - Pass 1 (2026-10-26 19:52Z): 28 commands, no errors. bump-it now carries the repin inside each repository's
-    routine PR. The repin-only ones merged: leanish-development#276, leanish-skills#41 and dtv#57 (dtv's CI is off at
+    routine PR. The repin-only ones merged: leanish-development#276, leanish-skills#41 and private-npm#57 (private-npm's CI is off at
     the owner's request). The ones that also move other dependencies merged on the owner's OK: sqs-codec#178 and
     java-conventions#101 once green (the latter's supply-chain check first failed on a POM lookup with HTTP 429 and
-    passed on a rerun); leanish-development-incubator#37 and kryptovero#20, whose CI is off, after local checks
-    passed (the incubator's workspace checks and CDK synthesis, kryptovero's Gradle build; the incubator's LocalStack
+    passed on a rerun); leanish-development-incubator#37 and private-gradle#20, whose CI is off, after local checks
+    passed (the incubator's workspace checks and CDK synthesis, private-gradle's Gradle build; the incubator's LocalStack
     integration job wasn't run).
   - Pass 2 (20:55Z): 28 commands, one failed: bump-it's routine run on sqs-codec stopped when the Claude CLI hit
     its session limit. Its bump-it half rerun after the reset (22:24Z): 14 commands, no errors. It opened
@@ -842,8 +843,8 @@ it was added. Haiku's points on #278, #279 and #284 were dismissed with Sol's ag
 - **Passes on v0.8.2**: the six fixture repins (`fixture-repin`) merged green.
   - Pass 1 (2026-10-27 01:55Z): 28 commands, no errors. Its seven PRs only repin the released workflow:
     leanish-development#287, java-conventions#102, sqs-codec#180 and leanish-skills#42 merged once green;
-    leanish-development-incubator#39, dtv#58 and kryptovero#21, whose CI is off, merged as they were.
-  - Pass 2 (02:56Z): 28 commands, one failed: secure-it on kryptovero hit a DNS error (`ENOTFOUND
+    leanish-development-incubator#39, private-npm#58 and private-gradle#21, whose CI is off, merged as they were.
+  - Pass 2 (02:56Z): 28 commands, one failed: secure-it on private-gradle hit a DNS error (`ENOTFOUND
     plugins.gradle.org`). That command alone was rerun at 03:23Z: nothing to fix. The pass opened
     leanish-development-incubator#40 (aws-cdk 2.1145.0 to 2.1146.0, a devDependency), merged.
 
@@ -906,10 +907,10 @@ became an amendment Sol agreed to: such a unit is reported under `errors`.
   on every open fixture PR; the adapters are unchanged since rc.1.
   Sol, unprimed on a fresh clone and label, found nothing; Astra, on its thread, found nothing.
 - **Passes on v0.9.0**: the six fixture repins (`fixture-repin`) merged green.
-  - Pass 1 (2026-10-27 18:29Z): 28 commands, two failed on infrastructure: secure-it on dtv (`ENOTFOUND
-    registry.npmjs.org`) and bump-it on kryptovero (GitHub's advisories API answered HTTP 500 for one unit). Both were
+  - Pass 1 (2026-10-27 18:29Z): 28 commands, two failed on infrastructure: secure-it on private-npm (`ENOTFOUND
+    registry.npmjs.org`) and bump-it on private-gradle (GitHub's advisories API answered HTTP 500 for one unit). Both were
     rerun at 18:31Z, clean. Its seven repins came as PRs of their own: leanish-development#306, java-conventions#103,
-    sqs-codec#181 and leanish-skills#43 merged once green; leanish-development-incubator#42, dtv#59 and kryptovero#22,
+    sqs-codec#181 and leanish-skills#43 merged once green; leanish-development-incubator#42, private-npm#59 and private-gradle#22,
     whose CI is off, merged as they were. Two dependency refreshes (leanish-development#305,
     leanish-development-incubator#41) are left for the owner.
   - Pass 2 (2026-10-27 19:32Z): 28 commands, each exited 0 and none reported `errors` (only
@@ -991,9 +992,9 @@ one on #316 and three on #317.
   - The six fixture repins (`fixture-repin`) merged green.
   - Pass 1 (2026-10-28, ending 21:03Z): 28 commands, none failed, none reported `errors`. As a patch, the repin came inside
     each adopter's routine PR.
-    - Three moved only the pin and merged: leanish-skills#45 and java-conventions#104 once green, and kryptovero#22
+    - Three moved only the pin and merged: leanish-skills#45 and java-conventions#104 once green, and private-gradle#22
       as it was, since its CI is off.
-    - Four also refresh dependencies and are left for the owner: sqs-codec#182, leanish-development#321, dtv#60 and
+    - Four also refresh dependencies and are left for the owner: sqs-codec#182, leanish-development#321, private-npm#60 and
       leanish-development-incubator#43. leanish-development#321 shows the `ajv` re-hoist #305 had misreported, now as
       moves.
   - Pass 2 (2026-10-28 22:05Z): 28 commands, each exited 0, and none reported `errors`. It opened nothing new and kept

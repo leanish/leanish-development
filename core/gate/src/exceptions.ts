@@ -10,8 +10,8 @@
  *   for fixes the gate can't prove by itself.
  * - `identity`: an npm publisher identity break that was reviewed.
  *
- * Malware can't be excepted. The format is the one leanish-development's and
- * dtv's gates used, plus an optional `ecosystem` (any, when absent).
+ * Malware can't be excepted. The format is the one the repositories' earlier gates
+ * used, plus an optional `ecosystem` (any, when absent).
  */
 import type { Finding } from "./findings.ts";
 import type { Snapshot } from "./snapshot.ts";

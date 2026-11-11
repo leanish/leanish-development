@@ -6,7 +6,7 @@ const HOME = "/Users/dev";
 const VALID = `
 repos:
   - repo: leanish/sqs-codec
-  - repo: leanish/dtv
+  - repo: acme/widget
     branch: main
 agent: { codingAgent: codex, model: sol, effort: medium }
 secrets: { write: leanish-secure-it-github, read: leanish-secure-it-github-read }
@@ -53,7 +53,7 @@ describe("tool config", () => {
       tool: "secure-it",
       repos: [
         { repo: "leanish/sqs-codec", branch: undefined },
-        { repo: "leanish/dtv", branch: "main" },
+        { repo: "acme/widget", branch: "main" },
       ],
       agent: { codingAgent: "codex", model: "sol", effort: "medium" },
       secrets: { write: "leanish-secure-it-github", read: "leanish-secure-it-github-read", signing: "leanish-secure-it-signing" },
@@ -77,7 +77,7 @@ describe("tool config", () => {
     const failing: Array<[string, string]> = [
       [VALID.replace("readDeny:", "readDenny:"), "unknown field(s): readDenny"],
       [VALID.replace("leanish/sqs-codec", "../sqs-codec"), "repository id '../sqs-codec' isn't owner/slug"],
-      [VALID.replace("leanish/dtv", "leanish/sqs-codec"), "lists leanish/sqs-codec twice"],
+      [VALID.replace("acme/widget", "leanish/sqs-codec"), "lists leanish/sqs-codec twice"],
       [VALID.replace("codingAgent: codex", "codingAgent: copilot"), "must be one of codex, claude-code; got 'copilot'"],
       [VALID.replace("read: leanish-secure-it-github-read", "read: leanish-secure-it-github"), "must be different items"],
       [VALID.replace("[~/dev/private, /Volumes/vault]", "[dev/private]"), "readDeny[0] must be an absolute path"],

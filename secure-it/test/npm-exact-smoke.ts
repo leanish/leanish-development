@@ -11,7 +11,7 @@ import { npmWindowFor } from "../src/npm-window.ts";
 import { planFor } from "../src/plan.ts";
 
 const sources = process.argv.slice(2);
-if (sources.length === 0) throw new Error("Usage: node secure-it/test/npm-exact-smoke.ts <sc-repro> <dtv-repro> (manifest/lock directories only)");
+if (sources.length === 0) throw new Error("Usage: node secure-it/test/npm-exact-smoke.ts <sc-repro> <direct-vite-repro> (manifest/lock directories only)");
 const npm = await runProcess("npm", ["--version"]);
 if (npm.code !== 0) throw new Error(npm.stderr);
 console.log(JSON.stringify({ npm: npm.stdout.trim(), expected: "11.19.1", target: "vite@8.3.3" }));

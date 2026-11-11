@@ -1,7 +1,7 @@
 Run manually on the weekly PATH with npm 11.19.1 and registry DNS:
 
 ```sh
-PATH="/opt/homebrew/bin:$PATH" node secure-it/test/npm-exact-smoke.ts /path/to/sc-repro /path/to/dtv-repro
+PATH="/opt/homebrew/bin:$PATH" node secure-it/test/npm-exact-smoke.ts /path/to/sc-repro /path/to/direct-vite-repro
 ```
 
 Use the manifest/lock-only base fixtures from the Vite incident (8.3.2 locked).
