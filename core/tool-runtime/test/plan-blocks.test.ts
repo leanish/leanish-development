@@ -98,6 +98,15 @@ describe("plan blocks", () => {
     expect(planPayload(planBlock({ a: "é" }, true))).toEqual({ a: "é" });
   });
 
+  it("reads no plan nested deeper than 64 levels, counting only brackets outside strings", () => {
+    const nested = (depth: number) => JSON.parse(`${"[".repeat(depth)}${"]".repeat(depth)}`) as unknown;
+    expect(planPayload(planBlock(nested(64)))).toEqual(nested(64));
+    expect(planPayload(planBlock(nested(65)))).toBeUndefined();
+    expect(planPayload(planBlock(nested(65), true))).toBeUndefined();
+    const brackets = { note: `"\\${"[{".repeat(100)}` };
+    expect(planPayload(planBlock(brackets))).toEqual(brackets);
+  });
+
   it.each(["<!-- leanish:plan -->", "<!-- leanish:plan:BR AAAA -->", "<!-- leanish:plan xx! -->", "<!-- leanish:plan xx> -->"])(
     "passes over a stray %s before the real block, as releases before compressed blocks do",
     (stray) => {

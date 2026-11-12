@@ -104,9 +104,15 @@ export function assertNoPlanMarker(body: string): void {
 }
 
 /**
+ * Far deeper than any plan the tools write. Signing, digests and identities walk a plan recursively, so a block someone
+ * nested past the stack must never be read as a plan.
+ */
+const PLAN_DEPTH_LIMIT = 64;
+
+/**
  * The payload of `body`'s first well-formed block, as releases before compressed blocks read it: other text starting
  * with the reserved prefix is passed over. Undefined when there's none, or when that block's payload doesn't decode
- * (bad data, or a plan over the size limit); a later block never stands in for it.
+ * (bad data, a plan over the size limit, or nested deeper than PLAN_DEPTH_LIMIT); a later block never stands in for it.
  */
 export function planPayload(body: string): unknown {
   const found = firstBlock(body);
@@ -116,10 +122,32 @@ export function planPayload(body: string): unknown {
     // maxOutputLength stops decompression at the limit, so a small tampered block can't expand without bound.
     const json = found.compressed ? brotliDecompressSync(data, { maxOutputLength: PLAN_BYTE_LIMIT }) : data;
     if (json.length > PLAN_BYTE_LIMIT) return undefined;
-    return JSON.parse(json.toString("utf8")) as unknown;
+    const text = json.toString("utf8");
+    return nestingDepth(text) > PLAN_DEPTH_LIMIT ? undefined : JSON.parse(text) as unknown;
   } catch {
     return undefined;
   }
+}
+
+/** How deep a JSON text's arrays and objects nest, counted without recursion; brackets inside strings don't count. */
+function nestingDepth(json: string): number {
+  let depth = 0;
+  let deepest = 0;
+  let inString = false;
+  for (let i = 0; i < json.length; i++) {
+    const char = json[i];
+    if (inString) {
+      if (char === "\\") i++;
+      else if (char === "\"") inString = false;
+    } else if (char === "\"") {
+      inString = true;
+    } else if (char === "[" || char === "{") {
+      deepest = Math.max(deepest, ++depth);
+    } else if (char === "]" || char === "}") {
+      depth--;
+    }
+  }
+  return deepest;
 }
 
 /** A body's first well-formed block, of a format this release reads. */

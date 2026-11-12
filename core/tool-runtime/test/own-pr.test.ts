@@ -153,7 +153,17 @@ describe("own PRs", () => {
         const edited = body.replace(planBlock({ kind: "routine", moves: ["a"] }), nested);
         expect(edited).not.toBe(body);
         expect(verifiedStateOf(SIGNED, { ...pr, body: edited })).toBeUndefined();
+        // It isn't read as a plan at all, so writing the body back walks nothing deep either.
+        expect(planPayload(edited)).toBeUndefined();
+        for (const record of [SIGNED, TRUSTING]) expect(planPayload(withMarker(record, edited, state, OWN_BRANCH))).toBeUndefined();
       }
+    });
+
+    // A multiline `$` matches before `\r` as before `\n`, so the Tracks line reads the same either way.
+    it("keeps verifying a body someone saved in GitHub's web editor, which stores CRLF", () => {
+      const crlf = body.replaceAll("\n", "\r\n");
+      expect(verifiedStateOf(SIGNED, { ...pr, body: crlf })).toEqual(state);
+      expect(verifiedStateOf(SIGNED, { ...pr, body: crlf.replace("Tracks #3.", "Tracks #4.") })).toBeUndefined();
     });
 
     it("verifies CRLF, Unicode and compressed plans as written", () => {
