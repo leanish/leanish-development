@@ -83,9 +83,9 @@ decision carries on as above, except one a person pushed to: the run leaves it a
 dismiss findings after such a closing, reopen the issue and close it by hand. Automation using a person's token closes
 as that person, so its closing does dismiss ([known limitation](../docs/coverage-gaps.md#limits)).
 
-Every issue says so before its findings, and a run comments once on each closing it didn't make, after its issues are
-in line. For a person's closing it lists the findings dismissed, says the gate and any open PR are unaffected, and that
-reopening the issue undoes this dismissal. For any other closing it says it isn't a dismissal, names the issues that
+Every open issue says so before its findings, and a run comments once on each closing it didn't make, after its issues
+are in line. For a person's closing it lists the findings dismissed, says this doesn't change what the gate checks or
+close an open PR, and that reopening the issue undoes this dismissal. For any other closing it says it isn't a dismissal, names the issues that
 track the findings now, if any, and how to dismiss them. Reopening an issue and closing it again gets a new comment. The
 comment goes before the record that it was made, so a failure between the two never skips it; one that fails is noted
 in the report and tried again on the next run. If the comment is made but not recorded (its answer is lost, or the
