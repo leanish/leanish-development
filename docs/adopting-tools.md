@@ -159,7 +159,7 @@ hexadecimal characters from `openssl rand -hex 32`, added the same way. Generate
 once and use the same value on every machine that runs that tool: a new key leaves
 the tool's open PRs unrecognized. An installation that sets `records:
 trusted-editors` needs no key: it signs nothing and trusts whoever can edit the
-tools' PRs ([config reference](tool-configuration.md)).
+tools' PRs and secure-it's issues ([config reference](tool-configuration.md)).
 
 Omit `secrets` in `agent.yaml` to use these names; the
 [config reference](tool-configuration.md) covers overrides. No Keychain item is
