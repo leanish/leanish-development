@@ -49,8 +49,9 @@ their separate JSONL outcome/summary contract.
    token in chat, read Keychain values, put a token in a file/argument, or inspect
    terminal history.** If a token is pasted, do not echo, store or use it; tell
    the person to revoke it immediately and create a replacement privately. The
-   result's `signingKey` is the same kind of secret, handled the same way: the person
-   generates it once and reuses it, in their own Terminal.
+   result's `signingKey`, when records are signed (the default), is the same kind of
+   secret, handled the same way: the person generates it once and reuses it, in their
+   own Terminal. With `records: trusted-editors` there is none.
 5. Run `node core/setup/src/cli.ts verify-tokens <tool> --owner <owner>` after the
    person reports enrollment complete. Only this process may read the configured
    Keychain items internally. A failed permission blocks. An exit-0 result can

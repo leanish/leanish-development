@@ -1,7 +1,7 @@
 /**
  * The command around one run of a tool: `<tool> run|review <owner/repo>
  * [--config <file>]`. It reads the config (the repository must be listed),
- * the two tokens and the signing key from the config's resolved per-tool
+ * the two tokens and, when records are signed, the signing key from the config's resolved per-tool
  * Keychain services (defaults or explicit overrides; the write one for the
  * tool's own GitHub calls, clone and push; the read-only one, the only
  * credential the agent's commands get), syncs the working copy, wires the isolated coding
@@ -42,6 +42,7 @@ import { type CodingAgent, defaultConfigPath, parseToolConfig, repoOf, type Tool
 import { keepingExceptions } from "./exception-cleanup.ts";
 import { DEFAULT_MODEL_PRICES } from "./model-prices.ts";
 import type { ToolName } from "./own-pr.ts";
+import type { RecordTrust } from "./record-signature.ts";
 import { GitHubRequests } from "./github-requests.ts";
 import { changedSince, fileState, type FileState, git } from "./git-copies.ts";
 import { runProcess } from "@leanish/gate/process";
@@ -70,8 +71,10 @@ export interface ToolRunContext {
   readonly releaseAgeExclude: ReadonlyArray<string>;
   /** The agent's read-only token: for the gate's own GitHub reads (advisories, actions), never for writes. */
   readonly readToken: string;
-  /** Signs the state in the tool's PRs; never handed to the agent or to anything sandboxed. */
-  readonly signingKey: Uint8Array;
+  /** How the tool's records are trusted; a signing key is never handed to the agent or to anything sandboxed. */
+  readonly trust: RecordTrust;
+  /** The login the write token acts as, read once per command: every PR of the tool's is its. */
+  readonly login: string;
   /** How the agent is isolated; `runSandboxed` runs repository code the same way. */
   readonly isolation: IsolationPolicy;
   /** Runs a skill with write access and the read-only token; restoredFiles declares dependency restores to its guard only. */
@@ -150,7 +153,11 @@ export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray
     const write = await m.secrets.get(config.secrets.write);
     const read = await m.secrets.get(config.secrets.read);
     if (write === read) throw new Error(`${config.secrets.write} and ${config.secrets.read} hold the same token: the agent would get the write one`);
-    const signingKey = signingKeyFrom(await m.secrets.get(config.secrets.signing), config.secrets.signing);
+    // Only a signed tool reads the key, and a signed tool without a valid one stops here: it never falls back to
+    // trusting editors.
+    const trust: RecordTrust = config.records === "signed"
+      ? { mode: "signed", key: signingKeyFrom(await m.secrets.get(config.secrets.signing), config.secrets.signing) }
+      : { mode: "trusted-editors" };
     // The sandbox may write inside the cache but can't create it or its parents. The agent's runner creates its roots
     // before a call, but sandboxed commands (inventories, npm, Gradle) can run first: on a fresh installation's
     // missing `dirs.cache` they failed with EPERM.
@@ -158,6 +165,7 @@ export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray
     // The tools' fine-grained token has no Checks permission, so CI is read from Actions jobs and commit statuses.
     const github = createGitHubClient({ env: { GITHUB_TOKEN: write }, fetch, headChecks: "actions-jobs" });
     const issues = createGitHubIssues({ env: { GITHUB_TOKEN: write }, fetch });
+    const login = await issues.login();
     const base = repo.branch ?? (await defaultBranch(repo.repo, write, fetch));
     const workspace = m.workspace(join(config.dirs.state, "workspaces"), write, config);
     const synced = await workspace.sync([{ id: repo.repo, source: { url: `https://github.com/${repo.repo}.git`, branch: base } }]);
@@ -203,7 +211,8 @@ export async function runToolCommand(handlers: ToolHandlers, argv: ReadonlyArray
       releaseAgeDays: repoConfig.releaseAgeDays,
       releaseAgeExclude,
       readToken: read,
-      signingKey,
+      trust,
+      login,
       isolation,
       agent: async (call) => {
         await m.assertAgentWorkspace(workingCopy, call.input, call.restoredFiles);

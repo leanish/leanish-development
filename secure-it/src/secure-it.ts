@@ -35,7 +35,7 @@ import { requireNpmExcludes } from "@leanish/tool-runtime/npm-version";
 import { runSandboxed, sandboxWritable } from "@leanish/tool-runtime/sandboxed";
 import { ensureOsvScanner, verifyingRun } from "@leanish/tool-runtime/osv-scanner";
 import { prepareUnitBranch } from "@leanish/tool-runtime/branches";
-import { branchFor, ownPullRequests, topicOf } from "@leanish/tool-runtime/own-pr";
+import { branchFor, comesFromTool, ownPullRequests, topicOf } from "@leanish/tool-runtime/own-pr";
 import { inspectOwnership, type Ours, samePlan } from "@leanish/tool-runtime/ownership";
 import { publicationParent, revertToBase } from "@leanish/tool-runtime/reconcile";
 import { assertPublishable, closeAndDelete, ownOpenPullRequests, type PublicationContext, publishNew, publishUpdate, rewriteText } from "@leanish/tool-runtime/publication";
@@ -54,7 +54,7 @@ import { attemptBranches, type Disposition, inactiveLabelNotices, issueDispositi
 import { type AttemptClient, type AttemptPatch, endAttempt, recoverAttempts, settleAttempt, showPullRequest } from "./issue-attempts.ts";
 import { EarlyPrs, takenEarlyOf, trackedIssueOf } from "./decision-issues.ts";
 import { datedYoung, earlyDecisions, reviewClosed, reviewDisposition, reviewExecution, type ReviewIssues, type ReviewPermit } from "./issue-review.ts";
-import { hasLabel, trackingContent } from "./issue-text.ts";
+import { trackingContent } from "./issue-text.ts";
 import { removalTransform } from "./floor-gradle.ts";
 import { probeOnBase } from "./floor-probe.ts";
 import { type ComputedRemoval, type RemovalProbe, floorsOf, selectRemovals } from "./floor-removal.ts";
@@ -182,7 +182,8 @@ function publicationOf(context: ToolRunContext, deps: SecureItDeps): Publication
     workspace: context.workspace,
     logger: context.logger,
     repo: context.repo.repo,
-    signingKey: context.signingKey,
+    trust: context.trust,
+    login: context.login,
     base: context.base,
     workingCopy: context.workingCopy,
     localRoots: machineRoots(context.config.dirs),
@@ -315,7 +316,7 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
   ]);
 
   const execution = { context, deps, env, inventories, publication: publicationOf(context, deps), npmFiles: new Map<string, string>(), branches: new Set<string>(), early: new EarlyPrs({ issues: context.issues, repo: context.repo.repo }) };
-  const listed = await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base);
+  const listed = await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base, context.login, execution.branches);
   const results: Readonly<Record<string, unknown>>[] = [];
   // Metadata first (no Gradle): the units and their plans. Then the issues decide what may execute.
   const prepared = await withRequiredYoung(execution, selection.units, base);
@@ -833,7 +834,8 @@ function attemptClient(execution: Execution): AttemptClient {
   const { context } = execution;
   return {
     issues: context.issues, github: context.github, repo: context.repo.repo, clean: issueCleaner(context),
-    ours: (pr) => topicOf(RULES, pr.headRef) !== undefined && pr.headRepo?.toLowerCase() === context.repo.repo.toLowerCase() && (pr.body.includes(RULES.marker) || hasLabel(pr.labels, RULES.label)),
+    // Closed, merged and edited PRs included: bookkeeping, never a reason to act on a PR.
+    ours: (pr) => comesFromTool(RULES, pr, context.repo.repo, context.login),
   };
 }
 
@@ -1124,7 +1126,8 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
   // Trusted packages as the default branch configures them: their young versions in a PR need no grant.
   const { config } = await readSettings(await deps.trees.commit(context.workingCopy, context.workingCopy.headSha));
   const trusted = (pkg: { readonly ecosystem: SecurityFix["ecosystem"]; readonly name: string }) => isTrustedPackage(config.trustedPackages, pkg);
-  const open = await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base);
+  const branches = new Set<string>();
+  const open = await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base, context.login, branches);
   // Which PRs the issues record as early attempts, for this tick: dispositions, matching and retries share the answers.
   const early = new EarlyPrs({ issues: context.issues, repo: context.repo.repo });
   // Decisions taken early are never reduced by review. Read once per tick, when first asked.
@@ -1137,7 +1140,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
       return deps.disposition(target);
     },
   };
-  const execution = { context, deps: governed, env, inventories, publication, npmFiles: new Map<string, string>(), branches: new Set<string>(), early };
+  const execution = { context, deps: governed, env, inventories, publication, npmFiles: new Map<string, string>(), branches, early };
   const notes: Array<Readonly<Record<string, unknown>>> = [];
   const planFrom = (pr: GitHubPullRequest): ChangePlan => {
     const plan = planOf(pr.body);

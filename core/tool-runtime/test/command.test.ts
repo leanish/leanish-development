@@ -78,10 +78,6 @@ function machine(overrides: Partial<Machine> & { readonly secretValues?: Record<
         return value;
       },
     },
-    fetch: (async (url: string | URL | Request, init?: RequestInit) => {
-      requested.push(`${String(url)} ${JSON.stringify(init?.headers)}`);
-      return new Response(JSON.stringify({ default_branch: "trunk" }), { status: 200 });
-    }) as typeof globalThis.fetch,
     stderr,
     now: () => new Date("2026-10-07T05:00:00Z"),
     readText: async (path) => {
@@ -92,6 +88,14 @@ function machine(overrides: Partial<Machine> & { readonly secretValues?: Record<
     workspace: () => new InMemoryWorkspace(),
     runner: () => runner,
     ...overrides,
+    // The write token's login, read once per command; anything else goes to the test's fetch, or answers the default
+    // branch.
+    fetch: (async (url: string | URL | Request, init?: RequestInit) => {
+      requested.push(`${String(url)} ${JSON.stringify(init?.headers)}`);
+      if (String(url) === "https://api.github.com/user") return new Response(JSON.stringify({ login: "tool-login" }), { status: 200 });
+      if (overrides.fetch !== undefined) return overrides.fetch(url, init);
+      return new Response(JSON.stringify({ default_branch: "trunk" }), { status: 200 });
+    }) as typeof globalThis.fetch,
   };
   const finalLine = () => JSON.parse(log.trim().split("\n").filter((line) => line.includes('"run finished"')).at(-1)!) as Record<string, unknown>;
   return { fake, finalLine, invocations, ensured, requested, log: () => log };
@@ -171,8 +175,8 @@ describe("runToolCommand", () => {
       expect(await runToolCommand({ ...handlers(run), tool, review: run }, [command, "leanish/widget", "--config", "/config/agent.yaml"], fake)).toBe(fail ? 1 : 0);
       const lines = log().trim().split("\n").map((line) => JSON.parse(line));
       expect(lines.filter((line) => line.msg === "GitHub API requests")).toEqual([expect.objectContaining({
-        level: "info", tool, command, repo: "leanish/widget", total: 3,
-        byKind: { "GET /repos/{owner}/{repo}": 1, "GET /repos/{owner}/{repo}/pulls": 1, "GET /repos/{owner}/{repo}/security-advisories": 1 },
+        level: "info", tool, command, repo: "leanish/widget", total: 4,
+        byKind: { "GET /repos/{owner}/{repo}": 1, "GET /repos/{owner}/{repo}/pulls": 1, "GET /repos/{owner}/{repo}/security-advisories": 1, "GET /user": 1 },
       })]);
       expect(lines.at(-2)?.msg).toBe("GitHub API requests");
       expect(lines.at(-1)?.msg).toBe("run finished");
@@ -288,7 +292,7 @@ describe("runToolCommand", () => {
     expect(seen?.isolation.env?.["npm_config_min_release_age"]).toBe("7");
     expect(seen?.isolation.env?.["PATH"]).toContain("agent-runtime/guard");
     expect(JSON.stringify({ ...seen, github: undefined, workspace: undefined, agent: undefined })).not.toContain("write-token");
-    expect(requested).toEqual([expect.stringContaining("https://api.github.com/repos/leanish/widget")]);
+    expect(requested).toEqual([expect.stringContaining("https://api.github.com/user"), expect.stringContaining("https://api.github.com/repos/leanish/widget")]);
     expect(requested[0]).toContain("Bearer write-token");
     expect(invocations[0]).toMatchObject({ access: "write", model: "sol", effort: "medium", env: { GH_TOKEN: "read-token" } });
     expect(JSON.stringify(invocations[0]?.env)).not.toContain("write-token");
@@ -324,6 +328,27 @@ describe("runToolCommand", () => {
     expect(await runToolCommand(handlers(async () => ({})), ["run", "leanish/widget", "--config", "/config/agent.yaml"], same.fake)).toBe(1);
     expect(same.finalLine()).toMatchObject({ error: expect.stringContaining("hold the same token") });
     expect(same.log()).not.toContain('"token"');
+  });
+
+  it("stops a signed tool whose key is missing, rather than trusting editors instead", async () => {
+    const missing = machine({ secretValues: { "tool-write": "write-token", "tool-read": "read-token" } });
+    let ran = false;
+    expect(await runToolCommand(handlers(async () => { ran = true; return {}; }), ["run", "leanish/widget", "--config", "/config/agent.yaml"], missing.fake)).toBe(1);
+    expect(missing.finalLine()).toMatchObject({ status: "error", error: "no Keychain item for service 'tool-signing'" });
+    expect(ran).toBe(false);
+  });
+
+  it("never reads the signing key with trusted-editors, and passes the token's login to the tool", async () => {
+    const read: string[] = [];
+    const { fake } = machine({
+      readText: async () => `${CONFIG}records: trusted-editors\n`,
+      secrets: { async get(name) { read.push(name); return name === "tool-write" ? "write-token" : "read-token"; } },
+    });
+    let seen: ToolRunContext | undefined;
+    expect(await runToolCommand(handlers(async (context) => { seen = context; return {}; }), ["run", "leanish/widget", "--config", "/config/agent.yaml"], fake)).toBe(0);
+    expect(read).toEqual(["tool-write", "tool-read"]);
+    expect(seen?.trust).toEqual({ mode: "trusted-editors" });
+    expect(seen?.login).toBe("tool-login");
   });
 
   it("reports a failing run as an error with its message, and runs review on `review`", async () => {
@@ -392,7 +417,7 @@ describe("runToolCommand", () => {
     const finals = log.split("\n").filter((line) => line.includes('"run finished"'));
     expect(finals.map((line) => JSON.parse(line))).toEqual([expect.objectContaining({ status: "interrupted", exitCode: 143, tool: "secure-it" })]);
     expect(log.split("\n").filter((line) => line.includes('"GitHub API requests"')).map((line) => JSON.parse(line))).toEqual([
-      expect.objectContaining({ tool: "secure-it", command: "run", total: 1, byKind: { "GET /repos/{owner}/{repo}/security-advisories": 1 } }),
+      expect.objectContaining({ tool: "secure-it", command: "run", total: 2, byKind: { "GET /repos/{owner}/{repo}/security-advisories": 1, "GET /user": 1 } }),
     ]);
     expect(readFileSync(marker, "utf8")).toBe("reported\n");
   }, 20_000);

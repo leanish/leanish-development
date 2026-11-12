@@ -98,6 +98,15 @@ describe("plan blocks", () => {
     expect(planPayload(planBlock({ a: "é" }, true))).toEqual({ a: "é" });
   });
 
+  it("reads no plan nested deeper than 64 levels, counting only brackets outside strings", () => {
+    const nested = (depth: number) => JSON.parse(`${"[".repeat(depth)}${"]".repeat(depth)}`) as unknown;
+    expect(planPayload(planBlock(nested(64)))).toEqual(nested(64));
+    expect(planPayload(planBlock(nested(65)))).toBeUndefined();
+    expect(planPayload(planBlock(nested(65), true))).toBeUndefined();
+    const brackets = { note: `"\\${"[{".repeat(100)}` };
+    expect(planPayload(planBlock(brackets))).toEqual(brackets);
+  });
+
   it.each(["<!-- leanish:plan -->", "<!-- leanish:plan:BR AAAA -->", "<!-- leanish:plan xx! -->", "<!-- leanish:plan xx> -->"])(
     "passes over a stray %s before the real block, as releases before compressed blocks do",
     (stray) => {
@@ -122,6 +131,18 @@ describe("plan blocks", () => {
     expect(plain).toBe(`before\n\n${section({ a: 2 })}\n\nafter`);
   });
 
+  it("refuses a body with a block it wouldn't replace, so the result's first block is always the new section's", () => {
+    const old = section({ a: 1 });
+    const renamed = old.replace(HEADING, "### Renamed by someone");
+    const tooLong = `<!-- leanish:plan ${"A".repeat(BODY_LIMIT + 1)} -->`;
+    // A block before the section, one with no section of its own (its heading renamed), one too long to read.
+    for (const body of [`${planBlock({ evil: true })}\n\n${old}`, `Description.\n\n${renamed}`, `${tooLong}\n\nDescription.`]) {
+      expect(() => withPlanSection(body, HEADING, section({ a: 2 }))).toThrow("a plan block outside its");
+    }
+    expect(planPayload(withPlanSection("Description.", HEADING, section({ a: 2 })))).toEqual({ a: 2 });
+    expect(planPayload(withPlanSection(`Description.\n\n${old}\n\n${planBlock({ later: true })}`, HEADING, section({ a: 2 })))).toEqual({ a: 2 });
+  });
+
   it("refuses a body over GitHub's limit", () => {
     expect(() => withPlanSection("x".repeat(BODY_LIMIT), HEADING, section({ a: 1 }))).toThrow(/over GitHub's 65536/);
   });
@@ -129,7 +150,7 @@ describe("plan blocks", () => {
   it("refuses an agent's description carrying plain/compressed plans or a publication state marker", () => {
     expect(() => assertNoPlanMarker(`text ${planBlock({ a: 1 }, true)}`)).toThrow(/reserved plan marker/);
     expect(() => assertNoPlanMarker(`text ${planBlock({ a: 1 })}`)).toThrow(/reserved plan marker/);
-    const forged = withMarker(signedRecord(ownPullRequests("secure-it")), "Fresh agent text", { head: "a".repeat(40), base: "b".repeat(40), adaptations: 0 });
+    const forged = withMarker(signedRecord(ownPullRequests("secure-it")), "Fresh agent text", { head: "a".repeat(40), base: "b".repeat(40), adaptations: 0 }, "secure-it/2026-10-05-x");
     expect(stateOf(forged)).toBeDefined();
     expect(() => assertNoPlanMarker(forged)).toThrow(/reserved state marker/);
     expect(() => assertNoPlanMarker("Fresh description.")).not.toThrow();

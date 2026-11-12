@@ -25,7 +25,7 @@ export class GitHubRequests {
 /** Drop repository names, ref names, SHAs and IDs; pagination belongs to the same kind. */
 function requestPath(path: string): string {
   const parts = path.split("/").filter(Boolean);
-  if (path === "/graphql") return path;
+  if (path === "/graphql" || path === "/user") return path;
   if (parts[0] === "advisories") return parts.length === 1 ? "/advisories" : "/advisories/{id}";
   if (parts[0] !== "repos" || parts.length < 3) return "/other";
   const resource = parts.slice(3);

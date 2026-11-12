@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { withMarker } from "../src/own-pr.ts";
 import { inspectOwnership, type Ours, samePlan } from "../src/ownership.ts";
-import { BASE_SHA, HEAD_SHA, ownPr, PUSHED_SHA, RULES, SIGNED } from "./fake-github.ts";
+import { BASE_SHA, HEAD_SHA, marked, OWN_BRANCH, ownPr, PUSHED_SHA, RULES, SIGNED } from "./fake-github.ts";
 
 describe("inspectOwnership", () => {
   it("takes a body recording the current head as the tool's", () => {
@@ -16,7 +16,7 @@ describe("inspectOwnership", () => {
   });
 
   it("doesn't take a PR as the tool's on a state someone else wrote, whatever head it claims", () => {
-    const forge = (head: string) => withMarker({ ...SIGNED, signingKey: Buffer.alloc(32, 9) }, "Mine now.", { head, base: BASE_SHA, adaptations: 0 });
+    const forge = (head: string) => withMarker({ ...SIGNED, trust: { mode: "signed", key: Buffer.alloc(32, 9) } }, "Mine now.", { head, base: BASE_SHA, adaptations: 0 }, OWN_BRANCH);
     expect(inspectOwnership(SIGNED, ownPr({ headSha: PUSHED_SHA, body: forge(PUSHED_SHA) }))).toEqual({ kind: "untracked" });
     expect(inspectOwnership(SIGNED, ownPr({ headSha: PUSHED_SHA, body: forge(HEAD_SHA) }))).toEqual({ kind: "untracked" });
   });
@@ -30,6 +30,11 @@ describe("inspectOwnership", () => {
     const pr = ownPr({ body: `A person's note.\n\n${ownPr().body}` });
     expect(inspectOwnership(SIGNED, pr).kind).toBe("ours");
   });
+
+  it("doesn't take a body signed for another of the tool's branches", () => {
+    const elsewhere = marked("Body.", { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }, "secure-it/2026-10-05-other");
+    expect(inspectOwnership(SIGNED, { ...ownPr(), body: elsewhere })).toEqual({ kind: "untracked" });
+  });
 });
 
 describe("samePlan", () => {
@@ -39,7 +44,7 @@ describe("samePlan", () => {
     if (ownership.kind !== "ours") throw new Error("the fixture should be the tool's");
     return ownership;
   };
-  const planned = ours(withMarker(SIGNED, "plan=same", { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }));
+  const planned = ours(marked("plan=same", { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }));
 
   it("matches a plan that reads as the digest", () => {
     expect(samePlan(planned, "same", read)).toBe(true);

@@ -32,14 +32,18 @@ export async function enrollment(options: InstallationOptions & { readonly login
     tokenUrl: tokenUrl(options.tool, ownerName(options.owner), role, config.secrets[role], contribution.permissions),
     command: `security add-generic-password -U -s '${config.secrets[role]}' -a '${login}' -w`,
   }));
+  const tokens = "For each role, open its tokenUrl, select only the opted-in repositories, generate the token, obtain organization approval/SSO as needed, then run its command in your own Terminal; never paste tokens into chat.";
+  const repos = config.repos.map(({ repo }) => repo);
+  // Records trusted to editors need no key: none is read, so none is asked for.
+  if (config.records === "trusted-editors") return result("enroll", "keychain", "needs-confirmation", tokens, { repos, permissions: contribution.permissions, commands });
   // No -U, so an existing key isn't replaced: a new one leaves every open PR of the tool unrecognized.
   const signingKey = {
     service: config.secrets.signing,
     generate: "openssl rand -hex 32 | pbcopy",
     command: `security add-generic-password -s '${config.secrets.signing}' -a '${login}' -w`,
   };
-  return result("enroll", "keychain", "needs-confirmation", "For each role, open its tokenUrl, select only the opted-in repositories, generate the token, obtain organization approval/SSO as needed, then run its command in your own Terminal; never paste tokens into chat. For the signing key, the first time run signingKey.generate and then its command, pasting at the prompt; on another machine, or if the item exists, reuse the same value rather than generating a new one", {
-    repos: config.repos.map(({ repo }) => repo), permissions: contribution.permissions, commands, signingKey,
+  return result("enroll", "keychain", "needs-confirmation", `${tokens} For the signing key, the first time run signingKey.generate and then its command, pasting at the prompt; on another machine, or if the item exists, reuse the same value rather than generating a new one`, {
+    repos, permissions: contribution.permissions, commands, signingKey,
   });
 }
 
@@ -80,9 +84,11 @@ export async function verifyTokens(
     read = await machine.secrets.get(config.secrets.read);
   } catch { return invalidTokens("keychain", "Keychain lookup failed; unlock or enroll the configured items in your own Terminal"); }
   if (write === "" || read === "" || write === read) return invalidTokens("separation", "Write and read tokens must be nonempty and different");
-  try {
-    signingKeyFrom(await machine.secrets.get(config.secrets.signing), config.secrets.signing);
-  } catch { return invalidTokens("signing-key", "The signing key is missing or malformed; enroll it in your own Terminal"); }
+  if (config.records === "signed") {
+    try {
+      signingKeyFrom(await machine.secrets.get(config.secrets.signing), config.secrets.signing);
+    } catch { return invalidTokens("signing-key", "The signing key is missing or malformed; enroll it in your own Terminal"); }
+  }
   const permissions: PermissionResult[] = [];
   for (const role of ["write", "read"] as const) {
     const token = role === "write" ? write : read;

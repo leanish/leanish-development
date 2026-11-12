@@ -57,6 +57,7 @@ describe("tool config", () => {
       ],
       agent: { codingAgent: "codex", model: "sol", effort: "medium" },
       secrets: { write: "leanish-secure-it-github", read: "leanish-secure-it-github-read", signing: "leanish-secure-it-signing" },
+      records: "signed",
       commitIdentity: { name: "leanish", email: "5417585+leanish@users.noreply.github.com" },
       dirs: { state: "/Users/dev/.local/share/leanish/secure-it", cache: "/Users/dev/.cache/leanish/secure-it" },
       readDeny: ["/Users/dev/dev/private", "/Volumes/vault"],
@@ -71,6 +72,14 @@ describe("tool config", () => {
   it("accepts Claude Code as the coding agent", () => {
     const text = VALID.replace("codingAgent: codex, model: sol", "codingAgent: claude-code, model: claude-haiku-5-5").replace("effort: medium", "effort: high");
     expect(parseToolConfig("bump-it", text, "agent.yaml", HOME).agent).toEqual({ codingAgent: "claude-code", model: "claude-haiku-5-5", effort: "high" });
+  });
+
+  it("signs records unless the config chooses trusted-editors explicitly", () => {
+    expect(parseToolConfig("secure-it", VALID, "agent.yaml", HOME).records).toBe("signed");
+    expect(parseToolConfig("secure-it", `${VALID}records: signed\n`, "agent.yaml", HOME).records).toBe("signed");
+    expect(parseToolConfig("bump-it", `${VALID}records: trusted-editors\n`, "agent.yaml", HOME).records).toBe("trusted-editors");
+    expect(() => parseToolConfig("secure-it", `${VALID}records: unsigned\n`, "agent.yaml", HOME)).toThrow("records must be one of signed, trusted-editors; got 'unsigned'");
+    expect(() => parseToolConfig("secure-it", `${VALID}records: ""\n`, "agent.yaml", HOME)).toThrow("records must be a non-empty string");
   });
 
   it("fails on what would quietly change behaviour", () => {

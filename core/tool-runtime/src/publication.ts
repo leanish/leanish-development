@@ -10,6 +10,7 @@ import type { Workspace } from "@leanish/agent-runtime/working-copy/workspace";
 
 import { cleanBody, cleanContent, type LocalRoots, withCanonical } from "./publication-text.ts";
 import { carriesLabel, isOwnPullRequest, type OwnPullRequests, type PullRequestState, verifiedStateOf, withMarker } from "./own-pr.ts";
+import type { RecordTrust } from "./record-signature.ts";
 
 /**
  * Everything a tool writes to GitHub, done by the tool's own process with its
@@ -27,8 +28,10 @@ export interface PublicationContext {
   readonly workspace: Workspace;
   readonly logger: Logger;
   readonly repo: string;
-  /** Signs the state in the tool's PRs (`RecordContext`); held only by the tool's process. */
-  readonly signingKey: Uint8Array;
+  /** How the state in the tool's PRs is trusted (`RecordContext`); a signing key is held only by the tool's process. */
+  readonly trust: RecordTrust;
+  /** The login the write token acts as: every PR of the tool's is its. */
+  readonly login: string;
   /** The default branch every PR of the tool targets. */
   readonly base: string;
   readonly workingCopy: WorkingCopy;
@@ -69,8 +72,12 @@ export function checkedText(title: string, body: string): string {
   return body;
 }
 
-/** A state line as long as any real one: placeholder SHAs, since publication only knows the head once it commits. */
+/**
+ * A state line as long as any real one: placeholder SHAs, since publication only knows the head once it commits. The
+ * branch a signature covers doesn't change its length.
+ */
 const PLACEHOLDER_STATE: PullRequestState = { head: "0".repeat(40), base: "0".repeat(40), adaptations: 0 };
+const PLACEHOLDER_BRANCH = "placeholder";
 
 /**
  * Throws unless `content` passes the checks publication applies to what it sends: the title and the body as cleaned
@@ -79,7 +86,7 @@ const PLACEHOLDER_STATE: PullRequestState = { head: "0".repeat(40), base: "0".re
  */
 export function assertPublishable(context: PublicationContext, content: PullRequestContent, adaptations = 0): void {
   const cleaned = cleanContent(content, rootsOf(context));
-  checkedText(cleaned.title, withMarker(context, cleaned.body, { ...PLACEHOLDER_STATE, adaptations }));
+  checkedText(cleaned.title, withMarker(context, cleaned.body, { ...PLACEHOLDER_STATE, adaptations }, PLACEHOLDER_BRANCH, content.body));
 }
 
 /** A PR's title, description and the commit message of the agent's change. */
@@ -89,14 +96,22 @@ export interface PullRequestContent {
   readonly commitMessage: string;
 }
 
-/** The tool's open PRs in the repository, oldest first. */
+/**
+ * The tool's open PRs in the repository, oldest first. `occupied`, when given, gets the branch of every open PR of the
+ * listing, the tool's or not: a PR someone else opened from a branch the tool would name keeps that branch taken, so
+ * a run picks a suffixed one instead of meeting it (`clearLeftoverBranch` refuses an open PR's branch).
+ */
 export async function ownOpenPullRequests(
   github: GitHubClient,
   rules: OwnPullRequests,
   repo: string,
   base: string,
+  login: string,
+  occupied?: Set<string>,
 ): Promise<GitHubPullRequest[]> {
-  return (await github.listOpenPullRequests({ repo })).filter((pr) => isOwnPullRequest(rules, pr, repo, base)).sort((a, b) => a.number - b.number);
+  const open = await github.listOpenPullRequests({ repo });
+  for (const pr of open) occupied?.add(pr.headRef);
+  return open.filter((pr) => isOwnPullRequest(rules, pr, repo, base, login)).sort((a, b) => a.number - b.number);
 }
 
 /**
@@ -129,10 +144,10 @@ export async function publishNew(
   const parent = await context.publicationParent?.(prepared) ?? prepared;
   const pushed = await context.workspace.publishBranch(context.workingCopy, parent, {
     message: content.commitMessage, ...verified,
-    beforePush: async (head) => { checkedText(content.title, withMarker(context, content.body, { head, base: prepared.baseSha, adaptations: 0 })); },
+    beforePush: async (head) => { checkedText(content.title, withMarker(context, content.body, { head, base: prepared.baseSha, adaptations: 0 }, prepared.branch, agentContent.body)); },
   });
   if (pushed.kind === "unchanged") return undefined;
-  const created = await createDraftPullRequest(context, prepared.branch, content, { head: pushed.sha, base: prepared.baseSha, adaptations: 0 });
+  const created = await createDraftPullRequest(context, prepared.branch, content, { head: pushed.sha, base: prepared.baseSha, adaptations: 0 }, agentContent.body);
   await ensureLabel(context, created);
   return created;
 }
@@ -155,7 +170,7 @@ export async function publishUpdate(
   const remoteHead = existingHead(context, prepared);
   const { pr: current, state: recorded } = await reReadRecorded(context, number, remoteHead);
   const attempts = adaptations ?? recorded.adaptations;
-  const bodyAt = (head: string) => checkedText(content.title, withMarker(context, content.body, { head, base: prepared.baseSha, adaptations: attempts }));
+  const bodyAt = (head: string) => checkedText(content.title, withMarker(context, content.body, { head, base: prepared.baseSha, adaptations: attempts }, current.headRef, agentContent.body));
   // Also before drafting a ready PR, or a no-push update (which has no beforePush callback).
   bodyAt(remoteHead);
   const verified = await expectedTree(context);
@@ -170,8 +185,9 @@ export async function publishUpdate(
   const head = pushed.kind === "pushed" ? pushed.sha : remoteHead;
   const body = bodyAt(head);
   const update = async () => {
-    // GitHub may still report the old head for a moment after a push; anything else is someone else's push.
-    await reReadOwn(context, current.number, remoteHead, ...(pushed.kind === "pushed" ? [pushed.sha] : []));
+    // GitHub may still report the old head for a moment after a push; anything else is someone else's push. The body
+    // names the previous head until an update lands, the new one once a lost response's update did.
+    await reReadOwn(context, current.number, [remoteHead, ...(pushed.kind === "pushed" ? [pushed.sha] : [])]);
     return github.updatePullRequest({ repo, number: current.number, title: content.title, body });
   };
   const updated = pushed.kind === "pushed" ? await updateAfterPush(context, current.number, head, update) : await update();
@@ -205,13 +221,15 @@ async function retire(context: PublicationContext, number: number, head: string)
   const left = "it's no longer the tool's open draft at that head, so the tool leaves it: if it's still open and nobody took it over, close it, and a later run recomputes it";
   // A removed state or a PR marked ready: someone took it over, and it's theirs to decide.
   // Of any head: the body still names the previous one when the update never applied.
-  const stillDraftWithState = (pr: GitHubPullRequest) => pr.isDraft && verifiedStateOf(context, pr.body) !== undefined;
+  const stillDraftWithState = (pr: GitHubPullRequest) => pr.isDraft && verifiedStateOf(context, pr) !== undefined;
   try {
     const current = await github.getPullRequest({ repo, number });
-    if (!isOwnPullRequest(rules, current, repo, base) || current.headSha !== head || !stillDraftWithState(current)) return left;
+    if (!isOwnPullRequest(rules, current, repo, base, context.login) || current.headSha !== head || !stillDraftWithState(current)) return left;
     const comment = `${rules.tool} couldn't confirm updating this PR's description after pushing to it, so the description may not match its head. Closing it: a later run recomputes the change from the default branch.`;
-    return await closeIf(context, number, head, comment, stillDraftWithState) ? "closed the PR, and a later run recomputes it" : left;
+    return await closeIf(context, number, head, comment, stillDraftWithState, "any") ? "closed the PR, and a later run recomputes it" : left;
   } catch (err) {
+    // Its state removed or edited between the two reads: taken over, as above.
+    if (err instanceof TakenOverError) return left;
     return `and couldn't finish closing it (${reasonOf(err)}): the commit is published but the body may not say so. If it's still open and nobody took it over, close it by hand, and a later run recomputes it`;
   }
 }
@@ -226,7 +244,7 @@ function reasonOf(err: unknown): string {
  */
 export async function recordState(context: PublicationContext, number: number, expectedHead: string, state: PullRequestState): Promise<GitHubPullRequest> {
   const { pr: current } = await reReadRecorded(context, number, expectedHead);
-  const updated = await context.github.updatePullRequest({ repo: context.repo, number, title: current.title, body: checkedText(current.title, withMarker(context, current.body, state)) });
+  const updated = await context.github.updatePullRequest({ repo: context.repo, number, title: current.title, body: checkedText(current.title, withMarker(context, current.body, state, current.headRef)) });
   await ensureLabel(context, updated);
   return updated;
 }
@@ -237,15 +255,17 @@ export async function recordState(context: PublicationContext, number: number, e
  */
 export async function rewriteText(context: PublicationContext, number: number, expectedHead: string, rewrite: (body: string) => string): Promise<GitHubPullRequest> {
   const { pr: current, state } = await reReadRecorded(context, number, expectedHead);
-  // From the body as it is now, so an edit made since the caller read it (an owner's note, say) is kept.
-  const updated = await context.github.updatePullRequest({ repo: context.repo, number, title: current.title, body: checkedText(current.title, withMarker(context, cleanBody(rewrite(current.body), rootsOf(context)), state)) });
+  // From the body as it is now, so an edit made since the caller read it (an owner's note, say) is kept. Its plan and
+  // machine lines are the ones verified with the state: only `rewrite`, the tool's own code, may change them.
+  const rewritten = rewrite(current.body);
+  const updated = await context.github.updatePullRequest({ repo: context.repo, number, title: current.title, body: checkedText(current.title, withMarker(context, cleanBody(rewritten, rootsOf(context)), state, current.headRef, rewritten)) });
   await ensureLabel(context, updated);
   return updated;
 }
 
 /** Mark the PR ready, once it's still the tool's draft at `expectedHead`. */
 export async function markReady(context: PublicationContext, number: number, expectedHead: string): Promise<void> {
-  const current = await reReadOwn(context, number, expectedHead);
+  const { pr: current } = await reReadOwn(context, number, [expectedHead]);
   if (current.isDraft) await context.github.markReadyForReview({ nodeId: current.nodeId });
   await ensureLabel(context, current);
 }
@@ -267,10 +287,20 @@ export async function closeAndDelete(
   return closed ? "closed" : "not-draft";
 }
 
-/** `closeAndDelete`, once `eligible` holds for the PR as re-read right before closing; whether it closed it. */
-async function closeIf(context: PublicationContext, number: number, expectedHead: string, comment: string, eligible: (current: GitHubPullRequest) => boolean): Promise<boolean> {
+/**
+ * `closeAndDelete`, once `eligible` holds for the PR as re-read right before closing; whether it closed it. `recorded`:
+ * the heads its body's state may name (`reReadOwn`).
+ */
+async function closeIf(
+  context: PublicationContext,
+  number: number,
+  expectedHead: string,
+  comment: string,
+  eligible: (current: GitHubPullRequest) => boolean,
+  recorded: ReadonlyArray<string> | "any" = [expectedHead],
+): Promise<boolean> {
   const { github, repo, logger, rules } = context;
-  const current = await reReadOwn(context, number, expectedHead);
+  const { pr: current } = await reReadOwn(context, number, [expectedHead], recorded);
   if (!eligible(current)) return false;
   await github.closePullRequest({ repo, number });
   try {
@@ -291,15 +321,16 @@ async function createDraftPullRequest(
   branch: string,
   content: PullRequestContent,
   state: PullRequestState,
+  composed: string,
 ): Promise<GitHubPullRequest> {
   const { github, repo, base, rules } = context;
-  const request = { repo, head: branch, base, title: content.title, body: checkedText(content.title, withMarker(context, content.body, state)), draft: true };
+  const request = { repo, head: branch, base, title: content.title, body: checkedText(content.title, withMarker(context, content.body, state, branch, composed)), draft: true };
   try {
     return await github.createPullRequest(request);
   } catch (err) {
     if (!(err instanceof GitHubApiError)) throw err;
     // The PR may exist even though the response was lost; otherwise try once more.
-    const open = (await github.findPullRequests({ repo, branch })).find((pr) => isOwnPullRequest(rules, pr, repo, base));
+    const open = (await github.findPullRequests({ repo, branch })).find((pr) => isOwnPullRequest(rules, pr, repo, base, context.login));
     return open ?? (await github.createPullRequest(request));
   }
 }
@@ -321,23 +352,41 @@ function existingHead(context: PublicationContext, prepared: PreparedBranch): st
   return prepared.remoteHeadSha;
 }
 
-/** `reReadOwn`, and the state the tool signed for that head: what gets carried forward and signed again is the tool's own. */
-async function reReadRecorded(context: PublicationContext, number: number, expectedHead: string): Promise<{ readonly pr: GitHubPullRequest; readonly state: PullRequestState }> {
-  const pr = await reReadOwn(context, number, expectedHead);
-  const state = verifiedStateOf(context, pr.body);
-  if (state?.head !== expectedHead) throw new Error(`${context.rules.tool}: ${context.repo}#${number}'s body has no state the tool signed for ${expectedHead}; not publishing over it`);
-  return { pr, state };
+/**
+ * `reReadOwn` at exactly `expectedHead`, with the state the tool recorded for it: what gets carried forward and signed
+ * again (the state, and with it the body's plan and machine lines) is what the tool wrote.
+ */
+function reReadRecorded(context: PublicationContext, number: number, expectedHead: string): Promise<{ readonly pr: GitHubPullRequest; readonly state: PullRequestState }> {
+  return reReadOwn(context, number, [expectedHead]);
 }
 
-/** The PR again, refused unless it is still an open PR of the tool at one of `expectedHeads`. */
-export async function reReadOwn(context: PublicationContext, number: number, ...expectedHeads: ReadonlyArray<string | null>): Promise<GitHubPullRequest> {
+/**
+ * The PR again, with its recorded state, refused unless it is still an open PR of the tool at one of `expectedHeads`
+ * whose body carries a state the tool recorded (signed, with signed records) for one of `recordedHeads`: by default the
+ * same heads; `"any"` when the body may still name an earlier one. Every write on an existing PR goes through this, so
+ * one someone took over since the tool last looked is left alone.
+ */
+async function reReadOwn(
+  context: PublicationContext,
+  number: number,
+  expectedHeads: ReadonlyArray<string>,
+  recordedHeads: ReadonlyArray<string> | "any" = expectedHeads,
+): Promise<{ readonly pr: GitHubPullRequest; readonly state: PullRequestState }> {
   const { github, repo, base, rules } = context;
   const current = await github.getPullRequest({ repo, number });
-  if (!isOwnPullRequest(rules, current, repo, base)) throw new Error(`${rules.tool}: ${repo}#${number} is no longer an open ${rules.tool} PR`);
+  if (!isOwnPullRequest(rules, current, repo, base, context.login)) throw new Error(`${rules.tool}: ${repo}#${number} is no longer an open ${rules.tool} PR`);
   if (!expectedHeads.includes(current.headSha)) {
-    throw new Error(
-      `${rules.tool}: ${repo}#${number} moved to ${current.headSha} (expected ${expectedHeads.map((head) => head ?? "none").join(" or ")}); not publishing over it`,
-    );
+    throw new Error(`${rules.tool}: ${repo}#${number} moved to ${current.headSha} (expected ${expectedHeads.join(" or ")}); not publishing over it`);
   }
-  return current;
+  const state = verifiedStateOf(context, current);
+  if (state === undefined || (recordedHeads !== "any" && !recordedHeads.includes(state.head))) {
+    const named = recordedHeads === "any" ? "" : ` for ${recordedHeads.join(" or ")}`;
+    throw new TakenOverError(`${rules.tool}: ${repo}#${number}'s body has no state the tool recorded${named}; not publishing over it`);
+  }
+  return { pr: current, state };
+}
+
+/** A PR whose body no longer carries a state the tool recorded: someone took it over, and it's theirs. */
+class TakenOverError extends Error {
+  override readonly name = "TakenOverError";
 }

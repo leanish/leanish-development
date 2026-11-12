@@ -12,9 +12,10 @@ import { isAdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import { heldEntry, heldUntil } from "@leanish/gate/cooldown";
 import { packageKey } from "@leanish/gate/package-version";
 import { type Ecosystem, ECOSYSTEMS } from "@leanish/gate/versions";
-import { MARKER_ROOM, stateOf } from "@leanish/tool-runtime/own-pr";
+import { MARKER_ROOM, ownPullRequests, stateOf } from "@leanish/tool-runtime/own-pr";
 import { defused, planPayload, planSection as sectionOf, TooLargeError, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
 import { literal } from "@leanish/tool-runtime/pr-text";
+import { canonicalJson } from "@leanish/tool-runtime/record-signature";
 
 import { advisoryNotice, EVIDENCE_LEFT_OUT, tableRowCount } from "./advisory-notice.ts";
 import { floorIdentity, validRemoval } from "./floor-removal.ts";
@@ -29,17 +30,21 @@ export const PUBLISHED_HELD_BODY_TARGET = MAX_BODY_CHARS - MARKER_ROOM;
 const WARNING_START = "<!-- secure-it cooldown warning -->";
 const WARNING_END = "<!-- /secure-it cooldown warning -->";
 
-/** Identity includes version targets, or exact removed floor records and the jointly resolved npm bytes. */
+/**
+ * Identity includes version targets, or exact removed floor records and the jointly resolved npm bytes. As canonical
+ * JSON, whatever order a body's keys come in: the signature on a PR's state reads its plan the same way, so a plan it
+ * vouches for is never a different plan here.
+ */
 export function planDigest(plan: ChangePlan): string {
   const moves = [...plan.moves]
     .map((move) => ({ ...move, locations: [...move.locations].sort(), advisories: [...move.advisories].sort() }))
-    .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+    .sort((a, b) => canonicalJson(a).localeCompare(canonicalJson(b)));
   const removal = plan.floorRemoval;
-  const identity = removal === undefined ? { moves, requiredNpm: [...plan.requiredNpm ?? []].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))) } : {
+  const identity = removal === undefined ? { moves, requiredNpm: [...plan.requiredNpm ?? []].sort((a, b) => canonicalJson(a).localeCompare(canonicalJson(b))) } : {
     floors: removal.floors.map(floorIdentity).sort(),
     files: [...removal.files].sort((a, b) => a.path.localeCompare(b.path)),
   };
-  return createHash("sha256").update(JSON.stringify(identity)).digest("hex");
+  return createHash("sha256").update(canonicalJson(identity)).digest("hex");
 }
 
 /** The section secure-it adds to the agent's description: the moves, and the plan for later runs. */
@@ -123,9 +128,26 @@ function omittedSection(plan: ChangePlan): string[] {
  * top while it holds. The advisory evidence is for people and never changes a verdict, so when the body can't be written
  * with it (its plan, section or body over a limit), it gives way, never the fix: written again without any, each fix that
  * had some says why it's missing. Fresh text has a smaller raw budget than text carrying a published state marker.
- * What still can't be written, and any other failure, fails as before.
+ * What still can't be written, and any other failure, fails as before. Throws when composing would change the body's
+ * `Tracks` lines (`tracksLines`).
  */
 export function withPlanSection(body: string, plan: ChangePlan): string {
+  const result = sized(body, plan);
+  // Removing the warning or replacing the section could expose, join or drop a `Tracks` line someone wrote around them
+  // (`Tracks #9, taken early.` right before the warning, say), which the tool would then sign: its lines are
+  // trackingContent's to write, never this.
+  if (JSON.stringify(tracksLines(result)) !== JSON.stringify(tracksLines(body))) {
+    throw new Error("composing the PR's plan section would change its Tracks lines; a person needs to fix its description");
+  }
+  return result;
+}
+
+/** The lines a body tracks an issue with, as the tools read them (`OwnPullRequests.machineLines`). */
+function tracksLines(body: string): string[] {
+  return [...body.matchAll(ownPullRequests("secure-it").machineLines!)].map((line) => line[0]);
+}
+
+function sized(body: string, plan: ChangePlan): string {
   const heldBodyTarget = stateOf(body) === undefined ? FRESH_HELD_BODY_TARGET : PUBLISHED_HELD_BODY_TARGET;
   try {
     return composed(body, plan, heldBodyTarget);

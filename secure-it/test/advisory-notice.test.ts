@@ -9,7 +9,7 @@ import type { ChangePlan, PlannedHold } from "../src/plan.ts";
 import { FRESH_HELD_BODY_TARGET, PUBLISHED_HELD_BODY_TARGET, cooldownWarning, planDigest, planOf, planSection, withPlanSection } from "../src/plan-block.ts";
 import { ownPullRequests, withMarker } from "@leanish/tool-runtime/own-pr";
 import { planBlock } from "@leanish/tool-runtime/plan-blocks";
-import { SIGNED } from "@leanish/tool-runtime/test/fake-github";
+import { marked, SIGNED } from "@leanish/tool-runtime/test/fake-github";
 import { cleanBody } from "@leanish/tool-runtime/publication-text";
 
 const PKG = "tools.jackson.core:jackson-databind";
@@ -195,6 +195,13 @@ describe("the advisory notice on a held PR", () => {
     expect(warning).toContain("admin merge");
   });
 
+  it("gives a plan the same digest whatever order its keys were written in, as the PR signature reads it", () => {
+    const move = { ecosystem: "npm" as const, name: "vite", from: "8.3.0", to: "8.3.5", locations: ["package.json"], advisories: ["GHSA-1"], mechanism: "npm-range", major: false };
+    const reversed = Object.fromEntries(Object.entries(move).reverse()) as typeof move;
+    const plan = { topic: "security", malware: false, kind: "routine", moves: [move], packages: ["npm|vite"] } as unknown as ChangePlan;
+    expect(planDigest({ ...plan, moves: [reversed] } as unknown as ChangePlan)).toBe(planDigest(plan));
+  });
+
   it("keeps granted versions of every ecosystem in the plan, out of its digest, and refuses an edited one", () => {
     const granted = [
       { ecosystem: "Maven" as const, name: "g:a", version: "2.0.0", eligibleAt: "unknown" },
@@ -262,7 +269,7 @@ describe("the advisory notice on a held PR", () => {
     expect(body.length + warning(shown + 1) - warning(shown)).toBeGreaterThan(61_440);
     // What publishing adds fits in the rest of GitHub's 65,536: the state and marker, and a few hundred short local
     // paths, each growing into `<local path>` when cleaned.
-    const mark = (text: string) => withMarker(SIGNED, text, { head: "a".repeat(40), base: "b".repeat(40), adaptations: 3 });
+    const mark = (text: string) => marked(text, { head: "a".repeat(40), base: "b".repeat(40), adaptations: 3 });
     const pathy = withPlanSection(`Ran it in /t/x. `.repeat(400), large);
     expect(pathy.length).toBeLessThanOrEqual(61_440);
     expect(mark(cleanBody(pathy, CLEANING)).length).toBeLessThanOrEqual(65_536);
@@ -322,7 +329,7 @@ describe("the advisory notice on a held PR", () => {
     const unpadded = withPlanSection("", bare).length;
     expect(withPlanSection("x".repeat(61_440 - unpadded), bare)).toHaveLength(61_440);
     expect(() => withPlanSection("x".repeat(61_441 - unpadded), bare)).toThrow("61441 characters, over the 61440 a held body is kept to");
-    const mark = (text: string) => withMarker(SIGNED, text, { head: "a".repeat(40), base: "b".repeat(40), adaptations: 0 });
+    const mark = (text: string) => marked(text, { head: "a".repeat(40), base: "b".repeat(40), adaptations: 0 });
     const storedBase = withPlanSection(mark(""), bare).length;
     expect(withPlanSection(mark("x".repeat(65_280 - storedBase)), bare)).toHaveLength(65_280);
     expect(() => withPlanSection(mark("x".repeat(65_281 - storedBase)), bare)).toThrow("65281 characters, over the 65280 a held body is kept to");

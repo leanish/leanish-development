@@ -5,10 +5,11 @@ import type { GitHubPullRequest } from "@leanish/agent-runtime/types/clients";
 import type { WorkingCopy } from "@leanish/agent-runtime/types/working-copy";
 import { InMemoryWorkspace } from "@leanish/agent-runtime/working-copy/in-memory-workspace";
 import { stateOf, withMarker } from "../src/own-pr.ts";
+import { planBlock } from "../src/plan-blocks.ts";
 import { closeAndDelete, publishUpdate, type PublicationContext } from "../src/publication.ts";
 import { type BaseMerge, MAX_ADAPTATIONS, type ReviewContext, reviewOpenPullRequests, type ReviewSteps } from "../src/review.ts";
 import { COOLDOWN_STEPS } from "../src/ci-state.ts";
-import { BASE_SHA, FakeGitHub, GREEN, HEAD_SHA, ownPr, PUSHED_SHA, RED, RULES, SIGNED, TEST_SIGNING_KEY } from "./fake-github.ts";
+import { BASE_SHA, FakeGitHub, GREEN, HEAD_SHA, ownPr, PUSHED_SHA, marked, OWN_BRANCH, RED, RULES, SIGNED, TOOL_LOGIN } from "./fake-github.ts";
 
 const REPO = "leanish/widget";
 const NEW_BASE = "f".repeat(40);
@@ -20,7 +21,7 @@ function workingCopy(baseSha = BASE_SHA): WorkingCopy {
 
 function context(github: FakeGitHub, workspace = new InMemoryWorkspace(), wc = workingCopy()): ReviewContext {
   workspace.setRemoteHead("secure-it/2026-10-05-snappy-java", HEAD_SHA);
-  return { rules: RULES, github, workspace, workingCopy: wc, logger: new ConsoleLogger({ minLevel: "error" }), repo: REPO, signingKey: TEST_SIGNING_KEY, base: "main", localRoots: [] };
+  return { rules: RULES, github, workspace, workingCopy: wc, logger: new ConsoleLogger({ minLevel: "error" }), repo: REPO, trust: SIGNED.trust, login: TOOL_LOGIN, base: "main", localRoots: [] };
 }
 
 /** Steps that record what they were asked, rebasing by updating the PR and adapting by pushing. */
@@ -168,7 +169,7 @@ describe("reviewOpenPullRequests", () => {
     expect(first[0]).toMatchObject({ outcome: "adapted", detail: "attempt 1 of 2" });
     expect(stateOf(github.prs.get(7)!.body)).toEqual({ head: PUSHED_SHA, base: BASE_SHA, adaptations: 1 });
 
-    const exhausted = new FakeGitHub(ownPr({ body: withMarker(SIGNED, "Body.", { head: HEAD_SHA, base: BASE_SHA, adaptations: MAX_ADAPTATIONS }) }));
+    const exhausted = new FakeGitHub(ownPr({ body: marked("Body.", { head: HEAD_SHA, base: BASE_SHA, adaptations: MAX_ADAPTATIONS }) }));
     exhausted.checks = RED;
     const entries = await reviewOpenPullRequests(context(exhausted), steps(calls));
     expect(entries[0]).toMatchObject({ outcome: "closed", detail: "CI failed after 2 adaptation(s)" });
@@ -201,7 +202,7 @@ describe("reviewOpenPullRequests", () => {
     expect(github.prs.get(7)!.state).toBe("open");
 
     const closed: number[] = [];
-    const exhausted = new FakeGitHub(ownPr({ body: withMarker(SIGNED, "Body.", { head: HEAD_SHA, base: BASE_SHA, adaptations: MAX_ADAPTATIONS }) }));
+    const exhausted = new FakeGitHub(ownPr({ body: marked("Body.", { head: HEAD_SHA, base: BASE_SHA, adaptations: MAX_ADAPTATIONS }) }));
     exhausted.checks = RED;
     const told = { ...steps(), closed: async (pr: GitHubPullRequest) => { closed.push(pr.number); } };
     expect(await reviewOpenPullRequests(context(exhausted), told)).toMatchObject([{ outcome: "closed" }]);
@@ -240,23 +241,50 @@ describe("reviewOpenPullRequests", () => {
   });
 
   it("runs nothing on a PR someone else made, or pushed to and edited the recorded head of", async () => {
-    const forged = withMarker({ ...SIGNED, signingKey: Buffer.alloc(32, 9) }, "Looks like the tool's.", { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 });
+    const forged = withMarker({ ...SIGNED, trust: { mode: "signed", key: Buffer.alloc(32, 9) } }, "Looks like the tool's.", { head: PUSHED_SHA, base: BASE_SHA, adaptations: 0 }, OWN_BRANCH);
     const edited = ownPr().body.replace(HEAD_SHA, PUSHED_SHA);
     for (const body of [forged, edited]) {
       const github = new FakeGitHub(ownPr({ headSha: PUSHED_SHA, body }));
       github.checks = RED;
       const calls: string[] = [];
       const entries = await reviewOpenPullRequests(context(github), steps(calls));
-      expect(entries[0]).toMatchObject({ outcome: "left-alone", detail: "its body has no valid state for the configured signing key: someone made or rewrote it, or the key changed" });
+      expect(entries[0]).toMatchObject({ outcome: "left-alone", detail: "its body has no state the tool signed for this PR: someone made or edited it, or the key changed" });
       expect(calls).toEqual([]);
       expect(github.calls.filter((call) => !call.startsWith("listOpenPullRequests"))).toEqual([]);
     }
   });
 
+  it("runs nothing on a PR whose plan someone edited, at the tool's own head", async () => {
+    const signed = marked(`Body.\n\n${planBlock({ moves: ["a"] })}`, { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 });
+    const github = new FakeGitHub(ownPr({ body: signed.replace(planBlock({ moves: ["a"] }), planBlock({ moves: ["b"] })) }));
+    github.checks = RED;
+    const calls: string[] = [];
+    const entries = await reviewOpenPullRequests(context(github), steps(calls));
+    expect(entries[0]).toMatchObject({ outcome: "left-alone" });
+    expect(calls).toEqual([]);
+  });
+
+  it("doesn't even list a PR someone else authored with the tool's branch, marker, label and a copied body", async () => {
+    const github = new FakeGitHub(ownPr({ author: "a-writer" }));
+    github.checks = RED;
+    const calls: string[] = [];
+    expect(await reviewOpenPullRequests(context(github), steps(calls))).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it("trusts an unsigned state whoever wrote it, with trusted-editors, and still only the token's PRs", async () => {
+    const trusting = { ...SIGNED, trust: { mode: "trusted-editors" } as const };
+    const github = new FakeGitHub(ownPr({ body: withMarker(trusting, "Body.", { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }, OWN_BRANCH) }), ownPr({ number: 8, nodeId: "n8", author: "a-writer" }));
+    github.checks = RED;
+    const calls: string[] = [];
+    const entries = await reviewOpenPullRequests({ ...context(github), trust: trusting.trust }, steps(calls));
+    expect(entries.map((entry) => [entry.number, entry.outcome])).toEqual([[7, "adapted"]]);
+  });
+
   it("leaves a PR whose state someone removed alone", async () => {
     const github = new FakeGitHub(ownPr({ headSha: PUSHED_SHA, body: `Rewritten.\n\n${RULES.marker}\n` }));
     const entries = await reviewOpenPullRequests(context(github, new InMemoryWorkspace(), workingCopy()), steps());
-    expect(entries[0]).toMatchObject({ outcome: "left-alone", detail: "its body has no valid state for the configured signing key: someone made or rewrote it, or the key changed" });
+    expect(entries[0]).toMatchObject({ outcome: "left-alone", detail: "its body has no state the tool signed for this PR: someone made or edited it, or the key changed" });
     expect(github.calls.filter((call) => !call.startsWith("listOpenPullRequests"))).toEqual([]);
   });
 

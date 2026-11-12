@@ -51,7 +51,8 @@ async function createExecution(context: ToolRunContext, deps: BumpItDeps): Promi
       workspace: context.workspace,
       logger: context.logger,
       repo: context.repo.repo,
-      signingKey: context.signingKey,
+      trust: context.trust,
+      login: context.login,
       base: context.base,
       workingCopy: context.workingCopy,
       localRoots: machineRoots(context.config.dirs),
@@ -81,7 +82,7 @@ async function run(context: ToolRunContext, deps: BumpItDeps): Promise<Readonly<
     return { outcome: "incomplete", incomplete: found.incomplete, ...(found.notes.length === 0 ? {} : { notes: found.notes }) };
   }
   const wrapper = await execution.wrapper.candidates(base);
-  const own = await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base);
+  const own = await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base, context.login, execution.branches);
   const priority = deps.priority(context);
   const deferredBefore = await priority.read();
   const order = (unit: Unit) => (unit.package === undefined ? -1 : deferredBefore.indexOf(unit.package));
