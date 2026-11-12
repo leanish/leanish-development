@@ -4,7 +4,7 @@ import { MAX_ISSUE_BODY_CHARS, MAX_ISSUE_TITLE_CHARS } from "@leanish/tool-runti
 import { cleanBody } from "@leanish/tool-runtime/publication-text";
 
 import type { IssueRecord, SubjectAssessment } from "../src/issue-model.ts";
-import { detailLimits, ISSUE_WRITER, issueWriter, recordOf, trackingContent, withoutClosingKeywords } from "../src/issue-text.ts";
+import { CLOSING_LINE, detailLimits, ISSUE_WRITER, issueWriter, recordOf, trackingContent, withoutClosingKeywords } from "../src/issue-text.ts";
 
 describe("issueWriter", () => {
   it.each(["", "<!-- leanish:plan "])("cleans a local path straddling the detail cut, including inside %s", (opening) => {
@@ -44,6 +44,14 @@ describe("issueWriter", () => {
     expect(blockedLine(rendered.body).length).toBeLessThan(10_000);
     expect(rendered.body.length).toBeLessThanOrEqual(MAX_ISSUE_BODY_CHARS);
     expect(recordOf(rendered.body)).toEqual(record);
+  });
+
+  it("says what closing the issue does, even when the rest of its body is cut", () => {
+    const record = largeRecord(800);
+    const rendered = renderRefusal(record, `a short first reason; ${"a long second reason ".repeat(500)}`);
+    expect(rendered.body).toContain("[truncated]");
+    expect(rendered.body).toContain(CLOSING_LINE);
+    expect(CLOSING_LINE).toBe("Closing this issue by hand dismisses its findings; a closing by a PR, a commit or a bot doesn't. Neither changes what the gate checks or closes an open PR.");
   });
 
   it("cuts a refusal shorter when its backticks widen the code span around it", () => {

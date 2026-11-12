@@ -38,6 +38,10 @@
   attempt of the old one. The first run after upgrading does that for any such closing made earlier. Each round of the
   issue sync makes one more GraphQL request per 100 issues it didn't close itself; if that read fails otherwise, the sync
   fails, and the run defers that repository's fixes.
+- secure-it explains closings: every open issue says that closing it by hand dismisses its findings and a closing by a
+  PR, a commit or a bot doesn't, and a run comments once on each closing it didn't make, saying whether it took it for
+  a dismissal. The first run after upgrading rewrites every open issue once to add that line, and comments on every
+  earlier closing it didn't make, a person's included.
 - A PR is the tools' only when the write token's login opened it, read once per command (one more request per run).
 - The tools sign what they act on in their PRs: the state line (head, base, adaptations), the PR's branch and base
   branch, the plan the body carries and secure-it's `Tracks` line, with a per-tool key kept in the Keychain
@@ -48,8 +52,8 @@
   PRs. Reuse the same key on every machine that runs a tool. Upgrade: with signed records, a PR made before this,
   including one signed by an earlier 0.12.0 build, stays alone until a person closes it, so close the tools' open PRs
   when upgrading (not secure-it's issues); with `trusted-editors`, the tools keep reading those PRs' state lines.
-- The gate no longer helps with the rename of `ownPackages` to `trustedPackages`: a config with the old name now fails
-  as an unknown field, and a PR making the rename compares against the default Gradle builds, and the lockfiles head
+- The gate no longer helps with the rename of `ownPackages` to `trustedPackages`: a config with the old name still fails,
+  now as an unknown field without saying to rename it, and a PR making the rename compares against the default Gradle builds, and the lockfiles head
   selects plus the default ones. A repository still on it should
   [rename it on 0.11.1](docs/releasing.md#trustedpackages-migration) first.
 
@@ -654,7 +658,7 @@
   the existing retry without the named package groups still follows, from the second refusal, or from the first when
   the second attempt never reached a verification. A review's adaptation isn't restarted this way. The run report
   lists the first refusal (`rejected`) and, when the unit still fails, why the second attempt stopped short of a
-  verification. On kryptovero, the agent replaced a planned Gradle floor with a move of its parent, which the gate
+  verification. On a private Gradle fixture, the agent replaced a planned Gradle floor with a move of its parent, which the gate
   refused, and the critical fix was never proposed.
 
 ### Fixed

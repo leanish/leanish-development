@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { GitHubApiError } from "@leanish/agent-runtime/github/github-client";
-import { createGitHubIssues, MAX_ISSUE_BODY_CHARS, MAX_ISSUE_TITLE_CHARS } from "../src/github-issues.ts";
+import { createGitHubIssues, type LatestClosing, MAX_ISSUE_BODY_CHARS, MAX_ISSUE_TITLE_CHARS } from "../src/github-issues.ts";
 
 const TOKEN = "ghp_secret-token-value";
 const REPO = "leanish/widget";
@@ -49,28 +49,34 @@ function issues(fetchFn: typeof fetch, env: Record<string, string | undefined> =
 const typed = (type: string | null) => (type === null ? null : { __typename: type });
 
 /** One issue's latest closing as GitHub answers it. */
-const closingOf = (closer: string | null, actor: string | null = "User") => ({ timelineItems: { nodes: [{ actor: typed(actor), closer: typed(closer) }] } });
+const closingOf = (closer: string | null, actor: string | null = "User", id = "CE_kwDOAbc123") =>
+  ({ timelineItems: { nodes: [{ id, actor: typed(actor), closer: typed(closer) }] } });
 
 /** A GraphQL answer about the latest closing of each issue: its closer's type, or null when GitHub recorded none. */
 function closings(closers: Record<number, string | null>, actor: string | null = "User"): Response {
-  const repository = Object.fromEntries(Object.entries(closers).map(([number, closer]) => [`issue${number}`, closingOf(closer, actor)]));
+  const repository = Object.fromEntries(Object.entries(closers).map(([number, closer]) => [`issue${number}`, closingOf(closer, actor, `CE_${number}`)]));
   return json({ data: { repository } });
 }
 
-describe("closedByPerson", () => {
+/** The issues a person last closed, out of their latest closings. */
+async function persons(answer: Promise<ReadonlyMap<number, LatestClosing>>): Promise<ReadonlySet<number>> {
+  return new Set([...await answer].filter(([, closing]) => closing.byPerson).map(([number]) => number));
+}
+
+describe("latestClosings", () => {
   it("makes no request for no numbers", async () => {
     const { fetch, calls } = scripted();
-    expect(await issues(fetch).closedByPerson({ repo: REPO, numbers: [] })).toEqual(new Set());
+    expect(await persons(issues(fetch).latestClosings({ repo: REPO, numbers: [] }))).toEqual(new Set());
     expect(calls).toEqual([]);
   });
 
   it.each([["Bot"], ["Mannequin"], ["Organization"], [null]])("doesn't take a closing with no closer by a %s actor for a person's", async (actor) => {
-    expect(await issues(scripted(closings({ 1: null }, actor)).fetch).closedByPerson({ repo: REPO, numbers: [1] })).toEqual(new Set());
+    expect(await persons(issues(scripted(closings({ 1: null }, actor)).fetch).latestClosings({ repo: REPO, numbers: [1] }))).toEqual(new Set());
   });
 
   it("takes only a user's closing with no closer for a person's, whatever the type of any other closer", async () => {
     const { fetch, calls } = scripted(closings({ 1: "PullRequest", 2: "Commit", 3: "ProjectV2", 4: null }));
-    expect(await issues(fetch).closedByPerson({ repo: REPO, numbers: [1, 2, 3, 4] })).toEqual(new Set([4]));
+    expect(await persons(issues(fetch).latestClosings({ repo: REPO, numbers: [1, 2, 3, 4] }))).toEqual(new Set([4]));
     expect(calls[0]!.url).toBe("https://api.github.com/graphql");
     expect(calls[0]!.init.method).toBe("POST");
     const body = JSON.parse(String(calls[0]!.init.body)) as { query: string; variables: unknown };
@@ -80,11 +86,27 @@ describe("closedByPerson", () => {
     expect(body.query).toContain("timelineItems(itemTypes: [CLOSED_EVENT], last: 1)");
   });
 
+  it("gives each closing's id, a refused one's included", async () => {
+    const data = { data: { repository: { issue1: closingOf(null, "User", "CE_one"), issue2: closingOf("PullRequest", "User", "CE_two") } } };
+    const answer = await issues(scripted(json({ ...data, errors: [refusal("issue1")] })).fetch).latestClosings({ repo: REPO, numbers: [1, 2] });
+    expect(answer).toEqual(new Map([[1, { id: "CE_one", byPerson: false }], [2, { id: "CE_two", byPerson: false }]]));
+  });
+
+  it.each([["CE_lADOU-nJG88AAAABYFjlZM8AAAAH-Xh7JA"], ["MDExOkNsb3NlZEV2ZW50+/1="]])("reads a closing id GitHub gives: %s", async (id) => {
+    const answer = { data: { repository: { issue1: closingOf(null, "User", id) } } };
+    expect((await issues(scripted(json(answer)).fetch).latestClosings({ repo: REPO, numbers: [1] })).get(1)?.id).toBe(id);
+  });
+
+  it.each([[undefined], [""], [7], ["CE --> x"], ["x".repeat(201)]])("fails on a closing id it can't put in a marker: %s", async (id) => {
+    const answer = { data: { repository: { issue1: { timelineItems: { nodes: [{ id, actor: typed("User"), closer: null }] } } } } };
+    await expect(issues(scripted(json(answer)).fetch).latestClosings({ repo: REPO, numbers: [1] })).rejects.toThrow("malformed closing id");
+  });
+
   it("asks about 100 issues per request, each number once", async () => {
     const numbers = Array.from({ length: 101 }, (_, i) => i + 1);
     const firstHundred = Object.fromEntries(numbers.slice(0, 100).map((number) => [number, "PullRequest"]));
     const { fetch, calls } = scripted(closings(firstHundred), closings({ 101: null }));
-    expect(await issues(fetch).closedByPerson({ repo: REPO, numbers: [...numbers, 1] })).toEqual(new Set([101]));
+    expect(await persons(issues(fetch).latestClosings({ repo: REPO, numbers: [...numbers, 1] }))).toEqual(new Set([101]));
     expect(calls).toHaveLength(2);
     expect((JSON.parse(String(calls[1]!.init.body)) as { query: string }).query).toContain("issue101:");
   });
@@ -92,7 +114,7 @@ describe("closedByPerson", () => {
   it("fails on errors beside partial data, even for what the data does answer", async () => {
     const closing = closingOf(null);
     const partial = { data: { repository: { issue1: closing, issue2: closing } }, errors: [{ type: "FORBIDDEN" }] };
-    await expect(issues(scripted(json(partial)).fetch).closedByPerson({ repo: REPO, numbers: [1, 2] })).rejects.toThrow(GitHubApiError);
+    await expect(issues(scripted(json(partial)).fetch).latestClosings({ repo: REPO, numbers: [1, 2] })).rejects.toThrow(GitHubApiError);
   });
 
   const refusal = (alias: string, field = "closer", type = "FORBIDDEN") =>
@@ -101,9 +123,9 @@ describe("closedByPerson", () => {
   it("doesn't take a closer the token can't read for a person's closing, identical as its data looks, and reads on", async () => {
     // As measured with a token limited to Issues: the closer comes back null, and only the error says there is one.
     const data = { data: { repository: { issue1: closingOf(null), issue2: closingOf(null) } } };
-    expect(await issues(scripted(json(data)).fetch).closedByPerson({ repo: REPO, numbers: [1, 2] })).toEqual(new Set([1, 2]));
+    expect(await persons(issues(scripted(json(data)).fetch).latestClosings({ repo: REPO, numbers: [1, 2] }))).toEqual(new Set([1, 2]));
     const refused = { ...data, errors: [refusal("issue1")] };
-    expect(await issues(scripted(json(refused)).fetch).closedByPerson({ repo: REPO, numbers: [1, 2] })).toEqual(new Set([2]));
+    expect(await persons(issues(scripted(json(refused)).fetch).latestClosings({ repo: REPO, numbers: [1, 2] }))).toEqual(new Set([2]));
   });
 
   it.each<[string, unknown[]]>([
@@ -115,7 +137,7 @@ describe("closedByPerson", () => {
     ["an empty error list", []],
   ])("still fails on %s", async (_, errors) => {
     const answer = { data: { repository: { issue1: closingOf(null), issue2: closingOf(null) } }, errors };
-    await expect(issues(scripted(json(answer)).fetch).closedByPerson({ repo: REPO, numbers: [1, 2] })).rejects.toThrow(GitHubApiError);
+    await expect(issues(scripted(json(answer)).fetch).latestClosings({ repo: REPO, numbers: [1, 2] })).rejects.toThrow(GitHubApiError);
   });
 
   it("matches a refusal to the batch that got it", async () => {
@@ -123,13 +145,13 @@ describe("closedByPerson", () => {
     const firstHundred = Object.fromEntries(numbers.slice(0, 100).map((number) => [number, null]));
     const second = (alias: string) => json({ data: { repository: { issue101: closingOf(null) } }, errors: [refusal(alias)] });
     const expected = new Set(numbers.slice(0, 100));
-    expect(await issues(scripted(closings(firstHundred), second("issue101")).fetch).closedByPerson({ repo: REPO, numbers })).toEqual(expected);
-    await expect(issues(scripted(closings(firstHundred), second("issue1")).fetch).closedByPerson({ repo: REPO, numbers })).rejects.toThrow(GitHubApiError);
+    expect(await persons(issues(scripted(closings(firstHundred), second("issue101")).fetch).latestClosings({ repo: REPO, numbers }))).toEqual(expected);
+    await expect(issues(scripted(closings(firstHundred), second("issue1")).fetch).latestClosings({ repo: REPO, numbers })).rejects.toThrow(GitHubApiError);
   });
 
   it("still reads a refused closing whole: a malformed actor beside it fails", async () => {
-    const answer = { data: { repository: { issue1: { timelineItems: { nodes: [{ actor: {}, closer: null }] } } } }, errors: [refusal("issue1")] };
-    await expect(issues(scripted(json(answer)).fetch).closedByPerson({ repo: REPO, numbers: [1] })).rejects.toThrow("malformed actor");
+    const answer = { data: { repository: { issue1: { timelineItems: { nodes: [{ id: "CE_1", actor: {}, closer: null }] } } } }, errors: [refusal("issue1")] };
+    await expect(issues(scripted(json(answer)).fetch).latestClosings({ repo: REPO, numbers: [1] })).rejects.toThrow("malformed actor");
   });
 
   it.each<[string, unknown, string]>([
@@ -137,17 +159,17 @@ describe("closedByPerson", () => {
     ["says a rate limit as every other method does", [{ type: "RATE_LIMITED" }], "rate limited"],
     ["stays generic without a usable type", [{ type: "not a type" }, null], "GraphQL errors"],
   ])("%s", async (_, errors, reason) => {
-    await expect(issues(scripted(json({ errors })).fetch).closedByPerson({ repo: REPO, numbers: [1] })).rejects.toMatchObject({ reason });
+    await expect(issues(scripted(json({ errors })).fetch).latestClosings({ repo: REPO, numbers: [1] })).rejects.toMatchObject({ reason });
   });
 
   it("fails when a later batch does, rather than answer for the earlier ones", async () => {
     const numbers = Array.from({ length: 101 }, (_, i) => i + 1);
     const firstHundred = Object.fromEntries(numbers.slice(0, 100).map((number) => [number, "PullRequest"]));
-    await expect(issues(scripted(closings(firstHundred), json({ errors: [{ type: "FORBIDDEN" }] })).fetch).closedByPerson({ repo: REPO, numbers })).rejects.toThrow(GitHubApiError);
+    await expect(issues(scripted(closings(firstHundred), json({ errors: [{ type: "FORBIDDEN" }] })).fetch).latestClosings({ repo: REPO, numbers })).rejects.toThrow(GitHubApiError);
   });
 
   it("fails on a refusal", async () => {
-    await expect(issues(scripted(json({}, 403)).fetch).closedByPerson({ repo: REPO, numbers: [1] })).rejects.toMatchObject({ status: 403 });
+    await expect(issues(scripted(json({}, 403)).fetch).latestClosings({ repo: REPO, numbers: [1] })).rejects.toMatchObject({ status: 403 });
   });
 
   it.each<[string, unknown]>([
@@ -157,19 +179,19 @@ describe("closedByPerson", () => {
     ["a null issue", { data: { repository: { issue1: null } } }],
     ["no timeline", { data: { repository: { issue1: {} } } }],
     ["no closing", { data: { repository: { issue1: { timelineItems: { nodes: [] } } } } }],
-    ["no closer field", { data: { repository: { issue1: { timelineItems: { nodes: [{ actor: { __typename: "User" } }] } } } } }],
-    ["a closer without a type", { data: { repository: { issue1: { timelineItems: { nodes: [{ actor: { __typename: "User" }, closer: {} }] } } } } }],
-    ["no actor field", { data: { repository: { issue1: { timelineItems: { nodes: [{ closer: null }] } } } } }],
-    ["an actor without a type", { data: { repository: { issue1: { timelineItems: { nodes: [{ actor: {}, closer: null }] } } } } }],
-    ["an actor without a type beside a closer", { data: { repository: { issue1: { timelineItems: { nodes: [{ actor: {}, closer: { __typename: "PullRequest" } }] } } } } }],
-    ["a closer without a type beside a bot", { data: { repository: { issue1: { timelineItems: { nodes: [{ actor: { __typename: "Bot" }, closer: {} }] } } } } }],
+    ["no closer field", { data: { repository: { issue1: { timelineItems: { nodes: [{ id: "CE_1", actor: { __typename: "User" } }] } } } } }],
+    ["a closer without a type", { data: { repository: { issue1: { timelineItems: { nodes: [{ id: "CE_1", actor: { __typename: "User" }, closer: {} }] } } } } }],
+    ["no actor field", { data: { repository: { issue1: { timelineItems: { nodes: [{ id: "CE_1", closer: null }] } } } } }],
+    ["an actor without a type", { data: { repository: { issue1: { timelineItems: { nodes: [{ id: "CE_1", actor: {}, closer: null }] } } } } }],
+    ["an actor without a type beside a closer", { data: { repository: { issue1: { timelineItems: { nodes: [{ id: "CE_1", actor: {}, closer: { __typename: "PullRequest" } }] } } } } }],
+    ["a closer without a type beside a bot", { data: { repository: { issue1: { timelineItems: { nodes: [{ id: "CE_1", actor: { __typename: "Bot" }, closer: {} }] } } } } }],
   ])("fails on %s, so what it can't read never reads as a person's closing", async (_, answer) => {
-    await expect(issues(scripted(json(answer)).fetch).closedByPerson({ repo: REPO, numbers: [1] })).rejects.toThrow(GitHubApiError);
+    await expect(issues(scripted(json(answer)).fetch).latestClosings({ repo: REPO, numbers: [1] })).rejects.toThrow(GitHubApiError);
   });
 
   it("refuses an invalid number before any request", async () => {
     const { fetch, calls } = scripted();
-    await expect(issues(fetch).closedByPerson({ repo: REPO, numbers: [0] })).rejects.toThrow("invalid issue number");
+    await expect(issues(fetch).latestClosings({ repo: REPO, numbers: [0] })).rejects.toThrow("invalid issue number");
     expect(calls).toEqual([]);
   });
 });

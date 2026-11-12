@@ -318,11 +318,170 @@ describe("syncIssues", () => {
       const issues = new FakeIssues();
       await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
       issues.closeByReference(1);
-      issues.forbidden.add("closedByPerson");
+      issues.forbidden.add("latestClosings");
       issues.calls.length = 0;
       await expect(syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]))).rejects.toThrow(GitHubApiError);
       expect(issues.calls).toEqual([]);
       expect(issues.issues.size).toBe(1);
+    });
+  });
+
+  describe("explaining a closing it didn't make", () => {
+    const openNumbers = (issues: FakeIssues) => [...issues.issues.values()].filter((issue) => issue.state === "open").map((issue) => issue.number);
+    const commentsOn = (issues: FakeIssues, number: number) => (issues.comments.get(number) ?? []).map((comment) => comment.body);
+    const closingIds = (issues: FakeIssues, number: number) => (issues.events.get(number) ?? []).filter((event) => event.event === "closed").map((event) => `CE_${event.id}`);
+    const failedNote = (result: { readonly notes: ReadonlyArray<string> }) => result.notes.some((note) => note.startsWith("#1: secure-it couldn't comment on its closing yet"));
+    /** Another process's client on the same issues: it doesn't remember what this one posted, so only a marker stops a repeat. */
+    const nextRun = (issues: FakeIssues): FakeIssues => new Proxy(issues, {
+      get: (target, key) => {
+        const value: unknown = Reflect.get(target, key, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+
+    it("says a person's closing dismisses, once, and records the closing it explained", async () => {
+      const issues = new FakeIssues();
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      issues.setState(1, "closed", "owner");
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      const [comment, ...more] = commentsOn(issues, 1);
+      expect(more).toEqual([]);
+      expect(comment).toContain("secure-it takes this closing for a person's dismissal of these findings: `npm lib GHSA-1`.");
+      expect(comment).toContain("Reopening this issue undoes its dismissal");
+      expect(comment).toContain(noticeMarker(`closing:${closingIds(issues, 1)[0]}`));
+      expect(recordOf(issues.issues.get(1)!.body)!.acknowledged).toBe(closingIds(issues, 1)[0]);
+      issues.calls.length = 0;
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      expect(issues.calls).toEqual([]);
+    });
+
+    it("says a reference's closing doesn't dismiss, naming the issue that tracks its findings now", async () => {
+      const issues = new FakeIssues();
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      issues.closeByReference(1);
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      expect(openNumbers(issues)).toEqual([2]);
+      const [comment, ...more] = commentsOn(issues, 1);
+      expect(more).toEqual([]);
+      expect(comment).toContain("secure-it doesn't take this closing for a dismissal: GitHub doesn't show a person closing it by hand.");
+      expect(comment).toContain("#2 tracks them now; to dismiss them, close it by hand.");
+    });
+
+    it("names no issue when none tracks the findings, and says how to dismiss them", async () => {
+      const issues = new FakeIssues();
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      issues.closeByBot(1);
+      await syncIssues(sync(issues), assessed([]));
+      expect(openNumbers(issues)).toEqual([]);
+      const [comment] = commentsOn(issues, 1);
+      expect(comment).toContain("It holds none of its findings back. To dismiss them, reopen this issue and close it by hand.");
+      expect(comment).not.toMatch(/#\d/);
+    });
+
+    it("explains a new closing after a reopening, even within the same second", async () => {
+      const issues = new FakeIssues();
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      issues.setState(1, "closed", "owner", "2026-11-03T10:00:00Z");
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      issues.setState(1, "open", "owner", "2026-11-03T10:00:00Z");
+      issues.setState(1, "closed", "owner", "2026-11-03T10:00:00Z");
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      const [first, second] = closingIds(issues, 1);
+      const comments = commentsOn(issues, 1);
+      expect(comments).toHaveLength(2);
+      expect(comments[0]).toContain(noticeMarker(`closing:${first}`));
+      expect(comments[1]).toContain(noticeMarker(`closing:${second}`));
+      expect(recordOf(issues.issues.get(1)!.body)!.acknowledged).toBe(second);
+    });
+
+    it("posts nothing new for the tool's own closings", async () => {
+      const issues = new FakeIssues();
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.2")], LATER));
+      expect(issues.issues.get(1)!.state).toBe("closed");
+      expect(commentsOn(issues, 1)).toHaveLength(1);
+      expect(commentsOn(issues, 1)[0]).toContain("superseded by #2");
+      expect(recordOf(issues.issues.get(1)!.body)!.acknowledged).toBeUndefined();
+    });
+
+    it("keeps the closing it explained through later record changes, and doesn't explain it again", async () => {
+      const issues = new FakeIssues();
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      issues.setState(1, "closed", "owner");
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      const explained = recordOf(issues.issues.get(1)!.body)!.acknowledged;
+      // A complete assessment without the finding records its absence on the closed issue.
+      await syncIssues(sync(issues), assessed([], LATER));
+      const record = recordOf(issues.issues.get(1)!.body)!;
+      expect(record.absences).toHaveLength(1);
+      expect(record.acknowledged).toBe(explained);
+      expect(commentsOn(issues, 1)).toHaveLength(1);
+    });
+
+    it("names only the findings a dismissal covers, not one recorded gone before it", async () => {
+      const issues = new FakeIssues();
+      const both = { ...waiting("lib", "1.0.1"), findings: [finding("lib", "GHSA-1"), finding("lib", "GHSA-2")] };
+      await syncIssues(sync(issues), assessed([both]));
+      // A complete assessment no longer finds GHSA-2: its episode ends on #1, which stays open for GHSA-1.
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")], LATER));
+      issues.setState(1, "closed", "owner");
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")], LATER));
+      const [comment] = commentsOn(issues, 1);
+      expect(comment).toContain("secure-it takes this closing for a person's dismissal of these findings: `npm lib GHSA-1`.");
+      expect(comment).not.toContain("GHSA-2");
+    });
+
+    it("says a dismissal covers nothing when no finding of the issue is still present", async () => {
+      const issues = new FakeIssues();
+      await syncIssues(sync(issues), assessed([{ subject: { kind: "package", ecosystem: "npm", name: "lib" }, findings: [], status: { kind: "informational" } }]));
+      issues.setState(1, "closed", "owner");
+      await syncIssues(sync(nextRun(issues)), assessed([]));
+      expect(commentsOn(issues, 1)[0]).toContain("secure-it takes this closing for a person's dismissal, but this issue tracks no finding still present, so it covers none.");
+    });
+
+    it("notes a comment that fails, records nothing, and explains it on a later run", async () => {
+      const issues = new FakeIssues();
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      issues.setState(1, "closed", "owner");
+      issues.forbidden.add("createComment");
+      const failed = await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      expect(failed.settled).toBe(true);
+      expect(failedNote(failed)).toBe(true);
+      expect(recordOf(issues.issues.get(1)!.body)!.acknowledged).toBeUndefined();
+      issues.forbidden.delete("createComment");
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      expect(commentsOn(issues, 1)).toHaveLength(1);
+      expect(recordOf(issues.issues.get(1)!.body)!.acknowledged).toBe(closingIds(issues, 1)[0]);
+    });
+
+    it.each([
+      ["the record write after the comment fails", "update"],
+      ["the comment's answer is lost", "comment"],
+    ])("doesn't comment twice when %s", async (_, lost) => {
+      const issues = new FakeIssues();
+      await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      issues.setState(1, "closed", "owner");
+      const update = issues.updateIssue.bind(issues);
+      const comment = issues.createComment.bind(issues);
+      if (lost === "update") {
+        issues.updateIssue = async (args) => {
+          if (args.body !== undefined && recordOf(args.body)?.acknowledged !== undefined) throw new GitHubApiError("updateIssue", "server error", 502);
+          return update(args);
+        };
+      } else {
+        issues.createComment = async (args) => {
+          await comment(args);
+          throw new GitHubApiError("createComment", "server error", 502);
+        };
+      }
+      const failed = await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
+      expect(failedNote(failed)).toBe(true);
+      expect(recordOf(issues.issues.get(1)!.body)!.acknowledged).toBeUndefined();
+      issues.updateIssue = update;
+      issues.createComment = comment;
+      await syncIssues(sync(nextRun(issues)), assessed([waiting("lib", "1.0.1")]));
+      expect(commentsOn(issues, 1)).toHaveLength(1);
+      expect(recordOf(issues.issues.get(1)!.body)!.acknowledged).toBe(closingIds(issues, 1)[0]);
     });
   });
 

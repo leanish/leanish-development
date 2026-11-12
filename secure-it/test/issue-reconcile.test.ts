@@ -465,6 +465,14 @@ describe("issue text", () => {
     expect(parseRecord({ version: 1, subject: { kind: "package", ecosystem: "pip", name: "x" }, openedAt: SHA, findings: [], absences: [], attempts: [] })).toBeUndefined();
     expect(parseRecord({ version: 1, subject: { kind: "package", ecosystem: "npm", name: "x" }, openedAt: SHA, findings: [], absences: [], attempts: [], grant: { actor: "x" } })).toBeUndefined();
   });
+
+  it("reads the closing a run explained, and refuses one that isn't an id", () => {
+    const base = { version: 1, subject: { kind: "package", ecosystem: "npm", name: "x" }, openedAt: SHA, findings: [], absences: [], attempts: [] };
+    expect(parseRecord({ ...base, acknowledged: "CE_kwDO1" })?.acknowledged).toBe("CE_kwDO1");
+    expect(parseRecord(base)).not.toHaveProperty("acknowledged");
+    expect(parseRecord({ ...base, acknowledged: "" })).toBeUndefined();
+    expect(parseRecord({ ...base, acknowledged: 7 })).toBeUndefined();
+  });
 });
 
 describe("recordShows", () => {

@@ -1,7 +1,8 @@
 /**
  * Brings the tool's issues in line with one frozen assessment: reads them (the token's own, open and closed), asks
- * `reconcile` for operations, applies them, and reads again until nothing is left or the rounds run out. Every text is
- * cleaned of local paths before it's published, and compared cleaned, so an unchanged issue is never rewritten.
+ * `reconcile` for operations, applies them, and reads again until nothing is left or the rounds run out. Once nothing
+ * is left, it explains each closing it didn't make and hasn't explained yet in a comment. Every text is cleaned of local
+ * paths before it's published, and compared cleaned, so an unchanged issue is never rewritten.
  *
  * GitHub's filtered issue listing lags writes by seconds (an issue created a moment ago isn't listed yet, an edited one
  * is listed with its old body), while reading an issue by its number doesn't. So every issue the sync wrote is read
@@ -12,9 +13,10 @@
  * limit stays a rate limit (`issueWrite`).
  */
 import { GitHubApiError } from "@leanish/agent-runtime/github/github-client";
-import type { GitHubIssue, GitHubIssues } from "@leanish/tool-runtime/github-issues";
+import type { GitHubIssue, GitHubIssues, LatestClosing } from "@leanish/tool-runtime/github-issues";
 
 import { issueWrite } from "./issue-access.ts";
+import { type ClosingNotice, closingNotices } from "./issue-closings.ts";
 import type { Assessment, PendingClose } from "./issue-model.ts";
 import { postNotice } from "./issue-notices.ts";
 import { type IssueOperation, reconcile, type TrackedIssue } from "./issue-reconcile.ts";
@@ -61,7 +63,10 @@ export async function syncIssues(sync: IssueSync, assessment: Assessment): Promi
     const result = reconcile({ ...assessment, at: shownFrom }, read.tracked, writer, read.unreadable);
     if (result.operations.length === 0 || round === ROUNDS) {
       notes.push(...result.notes);
-      return { ...read, notes: [...new Set(notes)], settled: result.operations.length === 0 };
+      const settled = result.operations.length === 0;
+      // Only once settled are the issues that now track a closed one's findings all open, so its notice can name them.
+      const tracked = settled ? await acknowledgeClosings(sync, writer, read.tracked, notes) : read.tracked;
+      return { tracked, unreadable: read.unreadable, notes: [...new Set(notes)], settled };
     }
     const seen = new Map(read.tracked.map((issue) => [issue.number, issue]));
     for (const operation of result.operations) {
@@ -88,6 +93,38 @@ async function withEventBoundary(sync: IssueSync, writer: IssueWriter, operation
   return { ...operation, body: writer.withRecord(operation.body, { ...record, pendingClose: { ...record.pendingClose, afterEvent } }) };
 }
 
+/**
+ * Comments on each closing the tool didn't make and hasn't explained yet (`closingNotices`), then records it as
+ * acknowledged, in that order: a failure between the two posts nothing twice (`postNotice` finds its marker), and never
+ * leaves a closing recorded but unexplained. Whenever the record isn't written after the comment was (its answer was
+ * lost, or the record write failed), a later try whose comment listing doesn't show it yet posts it again. One issue
+ * failing is noted, and a later run tries again; it fails nothing else.
+ */
+async function acknowledgeClosings<T extends TrackedIssue & { readonly labels: ReadonlyArray<string> }>(sync: IssueSync, writer: IssueWriter, tracked: ReadonlyArray<T>, notes: string[]): Promise<T[]> {
+  const notices = new Map(closingNotices(tracked).map((notice) => [notice.number, notice]));
+  const result: T[] = [];
+  for (const issue of tracked) {
+    const notice = notices.get(issue.number);
+    result.push(notice === undefined ? issue : await acknowledged(sync, writer, issue, notice, notes));
+  }
+  return result;
+}
+
+async function acknowledged<T extends TrackedIssue & { readonly labels: ReadonlyArray<string> }>(sync: IssueSync, writer: IssueWriter, issue: T, notice: ClosingNotice, notes: string[]): Promise<T> {
+  try {
+    // Written on what this run read: one a person changed since (reopened it, say) waits for the next run's reading.
+    if (!(await unchanged(sync, issue))) return issue;
+    await postNotice(sync, issue.number, notice.noticeId, notice.body);
+    const record = { ...issue.record, acknowledged: notice.closing };
+    const body = writer.withRecord(issue.body, record);
+    await issueWrite(() => sync.issues.updateIssue({ repo: sync.repo, number: issue.number, body }));
+    return { ...issue, body, record };
+  } catch (error) {
+    notes.push(`#${issue.number}: secure-it couldn't comment on its closing yet (${error instanceof Error ? error.message : String(error)}); a later run tries again`);
+    return issue;
+  }
+}
+
 /** Whether `read` is still what GitHub has: the same body, state and labels, read by its number. */
 async function unchanged(sync: IssueSync, read: { readonly number: number; readonly body: string; readonly state: string; readonly labels: ReadonlyArray<string> } | undefined): Promise<boolean> {
   if (read === undefined) return false;
@@ -109,7 +146,7 @@ async function readTracked(sync: IssueSync, login: string, written: ReadonlySet<
     const issue = await readWritten(sync, number);
     if (issue !== undefined && issue.author === login && hasLabel(issue.labels, ISSUE_LABEL)) fresh.push(issue);
   }
-  const read: Array<Omit<TrackedIssue, "closedByPerson"> & { readonly labels: ReadonlyArray<string> }> = [];
+  const read: Array<Omit<TrackedIssue, "closedByPerson" | "closing"> & { readonly labels: ReadonlyArray<string> }> = [];
   const unreadable: number[] = [];
   for (const issue of [...listed.filter((issue) => !written.has(issue.number)), ...fresh]) {
     const record = recordOf(issue.body);
@@ -125,8 +162,14 @@ async function readTracked(sync: IssueSync, login: string, written: ReadonlySet<
   // Only a closing the tool didn't record can be a dismissal, so only those need asking whether a person made them. A
   // failure fails the sync: a closing whose origin can't be read is taken neither for a person's nor for anything else.
   const undecided = read.filter((issue) => issue.state === "closed" && (issue.record.pendingClose === undefined || issue.reopened)).map((issue) => issue.number);
-  const byPerson = undecided.length === 0 ? new Set<number>() : await sync.issues.closedByPerson({ repo: sync.repo, numbers: undecided });
-  return { tracked: read.map((issue) => ({ ...issue, closedByPerson: byPerson.has(issue.number) })), unreadable };
+  const closings = undecided.length === 0 ? new Map<number, LatestClosing>() : await sync.issues.latestClosings({ repo: sync.repo, numbers: undecided });
+  return {
+    tracked: read.map((issue) => {
+      const closing = closings.get(issue.number);
+      return { ...issue, closedByPerson: closing?.byPerson === true, ...(closing === undefined ? {} : { closing: closing.id }) };
+    }),
+    unreadable,
+  };
 }
 
 /**

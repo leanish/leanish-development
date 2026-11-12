@@ -46,7 +46,7 @@ function snapshot(peers: Awaited<ReturnType<typeof prepareNpmPeers>>, affected: 
 }
 
 describe("direct npm peer sets", () => {
-  it("plans dtv's UI and coverage directs at the same exact version as the fixed vitest target", async () => {
+  it("plans a repository's vitest UI and coverage directs at the same exact version as the fixed vitest target", async () => {
     const h = fixture({ outward: true, future: true });
     const peers = await prepareNpmPeers(h.locks, [seed], h.sources);
     const result = await peers.resolve([move], snapshot(peers));
