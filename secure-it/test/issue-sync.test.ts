@@ -354,7 +354,7 @@ describe("syncIssues", () => {
       expect(comment).toContain("secure-it takes this closing for a person's dismissal of these findings: `npm lib GHSA-1`.");
       expect(comment).toContain("Reopening this issue undoes its dismissal");
       expect(comment).toContain(noticeMarker(`closing:${closingIds(issues, 1)[0]}`));
-      expect(recordOf(issues.issues.get(1)!.body)!.acknowledged).toBe(closingIds(issues, 1)[0]);
+      expect(recordOf(issues.issues.get(1)!.body, SEAL)!.acknowledged).toBe(closingIds(issues, 1)[0]);
       issues.calls.length = 0;
       await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
       expect(issues.calls).toEqual([]);
@@ -396,7 +396,7 @@ describe("syncIssues", () => {
       expect(comments).toHaveLength(2);
       expect(comments[0]).toContain(noticeMarker(`closing:${first}`));
       expect(comments[1]).toContain(noticeMarker(`closing:${second}`));
-      expect(recordOf(issues.issues.get(1)!.body)!.acknowledged).toBe(second);
+      expect(recordOf(issues.issues.get(1)!.body, SEAL)!.acknowledged).toBe(second);
     });
 
     it("posts nothing new for the tool's own closings", async () => {
@@ -406,7 +406,7 @@ describe("syncIssues", () => {
       expect(issues.issues.get(1)!.state).toBe("closed");
       expect(commentsOn(issues, 1)).toHaveLength(1);
       expect(commentsOn(issues, 1)[0]).toContain("superseded by #2");
-      expect(recordOf(issues.issues.get(1)!.body)!.acknowledged).toBeUndefined();
+      expect(recordOf(issues.issues.get(1)!.body, SEAL)!.acknowledged).toBeUndefined();
     });
 
     it("keeps the closing it explained through later record changes, and doesn't explain it again", async () => {
@@ -414,10 +414,10 @@ describe("syncIssues", () => {
       await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
       issues.setState(1, "closed", "owner");
       await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
-      const explained = recordOf(issues.issues.get(1)!.body)!.acknowledged;
+      const explained = recordOf(issues.issues.get(1)!.body, SEAL)!.acknowledged;
       // A complete assessment without the finding records its absence on the closed issue.
       await syncIssues(sync(issues), assessed([], LATER));
-      const record = recordOf(issues.issues.get(1)!.body)!;
+      const record = recordOf(issues.issues.get(1)!.body, SEAL)!;
       expect(record.absences).toHaveLength(1);
       expect(record.acknowledged).toBe(explained);
       expect(commentsOn(issues, 1)).toHaveLength(1);
@@ -452,11 +452,11 @@ describe("syncIssues", () => {
       const failed = await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
       expect(failed.settled).toBe(true);
       expect(failedNote(failed)).toBe(true);
-      expect(recordOf(issues.issues.get(1)!.body)!.acknowledged).toBeUndefined();
+      expect(recordOf(issues.issues.get(1)!.body, SEAL)!.acknowledged).toBeUndefined();
       issues.forbidden.delete("createComment");
       await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
       expect(commentsOn(issues, 1)).toHaveLength(1);
-      expect(recordOf(issues.issues.get(1)!.body)!.acknowledged).toBe(closingIds(issues, 1)[0]);
+      expect(recordOf(issues.issues.get(1)!.body, SEAL)!.acknowledged).toBe(closingIds(issues, 1)[0]);
     });
 
     it.each([
@@ -470,7 +470,7 @@ describe("syncIssues", () => {
       const comment = issues.createComment.bind(issues);
       if (lost === "update") {
         issues.updateIssue = async (args) => {
-          if (args.body !== undefined && recordOf(args.body)?.acknowledged !== undefined) throw new GitHubApiError("updateIssue", "server error", 502);
+          if (args.body !== undefined && recordOf(args.body, SEAL)?.acknowledged !== undefined) throw new GitHubApiError("updateIssue", "server error", 502);
           return update(args);
         };
       } else {
@@ -481,12 +481,12 @@ describe("syncIssues", () => {
       }
       const failed = await syncIssues(sync(issues), assessed([waiting("lib", "1.0.1")]));
       expect(failedNote(failed)).toBe(true);
-      expect(recordOf(issues.issues.get(1)!.body)!.acknowledged).toBeUndefined();
+      expect(recordOf(issues.issues.get(1)!.body, SEAL)!.acknowledged).toBeUndefined();
       issues.updateIssue = update;
       issues.createComment = comment;
       await syncIssues(sync(nextRun(issues)), assessed([waiting("lib", "1.0.1")]));
       expect(commentsOn(issues, 1)).toHaveLength(1);
-      expect(recordOf(issues.issues.get(1)!.body)!.acknowledged).toBe(closingIds(issues, 1)[0]);
+      expect(recordOf(issues.issues.get(1)!.body, SEAL)!.acknowledged).toBe(closingIds(issues, 1)[0]);
     });
   });
 
