@@ -160,7 +160,7 @@ describe("own PRs", () => {
     });
 
     // A multiline `$` matches before `\r` as before `\n`, so the Tracks line reads the same either way.
-    it("keeps verifying a body someone saved in GitHub's web editor, which stores CRLF", () => {
+    it("keeps verifying a body saved with CRLF line ends", () => {
       const crlf = body.replaceAll("\n", "\r\n");
       expect(verifiedStateOf(SIGNED, { ...pr, body: crlf })).toEqual(state);
       expect(verifiedStateOf(SIGNED, { ...pr, body: crlf.replace("Tracks #3.", "Tracks #4.") })).toBeUndefined();

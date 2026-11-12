@@ -116,7 +116,7 @@ What the gate can't see, in two kinds: **reported gaps**, which every report lis
   label. With `records: trusted-editors`, a PR's `Tracks` line is read from the PR's description the same way:
   review reads its last recognized `Tracks` line and keeps that issue number when it publishes an update, even when
   it names an unrelated issue (it posts no notice there); a regular run that redoes the PR replaces it with the
-  current decision's issue. With signed records, an edited `Tracks` line leaves the PR alone.
+  current decision's issue. With signed records, editing a PR's `Tracks` line makes the tool leave that PR alone.
 - **What a PR's signature doesn't stop (secure-it, bump-it)**: it proves the tool wrote that state, plan and `Tracks`
   line for that branch at some point. Restoring a body it signed earlier, at the same head (or after resetting the
   branch to an older signed head), repeats what that body allowed then: an adaptation attempt already used, for
