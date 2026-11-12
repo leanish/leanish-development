@@ -38,6 +38,10 @@
   attempt of the old one. The first run after upgrading does that for any such closing made earlier. Each round of the
   issue sync makes one more GraphQL request per 100 issues it didn't close itself; if that read fails otherwise, the sync
   fails, and the run defers that repository's fixes.
+- secure-it explains closings: every issue says that closing it by hand dismisses its findings and a closing by a PR,
+  a commit or a bot doesn't, and a run comments once on each closing it didn't make, saying whether it took it for a
+  dismissal. The first run after upgrading rewrites every open issue once to add that line, and comments on every
+  earlier closing it didn't make, a person's included.
 - The tools sign the state line in their PRs with a per-tool key kept in the Keychain (`secrets.signing`, default
   `leanish-<tool>-signing`; 64 hexadecimal characters, `openssl rand -hex 32`), so someone with write access can't get a
   commit taken as the tool's by copying or editing that line. Both tools refuse to start without the key; reuse the same

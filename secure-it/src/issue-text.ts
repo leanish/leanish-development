@@ -225,8 +225,12 @@ function essentialLines(assessment: SubjectAssessment, record: IssueRecord, deta
       `To take it early: someone with write access comments \`${TAKE_EARLY_LABEL}: <reason>\`, then adds the \`${TAKE_EARLY_LABEL}\` label. It covers exactly the moves above; if they change, this issue is superseded and the label doesn't carry over.`,
     );
   }
+  lines.push("", CLOSING_LINE);
   return lines;
 }
+
+/** What closing an issue does, among the lines that always show whole: a person deciding to close one reads it first. */
+export const CLOSING_LINE = "Closing this issue by hand dismisses its findings; a closing by a PR, a commit or a bot doesn't. Neither changes what the gate checks or closes an open PR.";
 
 function shortenedDetail(detail: string, limit: number): string {
   if (detail.length <= limit) return detail;
