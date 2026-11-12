@@ -6,9 +6,14 @@ import { FakeIssues } from "@leanish/tool-runtime/test/fake-issues";
 
 import { decisionIssue, EarlyPrs, grantStanding, scopeOf, takenEarlyOf, trackedIssueOf } from "../src/decision-issues.ts";
 import type { IssueRecord } from "../src/issue-model.ts";
-import { ISSUE_LABEL, ISSUE_WRITER, TAKE_EARLY_LABEL } from "../src/issue-text.ts";
+import { ISSUE_LABEL, TAKE_EARLY_LABEL } from "../src/issue-text.ts";
+import { sealFor, TEST_TRUST, writerFor } from "./issue-seal.ts";
 import type { ChangePlan } from "../src/plan.ts";
 import { RULES } from "../src/secure-it.ts";
+
+/** Issue records as the tool signs them for this file's repository. */
+const ISSUE_WRITER = writerFor("acme/widget");
+const SEAL = sealFor("acme/widget");
 
 const REPO = "acme/widget";
 const moves = [{ ecosystem: "npm" as const, name: "lib", from: "1.0.0", to: "1.0.1" }];
@@ -48,19 +53,28 @@ function counted(issues: FakeIssues): { reads: () => number } {
 }
 
 describe("decisionIssue", () => {
+  it("finds no issue, nor its grant, for a record that no longer verifies", async () => {
+    const issues = new FakeIssues();
+    const number = trackedIssue(issues);
+    const body = issues.issues.get(number)!.body;
+    issues.issues.set(number, { ...issues.issues.get(number)!, body: body.replace(/record-sig \S{43}/, `record-sig ${"A".repeat(43)}`) });
+    expect(await decisionIssue({ issues, repo: REPO, trust: TEST_TRUST }, number, plan)).toBeUndefined();
+    expect(await new EarlyPrs({ issues, repo: REPO, trust: TEST_TRUST }).is(pr(7, `Tracks #${number}.`), plan)).toBe(false);
+  });
+
   it("finds the tool's issue for the plan's decision", async () => {
     const issues = new FakeIssues();
     const number = trackedIssue(issues, { attempt: false });
-    expect((await decisionIssue({ issues, repo: REPO }, number, plan))?.issue.number).toBe(number);
+    expect((await decisionIssue({ issues, repo: REPO, trust: TEST_TRUST }, number, plan))?.issue.number).toBe(number);
   });
 
   it("finds nothing for a deleted issue, one someone else opened, or another decision's", async () => {
     const issues = new FakeIssues();
     const theirs = trackedIssue(issues, { attempt: false, author: "someone" });
     const ours = trackedIssue(issues, { attempt: false });
-    expect(await decisionIssue({ issues, repo: REPO }, 99, plan)).toBeUndefined();
-    expect(await decisionIssue({ issues, repo: REPO }, theirs, plan)).toBeUndefined();
-    expect(await decisionIssue({ issues, repo: REPO }, ours, other)).toBeUndefined();
+    expect(await decisionIssue({ issues, repo: REPO, trust: TEST_TRUST }, 99, plan)).toBeUndefined();
+    expect(await decisionIssue({ issues, repo: REPO, trust: TEST_TRUST }, theirs, plan)).toBeUndefined();
+    expect(await decisionIssue({ issues, repo: REPO, trust: TEST_TRUST }, ours, other)).toBeUndefined();
   });
 
   it.each([
@@ -72,7 +86,7 @@ describe("decisionIssue", () => {
     issues.getIssue = async () => {
       throw new GitHubApiError("getIssue", "gone", status);
     };
-    expect(await decisionIssue({ issues, repo: REPO }, 1, plan)).toBeUndefined();
+    expect(await decisionIssue({ issues, repo: REPO, trust: TEST_TRUST }, 1, plan)).toBeUndefined();
   });
 
   it("lets any other read failure through, so nothing goes ahead unread", async () => {
@@ -80,7 +94,7 @@ describe("decisionIssue", () => {
     issues.getIssue = async () => {
       throw new GitHubApiError("getIssue", "server error", 502);
     };
-    await expect(decisionIssue({ issues, repo: REPO }, 1, plan)).rejects.toThrow(GitHubApiError);
+    await expect(decisionIssue({ issues, repo: REPO, trust: TEST_TRUST }, 1, plan)).rejects.toThrow(GitHubApiError);
   });
 });
 
@@ -88,21 +102,21 @@ describe("grantStanding", () => {
   it("grants the running label from the issue's events, comments and the labeler's permission", async () => {
     const issues = new FakeIssues();
     const number = trackedIssue(issues);
-    const { record, issue } = (await decisionIssue({ issues, repo: REPO }, number, plan))!;
-    expect(await grantStanding({ issues, repo: REPO }, number, { state: issue.state, labels: issue.labels, record, status: waiting.status })).toMatchObject({ kind: "granted", grant: { actor: "owner" } });
+    const { record, issue } = (await decisionIssue({ issues, repo: REPO, trust: TEST_TRUST }, number, plan))!;
+    expect(await grantStanding({ issues, repo: REPO, trust: TEST_TRUST }, number, { state: issue.state, labels: issue.labels, record, status: waiting.status })).toMatchObject({ kind: "granted", grant: { actor: "owner" } });
     // Read afresh each time: a labeler who lost write access stops it on the next question.
     issues.permissions.set("owner", "read");
-    expect(await grantStanding({ issues, repo: REPO }, number, { state: issue.state, labels: issue.labels, record, status: waiting.status })).toMatchObject({ kind: "refused" });
+    expect(await grantStanding({ issues, repo: REPO, trust: TEST_TRUST }, number, { state: issue.state, labels: issue.labels, record, status: waiting.status })).toMatchObject({ kind: "refused" });
   });
 
   it("lets a failed read through instead of deciding without it", async () => {
     const issues = new FakeIssues();
     const number = trackedIssue(issues);
-    const { record, issue } = (await decisionIssue({ issues, repo: REPO }, number, plan))!;
+    const { record, issue } = (await decisionIssue({ issues, repo: REPO, trust: TEST_TRUST }, number, plan))!;
     issues.listEvents = async () => {
       throw new GitHubApiError("listEvents", "server error", 502);
     };
-    await expect(grantStanding({ issues, repo: REPO }, number, { state: issue.state, labels: issue.labels, record, status: waiting.status })).rejects.toThrow(GitHubApiError);
+    await expect(grantStanding({ issues, repo: REPO, trust: TEST_TRUST }, number, { state: issue.state, labels: issue.labels, record, status: waiting.status })).rejects.toThrow(GitHubApiError);
   });
 });
 
@@ -111,7 +125,7 @@ describe("EarlyPrs", () => {
     const issues = new FakeIssues();
     const number = trackedIssue(issues);
     const { reads } = counted(issues);
-    const early = new EarlyPrs({ issues, repo: REPO });
+    const early = new EarlyPrs({ issues, repo: REPO, trust: TEST_TRUST });
     const taken = pr(7, `Fixes lib.\n\nTracks #${number}.`);
     expect(await early.is(taken, plan)).toBe(true);
     expect(await early.is(taken, plan)).toBe(true);
@@ -125,16 +139,16 @@ describe("EarlyPrs", () => {
     const issues = new FakeIssues();
     const number = trackedIssue(issues);
     await issues.removeLabel({ repo: REPO, number, label: TAKE_EARLY_LABEL });
-    expect(await new EarlyPrs({ issues, repo: REPO }).is(pr(7, `Tracks #${number}.`), plan)).toBe(true);
+    expect(await new EarlyPrs({ issues, repo: REPO, trust: TEST_TRUST }).is(pr(7, `Tracks #${number}.`), plan)).toBe(true);
   });
 
   it("answers from what a disposition already read, without another read", async () => {
     const issues = new FakeIssues();
     const number = trackedIssue(issues);
     const taken = pr(7, `Tracks #${number}.`);
-    const scope = await scopeOf({ issues, repo: REPO }, taken, plan, number);
+    const scope = await scopeOf({ issues, repo: REPO, trust: TEST_TRUST }, taken, plan, number);
     const { reads } = counted(issues);
-    const early = new EarlyPrs({ issues, repo: REPO });
+    const early = new EarlyPrs({ issues, repo: REPO, trust: TEST_TRUST });
     early.remember(taken, scope);
     expect(await early.is(taken, plan)).toBe(true);
     expect(reads()).toBe(0);
@@ -143,7 +157,7 @@ describe("EarlyPrs", () => {
   it("counts an untracked PR, another PR's attempt, or a foreign issue as not early", async () => {
     const issues = new FakeIssues();
     const number = trackedIssue(issues);
-    const early = new EarlyPrs({ issues, repo: REPO });
+    const early = new EarlyPrs({ issues, repo: REPO, trust: TEST_TRUST });
     expect(await early.is(pr(8, "Fixes lib."), plan)).toBe(false);
     expect(await early.is(pr(9, `Tracks #${number}.`), plan)).toBe(false);
     expect(await early.is(pr(10, `Tracks #${number}.`), other)).toBe(false);

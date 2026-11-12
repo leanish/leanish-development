@@ -14,12 +14,11 @@ import { issueWrite } from "./issue-access.ts";
 import { withoutPr } from "./issue-assessment.ts";
 import { type Assessment, type Attempt, type IssueRecord, subjectId } from "./issue-model.ts";
 import { recordShows, type TrackedIssue } from "./issue-reconcile.ts";
-import { hasLabel, isLabel, issueWriter, recordOf, TAKE_EARLY_LABEL } from "./issue-text.ts";
+import { hasLabel, isLabel, type IssueSeal, issueWriter, recordOf, TAKE_EARLY_LABEL } from "./issue-text.ts";
 
-export interface AttemptClient {
+export interface AttemptClient extends IssueSeal {
   readonly issues: GitHubIssues;
   readonly github: GitHubClient;
-  readonly repo: string;
   /** Local paths out of a text bound for GitHub (`cleanBody`). */
   readonly clean: (body: string) => string;
   /** Whether a PR is one the tool opened: its own branch, label or marker, from this repository. */
@@ -35,7 +34,7 @@ export type AttemptPatch = Pick<Attempt, "pr" | "outcome">;
  */
 export async function settleAttempt(client: AttemptClient, number: number, id: string, patch: AttemptPatch, assessment: Assessment | undefined): Promise<void> {
   const issue = await client.issues.getIssue({ repo: client.repo, number });
-  const record = recordOf(issue.body);
+  const record = recordOf(issue.body, client);
   if (record === undefined) throw new Error(`#${number}'s record can't be read; attempt ${id} isn't recorded as ${describe(patch)}`);
   const attempt = record.attempts.find((entry) => entry.id === id);
   if (attempt === undefined || attempt.outcome !== undefined) return;
@@ -61,7 +60,7 @@ export async function settleAttempt(client: AttemptClient, number: number, id: s
  * recording it failed before, is attached and the attempt goes on with it; only with none is it `failed`.
  */
 export async function endAttempt(client: AttemptClient, number: number, id: string, assessment: Assessment): Promise<void> {
-  const record = recordOf((await client.issues.getIssue({ repo: client.repo, number })).body);
+  const record = recordOf((await client.issues.getIssue({ repo: client.repo, number })).body, client);
   const attempt = record?.attempts.find((entry) => entry.id === id);
   if (attempt === undefined || attempt.outcome !== undefined || attempt.pr !== undefined) return;
   const pr = (await client.github.findPullRequests({ repo: client.repo, branch: attempt.branch })).find(client.ours);
@@ -109,7 +108,7 @@ export async function recoverAttempts(client: AttemptClient, tracked: ReadonlyAr
  */
 export async function showPullRequest(client: AttemptClient, number: number, pr: { readonly number: number; readonly url: string }, assessment: Assessment): Promise<void> {
   const issue = await client.issues.getIssue({ repo: client.repo, number });
-  const record = recordOf(issue.body);
+  const record = recordOf(issue.body, client);
   if (record === undefined || issue.state !== "open" || record.pendingClose !== undefined) return;
   const id = subjectId(record.subject);
   const shown: Assessment = {
@@ -128,7 +127,7 @@ export async function showPullRequest(client: AttemptClient, number: number, pr:
  * end is never lost to its text.
  */
 function bodyWith(client: AttemptClient, body: string, record: IssueRecord, assessment: Assessment | undefined): string {
-  const writer = issueWriter(client.clean);
+  const writer = issueWriter(client.clean, client);
   if (assessment === undefined) return writer.withRecord(body, record);
   const subject = assessment.subjects.find((entry) => subjectId(entry.subject) === subjectId(record.subject));
   if (subject === undefined || !recordShows(record, subject)) return writer.withRecord(body, record);

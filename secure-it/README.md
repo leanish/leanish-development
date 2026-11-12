@@ -59,8 +59,10 @@ finishes a closing an earlier run recorded. Issue text never selects versions: t
 changes two things: closing an issue [dismisses its findings](#dismissing-findings), and a `take-early` label lets a
 waiting decision run early. Issue labels match ignoring case, as on GitHub: a `Take-Early` label made by hand counts,
 and so does the tool's own issue label in whatever casing the repository has it. Editing the issue's description isn't
-an input, but secure-it can't tell it happened: it reads its record back from there, whoever edited it last ([known
-limitation](../docs/coverage-gaps.md#limits)).
+an input. With signed records (the default) secure-it reads its record back from there only with its own signature, so
+an edited record reads as none; the text people read above it isn't signed. With `records: trusted-editors` it can't
+tell an edit happened, and reads the record whoever edited it last ([known
+limitations](../docs/coverage-gaps.md#limits)).
 
 ### Dismissing findings
 
@@ -126,8 +128,10 @@ fixes that work afresh, in the batch it now belongs to.
   base that changes the decision or takes a young version the label didn't cover. Whether a PR was taken early is
   read from its issue's attempt, not from the gate's cooldown.
 - **The attempts and the grant live in the issue's hidden record**, which anyone who can edit issues can change,
-  GitHub's Triage role included: in an organization's repository, give Triage only to people you'd trust with this
-  label ([known limitation](../docs/coverage-gaps.md#limits)).
+  GitHub's Triage role included. With signed records (the default) the tool signs it, and an edited record reads as
+  none: the issue then blocks new issues until a person restores the record the tool wrote or closes the issue. With
+  `records: trusted-editors` an edited record is trusted, so in an organization's repository give Triage only to
+  people you'd trust with this label ([known limitations](../docs/coverage-gaps.md#limits)).
 
 Verification can find a young version planning didn't choose (a transitive move, say). Whether the decision was past
 the wait or taken early, the run then publishes nothing, names the versions on the issue and tries again next run.

@@ -315,7 +315,7 @@ async function run(context: ToolRunContext, deps: SecureItDeps): Promise<Readonl
     ...(selection.undecided ?? []).flatMap((set) => set.packages.map((key) => [key, "direct-peer set"] as const)),
   ]);
 
-  const execution = { context, deps, env, inventories, publication: publicationOf(context, deps), npmFiles: new Map<string, string>(), branches: new Set<string>(), early: new EarlyPrs({ issues: context.issues, repo: context.repo.repo }) };
+  const execution = { context, deps, env, inventories, publication: publicationOf(context, deps), npmFiles: new Map<string, string>(), branches: new Set<string>(), early: new EarlyPrs({ issues: context.issues, repo: context.repo.repo, trust: context.trust }) };
   const listed = await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base, context.login, execution.branches);
   const results: Readonly<Record<string, unknown>>[] = [];
   // Metadata first (no Gradle): the units and their plans. Then the issues decide what may execute.
@@ -833,7 +833,7 @@ const decisionIdOf = (plan: ChangePlan) => subjectId({ kind: "decision", moves: 
 function attemptClient(execution: Execution): AttemptClient {
   const { context } = execution;
   return {
-    issues: context.issues, github: context.github, repo: context.repo.repo, clean: issueCleaner(context),
+    issues: context.issues, github: context.github, repo: context.repo.repo, trust: context.trust, clean: issueCleaner(context),
     // Closed, merged and edited PRs included: bookkeeping, never a reason to act on a PR.
     ours: (pr) => comesFromTool(RULES, pr, context.repo.repo, context.login),
   };
@@ -1129,7 +1129,7 @@ async function review(context: ToolRunContext, deps: SecureItDeps): Promise<Read
   const branches = new Set<string>();
   const open = await ownOpenPullRequests(context.github, RULES, context.repo.repo, context.base, context.login, branches);
   // Which PRs the issues record as early attempts, for this tick: dispositions, matching and retries share the answers.
-  const early = new EarlyPrs({ issues: context.issues, repo: context.repo.repo });
+  const early = new EarlyPrs({ issues: context.issues, repo: context.repo.repo, trust: context.trust });
   // Decisions taken early are never reduced by review. Read once per tick, when first asked.
   let taken: ReturnType<typeof earlyDecisions> | undefined;
   const decisions = () => (taken ??= earlyDecisions(open, early));
@@ -1432,7 +1432,7 @@ async function trackIssues(execution: Execution, inputs: TrackingInputs): Promis
       return found === undefined ? undefined : { number: found.pr.number, url: found.pr.url };
     },
   });
-  const sync = await syncIssues({ issues: context.issues, repo: context.repo.repo, clean: issueCleaner(context), ...(execution.deps.clock === undefined ? {} : { clock: execution.deps.clock }) }, assessment);
+  const sync = await syncIssues({ issues: context.issues, repo: context.repo.repo, trust: context.trust, clean: issueCleaner(context), ...(execution.deps.clock === undefined ? {} : { clock: execution.deps.clock }) }, assessment);
   // Before any disposition: an attempt a previous run left running is settled from its PR, or ends as interrupted.
   const recovered = await recoverAttempts(attemptClient(execution), sync.tracked, assessment);
   // Recovery can attach a PR to its attempt: execution must not reuse assessment's earlier ownership answer.
@@ -1464,7 +1464,7 @@ function issueCleaner(context: ToolRunContext): (body: string) => string {
  * floor removals and review steps keep the tool's default.
  */
 function trackedDisposition(execution: Execution, tracking: Tracking): SecureItDeps["disposition"] {
-  const client = { issues: execution.context.issues, repo: execution.context.repo.repo, clean: issueCleaner(execution.context), now: execution.context.now };
+  const client = { issues: execution.context.issues, repo: execution.context.repo.repo, trust: execution.context.trust, clean: issueCleaner(execution.context), now: execution.context.now };
   // An early attempt publishes to the branch of the PR its unit reuses, or to one reserved for its grant alone.
   const branches = attemptBranches((labelEventId) => branchFor(RULES, client.now, `take-early-${labelEventId}`));
   return async (target) => {

@@ -24,7 +24,8 @@ import type { Tree } from "@leanish/gate/tree";
 import { assertAgentWorkspace, type ToolRunContext } from "@leanish/tool-runtime/command";
 import { retargetRepository } from "@leanish/tool-runtime/test/retarget-repository";
 import { readScanState, readSettings, runCompare, type GateEnvironment } from "@leanish/gate/gate";
-import { ISSUE_LABEL, ISSUE_WRITER, recordOf } from "../src/issue-text.ts";
+import { ISSUE_LABEL, recordOf } from "../src/issue-text.ts";
+import { sealFor, TEST_TRUST, writerFor } from "./issue-seal.ts";
 import { type Attempt, type IssueRecord, type ObservedFinding, subjectId } from "../src/issue-model.ts";
 import { decisionMoves } from "../src/issue-assessment.ts";
 import { recoverAttempts } from "../src/issue-attempts.ts";
@@ -49,6 +50,10 @@ import { environment, OLD, postcss, securityBatch } from "@leanish/gate/test/req
 import { preservedFloors } from "../src/floor-checks.ts";
 import type { ScanState } from "@leanish/gate/gate";
 import { defaultDeps, type ExecutionTarget, RULES, type SecureItDeps, secureIt } from "../src/secure-it.ts";
+
+/** Issue records as the tool signs them for this file's repository. */
+const ISSUE_WRITER = writerFor("leanish/widget");
+const SEAL = sealFor("leanish/widget");
 
 // Keep local security verification real; replace only the external scan.
 vi.mock("@leanish/gate/gate", async (original) => ({ ...await original<object>(), runCompare: vi.fn() }));
@@ -188,14 +193,14 @@ async function grantWaiting(tool: ReturnType<typeof secureIt>, h: Harness, names
   await tool.run(h.context);
   const issues = h.context.issues as FakeIssues;
   const waiting = [...issues.issues.values()].filter((issue) => {
-    const record = recordOf(issue.body);
+    const record = recordOf(issue.body, SEAL);
     return issue.state === "open" && record?.subject.kind === "decision" && issue.body.includes("**Waiting for the release-age wait.**")
       && (names === undefined || record.subject.moves.some((move) => names.includes(move.name)));
   });
   expect(waiting.length).toBeGreaterThan(0);
   issues.permissions.set("owner", "admin");
   for (const issue of waiting) {
-    expect(recordOf(issue.body)!.shown?.young.length).toBeGreaterThan(0);
+    expect(recordOf(issue.body, SEAL)!.shown?.young.length).toBeGreaterThan(0);
     issues.comment(issue.number, "owner", "take-early: tested this exact decision");
     issues.label(issue.number, "owner", "take-early");
   }
@@ -205,7 +210,7 @@ function trackedRecord(h: Harness, number = 42): IssueRecord {
   const pr = h.github.prs.get(number)!;
   const issue = trackedIssueOf(pr.body);
   expect(issue).toBeDefined();
-  const record = recordOf((h.context.issues as FakeIssues).issues.get(issue!)!.body)!;
+  const record = recordOf((h.context.issues as FakeIssues).issues.get(issue!)!.body, SEAL)!;
   expect(record.subject.kind).toBe("decision");
   return record;
 }
@@ -227,7 +232,7 @@ async function track(h: Harness): Promise<void> {
     const plan = planOf(pr.body);
     if (plan === undefined || plan.kind === "floor-removal") continue;
     const number = trackedIssueOf(pr.body);
-    if (number !== undefined && recordOf(issues.issues.get(number)?.body ?? "") !== undefined) continue;
+    if (number !== undefined && recordOf(issues.issues.get(number)?.body ?? "", SEAL) !== undefined) continue;
     const subject = { kind: "decision" as const, moves: decisionMoves(plan) };
     const record: IssueRecord = { version: 1, subject, openedAt: BASE_SHA, findings: [], absences: [], attempts: [] };
     const body = ISSUE_WRITER.render({ subject, findings: [], status: { kind: "eligible", trusted: [] } }, record, BASE_SHA).body;
@@ -546,8 +551,8 @@ describe("secure-it run", () => {
     expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "already-open", pullRequest: "https://github.com/leanish/widget/pull/7" });
     const replacements = [...issues.issues.values()].filter((issue) => issue.number !== original && issue.state === "open");
     expect(replacements).toHaveLength(1);
-    expect(recordOf(replacements[0]!.body)).toMatchObject({ attempts: [] });
-    expect(recordOf(replacements[0]!.body)!.grant).toBeUndefined();
+    expect(recordOf(replacements[0]!.body, SEAL)).toMatchObject({ attempts: [] });
+    expect(recordOf(replacements[0]!.body, SEAL)!.grant).toBeUndefined();
     expect([h.agentCalls, h.workspace.publications]).toEqual([[], []]);
   });
 
@@ -729,8 +734,8 @@ describe("secure-it run", () => {
       await flow(h).run(h.context);
       const after = [...issues.issues.values()];
       expect(after.map((issue) => [issue.number, issue.state])).toEqual(before.map((issue) => [issue.number, "open"]));
-      expect(recordOf(after[0]!.body)).toMatchObject({ findings: [{ name: "vite", ids: [GHSA] }], absences: [] });
-      expect(recordOf(after[0]!.body)?.pendingClose).toBeUndefined();
+      expect(recordOf(after[0]!.body, SEAL)).toMatchObject({ findings: [{ name: "vite", ids: [GHSA] }], absences: [] });
+      expect(recordOf(after[0]!.body, SEAL)?.pendingClose).toBeUndefined();
     });
 
     it("says so with nothing to fix too: a failed sync as an error, one that didn't settle as a note", async () => {
@@ -770,7 +775,7 @@ describe("secure-it run", () => {
       const tool = secureIt({ ...h.deps, gate: async () => scanned("2026-10-05T00:00:00Z"), scan: readScanState, verify });
       expect(await tool.run(h.context)).toMatchObject({ outcome: "deferred", reason: "waiting for the release-age wait (#1)" });
       const issue = issuesOf(h).issues.get(1)!;
-      expect(recordOf(issue.body)).toMatchObject({ subject: { kind: "decision", moves: [{ name: "vite", from: "8.3.1", to: "8.3.3" }] }, attempts: [] });
+      expect(recordOf(issue.body, SEAL)).toMatchObject({ subject: { kind: "decision", moves: [{ name: "vite", from: "8.3.1", to: "8.3.3" }] }, attempts: [] });
       expect(issue.body).toContain("2026-10-12");
       expect(h.agentCalls).toEqual([]);
       expect(h.workspace.preparations).toEqual([]);
@@ -785,7 +790,7 @@ describe("secure-it run", () => {
     it("fixes a decision past the wait right away, tracked by its issue", async () => {
       const h = harness();
       expect(await flow(h, OLD).run(h.context)).toMatchObject({ outcome: "published" });
-      expect(recordOf(issuesOf(h).issues.get(1)!.body)).toMatchObject({ subject: { kind: "decision" }, attempts: [] });
+      expect(recordOf(issuesOf(h).issues.get(1)!.body, SEAL)).toMatchObject({ subject: { kind: "decision" }, attempts: [] });
       expect(h.agentCalls).toHaveLength(1);
     });
 
@@ -795,8 +800,8 @@ describe("secure-it run", () => {
       const issue = issuesOf(h).issues.get(1)!;
       issuesOf(h).issues.set(1, { ...issue, state: "closed" });
       const pr = [...h.github.prs.values()].find((entry) => trackedIssueOf(entry.body) === 1)!;
-      const client = { issues: h.context.issues, github: h.github, repo: REPO, clean: (body: string) => body, ours: () => true, now: NOW, trusted: () => false, retire: async () => "closed" as const, eligibleAt: async () => undefined };
-      expect(await reviewDisposition(client, pr, planOf(pr.body)!, new EarlyPrs({ issues: h.context.issues, repo: REPO }))).toEqual({ kind: "proceed", permit: { early: false, young: [], granted: [], issue: 1 } });
+      const client = { issues: h.context.issues, github: h.github, repo: REPO, trust: TEST_TRUST, clean: (body: string) => body, ours: () => true, now: NOW, trusted: () => false, retire: async () => "closed" as const, eligibleAt: async () => undefined };
+      expect(await reviewDisposition(client, pr, planOf(pr.body)!, new EarlyPrs({ issues: h.context.issues, repo: REPO, trust: TEST_TRUST }))).toEqual({ kind: "proceed", permit: { early: false, young: [], granted: [], issue: 1 } });
     });
 
     it("leaves a PR that says it was taken early once its issue is transferred away (301): nothing confirms its grant", async () => {
@@ -809,8 +814,8 @@ describe("secure-it run", () => {
       issues.getIssue = async () => {
         throw new GitHubApiError("getIssue", "moved", 301);
       };
-      const client = { issues, github: h.github, repo: REPO, clean: (body: string) => body, ours: () => true, now: NOW, trusted: () => false, retire: async () => "closed" as const, eligibleAt: async () => undefined };
-      expect(await reviewDisposition(client, pr, planOf(pr.body)!, new EarlyPrs({ issues, repo: REPO }))).toMatchObject({ kind: "leave" });
+      const client = { issues, github: h.github, repo: REPO, trust: TEST_TRUST, clean: (body: string) => body, ours: () => true, now: NOW, trusted: () => false, retire: async () => "closed" as const, eligibleAt: async () => undefined };
+      expect(await reviewDisposition(client, pr, planOf(pr.body)!, new EarlyPrs({ issues, repo: REPO, trust: TEST_TRUST }))).toMatchObject({ kind: "leave" });
     });
 
     it("goes on when an open PR's issue was transferred away (301): it's no issue of this decision's, and nothing defers", async () => {
@@ -833,7 +838,7 @@ describe("secure-it run", () => {
       h.workspace.setRemoteHead("secure-it/2026-10-05-security", HEAD_SHA);
       expect(await flow(h, OLD).run(h.context)).toMatchObject({ outcome: "updated", number: 7 });
       const issue = issuesOf(h).issues.get(1)!;
-      expect(recordOf(issue.body)!.subject).toMatchObject({ kind: "decision", moves: [{ name: "vite" }, { name: "left-pad" }] });
+      expect(recordOf(issue.body, SEAL)!.subject).toMatchObject({ kind: "decision", moves: [{ name: "vite" }, { name: "left-pad" }] });
       expect(issue.body).toContain("**In progress:** #7.");
       expect(issue.body).not.toContain("**Ready.**");
     });
@@ -843,7 +848,7 @@ describe("secure-it run", () => {
       h.workspace.setRemoteHead("secure-it/2026-10-05-security", HEAD_SHA);
       expect(await flow(h, OLD).run(h.context)).toMatchObject({ outcome: "cannot-apply" });
       const body = issuesOf(h).issues.get(1)!.body;
-      expect(recordOf(body)!.subject).toMatchObject({ kind: "decision", moves: [{ name: "left-pad" }] });
+      expect(recordOf(body, SEAL)!.subject).toMatchObject({ kind: "decision", moves: [{ name: "left-pad" }] });
       // The next run may redo that PR rather than open one, and may not manage it: the text promises neither.
       expect(body).toContain("**Ready.** secure-it tries to open or redo a PR for this fix on its next run.");
       expect(body).not.toContain("#7");
@@ -893,7 +898,7 @@ describe("secure-it run", () => {
       expect(await flow(h).run(h.context)).toMatchObject({ outcome: "published", number: 42 });
       const labeled = issuesOf(h).events.get(1)!.find((event) => event.event === "labeled")!;
       const branch = `secure-it/2026-10-07-take-early-${labeled.id}`;
-      const record = recordOf(issuesOf(h).issues.get(1)!.body)!;
+      const record = recordOf(issuesOf(h).issues.get(1)!.body, SEAL)!;
       expect(record).toMatchObject({ grant: { labelEventId: labeled.id, reasonCommentId: expect.any(Number) }, attempts: [{ branch, pr: 42 }] });
       expect(record.attempts[0]!.outcome).toBeUndefined();
       expect(h.github.prs.get(42)).toMatchObject({ headRef: branch, body: expect.stringContaining("Tracks #1, taken early.") });
@@ -914,7 +919,7 @@ describe("secure-it run", () => {
       const refused = await flow(h).run(h.context);
       expect(JSON.stringify(refused)).toContain("check that the write PAT has Issues: read and write");
       expect(h.agentCalls).toEqual([]);
-      expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toEqual([]);
+      expect(recordOf(issuesOf(h).issues.get(1)!.body, SEAL)!.attempts).toEqual([]);
     });
 
     it("keeps an early attempt running on the PR it opened when a later publication step fails", async () => {
@@ -926,7 +931,7 @@ describe("secure-it run", () => {
       // Not a GitHub API error, so labelling doesn't absorb it: the run fails after the PR exists.
       h.github.fail("addLabels", new Error("socket hang up") as never);
       expect(await flow(h).run(h.context)).toMatchObject({ outcome: "failed", detail: "socket hang up" });
-      const record = recordOf(issuesOf(h).issues.get(1)!.body)!;
+      const record = recordOf(issuesOf(h).issues.get(1)!.body, SEAL)!;
       expect(record.attempts).toMatchObject([{ pr: 42 }]);
       expect(record.attempts[0]!.outcome).toBeUndefined();
     });
@@ -951,7 +956,7 @@ describe("secure-it run", () => {
       expect(replaced).toMatchObject({ outcome: "published" });
       expect(h.github.prs.get(42)?.state).toBe("closed");
       expect([...h.github.prs.values()].filter((pr) => pr.state === "open")).toHaveLength(1);
-      expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 42, outcome: "pr-closed" }]);
+      expect(recordOf(issuesOf(h).issues.get(1)!.body, SEAL)!.attempts).toMatchObject([{ pr: 42, outcome: "pr-closed" }]);
       // The issue names the replacement as in progress, never the retired draft.
       const body = issuesOf(h).issues.get(1)!.body;
       expect(body).toContain(`**In progress:** #${String(replaced["number"])}.`);
@@ -978,7 +983,7 @@ describe("secure-it run", () => {
       const body = issuesOf(h).issues.get(1)!.body;
       expect(body).not.toContain("#42. This issue stays open");
       expect(body).toContain("**Ready.**");
-      expect(recordOf(body)!.attempts).toMatchObject([{ pr: 42, outcome: "pr-closed" }]);
+      expect(recordOf(body, SEAL)!.attempts).toMatchObject([{ pr: 42, outcome: "pr-closed" }]);
     });
 
     it("goes on with the run when retiring an aged early PR fails, leaving that PR as it is", async () => {
@@ -1005,12 +1010,12 @@ describe("secure-it run", () => {
       expect(await tool([vite()]).run(later)).toMatchObject({ outcome: "deferred", reason: "a PR taken early for its packages couldn't be retired this run" });
       expect(h.github.prs.get(42)?.state).toBe("open");
       expect([...h.github.prs.values()].filter((pr) => pr.state === "open")).toHaveLength(1);
-      expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts[0]!.outcome).toBeUndefined();
+      expect(recordOf(issuesOf(h).issues.get(1)!.body, SEAL)!.attempts[0]!.outcome).toBeUndefined();
       // The next run, the close goes through but its comment fails: the PR is closed all the same, and its attempt ends.
       h.github.fail("createComment", new Error("socket hang up") as never);
       await expect(tool([vite()]).run(later)).resolves.toBeDefined();
       expect(h.github.prs.get(42)?.state).toBe("closed");
-      expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 42, outcome: "pr-closed" }]);
+      expect(recordOf(issuesOf(h).issues.get(1)!.body, SEAL)!.attempts).toMatchObject([{ pr: 42, outcome: "pr-closed" }]);
     });
 
     it("keeps an early attempt running on its published PR when recording that PR fails once", async () => {
@@ -1027,7 +1032,7 @@ describe("secure-it run", () => {
         return update(args);
       };
       expect(await flow(h).run(h.context)).toMatchObject({ outcome: "failed", detail: "issue write timed out" });
-      const record = recordOf(issuesOf(h).issues.get(1)!.body)!;
+      const record = recordOf(issuesOf(h).issues.get(1)!.body, SEAL)!;
       expect(record.attempts).toMatchObject([{ pr: 42 }]);
       expect(record.attempts[0]!.outcome).toBeUndefined();
     });
@@ -1048,7 +1053,7 @@ describe("secure-it run", () => {
       // Aged, vite joins left-pad's routine fix: another decision, so issue #1 is superseded in the same run.
       await tool([vite(), leftPad()]).run({ ...h.context, now: new Date("2026-10-14T06:00:00Z") });
       expect(issuesOf(h).issues.get(1)).toMatchObject({ state: "closed", labels: [ISSUE_LABEL] });
-      expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 42, outcome: "pr-closed" }]);
+      expect(recordOf(issuesOf(h).issues.get(1)!.body, SEAL)!.attempts).toMatchObject([{ pr: 42, outcome: "pr-closed" }]);
     });
 
     it("says once that a label on a superseded issue authorizes nothing, and runs nothing for it", async () => {
@@ -1079,7 +1084,7 @@ describe("secure-it run", () => {
       const labeled = issuesOf(h).events.get(1)!.find((event) => event.event === "labeled")!;
       const issue = issuesOf(h).issues.get(1)!;
       const grant = { labelEventId: labeled.id, reasonCommentId: reason.id, actor: "owner", at: labeled.createdAt, young: [{ ecosystem: "npm" as const, name: "vite", version: "8.3.3" }] };
-      issuesOf(h).issues.set(1, { ...issue, body: ISSUE_WRITER.withRecord(issue.body, { ...recordOf(issue.body)!, grant, attempts: [attempt(labeled.id)] }) });
+      issuesOf(h).issues.set(1, { ...issue, body: ISSUE_WRITER.withRecord(issue.body, { ...recordOf(issue.body, SEAL)!, grant, attempts: [attempt(labeled.id)] }) });
       return `secure-it/2026-10-07-take-early-${labeled.id}`;
     };
     const started = (branch: (id: number) => string) => (id: number): Attempt => ({ id: `${id}-1`, grantEventId: id, branch: branch(id), startedAt: NOW.toISOString() });
@@ -1088,7 +1093,7 @@ describe("secure-it run", () => {
       const h = harness({ fixes: [young] });
       await granted(h, started((id) => `secure-it/2026-10-07-take-early-${id}`));
       expect(await flow(h).run(h.context)).toMatchObject({ outcome: "deferred", reason: "take-early refused on #1: this label's attempt has ended; a new reason and label authorize another" });
-      expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toMatchObject([{ outcome: "interrupted" }]);
+      expect(recordOf(issuesOf(h).issues.get(1)!.body, SEAL)!.attempts).toMatchObject([{ outcome: "interrupted" }]);
       expect(h.agentCalls).toEqual([]);
     });
 
@@ -1100,8 +1105,8 @@ describe("secure-it run", () => {
       h.github.prs.set(7, tracked);
       h.workspace.setRemoteHead(branch, HEAD_SHA);
       expect(await flow(h).run(h.context)).toMatchObject({ outcome: "already-open", pullRequest: pr.url });
-      expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 7 }]);
-      expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts[0]!.outcome).toBeUndefined();
+      expect(recordOf(issuesOf(h).issues.get(1)!.body, SEAL)!.attempts).toMatchObject([{ pr: 7 }]);
+      expect(recordOf(issuesOf(h).issues.get(1)!.body, SEAL)!.attempts[0]!.outcome).toBeUndefined();
       // Recovery runs after the sync rendered the issue: its own write renders it again, with the PR.
       expect(issuesOf(h).issues.get(1)!.body).toContain("**Taken early.**");
       expect(h.github.prs.get(7)).toEqual(tracked);
@@ -1115,7 +1120,7 @@ describe("secure-it run", () => {
       const branch = await granted(h, started((id) => `secure-it/2026-10-07-take-early-${id}`));
       h.github.prs.set(7, ownPr({ number: 7, headRef: branch, state: "closed", merged: true, body: "Body.", labels: [RULES.label.toUpperCase()] }));
       await flow(h).run(h.context);
-      expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 7, outcome: "pr-merged" }]);
+      expect(recordOf(issuesOf(h).issues.get(1)!.body, SEAL)!.attempts).toMatchObject([{ pr: 7, outcome: "pr-merged" }]);
     });
 
     it("recovers a merged PR a crash left unattached, even after its branch was deleted", async () => {
@@ -1123,7 +1128,7 @@ describe("secure-it run", () => {
       const branch = await granted(h, started((id) => `secure-it/2026-10-07-take-early-${id}`));
       h.github.prs.set(7, ownPr({ number: 7, headRef: branch, state: "closed", merged: true }));
       await flow(h).run(h.context);
-      expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 7, outcome: "pr-merged" }]);
+      expect(recordOf(issuesOf(h).issues.get(1)!.body, SEAL)!.attempts).toMatchObject([{ pr: 7, outcome: "pr-merged" }]);
       expect(h.agentCalls).toEqual([]);
     });
 
@@ -1132,7 +1137,7 @@ describe("secure-it run", () => {
       const branch = await granted(h, started((id) => `secure-it/2026-10-07-take-early-${id}`));
       h.github.prs.set(7, ownPr({ number: 7, headRef: branch, state: "closed", merged: true, author: "a-writer" }));
       await flow(h).run(h.context);
-      const [attempt] = recordOf(issuesOf(h).issues.get(1)!.body)!.attempts;
+      const [attempt] = recordOf(issuesOf(h).issues.get(1)!.body, SEAL)!.attempts;
       expect(attempt).toMatchObject({ outcome: "interrupted" });
       expect(attempt!.pr).toBeUndefined();
     });
@@ -1142,7 +1147,7 @@ describe("secure-it run", () => {
       const branch = await granted(h, (id) => ({ ...started(() => "")(id), branch: `secure-it/2026-10-07-take-early-${id}`, pr: 7 }));
       h.github.prs.set(7, ownPr({ number: 7, headRef: branch, state: "closed", merged: false }));
       await flow(h).run(h.context);
-      expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 7, outcome: "pr-closed" }]);
+      expect(recordOf(issuesOf(h).issues.get(1)!.body, SEAL)!.attempts).toMatchObject([{ pr: 7, outcome: "pr-closed" }]);
       expect(issuesOf(h).issues.get(1)!.labels).not.toContain("take-early");
       expect(issuesOf(h).issues.get(1)!.body).toContain("**Waiting for the release-age wait.**");
       expect(h.agentCalls).toEqual([]);
@@ -1159,7 +1164,7 @@ describe("secure-it run", () => {
       const text = (body: string) => body.slice(0, body.indexOf("<!-- leanish:plan"));
       const before = text(issuesOf(h).issues.get(1)!.body);
       await flow(h).run(h.context);
-      expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 7, outcome: "pr-closed" }]);
+      expect(recordOf(issuesOf(h).issues.get(1)!.body, SEAL)!.attempts).toMatchObject([{ pr: 7, outcome: "pr-closed" }]);
       expect(text(issuesOf(h).issues.get(1)!.body)).toBe(before);
     });
 
@@ -1209,7 +1214,7 @@ describe("secure-it run", () => {
       } });
       expect(await tool.run(h.context)).toMatchObject({ outcome: "failed", detail: cause });
       const issues = issuesOf(h);
-      const unassessed = [...issues.issues.values()].find((issue) => recordOf(issue.body)?.subject.kind === "package" && issue.title.includes("vite"))!;
+      const unassessed = [...issues.issues.values()].find((issue) => recordOf(issue.body, SEAL)?.subject.kind === "package" && issue.title.includes("vite"))!;
       const unrelated = [...issues.issues.values()].find((issue) => issue.title.includes("left-pad"))!;
       expect(unassessed.body).toContain("no fix was planned for it this run: registry 502 reading package-lock.json and <local path>");
       expect(unassessed.body).not.toContain("/synthetic/leanish/widget");
@@ -1221,7 +1226,7 @@ describe("secure-it run", () => {
       failing = false;
       expect(await tool.run(h.context)).toMatchObject({ outcome: "published" });
       expect(issues.issues.get(unassessed.number)!.state).toBe("closed");
-      expect(recordOf(issues.issues.get(trackedIssueOf(h.github.prs.get(42)!.body)!)!.body)!.subject.kind).toBe("decision");
+      expect(recordOf(issues.issues.get(trackedIssueOf(h.github.prs.get(42)!.body)!)!.body, SEAL)!.subject.kind).toBe("decision");
       for (const issue of issues.issues.values()) if (issue.state === "open") expect(issue.body).not.toContain("registry 502");
     });
 
@@ -1239,7 +1244,7 @@ describe("secure-it run", () => {
       const issues = [...issuesOf(h).issues.values()];
       expect(issues).toHaveLength(4);
       for (const name of ["vite", "left-pad", "brace"]) {
-        const issue = issues.find((issue) => { const subject = recordOf(issue.body)!.subject; return subject.kind === "package" && subject.name === name; });
+        const issue = issues.find((issue) => { const subject = recordOf(issue.body, SEAL)!.subject; return subject.kind === "package" && subject.name === name; });
         expect(issue?.body).toContain("no fix was planned for it this run: registry 503");
       }
       expect(issues.find((issue) => issue.title.includes("unrelated"))!.body).not.toContain("registry 503");
@@ -1264,7 +1269,7 @@ describe("secure-it run", () => {
         expect.objectContaining({ topic: "security-young-npm|vite", outcome: "failed", detail: expect.stringContaining("the aged unit's plan, which decides which of its fixes join held work, failed") }),
       ]) });
       const issues = [...issuesOf(h).issues.values()];
-      expect(issues.map((issue) => recordOf(issue.body)?.subject)).toEqual([{ kind: "package", ecosystem: "npm", name: "vite" }]);
+      expect(issues.map((issue) => recordOf(issue.body, SEAL)?.subject)).toEqual([{ kind: "package", ecosystem: "npm", name: "vite" }]);
       expect(issues[0]!.body).toContain("no fix was planned for it this run: the aged unit");
       expect(issues[0]!.body).toContain("registry 502");
       expect(agedPlans).toBe(1);
@@ -1278,7 +1283,7 @@ describe("secure-it run", () => {
       issuesOf(h).comment(1, "owner", "take-early: urgent");
       issuesOf(h).label(1, "owner", "take-early");
       expect(await flow(h).run(h.context)).toMatchObject({ outcome: "cannot-apply" });
-      expect(recordOf(issuesOf(h).issues.get(1)!.body)!.attempts).toMatchObject([{ outcome: "agent-refused" }]);
+      expect(recordOf(issuesOf(h).issues.get(1)!.body, SEAL)!.attempts).toMatchObject([{ outcome: "agent-refused" }]);
       // Its issue waits again, in its text too, from the moment the attempt ends.
       expect(issuesOf(h).issues.get(1)!.body).toContain("**Waiting for the release-age wait.**");
       expect(issuesOf(h).issues.get(1)!.body).not.toContain("Taking it early");
@@ -1375,7 +1380,7 @@ describe("secure-it run", () => {
     await secureIt(h.deps).run(h.context);
     expect(titled("vite")).toMatchObject({ state: "open", body: expect.stringContaining("the fix couldn't be assessed this run") });
     expect(titled("left-pad").state).toBe("closed");
-    expect(recordOf(titled("left-pad").body)!.pendingClose?.reason).toBe("resolved");
+    expect(recordOf(titled("left-pad").body, SEAL)!.pendingClose?.reason).toBe("resolved");
   });
 
   it("expands an existing batch by reconcile-by-revert rather than opening another package PR", async () => {
@@ -2391,7 +2396,7 @@ describe("the cooldown hold", () => {
   /** The tool's issues as a run reads them (`syncIssues`'s tracked list), without an assessment. */
   async function syncedIssues(h: Harness) {
     const issues = h.context.issues as FakeIssues;
-    return [...issues.issues.values()].map((issue) => ({ number: issue.number, state: issue.state, body: issue.body, record: recordOf(issue.body)!, reopened: false, closedByPerson: false, labels: issue.labels }));
+    return [...issues.issues.values()].map((issue) => ({ number: issue.number, state: issue.state, body: issue.body, record: recordOf(issue.body, SEAL)!, reopened: false, closedByPerson: false, labels: issue.labels }));
   }
 
   /**
@@ -2639,7 +2644,7 @@ describe("the cooldown hold", () => {
     await grantWaiting(tool, h, ["vite"]);
     const result = await tool.run(h.context);
     expect(result).toMatchObject({ units: [{ topic: "security", packages: ["npm|left-pad"], outcome: "already-open" }, { topic: "security-young-npm|vite", packages: ["npm|vite"], outcome: "published" }] });
-    const young = [...(h.context.issues as FakeIssues).issues.values()].map((issue) => recordOf(issue.body)!).find((record) => record.grant !== undefined)!;
+    const young = [...(h.context.issues as FakeIssues).issues.values()].map((issue) => recordOf(issue.body, SEAL)!).find((record) => record.grant !== undefined)!;
     expect(young.grant!.young).toEqual([{ ecosystem: "npm", name: "postcss", version: "8.5.29" }]);
   });
 
@@ -2657,7 +2662,7 @@ describe("the cooldown hold", () => {
     const result = await tool.run(h.context);
     expect(result).toMatchObject({ units: [{ topic: "security-young-npm|left-pad", packages: ["npm|left-pad", "npm|vite"], outcome: "published" }] });
     expect(trackedRecord(h).subject).toMatchObject({ moves: expect.arrayContaining([{ ecosystem: "npm", name: "vite", from: "8.3.1", to: "8.3.3" }, { ecosystem: "npm", name: "left-pad", from: "1.0.0", to: "1.0.1" }]) });
-    const young = [...(h.context.issues as FakeIssues).issues.values()].map((issue) => recordOf(issue.body)!).find((record) => record.grant !== undefined)!;
+    const young = [...(h.context.issues as FakeIssues).issues.values()].map((issue) => recordOf(issue.body, SEAL)!).find((record) => record.grant !== undefined)!;
     expect(young.grant!.young).toEqual([{ ecosystem: "npm", name: "c", version: "1.0.1" }]);
   });
 
@@ -2672,7 +2677,7 @@ describe("the cooldown hold", () => {
     const result = await tool.run(h.context);
     expect(result).toMatchObject({ units: [{ topic: "security-young-npm|left-pad", packages: ["npm|left-pad", "npm|vite"], outcome: "published" }] });
     expect(trackedRecord(h).subject).toMatchObject({ moves: expect.arrayContaining([{ ecosystem: "npm", name: "vite", from: "8.3.1", to: "8.3.3" }, { ecosystem: "npm", name: "left-pad", from: "1.0.0", to: "1.0.1" }]) });
-    const young = [...(h.context.issues as FakeIssues).issues.values()].map((issue) => recordOf(issue.body)!).find((record) => record.grant !== undefined)!;
+    const young = [...(h.context.issues as FakeIssues).issues.values()].map((issue) => recordOf(issue.body, SEAL)!).find((record) => record.grant !== undefined)!;
     expect(young.grant!.young).toEqual([{ ecosystem: "npm", name: "postcss", version: "8.5.29" }]);
   });
 
@@ -2688,7 +2693,7 @@ describe("the cooldown hold", () => {
     await grantWaiting(tool, h, ["vite"]);
     const result = await tool.run(h.context);
     expect(result).toMatchObject({ units: [{ topic: "security", packages: ["npm|left-pad"], outcome: "already-open" }, { topic: "security-young-npm|vite", packages: ["npm|vite"], outcome: "published" }] });
-    const young = [...(h.context.issues as FakeIssues).issues.values()].map((issue) => recordOf(issue.body)!).find((record) => record.grant !== undefined)!;
+    const young = [...(h.context.issues as FakeIssues).issues.values()].map((issue) => recordOf(issue.body, SEAL)!).find((record) => record.grant !== undefined)!;
     expect(young.grant!.young).toEqual([{ ecosystem: "npm", name: "c", version: "1.0.1" }]);
   });
 
@@ -2741,7 +2746,7 @@ describe("the cooldown hold", () => {
     const issues = h.context.issues as FakeIssues;
     const observed: string[] = [];
     const started = (step: string) => {
-      const records = [...issues.issues.values()].flatMap((issue) => recordOf(issue.body)?.attempts ?? []);
+      const records = [...issues.issues.values()].flatMap((issue) => recordOf(issue.body, SEAL)?.attempts ?? []);
       expect(records).toHaveLength(1);
       expect(records[0]!.outcome).toBeUndefined();
       observed.push(step);
@@ -2757,14 +2762,14 @@ describe("the cooldown hold", () => {
     const deps = { ...h.deps, gradle, scan: async (scanned: Tree) => ({ settings: await readSettings(scanned), packages: [] }) as unknown as ScanState };
     expect(await secureIt(deps).run(h.context)).toMatchObject({ units: [{ outcome: "deferred" }, { outcome: "deferred" }] });
     expect(observed).toEqual([]);
-    expect([...issues.issues.values()].every((issue) => recordOf(issue.body)!.attempts.length === 0)).toBe(true);
-    const [ga] = [...issues.issues.values()].filter((issue) => recordOf(issue.body)?.subject.kind === "decision"
-      && JSON.stringify(recordOf(issue.body)!.subject).includes("g:a"));
+    expect([...issues.issues.values()].every((issue) => recordOf(issue.body, SEAL)!.attempts.length === 0)).toBe(true);
+    const [ga] = [...issues.issues.values()].filter((issue) => recordOf(issue.body, SEAL)?.subject.kind === "decision"
+      && JSON.stringify(recordOf(issue.body, SEAL)!.subject).includes("g:a"));
     issues.permissions.set("owner", "admin");
     issues.comment(ga!.number, "owner", "take-early: urgent");
     issues.label(ga!.number, "owner", "take-early");
     expect(await secureIt(deps).run(h.context)).toMatchObject({ units: [{ topic: "security-young-Maven|g:a", outcome: "verification-failed", problems: ["the plan's Gradle reference can't be built: reference unavailable"] }, { outcome: "deferred" }] });
-    expect(recordOf(issues.issues.get(ga!.number)!.body)!.attempts).toMatchObject([{ outcome: "failed" }]);
+    expect(recordOf(issues.issues.get(ga!.number)!.body, SEAL)!.attempts).toMatchObject([{ outcome: "failed" }]);
     expect(observed).toEqual(["branch", "reference", "reference"]);
     expect(h.agentCalls).toHaveLength(2);
     expect(h.workspace.publications).toEqual([]);
@@ -2774,7 +2779,7 @@ describe("the cooldown hold", () => {
     const h = harness({ fixes: [YOUNG_VITE()] });
     const issues = h.context.issues as FakeIssues;
     const started = () => {
-      const attempts = recordOf(issues.issues.get(1)!.body)!.attempts;
+      const attempts = recordOf(issues.issues.get(1)!.body, SEAL)!.attempts;
       expect(attempts).toHaveLength(1);
       expect(attempts[0]!.outcome).toBeUndefined();
     };
@@ -2789,10 +2794,10 @@ describe("the cooldown hold", () => {
       return new Map([["package-lock.json", LOCK]]);
     }, writeFile: async () => { started(); throw new Error("files unavailable"); } });
     await grantWaiting(tool, h);
-    expect(recordOf(issues.issues.get(1)!.body)!.attempts).toEqual([]);
+    expect(recordOf(issues.issues.get(1)!.body, SEAL)!.attempts).toEqual([]);
     expect(h.workspace.preparations).toEqual([]);
     expect(await tool.run(h.context)).toMatchObject({ outcome: "failed", detail: `${step} unavailable` });
-    expect(recordOf(issues.issues.get(1)!.body)!.attempts).toMatchObject([{ outcome: "failed" }]);
+    expect(recordOf(issues.issues.get(1)!.body, SEAL)!.attempts).toMatchObject([{ outcome: "failed" }]);
     expect(h.agentCalls).toEqual([]);
     expect(h.workspace.publications).toEqual([]);
   });
@@ -2829,7 +2834,7 @@ describe("the cooldown hold", () => {
     ] });
     expect(h.github.prs.size).toBe(1);
     expect(trackedRecord(h).subject).toMatchObject({ moves: [{ name: "g:b" }] });
-    const failed = [...(h.context.issues as FakeIssues).issues.values()].map((issue) => recordOf(issue.body)!)
+    const failed = [...(h.context.issues as FakeIssues).issues.values()].map((issue) => recordOf(issue.body, SEAL)!)
       .find((record) => record.subject.kind === "decision" && record.subject.moves.some((move) => move.name === "g:a"))!;
     expect(failed.attempts).toMatchObject([{ outcome: "failed" }]);
   });
@@ -2850,7 +2855,7 @@ describe("the cooldown hold", () => {
     } else {
       expect(result).toMatchObject({ problems: expect.arrayContaining([expect.stringContaining(broken === "unresolved" ? "not found" : "g:a")]) });
       expect(h.github.prs.size).toBe(0);
-      const decision = [...(h.context.issues as FakeIssues).issues.values()].map((issue) => recordOf(issue.body)!).find((record) => record.subject.kind === "decision")!;
+      const decision = [...(h.context.issues as FakeIssues).issues.values()].map((issue) => recordOf(issue.body, SEAL)!).find((record) => record.subject.kind === "decision")!;
       expect(decision.attempts).toMatchObject([{ outcome: "failed" }]);
     }
   });
@@ -3006,13 +3011,13 @@ describe("the cooldown hold", () => {
     const tool = secureIt({ ...h.deps, verify: async () => [refusal] });
     await grantWaiting(tool, h);
     const issues = h.context.issues as FakeIssues;
-    const decision = [...issues.issues.values()].find((issue) => recordOf(issue.body)?.subject.kind === "decision")!;
+    const decision = [...issues.issues.values()].find((issue) => recordOf(issue.body, SEAL)?.subject.kind === "decision")!;
     expect(await tool.run(h.context)).toMatchObject({ outcome: "deferred", reason: "a decision taken early is retried whole or not at all" });
     expect(h.agentCalls.map((call) => (call.input["moves"] as Array<{ name: string }>).map((move) => move.name).sort())).toEqual([["left-pad", "vite"], ["left-pad", "vite"]]);
     expect(h.agentCalls.map((call) => call.input["rejected"])).toEqual([undefined, [refusal]]);
     expect(h.github.prs.size).toBe(0);
-    expect(recordOf(issues.issues.get(decision.number)!.body)!.attempts).toMatchObject([{ outcome: "deferred" }]);
-    expect([...issues.issues.values()].filter((issue) => recordOf(issue.body)?.subject.kind === "decision")).toHaveLength(1);
+    expect(recordOf(issues.issues.get(decision.number)!.body, SEAL)!.attempts).toMatchObject([{ outcome: "deferred" }]);
+    expect([...issues.issues.values()].filter((issue) => recordOf(issue.body, SEAL)?.subject.kind === "decision")).toHaveLength(1);
   });
 
   it("opens one held PR per young fix that can be separated, so none waits for another", async () => {
@@ -3116,7 +3121,7 @@ describe("the cooldown hold", () => {
     expect(h.github.prs.size).toBe(3);
     const issues = h.context.issues as FakeIssues;
     const unassessed = [...issues.issues.values()].find((issue) => {
-      const subject = recordOf(issue.body)!.subject;
+      const subject = recordOf(issue.body, SEAL)!.subject;
       return subject.kind === "package" && subject.name === "left-pad";
     });
     expect(unassessed?.body).toContain("no fix was planned for it this run: registry 502");
@@ -3272,7 +3277,7 @@ describe("the cooldown hold", () => {
       { topic: "security-young-npm|vite", outcome: "already-open", pullRequest: pr.url },
     ] });
     expect(h.github.prs.get(7)).toEqual(tracked);
-    const records = [...(h.context.issues as FakeIssues).issues.values()].map((issue) => recordOf(issue.body)!);
+    const records = [...(h.context.issues as FakeIssues).issues.values()].map((issue) => recordOf(issue.body, SEAL)!);
     const other = records.find((record) => record.subject.kind === "decision" && record.subject.moves.length === 1)!;
     expect(other.attempts).toEqual([]);
     expect(h.workspace.preparations).toEqual([]);
@@ -3296,7 +3301,7 @@ describe("the cooldown hold", () => {
     expect(h.workspace.publications).toEqual([]);
     expect(h.workspace.deletions).toEqual([]);
     expect(h.agentCalls).toEqual([]);
-    const records = [...(h.context.issues as FakeIssues).issues.values()].map((issue) => recordOf(issue.body)!);
+    const records = [...(h.context.issues as FakeIssues).issues.values()].map((issue) => recordOf(issue.body, SEAL)!);
     expect(records.flatMap((record) => record.attempts)).toHaveLength(1);
     for (const issue of (h.context.issues as FakeIssues).issues.values()) expect(issue.body).not.toContain("**In progress:** #7");
     await grantWaiting(tool, h);
@@ -3321,7 +3326,7 @@ describe("the cooldown hold", () => {
     expect(h.github.prs.get(7)).toEqual(other);
     expect(h.workspace.preparations).toEqual([]);
     expect(h.agentCalls).toEqual([]);
-    expect(recordOf((h.context.issues as FakeIssues).issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 8 }]);
+    expect(recordOf((h.context.issues as FakeIssues).issues.get(1)!.body, SEAL)!.attempts).toMatchObject([{ pr: 8 }]);
   });
 
   it("does not transfer an early grant through a matching sanitized topic", async () => {
@@ -3352,7 +3357,7 @@ describe("the cooldown hold", () => {
     await early(h, pr, [{ ecosystem: "npm", name: "vite", version: "8.3.3", eligibleAt: HELD.eligibleAt }]);
     expect(await secureIt(h.deps).review({ ...h.context, workingCopy: { ...h.context.workingCopy, headSha: "f".repeat(40) } })).toMatchObject({ reviewed: [{ number: 7, outcome: "retired" }] });
     expect(h.github.prs.get(7)?.state).toBe("closed");
-    expect(recordOf((h.context.issues as FakeIssues).issues.get(1)!.body)!.attempts).toMatchObject([{ outcome: "pr-closed" }]);
+    expect(recordOf((h.context.issues as FakeIssues).issues.get(1)!.body, SEAL)!.attempts).toMatchObject([{ outcome: "pr-closed" }]);
     expect((h.context.issues as FakeIssues).issues.get(1)!.labels).not.toContain("take-early");
     expect(h.agentCalls).toEqual([]);
     expect(h.workspace.publications).toEqual([]);
@@ -3375,7 +3380,7 @@ describe("the cooldown hold", () => {
     expect(h.github.prs.get(7)).toEqual(protectedPr);
     expect(h.workspace.publications).toEqual([]);
     expect(h.agentCalls).toEqual([]);
-    expect(recordOf(issues.issues.get(1)!.body)!.attempts).toHaveLength(1);
+    expect(recordOf(issues.issues.get(1)!.body, SEAL)!.attempts).toHaveLength(1);
   });
 
   const heldPlan = (fix: SecurityFix) => planFor([fix], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined },
@@ -3392,15 +3397,15 @@ describe("the cooldown hold", () => {
     const taken = { ...await early(h, pr, [{ ecosystem: "npm", name: "vite", version: "8.3.3", eligibleAt: HELD.eligibleAt }]), isDraft: false };
     h.github.prs.set(7, taken);
     const issues = h.context.issues as FakeIssues;
-    const attempts = recordOf(issues.issues.get(1)!.body)!.attempts;
+    const attempts = recordOf(issues.issues.get(1)!.body, SEAL)!.attempts;
     const tool = secureIt({ ...h.deps, verify: holdingVerify });
     for (let run = 0; run < 2; run++) {
       expect(await tool.run(h.context)).toMatchObject({ outcome: "deferred", reason: "a person marked the early PR ready" });
       expect(h.github.prs.size).toBe(1);
       expect(h.github.prs.get(7)).toEqual(taken);
-      expect(recordOf(issues.issues.get(1)!.body)!.attempts).toEqual(attempts);
-      expect(recordOf(issues.issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 7 }]);
-      expect(recordOf(issues.issues.get(1)!.body)!.attempts[0]!.outcome).toBeUndefined();
+      expect(recordOf(issues.issues.get(1)!.body, SEAL)!.attempts).toEqual(attempts);
+      expect(recordOf(issues.issues.get(1)!.body, SEAL)!.attempts).toMatchObject([{ pr: 7 }]);
+      expect(recordOf(issues.issues.get(1)!.body, SEAL)!.attempts[0]!.outcome).toBeUndefined();
       expect(issues.issues.get(1)!.labels).toContain("take-early");
       expect([h.workspace.preparations, h.workspace.publications, h.agentCalls, h.written, h.reverted]).toEqual([[], [], [], [], []]);
     }
@@ -3437,7 +3442,7 @@ describe("the cooldown hold", () => {
     expect(h.github.prs.get(7)!.body).toBe(protectedPr.body);
     expect(h.workspace.publications).toEqual([]);
     expect(h.agentCalls).toEqual([]);
-    expect(recordOf(issues.issues.get(1)!.body)!.attempts).toHaveLength(1);
+    expect(recordOf(issues.issues.get(1)!.body, SEAL)!.attempts).toHaveLength(1);
   });
 
   // The repository's label in its own casing (one a person made by hand) reads as the label everywhere.
@@ -3467,13 +3472,13 @@ describe("the cooldown hold", () => {
     expect(aged.agentCalls).toEqual([]);
     expect(aged.workspace.preparations).toEqual([]);
     expect(aged.github.calls.some((call) => call.startsWith("headChecks"))).toBe(false);
-    expect(recordOf(issues.issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 7, outcome: "pr-closed" }]);
+    expect(recordOf(issues.issues.get(1)!.body, SEAL)!.attempts).toMatchObject([{ pr: 7, outcome: "pr-closed" }]);
     // Recovery retries the label cleanup after graduation recorded the attempt's end. No subject assessed: only records change.
     const NO_SUBJECTS = { sha: "f".repeat(40), at: "2026-10-07T06:00:00.000Z", complete: true, subjects: [] };
-    const client = { issues, github: aged.github, repo: REPO, clean: (body: string) => body, ours: () => true };
+    const client = { issues, github: aged.github, repo: REPO, trust: TEST_TRUST, clean: (body: string) => body, ours: () => true };
     // The label's removal fails the first time: the attempt's end is recorded anyway, and the next recovery returns it.
     await recoverAttempts(client, await syncedIssues(aged), NO_SUBJECTS);
-    expect(recordOf(issues.issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 7, outcome: "pr-closed" }]);
+    expect(recordOf(issues.issues.get(1)!.body, SEAL)!.attempts).toMatchObject([{ pr: 7, outcome: "pr-closed" }]);
     expect(issues.issues.get(1)!.labels).toContain(casing);
     issues.forbidden.delete("removeLabel");
     await recoverAttempts(client, await syncedIssues(aged), NO_SUBJECTS);
@@ -3493,7 +3498,7 @@ describe("the cooldown hold", () => {
     const pr = ownPr({ headRef: "secure-it/2026-10-05-security-young-npm-vite", body: marked(withPlanSection("Fixes vite.", { ...plan, cooldown: [{ ...HELD, signals: [] }] }), { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 }) });
     const h = harness({ prs: [pr] });
     const tracked = await early(h, pr);
-    const client = { issues: h.context.issues, github: h.github, repo: REPO, clean: (body: string) => body, ours: () => true, now: NOW, trusted: () => false, retire: async () => "closed" as const, eligibleAt: async () => "2026-10-13T00:00:00.000Z" };
+    const client = { issues: h.context.issues, github: h.github, repo: REPO, trust: TEST_TRUST, clean: (body: string) => body, ours: () => true, now: NOW, trusted: () => false, retire: async () => "closed" as const, eligibleAt: async () => "2026-10-13T00:00:00.000Z" };
     const previous = planOf(tracked.body)!;
     const covered = { ecosystem: "npm" as const, name: "vite", version: "8.3.3" };
     expect(await reviewExecution(client, tracked, previous, previous, [covered])).toEqual({ kind: "proceed" });
@@ -3515,8 +3520,8 @@ describe("the cooldown hold", () => {
     expect(takenEarlyOf(tracked.body)).toBe(false);
     const issues = h.context.issues as FakeIssues;
     if (!label) await issues.removeLabel({ repo: REPO, number: 1, label: "take-early" });
-    const client = { issues, github: h.github, repo: REPO, clean: (body: string) => body, ours: () => true, now: NOW, trusted: () => false, retire: async () => "closed" as const, eligibleAt: async () => (aged ? "2026-10-06T00:00:00.000Z" : "2026-10-13T00:00:00.000Z") };
-    const shared = new EarlyPrs({ issues, repo: REPO });
+    const client = { issues, github: h.github, repo: REPO, trust: TEST_TRUST, clean: (body: string) => body, ours: () => true, now: NOW, trusted: () => false, retire: async () => "closed" as const, eligibleAt: async () => (aged ? "2026-10-06T00:00:00.000Z" : "2026-10-13T00:00:00.000Z") };
+    const shared = new EarlyPrs({ issues, repo: REPO, trust: TEST_TRUST });
     expect(await reviewDisposition(client, tracked, planOf(tracked.body)!, shared)).toEqual(outcome);
     let reads = 0;
     const getIssue = issues.getIssue.bind(issues);
@@ -3546,7 +3551,7 @@ describe("the cooldown hold", () => {
     };
     expect(await secureIt({ ...h.deps, verify }).review(h.context)).toMatchObject({ reviewed: [{ outcome: covered ? "adapted" : "adaptation-unchanged" }] });
     const issue = (h.context.issues as FakeIssues).issues.get(1)!;
-    expect(recordOf(issue.body)!.attempts).toMatchObject([{ pr: 7 }]);
+    expect(recordOf(issue.body, SEAL)!.attempts).toMatchObject([{ pr: 7 }]);
     expect(h.workspace.publications).toHaveLength(covered ? 1 : 0);
     if (covered) {
       expect(h.github.prs.get(7)!.body).toContain("Tracks #1");
@@ -3609,7 +3614,7 @@ describe("the cooldown hold", () => {
     expect(await secureIt({ ...h.deps, gate: async () => ({ ...env, fetch }) }).review(h.context)).toMatchObject({ reviewed: [{ outcome: "left-alone", detail: "a person marked the held PR ready" }] });
     expect(h.github.prs.get(7)).toEqual({ ...tracked, isDraft: false });
     expect(h.workspace.preparations).toEqual([]);
-    expect(recordOf((h.context.issues as FakeIssues).issues.get(1)!.body)!.attempts).toMatchObject([{ pr: 7 }]);
+    expect(recordOf((h.context.issues as FakeIssues).issues.get(1)!.body, SEAL)!.attempts).toMatchObject([{ pr: 7 }]);
   });
 
   it("leaves an open early PR to its owner after a reference closes its issue, and the new issue gets none of its grant", async () => {
@@ -3622,8 +3627,8 @@ describe("the cooldown hold", () => {
     await secureIt(h.deps).run(h.context);
     const replacements = [...issues.issues.values()].filter((issue) => issue.state === "open");
     expect(replacements.map((issue) => issue.number)).toEqual([2]);
-    expect(recordOf(replacements[0]!.body)!.grant).toBeUndefined();
-    expect(recordOf(replacements[0]!.body)!.attempts).toEqual([]);
+    expect(recordOf(replacements[0]!.body, SEAL)!.grant).toBeUndefined();
+    expect(recordOf(replacements[0]!.body, SEAL)!.attempts).toEqual([]);
     expect(await secureIt(h.deps).review(h.context)).toMatchObject({ reviewed: [{ number: 7, outcome: "left-alone" }] });
     expect(h.github.prs.get(7)!.headSha).toBe(tracked.headSha);
     expect(h.workspace.publications).toEqual([]);

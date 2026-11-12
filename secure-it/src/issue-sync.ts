@@ -20,11 +20,10 @@ import { type ClosingNotice, closingNotices } from "./issue-closings.ts";
 import type { Assessment, PendingClose } from "./issue-model.ts";
 import { postNotice } from "./issue-notices.ts";
 import { type IssueOperation, reconcile, type TrackedIssue } from "./issue-reconcile.ts";
-import { hasLabel, ISSUE_LABEL, type IssueWriter, issueWriter, noticeMarker, recordOf } from "./issue-text.ts";
+import { hasLabel, ISSUE_LABEL, type IssueSeal, type IssueWriter, issueWriter, noticeMarker, recordOf } from "./issue-text.ts";
 
-export interface IssueSync {
+export interface IssueSync extends IssueSeal {
   readonly issues: GitHubIssues;
-  readonly repo: string;
   /** Local paths out of a text bound for GitHub (`cleanBody`). */
   readonly clean: (body: string) => string;
   /** The wall clock, read just before each round's writes; the system's by default. */
@@ -51,7 +50,7 @@ const ROUNDS = 4;
 export const SHOWN_MARGIN_MS = 120_000;
 
 export async function syncIssues(sync: IssueSync, assessment: Assessment): Promise<SyncResult> {
-  const writer = issueWriter(sync.clean);
+  const writer = issueWriter(sync.clean, sync);
   const login = await sync.issues.login();
   const notes: string[] = [];
   const clock = sync.clock ?? (() => new Date());
@@ -86,7 +85,7 @@ export async function syncIssues(sync: IssueSync, assessment: Assessment): Promi
  * the tool's own `closed` event from a person's earlier ones by event order. A closing already recorded keeps its own.
  */
 async function withEventBoundary(sync: IssueSync, writer: IssueWriter, operation: Extract<IssueOperation, { kind: "close" }>): Promise<IssueOperation> {
-  const record = recordOf(operation.body);
+  const record = recordOf(operation.body, sync);
   if (record?.pendingClose === undefined || record.pendingClose.afterEvent !== undefined) return operation;
   const events = await sync.issues.listEvents({ repo: sync.repo, number: operation.number });
   const afterEvent = events.reduce((last, event) => Math.max(last, event.id), 0);
@@ -149,7 +148,7 @@ async function readTracked(sync: IssueSync, login: string, written: ReadonlySet<
   const read: Array<Omit<TrackedIssue, "closedByPerson" | "closing"> & { readonly labels: ReadonlyArray<string> }> = [];
   const unreadable: number[] = [];
   for (const issue of [...listed.filter((issue) => !written.has(issue.number)), ...fresh]) {
-    const record = recordOf(issue.body);
+    const record = recordOf(issue.body, sync);
     if (record === undefined) {
       // A closed one without a readable record stays out of everything; an open one blocks creates (`reconcile`).
       if (issue.state === "open" && looksOurs(issue)) unreadable.push(issue.number);

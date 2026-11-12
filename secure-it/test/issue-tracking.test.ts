@@ -5,6 +5,11 @@ import { FakeIssues } from "@leanish/tool-runtime/test/fake-issues";
 import { attemptBranchAllowed, attemptBranches, issueDisposition } from "../src/issue-tracking.ts";
 import { syncIssues } from "../src/issue-sync.ts";
 import type { ChangePlan } from "../src/plan.ts";
+import { sealFor, TEST_TRUST, writerFor } from "./issue-seal.ts";
+
+/** Issue records as the tool signs them for this file's repository. */
+const ISSUE_WRITER = writerFor("acme/widget");
+const SEAL = sealFor("acme/widget");
 
 const plan = { kind: "routine", topic: "security", malware: false, packages: ["npm|lib"], moves: [{ ecosystem: "npm", name: "lib", from: "1.0.0", to: "1.0.1" }] } as unknown as ChangePlan;
 const subject = {
@@ -13,7 +18,7 @@ const subject = {
   status: { kind: "eligible" as const, trusted: [] },
 };
 const assessment = { sha: "a".repeat(40), at: "2026-11-03T00:00:00.000Z", complete: true, subjects: [subject] };
-const clientOf = (issues: FakeIssues) => ({ issues, repo: "acme/widget", clean: (body: string) => body, now: new Date("2026-11-03T00:00:00Z") });
+const clientOf = (issues: FakeIssues) => ({ issues, repo: "acme/widget", trust: TEST_TRUST, clean: (body: string) => body, now: new Date("2026-11-03T00:00:00Z") });
 
 describe("issueDisposition", () => {
   it("runs nothing while the issues haven't settled, even for a decision past the wait", async () => {
@@ -23,13 +28,13 @@ describe("issueDisposition", () => {
 
   it("lets a decision past the wait go ahead through its open issue", async () => {
     const issues = new FakeIssues();
-    const sync = await syncIssues({ issues, repo: "acme/widget", clean: (body: string) => body }, assessment);
+    const sync = await syncIssues({ issues, repo: "acme/widget", trust: TEST_TRUST, clean: (body: string) => body }, assessment);
     expect(await issueDisposition({ assessment, sync }, plan, clientOf(issues), () => "unused")).toEqual({ kind: "proceed", tracked: { issue: 1, young: [], assessment } });
   });
 
   it("reads the issue again before anything runs: one a person closed after the sync read it stops the decision", async () => {
     const issues = new FakeIssues();
-    const sync = await syncIssues({ issues, repo: "acme/widget", clean: (body: string) => body }, assessment);
+    const sync = await syncIssues({ issues, repo: "acme/widget", trust: TEST_TRUST, clean: (body: string) => body }, assessment);
     issues.setState(1, "closed", "owner");
     expect(await issueDisposition({ assessment, sync }, plan, clientOf(issues), () => "unused")).toEqual({ kind: "defer", reason: "its issue #1 is no longer open as secure-it's" });
   });
@@ -59,7 +64,7 @@ describe("attemptBranches", () => {
 describe("issueDisposition with duplicates", () => {
   it("runs nothing while two open issues track the same decision", async () => {
     const issues = new FakeIssues();
-    const sync = await syncIssues({ issues, repo: "acme/widget", clean: (body: string) => body }, assessment);
+    const sync = await syncIssues({ issues, repo: "acme/widget", trust: TEST_TRUST, clean: (body: string) => body }, assessment);
     const twin = { ...sync.tracked[0]!, number: 2 };
     const tracking = { assessment, sync: { ...sync, tracked: [...sync.tracked, twin] } };
     expect(await issueDisposition(tracking, plan, clientOf(issues), () => "unused")).toEqual({ kind: "defer", reason: "#1 and #2 both track this decision; a person closes one" });

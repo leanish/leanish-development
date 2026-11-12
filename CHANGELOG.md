@@ -22,9 +22,8 @@
 - 0.11.0's note that a Maven version already on the base elsewhere isn't held or refused has an exception: a Gradle
   parent probe counts the versions it newly resolves in each configuration, even when they're on the base elsewhere,
   and its decision waits for untrusted ones still inside the wait, or whose publication date can't be read.
-- The coverage gaps no longer promise a release that stops trusting an issue record someone else edited, and say who
-  answers for a young version build code loads before secure-it can refuse it, which it doesn't guarantee: the
-  repository for its direct dependencies; transitive ones are a known limit.
+- The coverage gaps say who answers for a young version build code loads before secure-it can refuse it, which it
+  doesn't guarantee: the repository for its direct dependencies; transitive ones are a known limit.
 - The tools no longer keep a publication journal. When a PR's body can't be updated after a push, the tool tries once
   more, then closes the PR while it's still the tool's draft at that head, and a later run recomputes it; the run
   reports an error either way. A `take-early` PR closed this way needs a new authorization while its versions are
@@ -52,7 +51,13 @@
   `trusted-editors`, which signs nothing, reads no key and trusts whoever can edit the tools' PRs. Reuse the same key
   on every machine that runs a tool. Upgrade: with signed records, a PR made before this, including one signed by an
   unreleased 0.12.0 build in #470's reduced format, stays alone until a person closes it, so close the tools' open PRs
-  when upgrading (not secure-it's issues); with `trusted-editors`, the tools keep reading those PRs' state lines.
+  when upgrading; with `trusted-editors`, the tools keep reading those PRs' state lines.
+- secure-it signs the hidden record in its issues the same way, under the same setting: with signed records, a record
+  someone edited or wrote reads as none. An open issue whose record doesn't read blocks new issues until a person
+  restores the record the tool wrote or closes the issue, and a closed one no longer counts as a dismissal. Upgrade:
+  with signed records, issues opened before this have no signature, so close or delete secure-it's open issues when
+  upgrading (a later run opens new ones for what they tracked; closing them migrates nothing), and dismissals recorded
+  in closed ones no longer count.
 - The gate no longer helps with the rename of `ownPackages` to `trustedPackages`: a config with the old name still fails,
   now as an unknown field without saying to rename it, and a PR making the rename compares against the default Gradle builds, and the lockfiles head
   selects plus the default ones. A repository still on it should
