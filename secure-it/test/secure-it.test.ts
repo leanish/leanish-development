@@ -33,7 +33,8 @@ import { earlyDecisions, reviewDisposition, reviewExecution } from "../src/issue
 import { fakeFetch } from "@leanish/gate/test/fake-fetch";
 import { archive, manifest, serving } from "@leanish/gate/test/tarballs";
 import { parseToolConfig } from "@leanish/tool-runtime/config";
-import { branchFor, stateOf, withMarker } from "@leanish/tool-runtime/own-pr";
+import { branchFor, stateOf, verifiedStateOf, withMarker } from "@leanish/tool-runtime/own-pr";
+import { planBlock } from "@leanish/tool-runtime/plan-blocks";
 import { BASE_SHA, FakeGitHub, GREEN, HEAD_SHA, ownPr, PUSHED_SHA, marked, RED, SIGNED, TOOL_LOGIN } from "@leanish/tool-runtime/test/fake-github";
 import { FakeIssues } from "@leanish/tool-runtime/test/fake-issues";
 import { cooldownWarning, planOf, planSection, withPlanSection } from "../src/plan-block.ts";
@@ -572,6 +573,21 @@ describe("secure-it run", () => {
     expect(body).toContain("Fixes security findings.");
     expect(stateOf(body)).toEqual({ head: HEAD_SHA, base: BASE_SHA, adaptations: 0 });
     expect([h.agentCalls, h.workspace.publications]).toEqual([[], []]);
+  });
+
+  it("never signs a plan someone added behind warning markers when it rewrites an open PR's notes", async () => {
+    const plan = await planFor([vite()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined });
+    const section = planSection({ ...plan, notes: ["an outdated reason"] });
+    const evil = planBlock({ ...plan, moves: plan.moves.map((move) => ({ ...move, to: "9.9.9" })) });
+    // Its signed section wrapped in warning markers, which a refresh removes, and a plan of someone's after it.
+    const body = marked(`Fixes security findings.\n\n${section}`, { head: HEAD_SHA, base: BASE_SHA, adaptations: 0 })
+      .replace(section, `<!-- secure-it cooldown warning -->\n${section}\n<!-- /secure-it cooldown warning -->\n\n${evil}`);
+    const h = harness({ prs: [ownPr({ headRef: branchFor(RULES, new Date("2026-10-05T00:00:00Z"), plan.topic), body })] });
+    const stored = h.github.prs.get(7)!;
+    expect(verifiedStateOf({ ...SIGNED, rules: RULES, repo: REPO }, stored)).toEqual({ head: HEAD_SHA, base: BASE_SHA, adaptations: 0 });
+    expect(await secureIt(h.deps).run(h.context)).toMatchObject({ outcome: "failed", detail: expect.stringContaining("a plan block outside its") });
+    expect(h.github.prs.get(7)!.body).toBe(stored.body);
+    expect(h.github.calls.filter((call) => call.startsWith("updatePullRequest"))).toEqual([]);
   });
 
   it("leaves the same plan's open PR to its review tick, and reconciles one whose plan changed while it's still the tool's", async () => {
@@ -2345,6 +2361,22 @@ describe("secure-it floor-removal units", () => {
 });
 
 describe("the cooldown hold", () => {
+  it("refuses a body whose warning removal would expose, join or drop a block or a Tracks line", async () => {
+    const plan = await planFor([vite()], { named: undefined, lockfiles: new Map([["package-lock.json", JSON.parse(LOCK)]]), gradle: undefined, tagCommit: async () => undefined });
+    const warning = "<!-- secure-it cooldown warning -->\n> [!WARNING]\n<!-- /secure-it cooldown warning -->";
+    const evil = planBlock({ ...plan, moves: plan.moves.map((move) => ({ ...move, to: "9.9.9" })) });
+    expect(() => withPlanSection(`Fixes vite.\n\n<${warning}${evil.slice(1)}`, plan)).toThrow("a plan block outside its");
+    const tracks = [
+      `Fixes vite.\n\nTracks #9${warning}, taken early.`, // joined into one line
+      `Fixes vite.\n\nTracks #9, taken early.${warning}\nMore.`, // its own line once the warning goes
+      `Fixes vite.\n\n${warning}Tracks #9, taken early.`,
+      `${warning}\n Tracks #9.`, // trimmed into one
+      `Fixes vite.\n\nTracks #1.\n\n${warning.replace("> [!WARNING]", "> [!WARNING] Tracks #1.")}`, // dropped
+    ];
+    for (const body of tracks) expect(() => withPlanSection(body, plan)).toThrow("would change its Tracks lines");
+    expect(planOf(withPlanSection(`${warning}\n\nFixes vite.\n\nTracks #1.`, plan))?.moves.map((move) => move.to)).toEqual(["8.3.3"]);
+  });
+
   const YOUNG_VITE = () => vite({ to: { version: "8.3.3", line: "8", aged: false, major: false, blockers: [] } });
   const HELD = {
     ecosystem: "npm" as const, name: "vite", version: "8.3.3", replaced: ["8.3.1"],

@@ -2,9 +2,10 @@
  * How the tools trust the records they keep in GitHub, and the signer for them: a PR's state, with a kind of its own
  * kept for issue records so neither can stand in for the other.
  *
- * `signed` (the default): each record carries an HMAC-SHA-256 with a key only the tool's process holds, so editing the
- * record, or writing one, gets nothing. `trusted-editors`: nothing is signed or read from the Keychain, and whoever
- * can edit the tools' PRs and issues is trusted to (collaborators and integrations with that access).
+ * `signed` (the default): each PR record carries an HMAC-SHA-256 with a key only the tool's process holds, so editing
+ * the record, or writing one, gets nothing (issue records aren't signed yet). `trusted-editors`: nothing is signed or
+ * read from the Keychain, and whoever can edit the tools' PRs and issues is trusted to (collaborators and integrations
+ * with that access).
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
 

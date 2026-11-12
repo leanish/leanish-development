@@ -28,7 +28,8 @@ package is the code around them. Setup and operation are in [Adopting the tools]
     `<local path>`. The tool's own `<!-- leanish:… -->` markers (state and plan) pass through untouched, so this cleans
     what readers see, not every byte; any other `<!-- leanish:plan` in the text, or one cleaning would leave, is
     defused (`defused()` in `plan-blocks.ts`, written `&lt;!-- leanish:plan`), and removing old markers never joins the
-    text around them, so a body's first plan block is always the tool's own. Agent descriptions must not include the
+    text around them, so a body's first plan block is always the tool's own; `withPlanSection` refuses a body with a block
+    it wouldn't replace, so the section it writes is that first block. Agent descriptions must not include the
     reserved plan or state markers. On create and update, publication checks the cleaned title (nonblank, at most 256
     UTF-16 units) and the marked body (at most 65,536) against the client's limits. `assertPublishable` runs the same check for a
     caller before the work a refusal would waste.

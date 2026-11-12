@@ -131,6 +131,18 @@ describe("plan blocks", () => {
     expect(plain).toBe(`before\n\n${section({ a: 2 })}\n\nafter`);
   });
 
+  it("refuses a body with a block it wouldn't replace, so the result's first block is always the new section's", () => {
+    const old = section({ a: 1 });
+    const renamed = old.replace(HEADING, "### Renamed by someone");
+    const tooLong = `<!-- leanish:plan ${"A".repeat(BODY_LIMIT + 1)} -->`;
+    // A block before the section, one with no section of its own (its heading renamed), one too long to read.
+    for (const body of [`${planBlock({ evil: true })}\n\n${old}`, `Description.\n\n${renamed}`, `${tooLong}\n\nDescription.`]) {
+      expect(() => withPlanSection(body, HEADING, section({ a: 2 }))).toThrow("a plan block outside its");
+    }
+    expect(planPayload(withPlanSection("Description.", HEADING, section({ a: 2 })))).toEqual({ a: 2 });
+    expect(planPayload(withPlanSection(`Description.\n\n${old}\n\n${planBlock({ later: true })}`, HEADING, section({ a: 2 })))).toEqual({ a: 2 });
+  });
+
   it("refuses a body over GitHub's limit", () => {
     expect(() => withPlanSection("x".repeat(BODY_LIMIT), HEADING, section({ a: 1 }))).toThrow(/over GitHub's 65536/);
   });

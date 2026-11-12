@@ -160,13 +160,18 @@ function firstBlock(body: string): { index: number; length: number; compressed: 
 /**
  * `body` with its section (from `heading` through the hidden comment)
  * replaced by `section`, which must start with `heading` and end with its
- * block; appended when `body` has none. Throws when the result is over GitHub's body limit.
+ * block; appended when `body` has no block. So the result's first block is always `section`'s: it throws on a body
+ * with a block it wouldn't replace (none of its own section's, or one before it), which later reads, and a signature,
+ * would take over this one. Throws when the result is over GitHub's body limit.
  */
 export function withPlanSection(body: string, heading: string, section: string): string {
   if (!section.startsWith(heading) || firstBlock(section) === undefined) throw new Error(`a plan section starts with '${heading}' and carries its block`);
   const start = body.indexOf(heading);
   const block = firstBlock(body);
-  const result = start === -1 || block === undefined || block.index < start
+  if (BLOCK.test(body) && (block === undefined || start === -1 || block.index < start)) {
+    throw new Error(`the PR's body has a plan block outside its '${heading}' section; a person needs to remove it or restore the section`);
+  }
+  const result = block === undefined
     ? `${body.trimEnd()}\n\n${section}`
     : `${body.slice(0, start)}${section}${body.slice(block.index + block.length)}`;
   assertBodyFits(result);

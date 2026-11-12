@@ -12,7 +12,7 @@ import { isAdvisoryEvidence } from "@leanish/gate/advisory-evidence";
 import { heldEntry, heldUntil } from "@leanish/gate/cooldown";
 import { packageKey } from "@leanish/gate/package-version";
 import { type Ecosystem, ECOSYSTEMS } from "@leanish/gate/versions";
-import { MARKER_ROOM, stateOf } from "@leanish/tool-runtime/own-pr";
+import { MARKER_ROOM, ownPullRequests, stateOf } from "@leanish/tool-runtime/own-pr";
 import { defused, planPayload, planSection as sectionOf, TooLargeError, withPlanSection as replaced } from "@leanish/tool-runtime/plan-blocks";
 import { literal } from "@leanish/tool-runtime/pr-text";
 import { canonicalJson } from "@leanish/tool-runtime/record-signature";
@@ -128,9 +128,26 @@ function omittedSection(plan: ChangePlan): string[] {
  * top while it holds. The advisory evidence is for people and never changes a verdict, so when the body can't be written
  * with it (its plan, section or body over a limit), it gives way, never the fix: written again without any, each fix that
  * had some says why it's missing. Fresh text has a smaller raw budget than text carrying a published state marker.
- * What still can't be written, and any other failure, fails as before.
+ * What still can't be written, and any other failure, fails as before. Throws when composing would change the body's
+ * `Tracks` lines (`tracksLines`).
  */
 export function withPlanSection(body: string, plan: ChangePlan): string {
+  const result = sized(body, plan);
+  // Removing the warning or replacing the section could expose, join or drop a `Tracks` line someone wrote around them
+  // (`Tracks #9, taken early.` right before the warning, say), which the tool would then sign: its lines are
+  // trackingContent's to write, never this.
+  if (JSON.stringify(tracksLines(result)) !== JSON.stringify(tracksLines(body))) {
+    throw new Error("composing the PR's plan section would change its Tracks lines; a person needs to fix its description");
+  }
+  return result;
+}
+
+/** The lines a body tracks an issue with, as the tools read them (`OwnPullRequests.machineLines`). */
+function tracksLines(body: string): string[] {
+  return [...body.matchAll(ownPullRequests("secure-it").machineLines!)].map((line) => line[0]);
+}
+
+function sized(body: string, plan: ChangePlan): string {
   const heldBodyTarget = stateOf(body) === undefined ? FRESH_HELD_BODY_TARGET : PUBLISHED_HELD_BODY_TARGET;
   try {
     return composed(body, plan, heldBodyTarget);

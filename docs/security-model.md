@@ -95,7 +95,8 @@ Both tools are in this tree: [`secure-it`](../secure-it) and [`bump-it`](../bump
   state, the PR's branch and base branch, the plan the body carries and secure-it's `Tracks` line: everything the
   tools act on in a body. Editing any of it, or pushing and editing the recorded head, makes the PR someone else's,
   and it's left alone; prose stays free to edit. The tools check that cleaning text and removing markers never
-  creates plan or `Tracks` data, and never sign again what they haven't verified. A tool whose key is missing or
+  creates plan or `Tracks` data, write a plan only where it becomes the body's first block, never let composing a body
+  change its `Tracks` lines, and never sign again what they haven't verified. A tool whose key is missing or
   malformed doesn't start. With `records: trusted-editors` nothing is signed and the key is never read: whoever can
   edit the tools' PRs (collaborators and integrations with that access, on public and private repositories alike)
   is trusted to, as before 0.12.0. secure-it's issue records aren't signed yet. [Limits](coverage-gaps.md#limits).
