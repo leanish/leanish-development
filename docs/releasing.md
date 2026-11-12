@@ -82,8 +82,8 @@ decisions.
 
 ## trustedPackages migration
 
-This migration is over: since 0.12.0 a config with the old `ownPackages` field fails as
-an unknown field. A repository still on it should follow
+This migration is over: a config with the old `ownPackages` field fails, since 0.12.0 as
+an unknown field without saying to rename it. A repository still on it should follow
 [the guide in v0.11.1](https://github.com/leanish/leanish-development/blob/v0.11.1/docs/releasing.md#trustedpackages-migration),
 the last release whose gate explains the rename and keeps the base's lockfiles and
 Gradle builds during it, and move to a later release afterwards.
