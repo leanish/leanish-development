@@ -47,8 +47,8 @@
   commit taken as the tool's by copying or editing that line. Both tools refuse to start without the key; reuse the same
   value on every machine that runs a tool. A PR made before this has no signature and stays alone until a person
   closes it, so close the tools' open PRs when upgrading (not secure-it's issues).
-- The gate no longer helps with the rename of `ownPackages` to `trustedPackages`: a config with the old name now fails
-  as an unknown field, and a PR making the rename compares against the default Gradle builds, and the lockfiles head
+- The gate no longer helps with the rename of `ownPackages` to `trustedPackages`: a config with the old name still fails,
+  now as an unknown field without saying to rename it, and a PR making the rename compares against the default Gradle builds, and the lockfiles head
   selects plus the default ones. A repository still on it should
   [rename it on 0.11.1](docs/releasing.md#trustedpackages-migration) first.
 
