@@ -1026,6 +1026,28 @@ describe("bump-it review", () => {
     expect(h.github.calls.filter((call) => call.startsWith("closePullRequest") || call.startsWith("updatePullRequest"))).toEqual([]);
     expect([h.workspace.deletions, h.workspace.publications, h.agentCalls, h.computed, h.reverted]).toEqual([[], [], [], [], []]);
   });
+  const OVERRIDE_UNDECIDED = "package.json: override minimatch stays at 11.0.1: the registry couldn't list minimatch's versions: HTTP 503";
+  const holdingOverride = async (unit: Unit): Promise<NpmResult> => ({ ...npmOf(unit), notes: [OVERRIDE_UNDECIDED], undecided: [OVERRIDE_UNDECIDED] });
+  it("keeps a routine's PR, untouched, while an override raise can't be decided on the new base", async () => {
+    const pr = await prFor(routine());
+    const h = harness({ prs: [pr], bumps: [candidate({ major: undefined })], baseSha: NEW_BASE, npm: holdingOverride });
+    h.github.branches.add(pr.headRef);
+    // Without the guard: rebased without the raise the PR may carry.
+    expect(await bumpIt(h.deps).review(h.context)).toMatchObject({ reviewed: [
+      { number: pr.number, outcome: "error", detail: `an override raise can't be decided on the new base; keeping the PR: ${OVERRIDE_UNDECIDED}` },
+    ] });
+    expect(h.github.prs.get(pr.number)).toEqual(pr);
+    expect(h.github.calls.filter((call) => call.startsWith("closePullRequest") || call.startsWith("updatePullRequest"))).toEqual([]);
+  });
+  it("keeps a routine's PR in a run while an override raise can't be decided", async () => {
+    const lib = candidate({ major: undefined });
+    const pr = await prFor(routine(lib));
+    const h = harness({ prs: [pr], bumps: [lib], npm: holdingOverride });
+    expect(await bumpIt(h.deps).run(h.context)).toMatchObject({
+      units: [{ topic: "routine", outcome: "failed", detail: `an override raise can't be decided; keeping the PR: ${OVERRIDE_UNDECIDED}` }],
+    });
+    expect(h.github.prs.get(7)).toEqual(pr);
+  });
   it("keeps a routine's PR, untouched, while a direct-peer set can't be decided on the new base", async () => {
     const pr = await prFor(routineUnit([candidate({ major: undefined }), dev()]));
     const h = harness({ prs: [pr], bumps: [candidate({ major: undefined }), candidate({ ...dev(), major: undefined })], baseSha: NEW_BASE });

@@ -119,7 +119,13 @@ describe("secure-it floor preservation", () => {
       expect(await preservedFloors(raise(), base, head(), {})).toEqual([]);
     });
 
+    it("accepts one move that also covers a nested copy or another lockfile root", async () => {
+      const locations = ["node_modules/minimatch", "node_modules/parent/node_modules/minimatch", "example/node_modules/minimatch"];
+      expect(await preservedFloors(raise({ locations }), base, head(), {})).toEqual([]);
+    });
+
     it.each([
+      ["a move that lowers the recorded minimum", raise({ to: "11.0.0" }), head("11.0.0", "11.0.0")],
       ["a move from another version", raise({ from: "11.0.7" }), head()],
       ["a move for a nested copy", raise({ locations: ["node_modules/parent/node_modules/minimatch"] }), head()],
       ["a pin other than the target", raise(), head("11.0.10")],

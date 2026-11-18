@@ -14,6 +14,12 @@ describe("withOverride", () => {
     expect(withOverride(text, "lib", "11.0.1", "11.0.8", "package.json")).toBe(`{ "name": "app",\n  "overrides": { "lib":   "11.0.8" } }\n`);
   });
 
+  it("refuses an in-place replacement that would change another field", () => {
+    // The override's text is escaped, so the only literal match is another field with the same key and value.
+    const text = `{"config":{"lib":"11.0.1"},"overrides":{"lib":"11.0.\\u0031"}}\n`;
+    expect(() => withOverride(text, "lib", "11.0.1", "11.0.8", "package.json")).toThrow("package.json: replacing 'lib: 11.0.1' in place would change something else");
+  });
+
   it("refuses an override that isn't there at that value", () => {
     const text = `${JSON.stringify({ overrides: { lib: "^11.0.1" } }, null, 2)}\n`;
     expect(() => withOverride(text, "lib", "11.0.1", "11.0.8", "package.json")).toThrow("package.json has no top-level override lib at '11.0.1'");

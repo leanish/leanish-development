@@ -1,5 +1,5 @@
 /** Check policy and exact planned edits locally; run compare only when every local check passes. */
-import { basename } from "node:path";
+import { basename, dirname } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import semver from "semver";
@@ -229,6 +229,10 @@ async function floorProblems(floors: Settings["floors"], base: Tree, head: Tree,
  */
 async function raisedOverride(floor: Settings["floors"][number], was: unknown, now: unknown, head: Tree, raises: OverrideRaises): Promise<boolean> {
   if (raises.kind !== "routine" || raisableKey(floor, floor.declaredIn) === undefined) return false;
+  // A routine raises overrides only in a lockfile's own root manifest, never in a workspace's.
+  const dir = dirname(floor.declaredIn);
+  const beside = (name: string) => dir === "." ? name : `${dir}/${name}`;
+  if (await head.read(beside("package-lock.json")) === undefined && await head.read(beside("npm-shrinkwrap.json")) === undefined) return false;
   if (typeof was !== "string" || typeof now !== "string" || semver.valid(was) !== was || semver.valid(now) !== now || !semver.gt(now, was)) return false;
   const line = (version: string) => compatibleLine(raises.config, { ecosystem: "npm", name: floor.package }, version);
   if (line(was) !== line(now)) return false;

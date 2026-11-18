@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import semver from "semver";
@@ -33,6 +33,8 @@ interface Options {
   readonly locked?: readonly [string, string];
   /** npm leaves the copies at their locked versions on the first `n` commands. */
   readonly stale?: number;
+  /** npm's resolution brings a bundled copy of `child` at this version, which no override reaches. */
+  readonly bundled?: string;
 }
 
 /**
@@ -43,13 +45,14 @@ async function fixture(options: Options = {}) {
   const dir = await mkdtemp(join(process.cwd(), ".bump-raise-")); dirs.push(dir);
   const root = { name: "root", dependencies: { parent: "^1.0.0", ...options.dependencies }, overrides: options.overrides ?? { child: "1.0.0" } };
   const [top, nested] = options.locked ?? ["1.0.0", "1.0.0"];
-  const graph = (manifest: unknown, top: string, nested: string) => ({
+  const graph = (manifest: unknown, top: string, nested: string, bundled?: string) => ({
     lockfileVersion: 3,
     packages: {
       "": manifest,
       "node_modules/parent": { version: "1.0.0", dependencies: { child: "^1.0.0" } },
       "node_modules/parent/node_modules/child": { version: nested },
       "node_modules/child": { version: top },
+      ...(bundled === undefined ? {} : { "node_modules/carrier": { version: "1.0.0", bundleDependencies: ["child"] }, "node_modules/carrier/node_modules/child": { version: bundled, inBundle: true } }),
     },
   });
   const base = graph(root, top, nested);
@@ -64,10 +67,10 @@ async function fixture(options: Options = {}) {
     const pin = manifest.overrides?.child;
     const value = typeof pin === "string" && semver.valid(pin) !== null && calls.length > (options.stale ?? 0) ? pin : undefined;
     const current = JSON.parse(await readFile(join(cwd, "package-lock.json"), "utf8")).packages;
-    await writeFile(join(cwd, "package-lock.json"), json(graph(manifest, value ?? current["node_modules/child"].version, value ?? current["node_modules/parent/node_modules/child"].version)));
+    await writeFile(join(cwd, "package-lock.json"), json(graph(manifest, value ?? current["node_modules/child"].version, value ?? current["node_modules/parent/node_modules/child"].version, options.bundled)));
     return { code: 0, stdout: "", stderr: "" };
   };
-  const catalog: Record<string, string[]> = { parent: ["1.0.0"], child: ["1.0.0", "1.0.1", "1.1.0", "1.2.0-beta.1", "2.0.0"] };
+  const catalog: Record<string, string[]> = { parent: ["1.0.0"], carrier: ["1.0.0"], child: ["1.0.0", "1.0.1", "1.1.0", "1.2.0-beta.1", "2.0.0"] };
   const inputs: NpmInputs = {
     kind: "routine",
     dir,
@@ -137,6 +140,7 @@ describe("routine raise of an exact, security-floored override", () => {
     ["under a compatibility floor", {}, { floors: floor("1.0.0", "compatibility") }],
     ["when a floor selects a nested path", { overrides: { child: "1.0.0", parent: { child: "1.0.0" } } }, { floors: floor("1.0.0", "security", [["parent", "child"]]) }],
     ["when another rule names the package", { overrides: { child: "1.0.0", parent: { child: "1.0.0" } } }, {}],
+    ["when a version-qualified rule names the package", { overrides: { child: "1.0.0", "child@1.0.0": { grand: "2.0.0" } } }, {}],
     ["for a $ reference", { overrides: { child: "$child" }, dependencies: { child: "1.0.0" } }, {}],
     ["for a range", { overrides: { child: "^1.0.0" } }, {}],
     ["when the root declares it directly", { dependencies: { child: "1.0.0" } }, {}],
@@ -145,6 +149,43 @@ describe("routine raise of an exact, security-floored override", () => {
     const h = await fixture(options);
     const result = await computeNpm({ ...h.inputs, overrideFloors: { ...h.inputs.overrideFloors!, ...policy } });
     expect(result.files.has("package.json")).toBe(false);
+  });
+
+  it("refuses the computation when a copy the raise can't reach keeps the old version", async () => {
+    const h = await fixture({ bundled: "1.0.0" });
+    await expect(computeNpm(h.inputs)).rejects.toThrow("package-lock.json: the override child was raised to 1.1.0, but child at node_modules/carrier/node_modules/child is 1.0.0");
+  });
+
+  it.each([
+    ["the catalog", { versions: async () => { throw new Error("registry down"); } }, "the registry couldn't list child's versions: registry down"],
+    ["a publish time", { published: async (_name: string, version: string) => { if (version === "1.1.0") throw new Error("timeout"); return OLD; } }, "child@1.1.0's publish time couldn't be read: timeout"],
+    ["a candidate's missing publish time", { published: async (_name: string, version: string) => (version === "1.1.0" ? undefined : OLD) }, "the registry has no publish time for child@1.1.0, so its age can't be judged"],
+    ["the pin's missing publish time", { published: async (_name: string, version: string) => (version === "1.0.0" ? undefined : OLD) }, "a locked copy of it has no readable publish time, so npm's window excludes it"],
+    ["the advisory snapshot", { snapshot: async () => { throw new Error("osv down"); } }, "the advisory lookup failed: osv down"],
+    ["an identity check", { identity: async (_name: string, _from: string, to: string) => { if (to === "1.1.0") throw new Error("bad attestation"); return []; } }, "child@1.1.0 couldn't be judged: bad attestation"],
+  ])("holds the override and reports it when %s can't be read, instead of taking an older version", async (_label, sources, why) => {
+    const h = await fixture();
+    const result = await computeNpm({ ...h.inputs, sources: { ...h.inputs.sources, ...sources } as NpmInputs["sources"] });
+    expect(result.files.has("package.json")).toBe(false);
+    expect(result.notes).toContain(`package.json: override child stays at 1.0.0: ${why}`);
+    expect(result.undecided).toEqual([`package.json: override child stays at 1.0.0: ${why}`]);
+  });
+
+  it("holds the override as undecided when another lockfile's copy of the package has no publish time", async () => {
+    const h = await fixture();
+    const other = { lockfileVersion: 3, packages: { "": { name: "tool" }, "node_modules/child": { version: "2.0.0" } } };
+    await mkdir(join(h.dir, "tool"));
+    await writeFile(join(h.dir, "tool/package.json"), json({ name: "tool" }));
+    await writeFile(join(h.dir, "tool/package-lock.json"), json(other));
+    const result = await computeNpm({
+      ...h.inputs,
+      baseLocks: new Map([...h.inputs.baseLocks, ["tool/package-lock.json", other]]),
+      npm: async (cwd, args) => (cwd.endsWith("/tool") ? { code: 0, stdout: args[0] === "--version" ? "11.20.0" : "", stderr: "" } : h.inputs.npm(cwd, args)),
+      sources: { ...h.inputs.sources, published: async (_name, version) => (version === "2.0.0" ? undefined : OLD) },
+    });
+    const why = "package.json: override child stays at 1.0.0: a locked copy of it has no readable publish time, so npm's window excludes it";
+    expect(result.files.has("package.json")).toBe(false);
+    expect(result.undecided).toEqual([why]);
   });
 
   it("explains why an eligible-looking override stays", async () => {
@@ -157,7 +198,8 @@ describe("routine raise of an exact, security-floored override", () => {
     const h = await fixture();
     const result = await computeNpm({ ...h.inputs, sources: { ...h.inputs.sources, published: async (name, version) => (name === "child" && version === "1.0.0" ? YOUNG : OLD) } });
     expect(result.files.has("package.json")).toBe(false);
-    expect(result.notes).toContain("package.json: override child stays at 1.0.0: its locked version is younger than the window");
+    expect(result.notes).toContain("package.json: override child stays at 1.0.0: a locked copy of it is younger than the window");
+    expect(result.undecided ?? []).toEqual([]);
   });
 
   it("does nothing in a major", async () => {

@@ -132,16 +132,18 @@ async function overridePins(floor: Floor, base: Tree, head: Tree): Promise<{ rea
 
 /**
  * bump-it may have raised a security floor's exact top-level override above the record. A later security move of that
- * override starts from the installed pin, not the record: accept it when it addresses exactly that top-level copy, the
- * base pin is its `from` and head pins its `to`.
+ * override starts from the installed pin, not the record: accept it when it covers that top-level copy (it may cover
+ * nested copies and other lockfile roots too), the base pin is its `from`, head pins its `to`, and it never lowers the
+ * recorded minimum.
  */
 function fromInstalledPin(floor: Floor, move: PlannedMove, pins: { readonly was: unknown; readonly now: unknown } | undefined): boolean {
   const [path] = floor.overridePaths;
   if (pins === undefined || path?.length !== 1 || path[0] !== floor.package || move.mechanism !== "npm-override") return false;
   const dir = dirname(floor.declaredIn);
   const topLevel = `${dir === "." ? "" : `${dir}/`}node_modules/${floor.package}`;
-  return move.locations.length === 1 && move.locations[0] === topLevel && pins.was === move.from && pins.now === move.to
-    && semver.valid(move.from) !== null && semver.gt(move.from, floor.version);
+  return move.locations.includes(topLevel) && pins.was === move.from && pins.now === move.to
+    && semver.valid(move.from) !== null && semver.valid(move.to) !== null
+    && semver.gt(move.from, floor.version) && semver.gte(move.to, floor.version);
 }
 
 function plannedUpdate(plan: ChangePlan, before: Floor, after: Floor, pins?: { readonly was: unknown; readonly now: unknown }): boolean {

@@ -92,13 +92,16 @@ core/tool-runtime/run.sh bump-it review leanish/widget   # every few hours
 - A routine raises an exact top-level override that a security floor records (`"overrides": { "minimatch": "11.0.1" }`
   with a floor selecting `minimatch`) to the newest version in its compatible line that a routine target could take:
   aged (trusted packages aside), not deprecated, no prerelease from a stable pin, no added advisory or malware, same
-  publisher. It's written into the root manifest before the first install, every copy the override governs must land
-  on it, and the PR notes `override minimatch 11.0.1 → 11.0.8 (security floor 11.0.1 stays)`. The floor record is a
-  minimum and stays secure-it's to add, raise or remove. The override stays where it is, with a note, when another
-  override rule also names the package, the root or a workspace declares it directly, a copy under it is bundled,
-  aliased or locked at another version, or its locked version is younger than the window. Not raised at all: nested,
-  version-qualified or object-form rules, `$` references, aliases, ranges, `@types/node`, overrides with no security
-  floor, and compatibility floors.
+  publisher. It's written into the lockfile's root manifest before the first install, every copy of the package in the
+  final lockfile (bundled ones included) must be at it or the unit fails, and the PR notes
+  `override minimatch 11.0.1 → 11.0.8 (security floor 11.0.1 stays)`. The floor record is a minimum, and adding,
+  raising or removing it stays secure-it's job. The override stays where it is, with a note, when another override rule
+  also names the package (at any depth, version-qualified or not), the root or a workspace declares it directly, a copy
+  under it is bundled, aliased or locked at another version, or a locked copy of it (in any lockfile) is younger than
+  the window. When a lookup fails (the catalog, a publish time or a missing one, the advisory snapshot, an identity
+  check), the override stays, the note says why, and an existing PR is kept as it is rather than rewritten or retired. Not raised
+  at all: nested, version-qualified or object-form rules, `$` references, aliases, ranges, `@types/node`, overrides in a
+  workspace's manifest or with no security floor, and compatibility floors.
 - The agent never changes npm dependency fields or lockfiles. The tool-written graph already includes refreshed or
   induced transitives, even when those versions are absent from the explicit move list; the agent preserves them.
   It may adapt code and manifest scripts/config only for a major. The [skill](skills/bump-it/SKILL.md) defines the
