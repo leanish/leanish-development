@@ -7,6 +7,7 @@
  */
 import { type Fetch, githubRefusal } from "./http.ts";
 import { isObject, optionalString } from "./json.ts";
+import { actionAdvisoryNames, actionRepository } from "./package-version.ts";
 import { nextLink } from "./repository-advisories.ts";
 import { type Advisory, isMalware } from "./snapshot.ts";
 
@@ -25,8 +26,9 @@ export class ActionsGitHub {
     this.token = token;
   }
 
-  /** The commit `tag` points at in `repo` (annotated tags dereferenced); undefined when there's no such tag. */
-  tagCommit(repo: string, tag: string): Promise<string | undefined> {
+  /** The commit `tag` points at in the action's repository; undefined when there's no such tag. */
+  tagCommit(action: string, tag: string): Promise<string | undefined> {
+    const repo = actionRepository(action);
     const key = `${repo}@${tag}`;
     let cached = this.tagCommits.get(key);
     if (cached === undefined) {
@@ -52,8 +54,9 @@ export class ActionsGitHub {
     throw new Error(`GitHub tag ${tag} of ${repo} nests too many tag objects`);
   }
 
-  /** Published (non-draft) releases of `repo`, tag → publish time, every page; `complete` false past the page cap. Which of them are immutable. */
-  releasesOf(repo: string): Promise<Releases> {
+  /** Published releases of the action's repository, with dates and immutable tags; `complete` false past the page cap. */
+  releasesOf(action: string): Promise<Releases> {
+    const repo = actionRepository(action);
     let cached = this.releases.get(repo);
     if (cached === undefined) {
       cached = this.listReleases(repo);
@@ -84,10 +87,11 @@ export class ActionsGitHub {
   }
 
   /**
-   * When the release of `tag` was published; undefined when `repo` has no published release for it, or only a mutable
+   * When the release of `tag` was published; undefined when the action's repository has no published release for it, or only a mutable
    * one: its tag can be moved to newer code, which would then inherit the release's age.
    */
-  async releasePublished(repo: string, tag: string): Promise<Date | undefined> {
+  async releasePublished(action: string, tag: string): Promise<Date | undefined> {
+    const repo = actionRepository(action);
     const releases = await this.releasesOf(repo);
     if (releases.byTag.has(tag)) return releases.immutable.has(tag) ? releases.byTag.get(tag) : undefined;
     const release = await this.get(`/repos/${repo}/releases/tags/${encodeURIComponent(tag)}`);
@@ -96,16 +100,19 @@ export class ActionsGitHub {
     return Number.isNaN(published.getTime()) ? undefined : published;
   }
 
-  /** Global advisories (reviewed and malware) affecting `repo@version`, every page, withdrawn ones left out. */
-  async advisories(repo: string, version: string): Promise<Advisory[]> {
-    const affects = encodeURIComponent(`${repo}@${version}`);
+  /** Global advisories (reviewed and malware) affecting the action version under either of its package names. */
+  async advisories(action: string, version: string): Promise<Advisory[]> {
+    const names = actionAdvisoryNames(action);
+    // The API also accepts a comma-delimited string. Array entries keep any comma in the path literal.
+    const param = names.length === 1 ? "affects" : "affects%5B%5D";
+    const affects = names.map((name) => `${param}=${encodeURIComponent(`${name}@${version}`)}`).join("&");
     const found: Advisory[] = [];
     for (const type of ["reviewed", "malware"] as const) {
-      let path: string | undefined = `/advisories?ecosystem=actions&affects=${affects}&type=${type}&per_page=100`;
+      let path: string | undefined = `/advisories?ecosystem=actions&${affects}&type=${type}&per_page=100`;
       while (path !== undefined) {
         const { body, next } = await this.getPage(path);
         if (body === undefined) break;
-        if (!Array.isArray(body)) throw new Error(`GitHub advisories for ${repo}@${version} aren't a list`);
+        if (!Array.isArray(body)) throw new Error(`GitHub advisories for ${action}@${version} aren't a list`);
         for (const entry of body) {
           const advisory = globalAdvisory(entry, type === "malware");
           if (advisory !== undefined) found.push(advisory);

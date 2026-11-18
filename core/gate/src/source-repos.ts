@@ -8,7 +8,7 @@
 import { mapLimited, type Fetch } from "./http.ts";
 import { dig, isObject } from "./json.ts";
 import { npmPackageUrl } from "./npm-url.ts";
-import { packageKey, type PackageVersion, versionKey } from "./package-version.ts";
+import { actionRepository, packageKey, type PackageVersion, versionKey } from "./package-version.ts";
 import { child, children, text, type XmlElement, xmlRoot } from "./xml.ts";
 
 export const MAVEN_CENTRAL = "https://repo1.maven.org/maven2";
@@ -34,8 +34,11 @@ export async function sourceRepositories(
 export async function sourceRepository(pkg: PackageVersion, options: SourceRepoOptions): Promise<string | undefined> {
   const override = options.overrides.get(packageKey(pkg));
   if (override !== undefined) return override.toLowerCase();
-  // An action names its repository itself; `uses: ../..@v1` parses, but names none, as in githubRepository.
-  if (pkg.ecosystem === "GitHub Actions") return pkg.name.split("/").some(isDotSegment) ? undefined : pkg.name.toLowerCase();
+  if (pkg.ecosystem === "GitHub Actions") {
+    const name = actionRepository(pkg.name);
+    const repositoryOverride = options.overrides.get(packageKey({ ecosystem: pkg.ecosystem, name }));
+    return repositoryOverride?.toLowerCase() ?? (name.split("/").some(isDotSegment) ? undefined : name.toLowerCase());
+  }
   return pkg.ecosystem === "npm" ? npmRepository(pkg, options.fetch) : mavenRepository(pkg, options, 0);
 }
 

@@ -65,6 +65,8 @@
 
 ### Fixed
 
+- GitHub Actions advisories match both the repository name and the exact action subpath. Findings identify each
+  affected action separately, so a fix can update its pins even when a sibling action uses the same release.
 - The tools' agents are told that a Gradle move's locations are configurations, not files: an agent looking for
   `:buildscript.classpath` in the files refused a plugin major whose version is in the settings.
 - A repository advisory range written upper bound first (`< 2.0.0, >= 1.0.0`) now reads as the interval it names,

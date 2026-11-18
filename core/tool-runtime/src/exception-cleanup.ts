@@ -28,6 +28,7 @@ import { EXCEPTIONS_PATH, type GateEnvironment, type GradleInputs, readSettings 
 import type { Located } from "@leanish/gate/findings";
 import { gradleResolutionProblems } from "@leanish/gate/gradle";
 import { located, readInventory, sourcesOf } from "@leanish/gate/inventory";
+import { matchesPackageName } from "@leanish/gate/package-version";
 import type { Tree } from "@leanish/gate/tree";
 
 /** The three lists, in the file's order. */
@@ -129,7 +130,7 @@ function covers(list: List, entry: Record<string, unknown>, packages: ReadonlyAr
   const paths = list === "vulnerabilities" ? (entry["paths"] as ReadonlyArray<string>) : undefined;
   return packages.some((pkg) =>
     (ecosystem === undefined || ecosystem === pkg.ecosystem) &&
-    pkg.name === entry["package"] &&
+    typeof entry["package"] === "string" && matchesPackageName(entry["package"], pkg) &&
     pkg.version === entry["version"] &&
     (paths === undefined || pkg.locations.some((location) => paths.includes(location))));
 }

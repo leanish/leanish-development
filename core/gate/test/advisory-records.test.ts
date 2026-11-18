@@ -36,8 +36,13 @@ describe("global advisory records", () => {
 
   it.each([
     ["GitHub Actions", "actions", "OWNER/ACTION", "owner/action", true],
+    ["GitHub Actions", "actions", "OWNER/ACTION", "owner/action/setup", true],
+    ["GitHub Actions", "actions", "OWNER/ACTION/setup", "owner/action/setup", true],
+    ["GitHub Actions", "actions", "owner/action/Setup", "owner/action/setup", false],
+    ["GitHub Actions", "actions", "owner/action/other", "owner/action/setup", false],
+    ["GitHub Actions", "actions", "owner/action/setup", "owner/action", false],
     ["npm", "npm", "LIBRARY", "library", false],
-  ] as const)("ignores name case only for Actions (%s)", async (ecosystem, githubEcosystem, name, target, matches) => {
+  ] as const)("matches %s package %s:%s to %s (%s)", async (ecosystem, githubEcosystem, name, target, matches) => {
     const pkg = { ecosystem, name: target, version: "2.0.0" };
     const lookups = records(githubRecord(name, githubEcosystem), osvRecord(name, ecosystem));
     expect((await lookups.github(GHSA, pkg, [pkg.version]))?.namesPackage).toBe(matches);

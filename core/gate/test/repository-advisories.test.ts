@@ -174,6 +174,16 @@ describe("source repositories", () => {
     const overridden = { ...sourceOptions({}), overrides: new Map([["npm|@scope/lib", "Acme/Real"]]) };
     expect(await sourceRepository(lib, overridden)).toBe("acme/real");
   });
+
+  it("uses the action's repository or its configured override for a subpath", async () => {
+    const actions: PackageVersion = { ecosystem: "GitHub Actions", name: "gradle/actions/dependency-submission", version: "v6.4.0" };
+    const options = sourceOptions({});
+    expect(await sourceRepository(actions, options)).toBe("gradle/actions");
+    options.overrides.set("GitHub Actions|gradle/actions", "acme/mirror");
+    expect(await sourceRepository(actions, options)).toBe("acme/mirror");
+    options.overrides.set("GitHub Actions|gradle/actions/dependency-submission", "acme/submission");
+    expect(await sourceRepository(actions, options)).toBe("acme/submission");
+  });
 });
 
 describe("repository advisories", () => {

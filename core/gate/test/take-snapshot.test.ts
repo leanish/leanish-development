@@ -493,12 +493,14 @@ describe("reviewed records overriding wider repository ranges", () => {
 
   it.each([
     ["reviewed", "actions", "OWNER/ACTION", true],
+    ["reviewed", "actions", "OWNER/ACTION/build", true],
+    ["reviewed", "actions", "owner/action/test", false],
     ["unreviewed", "actions", "owner/action", false],
     ["malware", "actions", "owner/action", false],
     ["reviewed", "npm", "owner/action", false],
     ["reviewed", "actions", "owner/other", false],
   ])("uses only a reviewed GitHub Actions record naming the action (%s, %s, %s)", async (type, ecosystem, name, dropped) => {
-    const pkg = { ecosystem: "GitHub Actions", name: "owner/action", version: "4.1.138" } as const;
+    const pkg = { ecosystem: "GitHub Actions", name: "owner/action/build", version: "4.1.138" } as const;
     const requests: Array<{ url: string; headers: Record<string, string> }> = [];
     const snapshot = await takeSnapshot([pkg], reviewedOptions(pkg, [{ ...nettyAdvisory(), vulnerabilities: [
       { package: { ecosystem: "actions", name: pkg.name }, vulnerable_version_range: "<5.0.0" },

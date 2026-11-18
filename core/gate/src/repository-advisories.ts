@@ -13,7 +13,7 @@
  */
 import { githubRefusal, mapLimited, type Fetch } from "./http.ts";
 import { isObject, optionalString, stringList } from "./json.ts";
-import { label, type PackageVersion, versionKey } from "./package-version.ts";
+import { label, matchesPackageName, type PackageName, type PackageVersion, versionKey } from "./package-version.ts";
 import { mavenCoordinates } from "./source-repos.ts";
 import { inAdvisoryRange, parseAdvisoryRange, type VersionScheme, versionScheme } from "./versions.ts";
 
@@ -131,10 +131,10 @@ function fixedByPatch(range: string, patched: string | undefined, version: strin
   }
 }
 
-/** Same ecosystem, and the same name; for Maven a bare artifactId counts too (snappy-java's own advisories use one). */
-export function namesPackage(vulnerability: { ecosystem: string; name: string }, pkg: Pick<PackageVersion, "ecosystem" | "name">): boolean {
+/** Same ecosystem and a matching package name; Maven repository advisories may also name a bare artifactId. */
+export function namesPackage(vulnerability: { ecosystem: string; name: string }, pkg: PackageName): boolean {
   if (vulnerability.ecosystem.toLowerCase() !== GITHUB_ECOSYSTEMS[pkg.ecosystem]) return false;
-  if (vulnerability.name === pkg.name || (pkg.ecosystem === "GitHub Actions" && vulnerability.name.toLowerCase() === pkg.name)) return true;
+  if (matchesPackageName(vulnerability.name, pkg)) return true;
   return pkg.ecosystem === "Maven" && vulnerability.name === mavenCoordinates(pkg.name)[1];
 }
 

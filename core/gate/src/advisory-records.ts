@@ -1,7 +1,7 @@
 /** Shared advisory-id lookups and parsing for snapshots and held-version evidence. */
 import type { Fetch } from "./http.ts";
 import { isObject } from "./json.ts";
-import type { PackageName, PackageVersion } from "./package-version.ts";
+import { matchesPackageName, type PackageName, type PackageVersion } from "./package-version.ts";
 import { affects, namesPackage, type RepositoryAdvisory } from "./repository-advisories.ts";
 import { type Ecosystem, versionScheme } from "./versions.ts";
 
@@ -186,13 +186,9 @@ function githubRecord(raw: unknown, id: string, pkg: PackageName, versions: Read
   });
   const withdrawn = typeof raw["withdrawn_at"] === "string";
   // Global databases identify Maven packages by full coordinates; bare artifactIds belong to repository records.
-  const exact = vulnerabilities.filter((vulnerability) => samePackageName(vulnerability.name, pkg));
+  const named = vulnerabilities.filter((vulnerability) => matchesPackageName(vulnerability.name, pkg));
   // GitHub reviews malware records too; only `unreviewed` ones are its unchecked imports.
-  return advisoryRecord(raw["ghsa_id"], [...new Set(aliases)], withdrawn, raw["type"] === "reviewed" || raw["type"] === "malware", { vulnerabilities: exact }, pkg, versions);
-}
-
-function samePackageName(name: string, pkg: PackageName): boolean {
-  return name === pkg.name || (pkg.ecosystem === "GitHub Actions" && name.toLowerCase() === pkg.name);
+  return advisoryRecord(raw["ghsa_id"], [...new Set(aliases)], withdrawn, raw["type"] === "reviewed" || raw["type"] === "malware", { vulnerabilities: named }, pkg, versions);
 }
 
 export function advisoryRecord(
@@ -221,7 +217,7 @@ function osvRecord(raw: unknown, id: string, pkg: PackageName, versions: Readonl
   const mine = (Array.isArray(raw["affected"]) ? raw["affected"] : []).filter((entry: unknown) => {
     const found = isObject(entry) ? entry["package"] : undefined;
     return isObject(found) && found["ecosystem"] === OSV_ECOSYSTEMS[pkg.ecosystem] && typeof found["name"] === "string"
-      && samePackageName(found["name"], pkg);
+      && matchesPackageName(found["name"], pkg);
   }) as Record<string, unknown>[];
   const verdicts: Record<string, RangeVerdict> = {};
   for (const version of versions) verdicts[version] = mine.length === 0 ? "unknown" : osvVerdict(mine, pkg.ecosystem, version);

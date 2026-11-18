@@ -225,7 +225,8 @@ that rewrites a lockfile. Never lower/unset the window or add exclusions of your
   itself the configuration you'd declare on and a plugin fills it with defaults only while it has no dependencies of
   its own (`checkstyle`, a code-quality tool's configuration), declaring on it would drop the plugin's tool: declare
   the floor in a new helper configuration that it extends instead. Then add its record to `floorsFile` (see below).
-- `action-pin`: replace each `uses:` of the action in `locations` with `<name>@<commitSha> # <to>`.
+- `action-pin`: replace each `uses:` of the exact action in `locations` with `<name>@<commitSha> # <to>`.
+  The move's `name` includes the action's subpath when it has one.
 
 Don't add configurations Gradle can resolve: verification inventories the edit's resolvable configurations and compares
 them with the plan's reference, so a new one fails it. A helper configuration you introduce sets both

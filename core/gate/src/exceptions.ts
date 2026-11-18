@@ -1,6 +1,6 @@
 /**
  * `.github/supply-chain-exceptions.json`: reviewed exceptions in three lists,
- * each entry naming the exact package and version, with a reason and an
+ * each entry naming the package and version, with a reason and an
  * expiry date (valid through that UTC day).
  *
  * - `vulnerabilities`: an advisory (any id of its alias group) on a package
@@ -14,6 +14,7 @@
  * used, plus an optional `ecosystem` (any, when absent).
  */
 import type { Finding } from "./findings.ts";
+import { matchesPackageName } from "./package-version.ts";
 import type { Snapshot } from "./snapshot.ts";
 
 export interface VulnerabilityException {
@@ -145,7 +146,7 @@ export function unexcusedProblem(finding: Finding, exceptions: Exceptions, snaps
   const exception = exceptions.vulnerabilities.find(
     (entry) =>
       (entry.ecosystem === undefined || entry.ecosystem === finding.ecosystem) &&
-      entry.package === finding.name &&
+      matchesPackageName(entry.package, finding) &&
       entry.version === finding.version &&
       snapshot.group(entry.id) === finding.advisory,
   );
