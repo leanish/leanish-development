@@ -89,7 +89,11 @@ core/tool-runtime/run.sh bump-it review leanish/widget   # every few hours
 - Unjudgeable copies stay at their base version, with an unresolved note. Complex scoped override rules are treated
   conservatively: their copies stay at base rather than claiming an R3 selection. If a new copy has no provable eligible
   target, or npm cannot retain a required target, that unit fails. Exact repository pins are reported separately as pins.
-- A routine raises an exact top-level override that a security floor records (`"overrides": { "minimatch": "11.0.1" }`
+- Why overrides move: an exact override otherwise keeps its package at that version for good. Routines refresh copies
+  only within it, and secure-it moves it only when a reviewed advisory requires it, so later fixes never arrive,
+  including fixes for advisories only the package's own repository publishes. Raising it within its compatible line
+  keeps the package current, and the security floor still guarantees the minimum.
+  A routine raises an exact top-level override that a security floor records (`"overrides": { "minimatch": "11.0.1" }`
   with a floor selecting `minimatch`) to the newest version in its compatible line that a routine target could take:
   aged (trusted packages aside), not deprecated, no prerelease from a stable pin, no added advisory or malware, same
   publisher. It's written into the lockfile's root manifest before the first install, every copy of the package in the
