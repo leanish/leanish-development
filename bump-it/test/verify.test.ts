@@ -320,6 +320,40 @@ describe("bump verification", () => {
     expect(await verifyPlan(input)).toContain("floor declaration for g:lib changed at :runtimeClasspath");
     expect(await verifyPlan({ ...input, head: tree("head", {}) })).toContain("bump-it may not change dependency floors");
   });
+  describe("a routine's raise of an exact, security-floored override", () => {
+    const floors = (purpose = "security", selector: unknown = [["minimatch"]]) => JSON.stringify({ floors: [{ ecosystem: "npm", package: "minimatch", version: "11.0.1", declaredIn: "package.json", selector, purpose,
+      ...(purpose === "security" ? { advisories: ["GHSA-g3hv-75wg-m249"] } : {}), reason: "recorded floor", added: "2026-11-04" }] });
+    const root = (pin: unknown, spacing = 2, nested = false) => `${JSON.stringify({ name: "app", overrides: nested ? { parent: { minimatch: pin } } : { minimatch: pin } }, null, spacing)}\n`;
+    const npmLock = (version: string) => JSON.stringify({ lockfileVersion: 3, packages: { "": { name: "app" }, "node_modules/minimatch": { version } } });
+    async function raise(to: unknown, options: { floors?: string; kind?: "routine" | "major"; head?: string; base?: unknown; nested?: boolean } = {}): Promise<VerifyInputs> {
+      const nested = options.nested ?? false;
+      const files = new Map([["package.json", root(to, 2, nested)], ["package-lock.json", npmLock(typeof to === "string" ? to : "11.0.1")]]);
+      const planned = await planFor(routineUnit([]), { files, changes: [], notes: [] }, async () => undefined);
+      const recorded = options.floors ?? floors();
+      return {
+        plan: { ...planned, kind: options.kind ?? "routine" }, npmFiles: files, env, gradle: {}, reference: undefined, toolWritten: undefined, changedFiles: [...files.keys()],
+        base: tree("base", { "package.json": root(options.base ?? "11.0.1", 2, nested), "package-lock.json": npmLock("11.0.1"), ".github/dependency-floors.json": recorded }),
+        head: tree("head", { "package.json": options.head ?? files.get("package.json")!, "package-lock.json": files.get("package-lock.json")!, ".github/dependency-floors.json": recorded }),
+      };
+    }
+
+    it("accepts the computed move up the override's line, with the floor record unchanged", async () => {
+      expect(await verifyPlan(await raise("11.0.8"))).toEqual([]);
+    });
+
+    it.each([
+      ["a lower pin", "11.0.0", {}],
+      ["a pin past its line", "12.0.0", {}],
+      ["a range", "^11.0.8", {}],
+      ["a move from a range", "11.0.8", { base: "^11.0.1" }],
+      ["a compatibility floor", "11.0.8", { floors: floors("compatibility") }],
+      ["a nested selector", "11.0.8", { floors: floors("security", [["parent", "minimatch"]]), nested: true }],
+      ["a major", "11.0.8", { kind: "major" as const }],
+      ["head bytes the plan didn't compute", "11.0.8", { head: root("11.0.8", 4) }],
+    ])("refuses %s", async (_label, to, options) => {
+      expect(await verifyPlan(await raise(to, options))).toContain("floor override for minimatch changed");
+    });
+  });
   describe("Maven floor preservation during a plugin update", () => {
     it.each([GUAVA_FLOOR, "33.10.0-jre"])("rejects an added compatibility floor declaration at %s even when the plugin reference includes it", async (version) => {
       const input = await mavenFloorFixture([GUAVA_FLOOR], [GUAVA_FLOOR, version], undefined, "compatibility");

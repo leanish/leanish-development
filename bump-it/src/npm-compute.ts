@@ -19,6 +19,7 @@ import { workingTree } from "@leanish/gate/tree";
 import { assertLocalFile } from "./files.ts";
 import { withSpec } from "@leanish/tool-runtime/manifest-spec";
 import { type Copy, NpmGraph, rangeOf, rewriteSpec } from "./npm-graph.ts";
+import { type OverrideFloors, raiseOverrides } from "./npm-override-raise.ts";
 import { repositoryOverrides } from "./npm-overrides.ts";
 import { retentionManifests } from "./npm-pins.ts";
 import { type Decision, decideTargets, meetsReleaseAge, type TargetSources } from "./npm-targets.ts";
@@ -44,6 +45,8 @@ export interface NpmInputs {
   readonly npm: NpmCommand;
   readonly window: { readonly days: number; readonly exclude: ReadonlyArray<string> };
   readonly sources: TargetSources;
+  /** A routine's security floors whose exact top-level overrides may move up their line; none when absent. */
+  readonly overrideFloors?: OverrideFloors;
 }
 
 /** A copy that moved, came or went. */
@@ -136,6 +139,11 @@ async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions
     baseTexts.set(path, await readFile(at(manifestPath(path)), "utf8"));
   }
   const planned = plannedManifests(baseTexts, inputs.moves.filter((move) => move.lockfile === lockfile), lockfile);
+  // Before any resolution, so every pass and temporary pin already sees the raised value.
+  const raised = inputs.kind === "routine" && inputs.overrideFloors !== undefined
+    ? await raiseOverrides({ text: planned.get("")!, path: repoPath("package.json") }, baseGraph, lockedNames, inputs.overrideFloors, inputs.sources)
+    : undefined;
+  if (raised !== undefined) planned.set("", raised.text);
   const plannedParsed = new Map([...planned].map(([path, text]) => [path, JSON.parse(text) as Manifest]));
 
   const flags = [
@@ -239,7 +247,7 @@ async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions
   if (finalText !== lockText) {
     files.set(lockfile, finalText);
   }
-  const notes = decisions.flatMap((decision) => decisionNotes(lockfile, decision));
+  const notes = [...raised?.notes ?? [], ...decisions.flatMap((decision) => decisionNotes(lockfile, decision))];
   if (new NpmGraph(JSON.parse(finalText)).copies().some((copy) => copy.name === "@types/node")) {
     notes.push(nodeTypeProblem(runtime));
   }

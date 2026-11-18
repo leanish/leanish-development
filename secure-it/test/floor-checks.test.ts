@@ -105,6 +105,30 @@ describe("secure-it floor preservation", () => {
     expect(await preservedFloors(plan, tree([floor()]), tree([floor({ version: "1.2" })]), {})).toEqual([expect.stringContaining("outside an explicit")]);
   });
 
+  describe("a security raise of an npm override bump-it already moved above its record", () => {
+    const FIRST = "GHSA-g3hv-75wg-m249";
+    const NEXT = "GHSA-cf2h-pxjq-68xw";
+    const record = (version: string, advisories: string[]) => floor({ ecosystem: "npm", package: "minimatch", version, declaredIn: "package.json", selector: [["minimatch"]], advisories });
+    const raise = (overrides: Partial<ChangePlan["moves"][number]> = {}): ChangePlan => ({ ...plan, kind: "routine", packages: ["npm|minimatch"], moves: [{
+      ecosystem: "npm", name: "minimatch", from: "11.0.8", to: "11.0.9", mechanism: "npm-override", locations: ["node_modules/minimatch"],
+      advisories: [NEXT], major: false, commitSha: undefined, declaredAs: undefined, ...overrides }] });
+    const base = tree([record("11.0.1", [FIRST])], { overrides: { minimatch: "11.0.8" } });
+    const head = (pin = "11.0.9", version = "11.0.9") => tree([record(version, [FIRST, NEXT])], { overrides: { minimatch: pin } });
+
+    it("lets the planned override move start from the installed pin", async () => {
+      expect(await preservedFloors(raise(), base, head(), {})).toEqual([]);
+    });
+
+    it.each([
+      ["a move from another version", raise({ from: "11.0.7" }), head()],
+      ["a move for a nested copy", raise({ locations: ["node_modules/parent/node_modules/minimatch"] }), head()],
+      ["a pin other than the target", raise(), head("11.0.10")],
+      ["a record other than the target", raise(), head("11.0.9", "11.0.10")],
+    ])("refuses %s", async (_label, changes, after) => {
+      expect(await preservedFloors(changes, base, after, {})).toEqual([expect.stringContaining("outside an explicit security-floor move")]);
+    });
+  });
+
   it("allows only planned security floor additions, never a direct move's unrequested floor", async () => {
     const added = tree([floor({ version: "1.1" })]);
     expect(await preservedFloors(plan, tree([]), added, {})).toEqual([expect.stringContaining("added outside the plan")]);

@@ -4,6 +4,12 @@
 
 ### Added
 
+- A bump-it routine raises an exact top-level npm override that a security floor records (`"minimatch": "11.0.1"`)
+  within its compatible line, to the newest version a routine target could take (aged, not deprecated, no added
+  advisory, same publisher), and every copy it governs moves with it. The PR notes the move; the floor record stays a
+  minimum, and secure-it's. Before, such an override stayed at its version until an advisory moved it. secure-it's
+  next raise of that override starts from the installed version.
+
 - A secure-it or bump-it PR that moves versions removes the exceptions it leaves unused: entries that covered a version
   in the base and cover none in the PR's head. Only removals, written by the tool and the only change to the exceptions
   file verification admits; entries already unused, still covering a copy, or expired but still covering a version
