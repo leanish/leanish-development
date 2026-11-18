@@ -89,6 +89,23 @@ core/tool-runtime/run.sh bump-it review leanish/widget   # every few hours
 - Unjudgeable copies stay at their base version, with an unresolved note. Complex scoped override rules are treated
   conservatively: their copies stay at base rather than claiming an R3 selection. If a new copy has no provable eligible
   target, or npm cannot retain a required target, that unit fails. Exact repository pins are reported separately as pins.
+- Why overrides move: an exact override otherwise keeps its package at that version for good. Routines refresh copies
+  only within it, and secure-it moves it only when a reviewed advisory requires it, so later fixes never arrive,
+  including fixes for advisories only the package's own repository publishes. Raising it within its compatible line
+  keeps the package current, and the security floor still guarantees the minimum.
+  A routine raises an exact top-level override that a security floor records (`"overrides": { "minimatch": "11.0.1" }`
+  with a floor selecting `minimatch`) to the newest version in its compatible line that a routine target could take:
+  aged (trusted packages aside), not deprecated, no prerelease from a stable pin, no added advisory or malware, same
+  publisher. It's written into the lockfile's root manifest before the first install, every copy of the package in the
+  final lockfile (bundled ones included) must be at it or the unit fails, and the PR notes
+  `override minimatch 11.0.1 → 11.0.8 (security floor 11.0.1 stays)`. The floor record is a minimum, and adding,
+  raising or removing it stays secure-it's job. The override stays where it is, with a note, when another override rule
+  also names the package (at any depth, version-qualified or not), the root or a workspace declares it directly, a copy
+  under it is bundled, aliased or locked at another version, or a locked copy of it (in any lockfile) is younger than
+  the window. When a lookup fails (the catalog, a publish time or a missing one, the advisory snapshot, an identity
+  check), the override stays, the note says why, and an existing PR is kept as it is rather than rewritten or retired. Not raised
+  at all: nested, version-qualified or object-form rules, `$` references, aliases, ranges, `@types/node`, overrides in a
+  workspace's manifest or with no security floor, and compatibility floors.
 - The agent never changes npm dependency fields or lockfiles. The tool-written graph already includes refreshed or
   induced transitives, even when those versions are absent from the explicit move list; the agent preserves them.
   It may adapt code and manifest scripts/config only for a major. The [skill](skills/bump-it/SKILL.md) defines the
@@ -102,7 +119,8 @@ core/tool-runtime/run.sh bump-it review leanish/widget   # every few hours
 - Before verifying, bump-it removes the exceptions the PR leaves unused
   ([which ones](../core/gate/README.md#exceptions-githubsupply-chain-exceptionsjson)), even in a routine with no agent.
 - Verification fences off policy changes first (that removal is the only change to the exceptions file it admits), then requires exact planned lockfiles and dependency fields, exact
-  planned Gradle declarations, unchanged unplanned declarations and floors, interpreted strict declarations and strict
+  planned Gradle declarations, unchanged unplanned declarations and floors (a routine may change only a raised override's
+  value, as computed: same top-level selector, exact versions, upward within its line, floor record unchanged), interpreted strict declarations and strict
   constraints matching the Gradle reference, correct action pins, and all generated wrapper bytes/modes plus official
   checksums. The gate skips resolution failures in the configurations its `gradle.ignoreConfigurations` lists; like
   secure-it, bump-it accepts an edit that fails to resolve there the same way as the plan's reference. Only after every

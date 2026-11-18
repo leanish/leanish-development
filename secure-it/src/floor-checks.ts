@@ -2,6 +2,8 @@
 import { dirname } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
+import semver from "semver";
+
 import { type Floor, overrideAt } from "@leanish/gate/floors";
 import { gradleLocation, type GradleInventory } from "@leanish/gate/gradle";
 import type { Tree } from "@leanish/gate/tree";
@@ -40,7 +42,7 @@ export async function preservedFloors(plan: ChangePlan, base: Tree, head: Tree, 
     }
     const changedDeclaration = !isDeepStrictEqual(await declarations(floor, base, gradle.base), await declarations(next, head, gradle.head));
     if (!changedRecord && !changedDeclaration) continue;
-    if (floor.purpose === "compatibility" || !plannedUpdate(plan, floor, next)) {
+    if (floor.purpose === "compatibility" || !plannedUpdate(plan, floor, next, await overridePins(floor, base, head))) {
       problems.push(`${label} or its declaration changed outside an explicit security-floor move`);
     }
   }
@@ -121,8 +123,31 @@ function matchingMoves(plan: ChangePlan, floor: Floor, addition: boolean): Plann
     dir === "." ? location.startsWith("node_modules/") : location.startsWith(`${dir}/node_modules/`)));
 }
 
-function plannedUpdate(plan: ChangePlan, before: Floor, after: Floor): boolean {
-  const moves = matchingMoves(plan, after, false).filter((move) => move.from === before.version);
+/** An npm floor's single override value in base and head; undefined for Maven or several selectors. */
+async function overridePins(floor: Floor, base: Tree, head: Tree): Promise<{ readonly was: unknown; readonly now: unknown } | undefined> {
+  if (floor.ecosystem !== "npm" || floor.overridePaths.length !== 1) return undefined;
+  const at = async (tree: Tree) => overrideAt(JSON.parse(await tree.read(floor.declaredIn) ?? "{}").overrides, floor.overridePaths[0]!);
+  return { was: await at(base), now: await at(head) };
+}
+
+/**
+ * bump-it may have raised a security floor's exact top-level override above the record. A later security move of that
+ * override starts from the installed pin, not the record: accept it when it covers that top-level copy (it may cover
+ * nested copies and other lockfile roots too), the base pin is its `from`, head pins its `to`, and it never lowers the
+ * recorded minimum.
+ */
+function fromInstalledPin(floor: Floor, move: PlannedMove, pins: { readonly was: unknown; readonly now: unknown } | undefined): boolean {
+  const [path] = floor.overridePaths;
+  if (pins === undefined || path?.length !== 1 || path[0] !== floor.package || move.mechanism !== "npm-override") return false;
+  const dir = dirname(floor.declaredIn);
+  const topLevel = `${dir === "." ? "" : `${dir}/`}node_modules/${floor.package}`;
+  return move.locations.includes(topLevel) && pins.was === move.from && pins.now === move.to
+    && semver.valid(move.from) !== null && semver.valid(move.to) !== null
+    && semver.gt(move.from, floor.version) && semver.gte(move.to, floor.version);
+}
+
+function plannedUpdate(plan: ChangePlan, before: Floor, after: Floor, pins?: { readonly was: unknown; readonly now: unknown }): boolean {
+  const moves = matchingMoves(plan, after, false).filter((move) => move.from === before.version || fromInstalledPin(before, move, pins));
   if (moves.length === 0 || after.purpose !== "security") return false;
   // Record history and scope stay intact; the exact new version and extra target IDs are the planned change.
   if (!isDeepStrictEqual(normalized({ ...before, version: after.version, advisories: after.advisories }), normalized(after))) return false;

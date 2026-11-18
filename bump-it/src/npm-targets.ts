@@ -203,7 +203,7 @@ function baseVersionOf(copy: Copy, inputs: TargetInputs, within: (version: strin
 }
 
 /** Whether `version` may be the copy's target: no malware, every group inherited from the base's copies, identity kept. */
-async function eligible(name: string, version: string, baseVersion: string | undefined, inherited: Evidence, snapshot: Snapshot, sources: TargetSources): Promise<boolean> {
+export async function eligible(name: string, version: string, baseVersion: string | undefined, inherited: Evidence, snapshot: Snapshot, sources: TargetSources): Promise<boolean> {
   const pkg = { ecosystem: "npm" as const, name, version };
   if (snapshot.advisories(pkg).some((advisory) => advisory.malicious)) {
     return false;

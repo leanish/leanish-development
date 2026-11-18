@@ -1,4 +1,6 @@
-/** Change one declared spec without changing the manifest's formatting. */
+/** Change one declared spec or top-level override without changing the manifest's formatting. */
+import { isDeepStrictEqual } from "node:util";
+
 import { formatManifest } from "./manifest-format.ts";
 
 type Manifest = Record<string, unknown>;
@@ -16,6 +18,22 @@ export function withSpec(text: string, key: string, from: string, to: string, fi
   if (!found) {
     throw new Error(`${file} doesn't declare ${key} as '${from}'`);
   }
+  return rewritten(text, manifest, key, from, to, file);
+}
+
+/** The manifest with its top-level `overrides[key]` moved from `from` to `to`. */
+export function withOverride(text: string, key: string, from: string, to: string, file: string): string {
+  const manifest = JSON.parse(text) as Manifest;
+  const overrides = manifest["overrides"] as Record<string, unknown> | undefined;
+  if (overrides?.[key] !== from) {
+    throw new Error(`${file} has no top-level override ${key} at '${from}'`);
+  }
+  overrides[key] = to;
+  return rewritten(text, manifest, key, from, to, file);
+}
+
+/** `manifest` (`text` edited) re-serialized when npm's formatting reproduces `text`, else `key: from` replaced in place. */
+function rewritten(text: string, manifest: Manifest, key: string, from: string, to: string, file: string): string {
   if (formatManifest(text, JSON.parse(text)) === text) {
     return formatManifest(text, manifest);
   }
@@ -25,7 +43,12 @@ export function withSpec(text: string, key: string, from: string, to: string, fi
   if (matches.length !== 1) {
     throw new Error(`${file} isn't formatted the way npm writes it, and '${key}: ${from}' isn't there exactly once to replace`);
   }
-  return text.replace(pair, (_whole, colon: string) => `${JSON.stringify(key)}${colon}${JSON.stringify(to)}`);
+  const replaced = text.replace(pair, (_whole, colon: string) => `${JSON.stringify(key)}${colon}${JSON.stringify(to)}`);
+  // The one textual match may be another field (the intended one written with escapes): only the intended edit lands.
+  if (!isDeepStrictEqual(JSON.parse(replaced), manifest)) {
+    throw new Error(`${file}: replacing '${key}: ${from}' in place would change something else`);
+  }
+  return replaced;
 }
 
 /** `text` as a literal inside a regular expression. */

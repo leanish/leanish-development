@@ -19,6 +19,7 @@ import { workingTree } from "@leanish/gate/tree";
 import { assertLocalFile } from "./files.ts";
 import { withSpec } from "@leanish/tool-runtime/manifest-spec";
 import { type Copy, NpmGraph, rangeOf, rewriteSpec } from "./npm-graph.ts";
+import { type OverrideFloors, type OverrideRaise, raiseOverrides } from "./npm-override-raise.ts";
 import { repositoryOverrides } from "./npm-overrides.ts";
 import { retentionManifests } from "./npm-pins.ts";
 import { type Decision, decideTargets, meetsReleaseAge, type TargetSources } from "./npm-targets.ts";
@@ -44,6 +45,8 @@ export interface NpmInputs {
   readonly npm: NpmCommand;
   readonly window: { readonly days: number; readonly exclude: ReadonlyArray<string> };
   readonly sources: TargetSources;
+  /** A routine's security floors whose exact top-level overrides may move up their line; none when absent. */
+  readonly overrideFloors?: OverrideFloors;
 }
 
 /** A copy that moved, came or went. */
@@ -63,6 +66,8 @@ export interface NpmResult {
   readonly rehoisted?: ReadonlyArray<string>;
   /** Copies left as they were, and why. */
   readonly notes: ReadonlyArray<string>;
+  /** Overrides held because a lookup failed (`raiseOverrides`): whether they'd move can't be decided. */
+  readonly undecided?: ReadonlyArray<string>;
 }
 
 /** How many lock passes a lockfile gets before bump-it gives up on npm keeping the targets. */
@@ -74,6 +79,7 @@ export async function computeNpm(inputs: NpmInputs): Promise<NpmResult> {
   const files = new Map<string, string>();
   const changes: CopyChange[] = [];
   const rehoisted: string[] = [];
+  const undecided: string[] = [];
   const baseVersions = versionsByName(inputs.baseLocks);
   const lockfiles = [...inputs.baseLocks.keys()]
     .filter((lockfile) => inputs.kind === "routine" || inputs.moves.some((move) => move.lockfile === lockfile))
@@ -92,20 +98,21 @@ export async function computeNpm(inputs: NpmInputs): Promise<NpmResult> {
     await requireNpmExcludes(inputs.npm, join(inputs.dir, dirname(lockfile)), preparedWindow.window.exclude, preparedWindow.reason);
   }
   for (const lockfile of lockfiles) {
-    const result = await computeLockfile(lockfile, readyInputs, baseVersions, runtime, preparedWindow.lockedNames);
+    const result = await computeLockfile(lockfile, readyInputs, baseVersions, runtime, preparedWindow.lockedNames, preparedWindow.unreadableNames);
     for (const [path, content] of result.files) {
       files.set(path, content);
     }
     changes.push(...result.changes);
     rehoisted.push(...result.rehoisted ?? []);
+    undecided.push(...result.undecided ?? []);
     for (const note of result.notes) {
       notes.add(note);
     }
   }
-  return { files, changes, rehoisted, notes: [...notes].sort() };
+  return { files, changes, rehoisted, notes: [...notes].sort(), ...(undecided.length === 0 ? {} : { undecided }) };
 }
 
-async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions: ReadonlyMap<string, ReadonlyArray<string>>, runtime: NodeRuntime, lockedNames: ReadonlySet<string>): Promise<NpmResult> {
+async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions: ReadonlyMap<string, ReadonlyArray<string>>, runtime: NodeRuntime, lockedNames: ReadonlySet<string>, unreadableNames: ReadonlySet<string>): Promise<NpmResult> {
   const root = dirname(lockfile) === "." ? "" : dirname(lockfile);
   const at = (path: string) => join(inputs.dir, root, path);
   const repoPath = (path: string) => (root === "" ? path : `${root}/${path}`);
@@ -136,6 +143,11 @@ async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions
     baseTexts.set(path, await readFile(at(manifestPath(path)), "utf8"));
   }
   const planned = plannedManifests(baseTexts, inputs.moves.filter((move) => move.lockfile === lockfile), lockfile);
+  // Before any resolution, so every pass and temporary pin already sees the raised value.
+  const raised = inputs.kind === "routine" && inputs.overrideFloors !== undefined
+    ? await raiseOverrides({ text: planned.get("")!, path: repoPath("package.json") }, baseGraph, { locked: lockedNames, unreadable: unreadableNames }, inputs.overrideFloors, inputs.sources)
+    : undefined;
+  if (raised !== undefined) planned.set("", raised.text);
   const plannedParsed = new Map([...planned].map(([path, text]) => [path, JSON.parse(text) as Manifest]));
 
   const flags = [
@@ -239,12 +251,26 @@ async function computeLockfile(lockfile: string, inputs: NpmInputs, baseVersions
   if (finalText !== lockText) {
     files.set(lockfile, finalText);
   }
-  const notes = decisions.flatMap((decision) => decisionNotes(lockfile, decision));
+  const notes = [...raised?.notes ?? [], ...decisions.flatMap((decision) => decisionNotes(lockfile, decision))];
   if (new NpmGraph(JSON.parse(finalText)).copies().some((copy) => copy.name === "@types/node")) {
     notes.push(nodeTypeProblem(runtime));
   }
   const headGraph = new NpmGraph(JSON.parse(finalText));
-  return { files, changes: changesBetween(lockfile, baseGraph, headGraph), rehoisted: provenRehoists(lockfile, baseGraph, headGraph), notes };
+  assertRaisesLanded(headGraph, raised?.raises ?? [], lockfile);
+  return { files, changes: changesBetween(lockfile, baseGraph, headGraph), rehoisted: provenRehoists(lockfile, baseGraph, headGraph), notes, undecided: raised?.undecided ?? [] };
+}
+
+/**
+ * Every copy of a raised name in the final graph, bundled ones included (the passes don't pin those), is at the raised
+ * version: a copy the override doesn't reach would leave the floor's guarantee to chance.
+ */
+function assertRaisesLanded(graph: NpmGraph, raises: ReadonlyArray<OverrideRaise>, lockfile: string): void {
+  for (const raise of raises) {
+    const copies = graph.copies().filter((copy) => copy.name === raise.key);
+    if (copies.length === 0) throw new Error(`${lockfile}: the override ${raise.key} was raised to ${raise.to}, but no copy of it is left`);
+    const off = copies.find((copy) => copy.version !== raise.to);
+    if (off !== undefined) throw new Error(`${lockfile}: the override ${raise.key} was raised to ${raise.to}, but ${raise.key} at ${off.path} is ${off.version}`);
+  }
 }
 
 /** Existing incompatible types need manual correction; never accept a new incompatible copy. */

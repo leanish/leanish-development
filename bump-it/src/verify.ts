@@ -1,11 +1,14 @@
 /** Check policy and exact planned edits locally; run compare only when every local check passes. */
-import { basename } from "node:path";
+import { basename, dirname } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+
+import semver from "semver";
 
 import { type CooldownEvaluation, heldLines } from "@leanish/gate/cooldown";
 import { EXCEPTIONS_PATH, type GateEnvironment, type GradleInputs, readSettings, runCompare, type Settings, treeSources } from "@leanish/gate/gate";
 import type { GradleInventory } from "@leanish/gate/gradle";
 import type { Tree } from "@leanish/gate/tree";
+import { compatibleLine } from "@leanish/gate/young-fixes";
 import { actionsOutsidePlan, declaredAt, directChangesOutside, directVersions, FLOORS_FILE, isDependencyFile, policyFence, preservedMavenFloorProblems } from "@leanish/tool-runtime/edit-checks";
 
 import type { WrapperFile } from "./wrapper-generation.ts";
@@ -14,6 +17,7 @@ import { plannedPinsLanded } from "./action-pins.ts";
 import { admittedCleanup } from "@leanish/tool-runtime/exception-cleanup";
 import { referenceDifferences, type ReferenceFloor, type ReferenceMove, referenceProblems } from "@leanish/tool-runtime/gradle-reference";
 import { NPM_DEPENDENCY_FIELDS } from "@leanish/tool-runtime/npm-file-checks";
+import { raisableKey } from "./npm-override-raise.ts";
 import { type BumpPlan, dependencyDigest, sha256 } from "./plan.ts";
 
 export interface VerifyInputs {
@@ -68,7 +72,7 @@ export async function verifyPlan(inputs: VerifyInputs): Promise<string[]> {
   }
   // The gate reads head's config; the policy fence above has kept it base's.
   const { config, floors } = await readSettings(base);
-  problems.push(...await floorProblems(floors, base, head, gradle));
+  problems.push(...await floorProblems(floors, base, head, gradle, { kind: plan.kind, config, npmFiles: inputs.npmFiles }));
   problems.push(...directChangesOutside(await directVersions(base), await directVersions(head), (ecosystem, name, where) => includesDeclaration(plan, ecosystem, name, where)));
   // Gradle: the plan landed in the reference, and head resolves and declares exactly what the reference does; a
   // configuration the gate's `gradle.ignoreConfigurations` lists may fail to resolve, but the same way as there.
@@ -185,7 +189,14 @@ function matchesPlannedFile(plan: BumpPlan, file: BumpPlan["npmFiles"][number], 
   return sha256(text) === file.sha256;
 }
 
-async function floorProblems(floors: Settings["floors"], base: Tree, head: Tree, gradle: GradleInputs): Promise<string[]> {
+/** What lets a routine move a floor's override: the repository's line rule and the npm bytes the routine computed. */
+interface OverrideRaises {
+  readonly kind: BumpPlan["kind"];
+  readonly config: Settings["config"];
+  readonly npmFiles: ReadonlyMap<string, string>;
+}
+
+async function floorProblems(floors: Settings["floors"], base: Tree, head: Tree, gradle: GradleInputs, raises: OverrideRaises): Promise<string[]> {
   const problems: string[] = [];
   for (const floor of floors) {
     if (floor.ecosystem === "Maven") {
@@ -203,10 +214,28 @@ async function floorProblems(floors: Settings["floors"], base: Tree, head: Tree,
       const at = (value: unknown, path: ReadonlyArray<string>): unknown => path.reduce<unknown>((node, key) => node !== null && typeof node === "object" ? (node as Record<string, unknown>)[key] : undefined, value);
       const was = await overrides(base);
       const now = await overrides(head);
-      if (floor.overridePaths.some((path) => !isDeepStrictEqual(at(was, path), at(now, path)))) {
+      const changed = floor.overridePaths.filter((path) => !isDeepStrictEqual(at(was, path), at(now, path)));
+      if (changed.length > 0 && !(changed.length === 1 && await raisedOverride(floor, at(was, changed[0]!), at(now, changed[0]!), head, raises))) {
         problems.push(`floor override for ${floor.package} changed`);
       }
     }
   }
   return problems;
+}
+
+/**
+ * A routine's computed raise of an exact top-level override a security floor records: the same selector selection
+ * accepts, exact versions before and after, up its compatible line, and head's manifest the exact computed bytes.
+ */
+async function raisedOverride(floor: Settings["floors"][number], was: unknown, now: unknown, head: Tree, raises: OverrideRaises): Promise<boolean> {
+  if (raises.kind !== "routine" || raisableKey(floor, floor.declaredIn) === undefined) return false;
+  // A routine raises overrides only in a lockfile's own root manifest, never in a workspace's.
+  const dir = dirname(floor.declaredIn);
+  const beside = (name: string) => dir === "." ? name : `${dir}/${name}`;
+  if (await head.read(beside("package-lock.json")) === undefined && await head.read(beside("npm-shrinkwrap.json")) === undefined) return false;
+  if (typeof was !== "string" || typeof now !== "string" || semver.valid(was) !== was || semver.valid(now) !== now || !semver.gt(now, was)) return false;
+  const line = (version: string) => compatibleLine(raises.config, { ecosystem: "npm", name: floor.package }, version);
+  if (line(was) !== line(now)) return false;
+  const computed = raises.npmFiles.get(floor.declaredIn);
+  return computed !== undefined && await head.read(floor.declaredIn) === computed;
 }

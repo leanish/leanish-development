@@ -6,6 +6,7 @@ import { readInventory } from "@leanish/gate/inventory";
 import { NpmRegistry } from "@leanish/gate/npm-registry";
 import { isTrustedPackage } from "@leanish/gate/config";
 import { takeSnapshot } from "@leanish/gate/take-snapshot";
+import { compatibleLine } from "@leanish/gate/young-fixes";
 import type { Tree } from "@leanish/gate/tree";
 import type { ToolRunContext } from "@leanish/tool-runtime/command";
 import { exportCommit } from "@leanish/tool-runtime/git-copies";
@@ -46,6 +47,7 @@ export async function computeOnBase(context: ToolRunContext, unit: Unit, base: T
   try {
     const npm: NpmCommand = (cwd, args) => runSandboxed(context.isolation, { workingCopy: { ...context.workingCopy, path: cwd }, command: ["npm", ...args] });
     const sources = await targetSources(base, env, gradle);
+    const { config, floors } = await readSettings(base);
     const moves = unit.moves.flatMap((move) => move.declarations.map((declaration) => ({ ...declaration, name: move.name, to: move.to })));
     return await computeNpm({
       kind: unit.kind,
@@ -55,6 +57,7 @@ export async function computeOnBase(context: ToolRunContext, unit: Unit, base: T
       npm,
       window: { days: context.releaseAgeDays, exclude: context.releaseAgeExclude },
       sources,
+      overrideFloors: { floors, line: (name, version) => compatibleLine(config, { ecosystem: "npm", name }, version) },
     });
   } finally {
     await scratch.remove();

@@ -243,6 +243,9 @@ async function runUnit(
   const reused = same ?? owned[0];
   if (reused !== undefined) {
     assertNoUndecidedMoves(planOf(reused.pr.body)?.moves, undecided);
+    if (computed.undecidedOverrides !== undefined) {
+      throw new Error(`an override raise can't be decided; keeping the PR: ${computed.undecidedOverrides.join("; ")}`);
+    }
   }
   if (computed.blocked !== undefined) {
     return { topic: unit.topic, outcome: "blocked", detail: computed.blocked, notes: computed.plan.notes };
@@ -357,6 +360,9 @@ async function review(context: ToolRunContext, deps: BumpItDeps): Promise<Readon
       }
       if (computed?.blocked !== undefined) {
         throw new Error(`recomputation is blocked; keeping the PR: ${computed.blocked}`);
+      }
+      if (computed?.undecidedOverrides !== undefined) {
+        throw new Error(`an override raise can't be decided on the new base; keeping the PR: ${computed.undecidedOverrides.join("; ")}`);
       }
       if (computed !== undefined && empty(computed) && computed.wrapperOmitted && previous.moves.some((move) => move.mechanism === "gradle-wrapper")) {
         throw new Error(`wrapper recomputation is unavailable; keeping the PR: ${computed.plan.notes.join("; ")}`);

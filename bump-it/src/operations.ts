@@ -49,6 +49,8 @@ export interface Computed {
   readonly blocked?: string;
   /** Direct-peer sets whose checks failed (`coupledUnit`): moves left out that may still be needed, a failure to report. */
   readonly undecided?: ReadonlyArray<UndecidedPeers>;
+  /** Overrides a failed lookup kept from being raised: an existing PR may carry their raise, so it isn't rewritten. */
+  readonly undecidedOverrides?: ReadonlyArray<string>;
 }
 
 interface SkillAnswer {
@@ -84,6 +86,7 @@ export async function compute(execution: Execution, unit: Unit, base: Tree, grad
     plan, files: npm.files, wrapperFiles, wrapperOmitted: wrapper.unavailable === true || generated.notes.length > 0, base, gradle,
     ...(blocked === undefined ? {} : { blocked }),
     ...(coupled.undecided.length === 0 ? {} : { undecided: coupled.undecided }),
+    ...(npm.undecided === undefined || npm.undecided.length === 0 ? {} : { undecidedOverrides: npm.undecided }),
   };
 }
 
