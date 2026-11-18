@@ -50,6 +50,15 @@ describe("unusedRemoval", () => {
     expect(unusedRemoval(text, [npm("a", "1.0.0", "node_modules/x/node_modules/a")], [])).toEqual({ kind: "none" });
   });
 
+  it("keeps bare-repository action exceptions while a sibling still uses the version", () => {
+    const path = ".github/workflows/ci.yml";
+    const repository = vulnerability("acme/actions", "v1.0.0", [path]);
+    const text = file({ vulnerabilities: [repository, vulnerability("acme/actions/build", "v1.0.0", [path])] });
+    const build: Located = { ecosystem: "GitHub Actions", name: "acme/actions/build", version: "v1.0.0", locations: [path] };
+    const test = { ...build, name: "acme/actions/test" };
+    expect(unusedRemoval(text, [build, test], [test])).toEqual({ kind: "removal", text: file({ vulnerabilities: [repository] }) });
+  });
+
   it("reads an omitted ecosystem as any, a named one as that one, and identity as npm", () => {
     const npmOnly = vulnerability("g:b", "1.0", ["runtimeClasspath"], { ecosystem: "npm" });
     const identity = { package: "g:a", version: "1.0", reason: "r", expires: "2026-12-31" };

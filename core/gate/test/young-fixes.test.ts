@@ -42,6 +42,7 @@ describe("configured compatible lines", () => {
     const config = parseConfig({ compatibleLines: { "GitHub Actions:acme/tool": 1 } });
     expect(compatibleLine(config, action, `${prefix}1.2.0`)).toBe("1");
     expect(compatibleLine(config, action, `${prefix}2.2.0`)).toBe("2");
+    expect(compatibleLine(config, { ...action, name: "acme/tool/setup" }, `${prefix}2.2.0`)).toBe("2");
   });
 });
 

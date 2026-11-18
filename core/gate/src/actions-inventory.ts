@@ -17,6 +17,7 @@ import { posix } from "node:path";
 import { isAlias, isMap, isScalar, isSeq, parseDocument } from "yaml";
 
 import type { ActionsGitHub } from "./actions-github.ts";
+import { normalizeActionName } from "./package-version.ts";
 import { isDotSegment } from "./source-repos.ts";
 import type { Tree } from "./tree.ts";
 
@@ -48,6 +49,17 @@ const USES = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)(\/[^@\s]+)?@([^@\s]+)$/;
 function remoteAction(value: string): RegExpExecArray | undefined {
   const match = USES.exec(value);
   return match === null || isDotSegment(match[1]!) || isDotSegment(match[2]!) ? undefined : match;
+}
+
+/** The full package name of a parsed action use. */
+export function actionUseName(use: Pick<ActionUse, "name" | "path">): string {
+  return use.path === undefined ? use.name : `${use.name}/${use.path}`;
+}
+
+/** The full package name in a remote `uses:` value, when it names an action. */
+export function remoteActionName(value: string): string | undefined {
+  const literal = value.trim();
+  return remoteAction(literal) === undefined ? undefined : normalizeActionName(literal.slice(0, literal.indexOf("@")));
 }
 /** A local reusable workflow: GitHub only calls them from `.github/workflows` itself. */
 const LOCAL_WORKFLOW = /^\.github\/workflows\/[^/]+\.ya?ml$/;

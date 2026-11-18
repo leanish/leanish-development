@@ -22,7 +22,7 @@
 import { ageDays } from "./age.ts";
 import type { Config } from "./config.ts";
 import { evidenceOf, inherits } from "./findings.ts";
-import { type PackageName, type PackageVersion, versionKey } from "./package-version.ts";
+import { matchesPackageName, type PackageName, type PackageVersion, versionKey } from "./package-version.ts";
 import type { Snapshot } from "./snapshot.ts";
 import { type Ecosystem, versionScheme } from "./versions.ts";
 
@@ -49,9 +49,11 @@ export function compatibleLine(config: Config, pkg: PackageName, version: string
 }
 
 function lineOverride(config: Config, pkg: PackageName): number | undefined {
-  const key = `${pkg.ecosystem}:${pkg.name}`;
+  const ecosystem = `${pkg.ecosystem}:`;
   for (const [pattern, segments] of config.compatibleLines) {
-    if (pattern === key || (pattern.endsWith("*") && key.startsWith(pattern.slice(0, -1)))) return segments;
+    if (!pattern.startsWith(ecosystem)) continue;
+    const name = pattern.slice(ecosystem.length);
+    if (name.endsWith("*") ? pkg.name.startsWith(name.slice(0, -1)) : matchesPackageName(name, pkg)) return segments;
   }
   return undefined;
 }

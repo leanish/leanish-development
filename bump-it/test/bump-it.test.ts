@@ -165,8 +165,8 @@ describe("bump-it run", () => {
     const root = await mkdtemp(fileURLToPath(new URL("../../.resolve-test-", import.meta.url)));
     try {
       const path = ".github/workflows/supply-chain.yml";
-      const name = "leanish/leanish-development";
-      const workflow = (sha: string, tag: string) => `on: push\njobs:\n  gate:\n    uses: ${name}/.github/workflows/supply-chain.yml@${sha} # ${tag}\n`;
+      const name = `leanish/leanish-development/${path}`;
+      const workflow = (sha: string, tag: string) => `on: push\njobs:\n  gate:\n    uses: ${name}@${sha} # ${tag}\n`;
       const bump = candidate({ ecosystem: "GitHub Actions", name, from: "v0.4.0", minor: undefined, major: { version: "v0.6.0", line: "0.6" }, declarations: [], locations: [path] });
       const unit = major(bump);
       const branch = branchFor(RULES, NOW, unit.topic);
@@ -283,8 +283,8 @@ describe("bump-it run", () => {
     try {
       const path = ".github/workflows/supply-chain.yml";
       // Another reusable workflow than the gate's: its major keeps the agent's pass.
-      const name = "acme/workflows";
-      const workflow = (sha: string, tag: string) => `on: push\njobs:\n  gate:\n    uses: ${name}/.github/workflows/supply-chain.yml@${sha} # ${tag}\n`;
+      const name = `acme/workflows/${path}`;
+      const workflow = (sha: string, tag: string) => `on: push\njobs:\n  gate:\n    uses: ${name}@${sha} # ${tag}\n`;
       const baseFiles = { [path]: workflow("a".repeat(40), "v0.4.0"), "EXPECTED.md": "base expectations\n", "README.md": "base docs\n" };
       const bump = candidate({ ecosystem: "GitHub Actions", name, from: "v0.4.0", minor: undefined, major: { version: "v0.6.0", line: "0.6" }, declarations: [], locations: [path] });
       const branch = branchFor(RULES, NOW, major(bump).topic);
@@ -371,8 +371,8 @@ describe("bump-it run", () => {
     const root = await mkdtemp(fileURLToPath(new URL("../../.retarget-test-", import.meta.url)));
     try {
       const path = ".github/workflows/supply-chain.yml";
-      const name = "leanish/leanish-development";
-      const workflow = (sha: string, tag: string) => `# The gate (leanish/supply-chain): see packages/ci/README.md.\non: push\njobs:\n  gate:\n    uses: ${name}/.github/workflows/supply-chain.yml@${sha} # ${tag}\n`;
+      const name = `leanish/leanish-development/${path}`;
+      const workflow = (sha: string, tag: string) => `# The gate (leanish/supply-chain): see packages/ci/README.md.\non: push\njobs:\n  gate:\n    uses: ${name}@${sha} # ${tag}\n`;
       const baseFiles = { [path]: workflow("a".repeat(40), "v0.4.0"), "README.md": "base docs\n" };
       const bump = candidate({ ecosystem: "GitHub Actions", name, from: "v0.4.0", minor: undefined, major: { version: "v0.6.0", line: "0.6" }, declarations: [], locations: [path] });
       const branch = branchFor(RULES, NOW, major(bump).topic);
@@ -403,8 +403,8 @@ describe("bump-it run", () => {
     const root = await mkdtemp(fileURLToPath(new URL("../../.retarget-test-", import.meta.url)));
     try {
       const path = ".github/workflows/supply-chain.yml";
-      const name = "leanish/leanish-development";
-      const workflow = (sha: string, tag: string) => `# The gate (leanish/supply-chain): see packages/ci/README.md.\non: push\njobs:\n  gate:\n    uses: ${name}/.github/workflows/supply-chain.yml@${sha} # ${tag}\n`;
+      const name = `leanish/leanish-development/${path}`;
+      const workflow = (sha: string, tag: string) => `# The gate (leanish/supply-chain): see packages/ci/README.md.\non: push\njobs:\n  gate:\n    uses: ${name}@${sha} # ${tag}\n`;
       const baseFiles = { [path]: workflow("a".repeat(40), "v0.4.0"), "README.md": "base docs\n" };
       const bump = candidate({ ecosystem: "GitHub Actions", name, from: "v0.4.0", minor: undefined, major: { version: "v0.6.0", line: "0.6" }, declarations: [], locations: [path] });
       const branch = branchFor(RULES, NOW, major(bump).topic);

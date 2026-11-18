@@ -1,8 +1,9 @@
 /** Planning and editing one independent unit; no publication until verification passes. */
 import { ActionsGitHub } from "@leanish/gate/actions-github";
-import { readActionsInventory } from "@leanish/gate/actions-inventory";
+import { actionUseName, readActionsInventory } from "@leanish/gate/actions-inventory";
 import { EXCEPTIONS_PATH, type GateEnvironment, type GradleInputs } from "@leanish/gate/gate";
 import type { NpmPeerPlanner } from "@leanish/gate/npm-peers";
+import { normalizeActionName } from "@leanish/gate/package-version";
 import type { Tree } from "@leanish/gate/tree";
 import type { ToolRunContext } from "@leanish/tool-runtime/command";
 import { GATE_WORKFLOW, isPolicyFile, writtenPins } from "@leanish/tool-runtime/edit-checks";
@@ -173,7 +174,8 @@ async function localFile(root: string, path: string): Promise<boolean> {
 /** Whether every planned pin is the gate's own reusable workflow, the only major that needs no agent: nothing but its pin may change there. */
 async function onlyGateWorkflow(computed: Computed): Promise<boolean> {
   const moves = computed.plan.moves;
-  if (moves.length === 0 || moves.some((move) => move.mechanism !== "action-pin" || move.name.toLowerCase() !== GATE_WORKFLOW.name)) return false;
+  const name = actionUseName(GATE_WORKFLOW);
+  if (moves.length === 0 || moves.some((move) => move.mechanism !== "action-pin" || normalizeActionName(move.name) !== name)) return false;
   const uses = (await readActionsInventory(computed.base)).uses.filter((use) => use.name === GATE_WORKFLOW.name);
   return uses.length > 0 && uses.every((use) => use.path === GATE_WORKFLOW.path);
 }

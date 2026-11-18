@@ -355,8 +355,8 @@ describe("secure-it run", () => {
     const root = await mkdtemp(fileURLToPath(new URL("../../.resolve-test-", import.meta.url)));
     try {
       const path = ".github/workflows/supply-chain.yml";
-      const name = "leanish/leanish-development";
-      const workflow = (sha: string, tag: string) => `on: push\njobs:\n  gate:\n    uses: ${name}/.github/workflows/supply-chain.yml@${sha} # ${tag}\n`;
+      const name = `leanish/leanish-development/${path}`;
+      const workflow = (sha: string, tag: string) => `on: push\njobs:\n  gate:\n    uses: ${name}@${sha} # ${tag}\n`;
       const fix = vite({ ecosystem: "GitHub Actions", name, from: "v0.4.0", locations: [path], to: { version: "v0.6.0", line: "0.6", aged: true, major: true, blockers: [] } });
       const unit = { kind: "major" as const, topic: `${name}-major` };
       const branch = branchFor(RULES, NOW, unit.topic);
@@ -415,8 +415,8 @@ describe("secure-it run", () => {
     const root = await mkdtemp(fileURLToPath(new URL("../../.secure-retarget-test-", import.meta.url)));
     try {
       const path = ".github/workflows/supply-chain.yml";
-      const name = "leanish/leanish-development";
-      const workflow = (sha: string, tag: string) => `on: push\njobs:\n  gate:\n    uses: ${name}/.github/workflows/supply-chain.yml@${sha} # ${tag}\n`;
+      const name = `leanish/leanish-development/${path}`;
+      const workflow = (sha: string, tag: string) => `on: push\njobs:\n  gate:\n    uses: ${name}@${sha} # ${tag}\n`;
       const baseFiles = { [path]: workflow("a".repeat(40), "v0.4.0"), "EXPECTED.md": "base expectations\n", "README.md": "base docs\n" };
       const fix = vite({ ecosystem: "GitHub Actions", name, from: "v0.4.0", locations: [path], to: { version: "v0.6.0", line: "0.6", aged: true, major: true, blockers: [] } });
       const unit = { kind: "major" as const, topic: `${name}-major` };

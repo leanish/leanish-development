@@ -18,7 +18,7 @@ import { ageDays, eligibleAt, isUnderWait } from "./age.ts";
 import { type Config, isTrustedPackage } from "./config.ts";
 import type { Exceptions } from "./exceptions.ts";
 import type { BundleFixProof } from "./bundle-fix-proof.ts";
-import { label, type PackageVersion, versionKey } from "./package-version.ts";
+import { label, matchesPackageName, type PackageVersion, versionKey } from "./package-version.ts";
 import type { Snapshot } from "./snapshot.ts";
 import type { Ecosystem } from "./versions.ts";
 import { groupsOf, reviewedGroups, targetsOf, type VersionCatalog, youngFixProblem } from "./young-fixes.ts";
@@ -144,7 +144,7 @@ async function judgeYoung(change: ChangedVersion, context: AgeContext): Promise<
   if (bundle !== undefined && bundle.problem === undefined) return { justification: "bundle-fix" };
   const bundled = bundle?.problem;
   const exception = context.exceptions.releaseAge.find(
-    (entry) => (entry.ecosystem === undefined || entry.ecosystem === pkg.ecosystem) && entry.package === pkg.name && entry.version === pkg.version,
+    (entry) => (entry.ecosystem === undefined || entry.ecosystem === pkg.ecosystem) && matchesPackageName(entry.package, pkg) && entry.version === pkg.version,
   );
   if (exception === undefined) {
     const age = ageDays(change.published, context.now)!;

@@ -4,6 +4,8 @@ import { ActionsCatalog, actionChanges, actionGaps, actionsLocated, resolveUses 
 import { ActionsGitHub } from "../src/actions-github.ts";
 import { type ActionsInventory, parseUses, readActionsInventory } from "../src/actions-inventory.ts";
 import { parseConfig } from "../src/config.ts";
+import { findingsOf } from "../src/findings.ts";
+import { takeSnapshot } from "../src/take-snapshot.ts";
 import type { Tree } from "../src/tree.ts";
 import { fakeFetch, type FakeResponse } from "./fake-fetch.ts";
 
@@ -38,6 +40,64 @@ function github(extra: Record<string, FakeResponse> = {}): ActionsGitHub {
     undefined,
   );
 }
+
+describe("action subpath advisories", () => {
+  it("matches GHSA-chpw-2mqm-95cc only for the affected action and version", async () => {
+    const sha = "3f5f9adaf7d9fecd50b5935e54106014257a94e6";
+    const patchedSha = "b".repeat(40);
+    const workflow = (use: string) => `jobs:\n  build:\n    steps:\n      - uses: gradle/actions${use}\n`;
+    const inventory = await readActionsInventory(tree({
+      ".github/workflows/dependency.yml": workflow(`/dependency-submission@${sha} # v6.4.0`),
+      ".github/workflows/setup.yml": workflow(`/setup-gradle@${sha} # v6.4.0`),
+      ".github/workflows/patched.yml": workflow(`/dependency-submission@${patchedSha} # v6.4.1`),
+      ".github/workflows/root.yml": workflow(`@${sha} # v6.4.0`),
+    }));
+    const advisory = (id: string, name: string) => ({
+      ghsa_id: id, state: "published", severity: "high",
+      vulnerabilities: [{ package: { ecosystem: "actions", name }, vulnerable_version_range: "<= 6.4.0", patched_versions: "6.4.1" }],
+    });
+    const fetch = fakeFetch({
+      [`${API}/repos/gradle/actions/git/ref/tags/v6.4.0`]: { body: { object: { type: "commit", sha } } },
+      [`${API}/repos/gradle/actions/git/ref/tags/v6.4.1`]: { body: { object: { type: "commit", sha: patchedSha } } },
+      [`${API}/repos/gradle/actions/security-advisories?state=published&per_page=100`]: { body: [
+        advisory("GHSA-chpw-2mqm-95cc", "gradle/actions/dependency-submission"),
+        advisory("GHSA-repository-wide", "Gradle/Actions"),
+      ] },
+    });
+    const actions = new ActionsGitHub(fetch, undefined);
+    const packages = actionsLocated(inventory, await resolveUses([inventory], actions));
+    const snapshot = await takeSnapshot(packages, {
+      actions, now: () => new Date("2026-11-18"),
+      sourceRepos: { fetch, overrides: new Map(), mavenRepositories: [] },
+      repositoryAdvisories: { fetch, token: undefined },
+      osv: { binary: "osv-scanner", run: async () => { throw new Error("Actions should not be sent to OSV-Scanner"); } },
+    });
+    const findings = findingsOf(packages, snapshot);
+    expect(findings.filter(({ advisory }) => advisory === "GHSA-chpw-2mqm-95cc")).toEqual([
+      expect.objectContaining({ name: "gradle/actions/dependency-submission", version: "v6.4.0", locations: [".github/workflows/dependency.yml"], severity: "HIGH", reviewed: false }),
+    ]);
+    expect(findings.filter(({ advisory }) => advisory === "GHSA-repository-wide").map(({ name }) => name).sort()).toEqual([
+      "gradle/actions", "gradle/actions/dependency-submission", "gradle/actions/setup-gradle",
+    ]);
+    expect(snapshot.gaps).toEqual([]);
+  });
+
+  it("queries both full and repository names for global reviewed and malware advisories", async () => {
+    const affects = (name: string, type: string) => `${API}/advisories?ecosystem=actions&affects%5B%5D=gradle%2Factions%40v6.4.0&affects%5B%5D=${encodeURIComponent(`${name}@v6.4.0`)}&type=${type}&per_page=100`;
+    const dependency = "gradle/actions/dependency-submission";
+    const setup = "gradle/actions/setup-gradle";
+    const reviewed = { ghsa_id: "GHSA-reviewed-subpath", type: "reviewed" };
+    const malware = { ghsa_id: "GHSA-malware-repository", type: "malware" };
+    const actions = new ActionsGitHub(fakeFetch({
+      [affects(dependency, "reviewed")]: { body: [reviewed] },
+      [affects(setup, "reviewed")]: { body: [] },
+      [affects(dependency, "malware")]: { body: [malware] },
+      [affects(setup, "malware")]: { body: [malware] },
+    }), undefined);
+    expect((await actions.advisories(dependency, "v6.4.0")).map(({ id }) => id)).toEqual([reviewed.ghsa_id, malware.ghsa_id]);
+    expect((await actions.advisories(setup, "v6.4.0")).map(({ id }) => id)).toEqual([malware.ghsa_id]);
+  });
+});
 
 describe("reading workflows", () => {
   it("reads a key named `uses` outside a job or step only when it's an action, and stays strict in steps", () => {
@@ -273,6 +333,22 @@ describe("occurrences and edge cases", () => {
     expect((await actionChanges(base, copied, resolutions, gh, config)).problems).toEqual([
       "actions/checkout@v6 (release.yml) is new or changed, so it must be pinned to a full commit SHA with a `# vX.Y.Z` comment",
     ]);
+  });
+
+  it("tracks a replaced version by subpath while sharing the repository's tags and releases", async () => {
+    const gh = github();
+    const setup = { ...use(OLD_CHECKOUT_SHA, "v4.2.2"), path: "setup" };
+    const test = { ...setup, path: "test" };
+    const base: ActionsInventory = { uses: [setup, test], docker: [], files: ["ci.yml"], gaps: [] };
+    const head = { ...base, uses: [{ ...use(CHECKOUT_SHA, "v7.0.1"), path: "setup" }, test] };
+    const result = await actionChanges(base, head, await resolveUses([base, head], gh), gh, parseConfig({}));
+    expect(result.problems).toEqual([]);
+    expect(result.changes).toEqual([{
+      pkg: { ecosystem: "GitHub Actions", name: "actions/checkout/setup", version: "v7.0.1" },
+      published: new Date("2026-04-10T17:31:14Z"), replaced: ["v4.2.2"],
+    }]);
+    expect((await new ActionsCatalog(gh).versions(result.changes[0]!.pkg))?.toSorted()).toEqual(["v4.2.2", "v7.0.1"]);
+    expect(await gh.tagCommit("actions/checkout/setup", "v7.0.1")).toBe(CHECKOUT_SHA);
   });
 
   it("counts occurrences, subdirectory included: another action of the same repository, a second copy or an aliased step is new", async () => {

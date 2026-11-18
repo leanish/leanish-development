@@ -1,5 +1,6 @@
 /** A workflow can use several lines of the same action: each source version has its own target. */
-import { commentTag, readActionsInventory } from "@leanish/gate/actions-inventory";
+import { actionUseName, commentTag, readActionsInventory } from "@leanish/gate/actions-inventory";
+import { normalizeActionName } from "@leanish/gate/package-version";
 import type { Tree } from "@leanish/gate/tree";
 import { pinsLanded } from "@leanish/tool-runtime/edit-checks";
 
@@ -14,7 +15,7 @@ export async function plannedPinsLanded(moves: ReadonlyArray<PlannedMove>, base:
   const after = (await readActionsInventory(head)).uses;
   const problems: string[] = [];
   const simple = pins.flatMap((pin) => pin.locations.flatMap((file) => {
-    const uses = before.filter((use) => use.file === file && use.name === pin.name.toLowerCase());
+    const uses = before.filter((use) => use.file === file && actionUseName(use) === normalizeActionName(pin.name));
     return uses.length > 0 && uses.every((use) => commentTag(use) === pin.from) ? [{ name: pin.name, locations: [file], to: pin.to, commitSha: pin.commitSha }] : [];
   }));
   problems.push(...await pinsLanded(simple, head));
@@ -28,19 +29,20 @@ export async function plannedPinsLanded(moves: ReadonlyArray<PlannedMove>, base:
     for (let index = 0; index < was.length; index++) {
       const use = was[index]!;
       const landed = now[index]!;
-      const move = pins.find((pin) => pin.locations.includes(file) && pin.name.toLowerCase() === use.name && pin.from === commentTag(use));
+      const name = actionUseName(use);
+      const move = pins.find((pin) => pin.locations.includes(file) && normalizeActionName(pin.name) === name && pin.from === commentTag(use));
       if (move === undefined) {
         if (use.ref !== landed.ref || use.comment !== landed.comment) {
-          problems.push(`${file}: ${use.name} at ${commentTag(use) ?? use.ref} changed outside its planned source version`);
+          problems.push(`${file}: ${name} at ${commentTag(use) ?? use.ref} changed outside its planned source version`);
         }
       } else if (landed.ref !== move.commitSha || commentTag(landed) !== move.to) {
-        problems.push(`${file}: ${use.name} from ${move.from} must land at ${move.commitSha} # ${move.to}`);
+        problems.push(`${file}: ${name} from ${move.from} must land at ${move.commitSha} # ${move.to}`);
       }
     }
   }
   for (const pin of pins) {
     for (const file of pin.locations) {
-      if (!before.some((use) => use.file === file && use.name === pin.name.toLowerCase() && commentTag(use) === pin.from)) {
+      if (!before.some((use) => use.file === file && actionUseName(use) === normalizeActionName(pin.name) && commentTag(use) === pin.from)) {
         problems.push(`${file} has no source use of ${pin.name}@${pin.from}`);
       }
     }

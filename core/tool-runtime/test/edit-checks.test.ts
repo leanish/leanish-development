@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { GATE_WORKFLOW, isDependencyFile, isMechanical, writtenPins } from "../src/edit-checks.ts";
+import { tree } from "@leanish/gate/test/required-fixture";
+
+import { actionsOutsidePlan, GATE_WORKFLOW, isDependencyFile, isMechanical, pinsLanded, policyFence, writtenPins } from "../src/edit-checks.ts";
 
 describe("isMechanical", () => {
   it("takes the base's side for the dependency files a move touches, workflows aside, matching the catalog by whole folder", () => {
@@ -39,8 +41,7 @@ describe("writtenPins", () => {
     ].join("\n");
     const written = writtenPins(text, "ci.yml", [pin]);
     expect(written).toBe(text
-      .replace(`      - uses: acme/setup@${OLD}   # v4.0.0`, `      - uses: acme/setup@${NEW}   # v5.0.0`)
-      .replace(`      - uses: "acme/setup/sub@${OLD}" # v4.0.0`, `      - uses: "acme/setup/sub@${NEW}" # v5.0.0`));
+      .replace(`      - uses: acme/setup@${OLD}   # v4.0.0`, `      - uses: acme/setup@${NEW}   # v5.0.0`));
     expect(writtenPins(written, "ci.yml", [pin])).toBe(written);
   });
 
@@ -50,9 +51,28 @@ describe("writtenPins", () => {
   });
 
   it("adds no comment where there was none to match, and writes the gate's own caller", () => {
-    const gate = `jobs:\n  gate:\n    uses: ${GATE_WORKFLOW.name}/${GATE_WORKFLOW.path}@${OLD} # v0.6.1\n`;
-    expect(writtenPins(gate, GATE_WORKFLOW.path, [{ name: GATE_WORKFLOW.name, from: "v0.6.1", to: "v0.7.0", commitSha: NEW }]))
-      .toBe(`jobs:\n  gate:\n    uses: ${GATE_WORKFLOW.name}/${GATE_WORKFLOW.path}@${NEW} # v0.7.0\n`);
+    const name = `${GATE_WORKFLOW.name}/${GATE_WORKFLOW.path}`;
+    const gate = `jobs:\n  gate:\n    uses: ${name}@${OLD} # v0.6.1\n`;
+    expect(writtenPins(gate, GATE_WORKFLOW.path, [{ name, from: "v0.6.1", to: "v0.7.0", commitSha: NEW }]))
+      .toBe(`jobs:\n  gate:\n    uses: ${name}@${NEW} # v0.7.0\n`);
+  });
+
+  it("writes and verifies a subpath pin independently of siblings in the same file", async () => {
+    const file = ".github/workflows/ci.yml";
+    const text = `jobs:\n  j:\n    steps:\n      - uses: Acme/setup/Deploy@${OLD} # v4.0.0\n      - uses: acme/setup/deploy@${OLD} # v4.0.0\n`;
+    const move = { ...pin, name: "acme/setup/Deploy", locations: [file] };
+    const written = writtenPins(text, file, [move]);
+    expect(written).toBe(text.replace(`Deploy@${OLD} # v4.0.0`, `Deploy@${NEW} # v5.0.0`));
+    const base = tree({ [file]: text }, "base");
+    const head = tree({ [file]: written }, "head");
+    expect(await pinsLanded([move], head)).toEqual([]);
+    expect(await policyFence([file], [move], base, head)).toEqual([]);
+    const both = tree({ [file]: written.replace(`deploy@${OLD} # v4.0.0`, `deploy@${NEW} # v5.0.0`) }, "both");
+    expect(await policyFence([file], [move], base, both)).toHaveLength(1);
+    expect(await actionsOutsidePlan([move], base, both)).toEqual([
+      expect.stringContaining("acme/setup/deploy@"),
+      expect.stringContaining("acme/setup/deploy@"),
+    ]);
   });
 
   it.each([
